@@ -395,6 +395,7 @@ class TaskOperationsMixin:
                 "title": title,
                 "prompt": obj_in.prompt,
                 "teamRef": {
+                    "id": team.id,
                     "name": team.name,
                     "namespace": team.namespace,
                     "user_id": team.user_id,

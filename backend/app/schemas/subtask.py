@@ -119,7 +119,11 @@ class SubtaskContextBrief(BaseModel):
     document_id: Optional[int] = None
     source_config: Optional[dict[str, Any]] = None
     # External knowledge fields (from type_data)
+    external_ref: Optional[dict[str, Any]] = None
     external_provider: Optional[str] = None
+    external_provider_label: Optional[str] = None
+    external_source_name: Optional[str] = None
+    external_target_name: Optional[str] = None
     external_mode: Optional[str] = None
     external_id: Optional[str] = None
     external_scope: Optional[str] = None
@@ -127,6 +131,7 @@ class SubtaskContextBrief(BaseModel):
     external_node_id: Optional[str] = None
     external_document_id: Optional[str] = None
     external_parent_id: Optional[str] = None
+    retrieval_status: Optional[dict[str, Any]] = None
     # External web content fields
     video_count: Optional[int] = None
     site: Optional[str] = None

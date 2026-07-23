@@ -5,7 +5,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { useChatStreamHandlers } from '@/features/tasks/components/chat/useChatStreamHandlers'
 import type { ContextItem } from '@/types/context'
-import type { TaskDetail } from '@/types/api'
+import type { SubtaskContextBrief, TaskDetail } from '@/types/api'
 
 const mockContextSendMessage = jest.fn()
 
@@ -160,16 +160,24 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
     expect(request.contexts).toEqual([
       {
         type: 'knowledge_base',
-        data: { knowledge_id: 5, name: 'Product Docs', document_count: 3 },
+        data: {
+          knowledge_id: 5,
+          name: 'Product Docs',
+          document_count: 3,
+          document_ids: undefined,
+          scope_restricted: undefined,
+        },
       },
       {
         type: 'external_knowledge',
         data: {
-          provider: 'demo',
-          mode: 'explicit',
-          id: 'lib-1',
-          name: 'Lib One',
-          scope: 'org',
+          external_ref: {
+            provider: 'demo',
+            mode: 'explicit',
+            id: 'lib-1',
+            name: 'Lib One',
+            scope: 'org',
+          },
         },
       },
     ])
@@ -192,5 +200,60 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
     const request = mockContextSendMessage.mock.calls[0][0]
     expect(request).not.toHaveProperty('externalKnowledgeRefs')
     expect(request).not.toHaveProperty('externalKnowledgeRefsReplace')
+  })
+
+  it('resends external knowledge as canonical external_ref during regeneration', async () => {
+    const originalContexts: SubtaskContextBrief[] = [
+      {
+        id: 90,
+        context_type: 'external_knowledge',
+        name: 'Roadmap.md',
+        status: 'ready',
+        external_ref: {
+          provider: 'dingtalk',
+          mode: 'explicit',
+          id: 'docs',
+          name: 'DingTalk Docs',
+          scope: 'personal',
+          target_type: 'document',
+          node_id: 'node-1',
+          document_id: 'doc-1',
+          target_name: 'Roadmap.md',
+        },
+        external_provider: 'stale-provider',
+        external_mode: 'explicit',
+        external_id: 'stale-id',
+      },
+    ]
+
+    const { result } = renderSendHook([])
+
+    await act(async () => {
+      await result.current.handleSendMessageWithModel(
+        'find the spec',
+        { name: 'gpt-test', type: 'public' } as never,
+        originalContexts
+      )
+    })
+
+    const request = mockContextSendMessage.mock.calls[0][0]
+    expect(request.contexts).toEqual([
+      {
+        type: 'external_knowledge',
+        data: {
+          external_ref: {
+            provider: 'dingtalk',
+            mode: 'explicit',
+            id: 'docs',
+            name: 'DingTalk Docs',
+            scope: 'personal',
+            target_type: 'document',
+            node_id: 'node-1',
+            document_id: 'doc-1',
+            target_name: 'Roadmap.md',
+          },
+        },
+      },
+    ])
   })
 })

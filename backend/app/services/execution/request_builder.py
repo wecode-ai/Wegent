@@ -27,6 +27,7 @@ from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
+from app.services.kind_reference import resolve_kind_reference
 from app.services.mcp_provider_registry import (
     get_mcp_service_by_skill_name,
     list_mcp_providers,
@@ -820,13 +821,12 @@ class TaskRequestBuilder:
 
         first_member = team_crd.spec.members[0]
 
-        bot = kindReader.get_by_name_and_namespace(
+        bot = resolve_kind_reference(
             self.db,
-            team.user_id,
-            KindType.BOT,
-            first_member.botRef.namespace,
-            first_member.botRef.name,
-        )
+            kind="Bot",
+            ref=first_member.botRef,
+            actor_user_id=team.user_id,
+        ).resource
 
         if not bot:
             logger.error(
@@ -1072,6 +1072,8 @@ class TaskRequestBuilder:
 
     @staticmethod
     def _team_member_matches_bot(member: TeamMember, bot: Kind) -> bool:
+        if member.botRef.id is not None:
+            return member.botRef.id == bot.id
         return (
             member.botRef.name == bot.name and member.botRef.namespace == bot.namespace
         )
@@ -1268,13 +1270,12 @@ class TaskRequestBuilder:
             return [], [], [], {}
 
         # Query Ghost
-        ghost = kindReader.get_by_name_and_namespace(
+        ghost = resolve_kind_reference(
             self.db,
-            team.user_id,
-            KindType.GHOST,
-            bot_crd.spec.ghostRef.namespace,
-            bot_crd.spec.ghostRef.name,
-        )
+            kind="Ghost",
+            ref=bot_crd.spec.ghostRef,
+            actor_user_id=team.user_id,
+        ).resource
 
         if not ghost or not ghost.json:
             logger.warning(
@@ -1717,13 +1718,12 @@ Response template:
                 if self._team_member_matches_bot(member, first_bot):
                     bot = first_bot
                 else:
-                    bot = kindReader.get_by_name_and_namespace(
+                    bot = resolve_kind_reference(
                         self.db,
-                        team.user_id,
-                        KindType.BOT,
-                        member.botRef.namespace,
-                        member.botRef.name,
-                    )
+                        kind="Bot",
+                        ref=member.botRef,
+                        actor_user_id=team.user_id,
+                    ).resource
 
                 if bot:
                     bot_members.append((bot, member))
@@ -1749,13 +1749,12 @@ Response template:
             ghost_skill_refs = {}
 
             if bot_spec and bot_spec.ghostRef:
-                ghost = kindReader.get_by_name_and_namespace(
+                ghost = resolve_kind_reference(
                     self.db,
-                    team.user_id,
-                    KindType.GHOST,
-                    bot_spec.ghostRef.namespace,
-                    bot_spec.ghostRef.name,
-                )
+                    kind="Ghost",
+                    ref=bot_spec.ghostRef,
+                    actor_user_id=team.user_id,
+                ).resource
                 if ghost and ghost.json:
                     ghost_crd = Ghost.model_validate(ghost.json)
                     # Convert dict format to list format with name field
@@ -1977,13 +1976,12 @@ Response template:
         bot_crd = Bot.model_validate(bot.json)
 
         if bot_crd.spec and bot_crd.spec.ghostRef:
-            ghost = kindReader.get_by_name_and_namespace(
+            ghost = resolve_kind_reference(
                 self.db,
-                team.user_id,
-                KindType.GHOST,
-                bot_crd.spec.ghostRef.namespace,
-                bot_crd.spec.ghostRef.name,
-            )
+                kind="Ghost",
+                ref=bot_crd.spec.ghostRef,
+                actor_user_id=team.user_id,
+            ).resource
 
             if ghost and ghost.json:
                 ghost_crd = Ghost.model_validate(ghost.json)

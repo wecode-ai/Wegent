@@ -7,8 +7,9 @@ Service for task knowledge base (group chat) binding management.
 """
 
 import logging
+from copy import deepcopy
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -38,6 +39,10 @@ class BoundKnowledgeBaseDetail:
         document_count: int,
         bound_by: str,
         bound_at: str,
+        scope_restricted: bool = False,
+        document_ids: Optional[List[int]] = None,
+        folder_ids: Optional[List[int]] = None,
+        include_subfolders: bool = True,
     ):
         self.id = id
         self.name = name
@@ -47,6 +52,10 @@ class BoundKnowledgeBaseDetail:
         self.document_count = document_count
         self.bound_by = bound_by
         self.bound_at = bound_at
+        self.scope_restricted = scope_restricted
+        self.document_ids = document_ids or []
+        self.folder_ids = folder_ids or []
+        self.include_subfolders = include_subfolders
 
     def to_dict(self):
         return {
@@ -58,7 +67,66 @@ class BoundKnowledgeBaseDetail:
             "document_count": self.document_count,
             "bound_by": self.bound_by,
             "bound_at": self.bound_at,
+            "scope_restricted": self.scope_restricted,
+            "document_ids": self.document_ids,
+            "folder_ids": self.folder_ids,
+            "include_subfolders": self.include_subfolders,
         }
+
+
+def project_task_knowledge_bindings(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Merge whole and scoped Task bindings into one ID-deduplicated view."""
+    projected: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for raw_ref in spec.get("knowledgeBaseScopes") or []:
+        if not isinstance(raw_ref, dict):
+            continue
+        ref = dict(raw_ref)
+        ref["_binding_source"] = "scope"
+        ref["scope_restricted"] = True
+        ref["document_ids"] = list(ref.get("explicitDocumentIds") or [])
+        ref["folder_ids"] = list(ref.get("folderIds") or [])
+        ref["include_subfolders"] = bool(ref.get("includeSubfolders", True))
+        projected[_knowledge_binding_key(ref)] = ref
+    for raw_ref in spec.get("knowledgeBaseRefs") or []:
+        if not isinstance(raw_ref, dict):
+            continue
+        ref = dict(raw_ref)
+        key = _knowledge_binding_key(ref)
+        # Older Task data may store a restricted binding in knowledgeBaseRefs
+        # and newer data may also mirror it in knowledgeBaseScopes. Preserve
+        # the restriction when the legacy ref explicitly carries it.
+        if ref.get("scopeRestricted") or ref.get("scope_restricted"):
+            ref["_binding_source"] = "scope"
+            ref["scope_restricted"] = True
+            ref["document_ids"] = list(
+                ref.get("explicitDocumentIds") or ref.get("document_ids") or []
+            )
+            ref["folder_ids"] = list(
+                ref.get("folderIds") or ref.get("folder_ids") or []
+            )
+            ref["include_subfolders"] = bool(
+                ref.get("includeSubfolders", ref.get("include_subfolders", True))
+            )
+            projected.setdefault(key, ref)
+            continue
+        ref["_binding_source"] = "whole"
+        ref["scope_restricted"] = False
+        ref["document_ids"] = []
+        ref["folder_ids"] = []
+        ref["include_subfolders"] = True
+        # An explicit whole binding intentionally replaces a scoped binding
+        # for the same knowledge base.
+        projected[key] = ref
+    return list(projected.values())
+
+
+def _knowledge_binding_key(ref: dict[str, Any]) -> tuple[Any, ...]:
+    if ref.get("id") is not None:
+        try:
+            return ("id", int(ref["id"]))
+        except (TypeError, ValueError):
+            pass
+    return ("legacy", ref.get("namespace", "default"), ref.get("name"))
 
 
 class TaskKnowledgeBaseService:
@@ -72,7 +140,9 @@ class TaskKnowledgeBaseService:
 
     def get_user(self, db: Session, user_id: int) -> Optional[User]:
         """Get a user by ID"""
-        return db.query(User).filter(User.id == user_id, User.is_active == True).first()
+        return (
+            db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+        )
 
     def is_group_chat(self, db: Session, task_id: int) -> bool:
         """Check if a task is configured as a group chat"""
@@ -144,7 +214,7 @@ class TaskKnowledgeBaseService:
             .filter(
                 Kind.kind == "KnowledgeBase",
                 Kind.namespace == namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .all()
         )
@@ -172,7 +242,7 @@ class TaskKnowledgeBaseService:
             .filter(
                 Kind.id == kb_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -200,7 +270,7 @@ class TaskKnowledgeBaseService:
             .filter(
                 Kind.id.in_(kb_ids),
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .all()
         )
@@ -341,7 +411,7 @@ class TaskKnowledgeBaseService:
                     .filter(
                         Kind.kind == "KnowledgeBase",
                         Kind.namespace == namespace,
-                        Kind.is_active == True,
+                        Kind.is_active.is_(True),
                     )
                     .all()
                 )
@@ -498,7 +568,7 @@ class TaskKnowledgeBaseService:
         # Get knowledgeBaseRefs from task spec
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
-        kb_refs = spec.get("knowledgeBaseRefs", []) or []
+        kb_refs = project_task_knowledge_bindings(spec)
 
         if not kb_refs:
             return []
@@ -506,18 +576,15 @@ class TaskKnowledgeBaseService:
         # Use batch query to resolve all refs efficiently
         found_kbs, _ = self.resolve_kb_refs_batch(db, kb_refs)
 
-        # Build result and collect refs needing migration
+        # Build a read-only projection. Legacy migration is handled separately so
+        # scope-only refs can never be written into the wrong backing field.
         result = []
-        refs_to_migrate = []
 
-        for idx, kb, needs_migration in found_kbs:
+        for idx, kb, _needs_migration in found_kbs:
             ref = kb_refs[idx]
             kb_name = ref.get("name")
             # Get namespace from the actual KB object, not from ref (ref may not have namespace for new data)
             kb_namespace = kb.namespace
-
-            if needs_migration:
-                refs_to_migrate.append((idx, kb.id))
 
             kb_spec = kb.json.get("spec", {})
             display_name = kb_spec.get("name", kb_name)
@@ -534,12 +601,12 @@ class TaskKnowledgeBaseService:
                     document_count=document_count,
                     bound_by=ref.get("boundBy", "Unknown"),
                     bound_at=ref.get("boundAt", ""),
+                    scope_restricted=bool(ref.get("scope_restricted")),
+                    document_ids=ref.get("document_ids") or [],
+                    folder_ids=ref.get("folder_ids") or [],
+                    include_subfolders=bool(ref.get("include_subfolders", True)),
                 )
             )
-
-        # Perform batch migration for legacy refs
-        if refs_to_migrate:
-            self._batch_migrate_kb_refs(db, task, refs_to_migrate)
 
         return result
 
@@ -578,7 +645,7 @@ class TaskKnowledgeBaseService:
 
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
-        kb_refs = spec.get("knowledgeBaseRefs", []) or []
+        kb_refs = project_task_knowledge_bindings(spec)
 
         if not kb_refs:
             return []
@@ -586,16 +653,28 @@ class TaskKnowledgeBaseService:
         # Use batch query to resolve all refs efficiently
         found_kbs, _ = self.resolve_kb_refs_batch(db, kb_refs)
 
-        # Build result and collect refs needing migration
+        # Migrate legacy whole refs only. Scope refs have a separate backing
+        # field and must never be written into knowledgeBaseRefs.
         result = []
         refs_to_migrate = []
 
         for idx, kb, needs_migration in found_kbs:
             result.append(kb.id)
-            if needs_migration:
-                refs_to_migrate.append((idx, kb.id))
+            if needs_migration and kb_refs[idx].get("_binding_source") == "whole":
+                whole_index = next(
+                    (
+                        ref_index
+                        for ref_index, ref in enumerate(
+                            spec.get("knowledgeBaseRefs") or []
+                        )
+                        if _knowledge_binding_key(ref)
+                        == _knowledge_binding_key(kb_refs[idx])
+                    ),
+                    None,
+                )
+                if whole_index is not None:
+                    refs_to_migrate.append((whole_index, kb.id))
 
-        # Perform batch migration for legacy refs
         if refs_to_migrate:
             self._batch_migrate_kb_refs(db, task, refs_to_migrate)
 
@@ -626,11 +705,12 @@ class TaskKnowledgeBaseService:
             HTTPException: On validation or permission errors
         """
         # Verify task exists and is a group chat
-        task = self.get_task(db, task_id)
+        task = task_store.get_by_id_for_update(db, task_id=task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        if not self.is_group_chat(db, task_id):
+        task_spec = (task.json or {}).get("spec", {})
+        if not task_spec.get("is_group_chat", False):
             raise HTTPException(status_code=400, detail="This task is not a group chat")
 
         # Verify user is a member
@@ -652,12 +732,20 @@ class TaskKnowledgeBaseService:
             raise HTTPException(status_code=404, detail="Knowledge base not found")
 
         # Get current task spec
-        task_json = task.json if isinstance(task.json, dict) else {}
+        task_json = deepcopy(task.json) if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
         kb_refs = spec.get("knowledgeBaseRefs", []) or []
+        scope_refs = spec.get("knowledgeBaseScopes", []) or []
 
-        # Check binding limit
-        if len(kb_refs) >= self.MAX_BOUND_KNOWLEDGE_BASES:
+        bound_kb_ids = {
+            int(ref["id"])
+            for ref in kb_refs + scope_refs
+            if isinstance(ref, dict) and ref.get("id") is not None
+        }
+        if (
+            kb.id not in bound_kb_ids
+            and len(bound_kb_ids) >= self.MAX_BOUND_KNOWLEDGE_BASES
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=f"Cannot bind more than {self.MAX_BOUND_KNOWLEDGE_BASES} knowledge bases",
@@ -672,6 +760,10 @@ class TaskKnowledgeBaseService:
                 raise HTTPException(
                     status_code=400, detail="Knowledge base is already bound"
                 )
+        if any(ref.get("id") == kb.id for ref in scope_refs):
+            raise HTTPException(
+                status_code=400, detail="Knowledge base is already bound"
+            )
 
         # Get user info
         user = self.get_user(db, user_id)
@@ -746,33 +838,36 @@ class TaskKnowledgeBaseService:
                 status_code=403, detail="You are not a member of this group chat"
             )
 
-        task = self.get_task(db, task_id)
+        task = task_store.get_by_id_for_update(db, task_id=task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
         # Get current task spec
-        task_json = task.json if isinstance(task.json, dict) else {}
+        task_json = deepcopy(task.json) if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
         kb_refs = spec.get("knowledgeBaseRefs", []) or []
+        scope_refs = spec.get("knowledgeBaseScopes", []) or []
 
         # Find and remove the binding (by ID or by name+namespace)
         found = False
-        new_refs = []
-        for ref in kb_refs:
+
+        def keep_ref(ref: dict[str, Any]) -> bool:
+            nonlocal found
             # Match by ID (preferred) or by name+namespace
             is_match = False
-            if kb_id is not None and ref.get("id") == kb_id:
-                is_match = True
+            if kb_id is not None:
+                is_match = ref.get("id") == kb_id
             elif (
                 ref.get("name") == kb_name
                 and ref.get("namespace", "default") == kb_namespace
             ):
                 is_match = True
-
             if is_match:
                 found = True
-            else:
-                new_refs.append(ref)
+            return not is_match
+
+        new_refs = [ref for ref in kb_refs if keep_ref(ref)]
+        new_scope_refs = [ref for ref in scope_refs if keep_ref(ref)]
 
         if not found:
             raise HTTPException(
@@ -781,6 +876,7 @@ class TaskKnowledgeBaseService:
 
         # Update task spec
         spec["knowledgeBaseRefs"] = new_refs
+        spec["knowledgeBaseScopes"] = new_scope_refs
         task_json["spec"] = spec
         task_store.update_json(db, task=task, payload=task_json)
         db.commit()
@@ -790,357 +886,6 @@ class TaskKnowledgeBaseService:
         )
 
         return True
-
-    def sync_subtask_kb_to_task(
-        self,
-        db: Session,
-        task: TaskResource,
-        knowledge_id: int,
-        user_id: int,
-        user_name: str,
-    ) -> bool:
-        """
-        Sync a subtask-level knowledge base to task-level knowledgeBaseRefs.
-
-        This is an internal method that automatically syncs KB selected in subtask
-        to the task level. It uses append mode with deduplication.
-
-        Unlike bind_knowledge_base(), this method:
-        - Does NOT require group chat check (works for all tasks)
-        - Does NOT throw exceptions on failures (silent skip)
-        - Skips if KB limit is reached (instead of raising error)
-        - Skips if user has no access (instead of raising error)
-
-        Args:
-            db: Database session
-            task: Pre-queried TaskResource object
-            knowledge_id: Knowledge base Kind.id
-            user_id: User ID who selected the KB
-            user_name: Pre-queried user name for boundBy field
-
-        Returns:
-            True if synced successfully, False if skipped
-        """
-        try:
-            # Get the knowledge base by ID
-            kb = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == knowledge_id,
-                    Kind.kind == "KnowledgeBase",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            if not kb:
-                logger.info(
-                    f"[sync_subtask_kb_to_task] Skip sync because KB was not found: "
-                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}"
-                )
-                return False
-
-            # Extract KB display name and namespace
-            kb_spec = kb.json.get("spec", {}) if kb.json else {}
-            kb_name = kb_spec.get("name")
-            kb_namespace = kb.namespace
-
-            if not kb_name:
-                logger.info(
-                    f"[sync_subtask_kb_to_task] Skip sync because KB has no display name: "
-                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}"
-                )
-                return False
-
-            # Check user access to the knowledge base
-            if not self.can_access_knowledge_base(
-                db,
-                user_id,
-                kb_name,
-                kb_namespace,
-                knowledge_id=knowledge_id,
-            ):
-                logger.info(
-                    f"[sync_subtask_kb_to_task] Skip sync because user has no access "
-                    f"to KB {kb_name}/{kb_namespace}: task_id={task.id}, "
-                    f"knowledge_id={knowledge_id}, user_id={user_id}"
-                )
-                return False
-
-            # Get current task spec
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
-
-            # Check binding limit - skip silently if reached
-            if len(kb_refs) >= self.MAX_BOUND_KNOWLEDGE_BASES:
-                logger.info(
-                    f"[sync_subtask_kb_to_task] Skip sync because KB limit was reached: "
-                    f"task_id={task.id}, knowledge_id={knowledge_id}, user_id={user_id}, "
-                    f"kb={kb_name}/{kb_namespace}, max_bound={self.MAX_BOUND_KNOWLEDGE_BASES}"
-                )
-                return False
-
-            # Check if already bound (deduplication by ID or by name+namespace)
-            for ref in kb_refs:
-                if (ref.get("id") == kb.id) or (
-                    ref.get("name") == kb_name
-                    and ref.get("namespace", "default") == kb_namespace
-                ):
-                    logger.info(
-                        f"[sync_subtask_kb_to_task] Skip sync because KB is already "
-                        f"bound: task_id={task.id}, knowledge_id={knowledge_id}, "
-                        f"user_id={user_id}, kb={kb_name}/{kb_namespace}"
-                    )
-                    return False
-
-            # Add new binding with ID for stable references
-            # Note: namespace is no longer stored - ID is sufficient for lookup
-            new_ref = KnowledgeBaseTaskRef(
-                id=kb.id,
-                name=kb_name,
-                boundBy=user_name,
-                boundAt=datetime.utcnow().isoformat() + "Z",
-            )
-            kb_refs.append(new_ref.model_dump())
-            scope_refs = spec.get("knowledgeBaseScopes", []) or []
-            spec["knowledgeBaseScopes"] = [
-                ref for ref in scope_refs if ref.get("id") != kb.id
-            ]
-
-            # Update task spec
-            spec["knowledgeBaseRefs"] = kb_refs
-            task_json["spec"] = spec
-            task_store.update_json(db, task=task, payload=task_json)
-            db.commit()
-            db.refresh(task)
-
-            logger.info(
-                f"[sync_subtask_kb_to_task] Synced KB {kb_name}/{kb_namespace} "
-                f"to task {task.id} (selected by user {user_id})"
-            )
-            return True
-
-        except Exception as e:
-            logger.warning(
-                f"[sync_subtask_kb_to_task] Failed to sync KB {knowledge_id} "
-                f"to task {task.id}: {e}"
-            )
-            db.rollback()
-            return False
-
-    def sync_subtask_kb_scope_to_task(
-        self,
-        db: Session,
-        task: TaskResource,
-        knowledge_id: int,
-        document_ids: list[int],
-        user_id: int,
-        user_name: str,
-        folder_ids: list[int] | None = None,
-        include_subfolders: bool = True,
-    ) -> bool:
-        """Sync a scoped KB selection to task-level scope refs."""
-        normalized_document_ids = self._normalize_document_ids(document_ids)
-        normalized_folder_ids = self._normalize_folder_ids(folder_ids or [])
-        if not normalized_document_ids and not normalized_folder_ids:
-            logger.info(
-                "[sync_subtask_kb_scope_to_task] Skip empty scope: "
-                "task_id=%s, knowledge_id=%s, user_id=%s",
-                task.id,
-                knowledge_id,
-                user_id,
-            )
-            return False
-
-        try:
-            kb = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == knowledge_id,
-                    Kind.kind == "KnowledgeBase",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-            if not kb:
-                logger.info(
-                    "[sync_subtask_kb_scope_to_task] Skip missing KB: "
-                    "task_id=%s, knowledge_id=%s, user_id=%s",
-                    task.id,
-                    knowledge_id,
-                    user_id,
-                )
-                return False
-
-            kb_spec = kb.json.get("spec", {}) if kb.json else {}
-            kb_name = kb_spec.get("name")
-            kb_namespace = kb.namespace
-            if not kb_name:
-                logger.info(
-                    "[sync_subtask_kb_scope_to_task] Skip KB without display name: "
-                    "task_id=%s, knowledge_id=%s, user_id=%s",
-                    task.id,
-                    knowledge_id,
-                    user_id,
-                )
-                return False
-
-            if not self.can_access_knowledge_base(
-                db,
-                user_id,
-                kb_name,
-                kb_namespace,
-                knowledge_id=knowledge_id,
-            ):
-                logger.info(
-                    "[sync_subtask_kb_scope_to_task] Skip inaccessible KB %s/%s: "
-                    "task_id=%s, knowledge_id=%s, user_id=%s",
-                    kb_name,
-                    kb_namespace,
-                    task.id,
-                    knowledge_id,
-                    user_id,
-                )
-                return False
-
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.setdefault("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
-            if any(ref.get("id") == kb.id for ref in kb_refs):
-                logger.info(
-                    "[sync_subtask_kb_scope_to_task] Skip scoped sync because KB is "
-                    "already bound as whole KB: task_id=%s, knowledge_id=%s",
-                    task.id,
-                    knowledge_id,
-                )
-                return False
-
-            scope_refs = spec.get("knowledgeBaseScopes", []) or []
-            if any(
-                ref.get("id") == kb.id and not bool(ref.get("scopeRestricted", False))
-                for ref in scope_refs
-            ):
-                logger.info(
-                    "[sync_subtask_kb_scope_to_task] Skip scoped sync because KB is "
-                    "already bound as unrestricted scope: task_id=%s, knowledge_id=%s",
-                    task.id,
-                    knowledge_id,
-                )
-                return False
-
-            next_scope_refs: list[dict] = []
-            merged = False
-            for ref in scope_refs:
-                if ref.get("id") != kb.id:
-                    next_scope_refs.append(ref)
-                    continue
-
-                existing_ids = self._normalize_document_ids(
-                    ref.get("explicitDocumentIds") or []
-                )
-                existing_folder_ids = self._normalize_folder_ids(
-                    ref.get("folderIds") or []
-                )
-                merged_ids = self._normalize_document_ids(
-                    existing_ids + normalized_document_ids
-                )
-                merged_folder_ids = self._normalize_folder_ids(
-                    existing_folder_ids + normalized_folder_ids
-                )
-                next_include_subfolders = (
-                    include_subfolders
-                    if normalized_folder_ids
-                    else ref.get("includeSubfolders", include_subfolders)
-                )
-                next_scope_refs.append(
-                    {
-                        **ref,
-                        "scopeRestricted": True,
-                        "explicitDocumentIds": merged_ids,
-                        "folderIds": merged_folder_ids or None,
-                        "includeSubfolders": next_include_subfolders,
-                        "boundBy": ref.get("boundBy") or user_name,
-                        "boundAt": ref.get("boundAt")
-                        or datetime.utcnow().isoformat() + "Z",
-                    }
-                )
-                merged = True
-
-            if not merged:
-                next_scope_refs.append(
-                    {
-                        "id": kb.id,
-                        "namespace": kb_namespace,
-                        "name": kb_name,
-                        "scopeRestricted": True,
-                        "folderIds": normalized_folder_ids or None,
-                        "explicitDocumentIds": normalized_document_ids,
-                        "includeSubfolders": include_subfolders,
-                        "boundBy": user_name,
-                        "boundAt": datetime.utcnow().isoformat() + "Z",
-                    }
-                )
-
-            if scope_refs == next_scope_refs:
-                return False
-
-            spec["knowledgeBaseScopes"] = next_scope_refs
-            task_json["spec"] = spec
-            task_store.update_json(db, task=task, payload=task_json)
-            db.commit()
-            db.refresh(task)
-            logger.info(
-                "[sync_subtask_kb_scope_to_task] Synced scoped KB %s/%s to task %s "
-                "(documents=%s, folders=%s, selected_by=%s)",
-                kb_name,
-                kb_namespace,
-                task.id,
-                normalized_document_ids,
-                normalized_folder_ids,
-                user_id,
-            )
-            return True
-        except Exception as e:
-            logger.warning(
-                "[sync_subtask_kb_scope_to_task] Failed to sync scoped KB %s "
-                "to task %s: %s",
-                knowledge_id,
-                task.id,
-                e,
-            )
-            db.rollback()
-            return False
-
-    @staticmethod
-    def _normalize_document_ids(document_ids: list[int]) -> list[int]:
-        normalized_ids: list[int] = []
-        seen_ids: set[int] = set()
-        for document_id in document_ids or []:
-            try:
-                normalized_id = int(document_id)
-            except (TypeError, ValueError):
-                continue
-            if normalized_id <= 0 or normalized_id in seen_ids:
-                continue
-            normalized_ids.append(normalized_id)
-            seen_ids.add(normalized_id)
-        return normalized_ids
-
-    @staticmethod
-    def _normalize_folder_ids(folder_ids: list[int]) -> list[int]:
-        normalized_ids: list[int] = []
-        seen_ids: set[int] = set()
-        for folder_id in folder_ids or []:
-            try:
-                normalized_id = int(folder_id)
-            except (TypeError, ValueError):
-                continue
-            if normalized_id < 0 or normalized_id in seen_ids:
-                continue
-            normalized_ids.append(normalized_id)
-            seen_ids.add(normalized_id)
-        return normalized_ids
 
 
 task_knowledge_base_service = TaskKnowledgeBaseService()

@@ -935,7 +935,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     ),
                     contexts=payload.contexts,
                     task=task,
-                    user_name=user_name,
+                    knowledge_base_id=payload.knowledge_base_id,
                 )
                 if linked_context_ids:
                     logger.info(

@@ -1061,6 +1061,7 @@ async def create_all_resources(
         bot_name = f"{request.name}-bot"
         bot_spec = {
             "ghostRef": {
+                "id": ghost.id,
                 "name": ghost_name,
                 "namespace": request.namespace,
             },
@@ -1122,6 +1123,7 @@ async def create_all_resources(
                 "members": [
                     {
                         "botRef": {
+                            "id": bot.id,
                             "name": bot_name,
                             "namespace": request.namespace,
                         },

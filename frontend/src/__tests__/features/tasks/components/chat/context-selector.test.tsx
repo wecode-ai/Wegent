@@ -7,6 +7,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 import type { ContextItem } from '@/types/context'
+import type { ExternalKbNode } from '@/types/external-knowledge'
 
 const mockListKnowledgeBases = jest.fn()
 const mockGetAllGroupedKnowledgeBases = jest.fn()
@@ -18,6 +19,174 @@ const mockGetDingTalkDocs = jest.fn()
 const mockGetDingTalkSyncStatus = jest.fn()
 const mockGetDingTalkWikispaceNodes = jest.fn()
 const mockGetDingTalkWikispaceSyncStatus = jest.fn()
+const mockSyncDingTalkDocs = jest.fn()
+const mockSyncDingTalkWikispaceNodes = jest.fn()
+
+interface MockDingTalkNode {
+  dingtalk_node_id: string
+  name: string
+  node_type: string
+  parent_node_id?: string
+  workspace_id?: string
+  source?: string
+  children?: MockDingTalkNode[]
+}
+
+interface MockDingTalkTree {
+  nodes: MockDingTalkNode[]
+}
+
+interface MockExternalKnowledgeBase {
+  knowledge_base_id: string
+  knowledge_base_name: string
+  scope?: string
+}
+
+function countMockDingTalkDocuments(nodes: MockDingTalkNode[]): number {
+  return nodes.reduce((total, node) => {
+    const self = node.node_type === 'folder' ? 0 : 1
+    return total + self + countMockDingTalkDocuments(node.children ?? [])
+  }, 0)
+}
+
+function toMockExternalNode(node: MockDingTalkNode): ExternalKbNode {
+  return {
+    node_id: node.dingtalk_node_id,
+    raw_id: node.dingtalk_node_id,
+    name: node.name,
+    node_type: node.node_type === 'folder' ? 'folder' : 'document',
+    parent_id: node.parent_node_id || null,
+    children: (node.children ?? []).map(toMockExternalNode),
+    source_type: node.source,
+  }
+}
+
+const mockDingTalkExternalSource = {
+  providerId: 'dingtalk',
+  label: 'DingTalk',
+  capabilities: {
+    enforcesPerUserAccess: true,
+    supportsAgentDefault: true,
+    supportsKnowledgeBaseSelection: true,
+    supportsDocumentSelection: true,
+    supportsDocumentTree: true,
+    supportsSyncStatus: true,
+  },
+  scopes: [
+    { key: 'personal', label: 'DingTalk Docs', icon: 'personal' },
+    { key: 'organization', label: 'DingTalk Knowledge Bases', icon: 'organization' },
+  ],
+  getKnowledgeBaseDisplay: (kb: MockExternalKnowledgeBase) =>
+    kb.knowledge_base_id === 'docs'
+      ? {
+          labelKey: 'chat:dingtalkDocs.allDocs',
+          icon: 'folderOpen',
+          rowVariant: 'primary',
+          testId: 'knowledge-picker-dingtalk-all-docs',
+        }
+      : undefined,
+  listKnowledgeBases: async (params: { scope?: string } = {}) => {
+    const [docsTree, docsStatus, wikispaceTree, wikispaceStatus] = await Promise.all([
+      mockGetDingTalkDocs(),
+      mockGetDingTalkSyncStatus(),
+      mockGetDingTalkWikispaceNodes(),
+      mockGetDingTalkWikispaceSyncStatus(),
+    ] as const)
+    const typedDocsTree = docsTree as MockDingTalkTree
+    const typedWikispaceTree = wikispaceTree as MockDingTalkTree
+    const items = []
+    if (
+      docsStatus.is_configured &&
+      typedDocsTree.nodes.length > 0 &&
+      (params.scope === undefined || params.scope === 'all' || params.scope === 'personal')
+    ) {
+      items.push({
+        provider: 'dingtalk',
+        knowledge_base_id: 'docs',
+        knowledge_base_name: 'DingTalk Docs',
+        scope: 'personal',
+        document_count: countMockDingTalkDocuments(typedDocsTree.nodes),
+      })
+    }
+    if (
+      wikispaceStatus.is_configured &&
+      (params.scope === undefined || params.scope === 'all' || params.scope === 'organization')
+    ) {
+      items.push(
+        ...typedWikispaceTree.nodes.map((node: MockDingTalkNode) => ({
+          provider: 'dingtalk',
+          knowledge_base_id: node.workspace_id || node.dingtalk_node_id,
+          knowledge_base_name: node.name,
+          scope: 'organization',
+          document_count: countMockDingTalkDocuments(node.children ?? []),
+        }))
+      )
+    }
+    return { items, total: items.length, has_more: false }
+  },
+  getKnowledgeBaseCount: async () => 2,
+  getScopeStatuses: async () => {
+    const [docsTree, docsStatus, wikispaceTree, wikispaceStatus] = await Promise.all([
+      mockGetDingTalkDocs(),
+      mockGetDingTalkSyncStatus(),
+      mockGetDingTalkWikispaceNodes(),
+      mockGetDingTalkWikispaceSyncStatus(),
+    ] as const)
+    const typedDocsTree = docsTree as MockDingTalkTree
+    const typedWikispaceTree = wikispaceTree as MockDingTalkTree
+    return [
+      {
+        key: 'personal',
+        configured: Boolean(docsStatus.is_configured),
+        synced: typedDocsTree.nodes.length > 0,
+        lastSyncedAt: docsStatus.last_synced_at,
+        messageKey: docsStatus.is_configured
+          ? 'chat:dingtalkDocs.empty'
+          : 'chat:dingtalkDocs.notConfigured',
+      },
+      {
+        key: 'organization',
+        configured: Boolean(wikispaceStatus.is_configured),
+        synced: typedWikispaceTree.nodes.length > 0,
+        lastSyncedAt: wikispaceStatus.last_synced_at,
+        messageKey: wikispaceStatus.is_configured
+          ? 'chat:dingtalkDocs.wikispaceEmpty'
+          : 'chat:dingtalkDocs.wikispaceNotConfigured',
+      },
+    ]
+  },
+  syncScope: async (scope: string) => {
+    if (scope === 'organization') {
+      await mockSyncDingTalkWikispaceNodes()
+      return
+    }
+    await mockSyncDingTalkDocs()
+  },
+  listNodes: async (knowledgeBaseId: string) => {
+    if (knowledgeBaseId === 'docs') {
+      const tree = (await mockGetDingTalkDocs()) as MockDingTalkTree
+      return {
+        items: tree.nodes.map(toMockExternalNode),
+        total: tree.nodes.length,
+        has_more: false,
+      }
+    }
+    const tree = (await mockGetDingTalkWikispaceNodes()) as MockDingTalkTree
+    const root = tree.nodes.find(
+      (node: MockDingTalkNode) => (node.workspace_id || node.dingtalk_node_id) === knowledgeBaseId
+    )
+    const items = (root?.children ?? []).map(toMockExternalNode)
+    return { items, total: items.length, has_more: false }
+  },
+  toRef: (kb: MockExternalKnowledgeBase) => ({
+    provider: 'dingtalk',
+    mode: 'explicit',
+    id: kb.knowledge_base_id,
+    name: kb.knowledge_base_name,
+    scope: kb.scope,
+    target_type: 'knowledge_base',
+  }),
+}
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -26,7 +195,11 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('next/link', () => {
-  const MockLink = ({ children }: { children: React.ReactNode }) => <a>{children}</a>
+  const MockLink = ({ children, href, ...props }: { children: React.ReactNode; href?: string }) => (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  )
   MockLink.displayName = 'MockLink'
   return MockLink
 })
@@ -62,9 +235,17 @@ jest.mock('@/apis/dingtalk-doc', () => ({
     getSyncStatus: (...args: unknown[]) => mockGetDingTalkSyncStatus(...args),
     getWikispaceNodes: (...args: unknown[]) => mockGetDingTalkWikispaceNodes(...args),
     getWikispaceSyncStatus: (...args: unknown[]) => mockGetDingTalkWikispaceSyncStatus(...args),
-    syncDocs: jest.fn().mockResolvedValue({ added: 0, updated: 0, deleted: 0, total: 0 }),
-    syncWikispaceNodes: jest.fn().mockResolvedValue({ added: 0, updated: 0, deleted: 0, total: 0 }),
+    syncDocs: (...args: unknown[]) => mockSyncDingTalkDocs(...args),
+    syncWikispaceNodes: (...args: unknown[]) => mockSyncDingTalkWikispaceNodes(...args),
   },
+}))
+
+jest.mock('@/features/knowledge/externalKnowledgeSourceRegistry', () => ({
+  useExternalKnowledgeSources: () => [mockDingTalkExternalSource],
+}))
+
+jest.mock('@/features/knowledge/document/extension-loader', () => ({
+  loadKBExtensions: jest.fn().mockResolvedValue(undefined),
 }))
 
 jest.mock('@/components/ui/popover', () => ({
@@ -172,6 +353,7 @@ function createAllGroupedResponse({
 
 describe('ContextSelector organization grouping', () => {
   beforeEach(() => {
+    jest.clearAllMocks()
     mockListKnowledgeBases.mockResolvedValue({ items: [] })
     mockGetBoundKnowledgeBases.mockResolvedValue({ items: [] })
     mockGetAllGroupedKnowledgeBases.mockResolvedValue(
@@ -203,6 +385,13 @@ describe('ContextSelector organization grouping', () => {
       is_configured: true,
       last_synced_at: null,
       total_nodes: 0,
+    })
+    mockSyncDingTalkDocs.mockResolvedValue({ added: 0, updated: 0, deleted: 0, total: 0 })
+    mockSyncDingTalkWikispaceNodes.mockResolvedValue({
+      added: 0,
+      updated: 0,
+      deleted: 0,
+      total: 0,
     })
   })
 
@@ -287,6 +476,9 @@ describe('ContextSelector organization grouping', () => {
     )
     await waitFor(() => {
       expect(mockListDocuments).toHaveBeenCalledWith(1, { limit: 200, offset: 0 })
+    })
+    await waitFor(() => {
+      expect(screen.getByText('picker.emptyDocuments')).toBeInTheDocument()
     })
   })
 
@@ -454,6 +646,9 @@ describe('ContextSelector organization grouping', () => {
         type: 'knowledge_base',
       })
     )
+    await waitFor(() => {
+      expect(screen.getByText('picker.emptyDocuments')).toBeInTheDocument()
+    })
   })
 
   it('falls back to namespace when a group display name is missing', async () => {
@@ -991,7 +1186,7 @@ describe('ContextSelector organization grouping', () => {
   })
 
   it('renders DingTalk docs inside the knowledge source picker with a virtual all-docs container', async () => {
-    const onSelectMultiple = jest.fn()
+    const onSelect = jest.fn()
     mockGetDingTalkDocs.mockResolvedValue({
       total_count: 2,
       nodes: [
@@ -1036,45 +1231,343 @@ describe('ContextSelector organization grouping', () => {
         open={true}
         onOpenChange={jest.fn()}
         selectedContexts={[]}
-        onSelect={jest.fn()}
+        onSelect={onSelect}
         onDeselect={jest.fn()}
-        onSelectMultiple={onSelectMultiple}
       >
         <button>trigger</button>
       </ContextSelector>
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-dingtalk-parent')).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-source-external:dingtalk')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-parent'))
-    await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-dingtalk-docs')).toBeInTheDocument()
-    })
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-docs'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-external:dingtalk'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-personal'))
 
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-all-docs')).toBeInTheDocument()
-      expect(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1')).toBeInTheDocument()
+    })
+    expect(screen.getByText('chat:dingtalkDocs.allDocs')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-all-docs'))
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'external:dingtalk:explicit:docs',
+        type: 'external_knowledge',
+        ref: expect.objectContaining({ provider: 'dingtalk', id: 'docs' }),
+      })
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-external-node-folder-1')).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-external-node-file-1')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-node-file-1'))
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'external:dingtalk:explicit:docs:document:file-1',
+        type: 'external_knowledge',
+        ref: expect.objectContaining({
+          provider: 'dingtalk',
+          id: 'docs',
+          target_type: 'document',
+          node_id: 'file-1',
+        }),
+      })
+    )
+  })
+
+  it('shows the DingTalk docs sync toolbar and routes sync to docs only', async () => {
+    let resolveSync: (value: unknown) => void = () => undefined
+    mockSyncDingTalkDocs.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveSync = resolve
+      })
+    )
+    mockGetDingTalkDocs.mockResolvedValue({
+      total_count: 1,
+      nodes: [
+        {
+          id: 1,
+          dingtalk_node_id: 'file-1',
+          name: '任务执行流程',
+          doc_url: 'https://alidocs.dingtalk.com/i/nodes/file-1',
+          parent_node_id: '',
+          node_type: 'file',
+          workspace_id: 'workspace-1',
+          content_type: 'ALIDOC',
+          source: 'docs',
+          is_active: true,
+          last_synced_at: '',
+          created_at: '',
+          updated_at: '',
+          children: [],
+        },
+      ],
     })
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1'))
-    expect(onSelectMultiple).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'docs:folder-1', type: 'dingtalk_doc' }),
-      expect.objectContaining({ id: 'docs:file-1', type: 'dingtalk_doc' }),
-    ])
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
 
-    onSelectMultiple.mockClear()
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-all-docs'))
-    expect(onSelectMultiple).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'docs:folder-1', type: 'dingtalk_doc' }),
-      expect.objectContaining({ id: 'docs:file-1', type: 'dingtalk_doc' }),
-    ])
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-external:dingtalk')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-external:dingtalk'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-personal'))
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('knowledge-picker-external-scope-sync-toolbar-dingtalk-personal')
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByText('dingtalkDocs.neverSynced')).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByTestId('knowledge-picker-external-scope-sync-button-dingtalk-personal')
+    )
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('knowledge-picker-external-scope-sync-button-dingtalk-personal')
+      ).toHaveTextContent('dingtalkDocs.syncing')
+    })
+
+    expect(mockSyncDingTalkDocs).toHaveBeenCalledTimes(1)
+    expect(mockSyncDingTalkWikispaceNodes).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveSync({ added: 0, updated: 0, deleted: 0, total: 0 })
+      await Promise.resolve()
+    })
+  })
+
+  it('shows the DingTalk wikispace sync toolbar and routes sync to wikispace only', async () => {
+    mockGetDingTalkWikispaceSyncStatus.mockResolvedValue({
+      is_configured: true,
+      last_synced_at: '2026-07-08T00:00:00Z',
+      total_nodes: 1,
+    })
+    mockGetDingTalkWikispaceNodes.mockResolvedValue({
+      total_count: 1,
+      nodes: [
+        {
+          id: 10,
+          dingtalk_node_id: 'space-1',
+          name: '视频业务研发',
+          doc_url: 'https://alidocs.dingtalk.com/i/spaces/space-1/overview',
+          parent_node_id: '',
+          node_type: 'folder',
+          workspace_id: 'space-1',
+          content_type: '',
+          source: 'wikispace',
+          is_active: true,
+          last_synced_at: '',
+          created_at: '',
+          updated_at: '',
+          children: [],
+        },
+      ],
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-external:dingtalk')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-external:dingtalk'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('knowledge-picker-external-scope-sync-toolbar-dingtalk-organization')
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByText('dingtalkDocs.lastSynced')).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByTestId('knowledge-picker-external-scope-sync-button-dingtalk-organization')
+    )
+
+    await waitFor(() => {
+      expect(mockSyncDingTalkWikispaceNodes).toHaveBeenCalledTimes(1)
+    })
+    expect(mockSyncDingTalkDocs).not.toHaveBeenCalled()
+  })
+
+  it('keeps the configured-empty DingTalk docs CTA wired to docs sync', async () => {
+    mockGetDingTalkDocs.mockResolvedValue({ nodes: [], total_count: 0 })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-external:dingtalk')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-external:dingtalk'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-personal'))
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('knowledge-picker-external-scope-empty-sync-button-dingtalk-personal')
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByText('chat:dingtalkDocs.empty')).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByTestId('knowledge-picker-external-scope-empty-sync-button-dingtalk-personal')
+    )
+    await waitFor(() => {
+      expect(mockSyncDingTalkDocs).toHaveBeenCalledTimes(1)
+    })
+    expect(mockSyncDingTalkWikispaceNodes).not.toHaveBeenCalled()
+  })
+
+  it('keeps the configured-empty DingTalk wikispace CTA wired to wikispace sync', async () => {
+    mockGetDingTalkWikispaceNodes.mockResolvedValue({ nodes: [], total_count: 0 })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-external:dingtalk')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-external:dingtalk'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId(
+          'knowledge-picker-external-scope-empty-sync-button-dingtalk-organization'
+        )
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByText('chat:dingtalkDocs.wikispaceEmpty')).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByTestId('knowledge-picker-external-scope-empty-sync-button-dingtalk-organization')
+    )
+    await waitFor(() => {
+      expect(mockSyncDingTalkWikispaceNodes).toHaveBeenCalledTimes(1)
+    })
+    expect(mockSyncDingTalkDocs).not.toHaveBeenCalled()
+  })
+
+  it('shows configure for an unconfigured DingTalk docs scope without a sync button', async () => {
+    mockGetDingTalkSyncStatus.mockResolvedValue({
+      is_configured: false,
+      last_synced_at: null,
+      total_nodes: 0,
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-external:dingtalk')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-external:dingtalk'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-personal'))
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('knowledge-picker-external-scope-configure-link-dingtalk-personal')
+      ).toBeInTheDocument()
+    })
+    expect(
+      screen.queryByTestId('knowledge-picker-external-scope-sync-button-dingtalk-personal')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('knowledge-picker-external-scope-empty-sync-button-dingtalk-personal')
+    ).not.toBeInTheDocument()
+  })
+
+  it('retries DingTalk catalog loading without invoking sync', async () => {
+    mockGetDingTalkDocs.mockRejectedValueOnce(new Error('catalog failed')).mockResolvedValue({
+      nodes: [],
+      total_count: 0,
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-external:dingtalk')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-external:dingtalk'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-personal'))
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('knowledge-picker-dingtalk-catalog-retry-button')
+      ).toBeInTheDocument()
+    })
+
+    const callsBeforeRetry = mockGetDingTalkDocs.mock.calls.length
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-catalog-retry-button'))
+    await waitFor(() => {
+      expect(mockGetDingTalkDocs.mock.calls.length).toBeGreaterThan(callsBeforeRetry)
+    })
+    expect(mockSyncDingTalkDocs).not.toHaveBeenCalled()
+    expect(mockSyncDingTalkWikispaceNodes).not.toHaveBeenCalled()
   })
 
   it('renders DingTalk wikispace names in the second column, supports selecting a space, and opens children in the third column', async () => {
-    const onSelectMultiple = jest.fn()
+    const onSelect = jest.fn()
     mockGetDingTalkWikispaceNodes.mockResolvedValue({
       total_count: 2,
       nodes: [
@@ -1119,35 +1612,35 @@ describe('ContextSelector organization grouping', () => {
         open={true}
         onOpenChange={jest.fn()}
         selectedContexts={[]}
-        onSelect={jest.fn()}
+        onSelect={onSelect}
         onDeselect={jest.fn()}
-        onSelectMultiple={onSelectMultiple}
       >
         <button>trigger</button>
       </ContextSelector>
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-dingtalk-parent')).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-source-external:dingtalk')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-parent'))
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-wikispace'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-external:dingtalk'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
 
     await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-dingtalk-space-space-1')).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-external-kb-space-1')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-space-space-1'))
-    expect(onSelectMultiple).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'wikispace:space-1', type: 'dingtalk_doc' }),
-      expect.objectContaining({ id: 'wikispace:wiki-file-1', type: 'dingtalk_doc' }),
-    ])
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-space-1'))
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'external:dingtalk:explicit:space-1',
+        type: 'external_knowledge',
+        ref: expect.objectContaining({ provider: 'dingtalk', id: 'space-1' }),
+      })
+    )
 
     await waitFor(() => {
-      expect(
-        screen.getByTestId('knowledge-picker-dingtalk-node-wikispace-wiki-file-1')
-      ).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-external-node-wiki-file-1')).toBeInTheDocument()
     })
   })
 

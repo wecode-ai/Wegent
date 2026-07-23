@@ -28,10 +28,16 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.chat.external_knowledge_refs import (
+    build_external_knowledge_warning,
+    build_external_ref_canonical_key,
     extract_task_external_knowledge_refs,
-    validate_external_knowledge_refs,
+    filter_valid_external_knowledge_refs,
+    lock_task_for_knowledge_update,
+    replace_task_context_warnings,
 )
+from app.services.chat.knowledge_binding_resolver import KnowledgeBindingResolver
 from app.services.context import context_service
+from app.services.rag.sources import ExternalRefValidationError
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
     CODEX_RUNTIME_MODEL_NAME,
@@ -325,7 +331,6 @@ def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
             SELECTED_KB_PRELOAD_SKILL,
             request.knowledge_base_ids,
         )
-
     user_selected_skills = list(request.user_selected_skills or [])
     if SELECTED_KB_PRELOAD_SKILL not in user_selected_skills:
         user_selected_skills.append(SELECTED_KB_PRELOAD_SKILL)
@@ -335,6 +340,126 @@ def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
             SELECTED_KB_PRELOAD_SKILL,
             request.knowledge_base_ids,
         )
+
+
+def _extract_external_refs_from_contexts(contexts: list[Any]) -> list[dict[str, Any]]:
+    """Build external refs from current-message external knowledge contexts."""
+    refs: list[dict[str, Any]] = []
+    for context in contexts:
+        type_data = context.type_data if isinstance(context.type_data, dict) else {}
+        external_ref = type_data.get("external_ref")
+        if isinstance(external_ref, dict):
+            refs.append(
+                {key: value for key, value in external_ref.items() if value is not None}
+            )
+            continue
+        provider = type_data.get("provider")
+        mode = type_data.get("mode")
+        if not provider or not mode:
+            continue
+        ref = {
+            "provider": provider,
+            "mode": mode,
+            "id": type_data.get("id"),
+            "name": type_data.get("name") or context.name or type_data.get("id"),
+            "scope": type_data.get("scope"),
+            "target_type": type_data.get("target_type"),
+            "node_id": type_data.get("node_id"),
+            "document_id": type_data.get("document_id"),
+            "parent_id": type_data.get("parent_id"),
+            "target_name": type_data.get("target_name"),
+        }
+        refs.append({key: value for key, value in ref.items() if value is not None})
+    return refs
+
+
+def _inspect_message_knowledge_contexts(
+    db: "Session",
+    user_subtask_id: int | None,
+) -> tuple[bool, bool, list[dict[str, Any]]]:
+    """Return explicit internal/external knowledge selections on this message."""
+    if not user_subtask_id:
+        return False, False, []
+    from app.schemas.subtask_context import ContextStatus, ContextType
+
+    contexts = context_service.get_by_subtask(db, user_subtask_id) or []
+    has_internal_kb = any(
+        context.context_type == ContextType.KNOWLEDGE_BASE.value for context in contexts
+    )
+    has_external_knowledge = any(
+        context.context_type == ContextType.EXTERNAL_KNOWLEDGE.value
+        for context in contexts
+    )
+    external_contexts = [
+        context
+        for context in contexts
+        if context.context_type == ContextType.EXTERNAL_KNOWLEDGE.value
+        and context.status == ContextStatus.READY.value
+    ]
+    return (
+        has_internal_kb,
+        has_external_knowledge,
+        _extract_external_refs_from_contexts(external_contexts),
+    )
+
+
+def _resolve_external_knowledge_scope(
+    *,
+    db: "Session",
+    task: TaskResource,
+    team: Kind,
+    sender: User,
+    has_explicit_selection: bool,
+    explicit_refs: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], User | None]:
+    """Resolve refs and their actor once for this execution without fallback."""
+    warning_task = task
+    if has_explicit_selection:
+        candidate_refs = explicit_refs
+    else:
+        warning_task = lock_task_for_knowledge_update(db, task)
+        candidate_refs = extract_task_external_knowledge_refs(warning_task)
+    if not candidate_refs:
+        return [], sender if has_explicit_selection else None
+
+    actor = (
+        sender
+        if has_explicit_selection
+        else KnowledgeBindingResolver(db).resolve_task_owner_user(task=task)
+    )
+    warnings: list[dict[str, Any]] = []
+    if actor is None:
+        valid_refs: list[dict[str, Any]] = []
+        missing_actor = ExternalRefValidationError(
+            "The conversation owner no longer exists",
+            reason="actor_not_found",
+        )
+        warnings = [
+            build_external_knowledge_warning(ref, missing_actor)
+            for ref in candidate_refs
+        ]
+    else:
+        valid_refs, warnings = filter_valid_external_knowledge_refs(
+            candidate_refs,
+            binding_level="conversation",
+            actor_user_id=actor.id,
+        )
+        if warnings:
+            logger.info(
+                "Ignored %d unavailable external knowledge refs for task %d",
+                len(warnings),
+                task.id,
+            )
+    if not has_explicit_selection:
+        replace_task_context_warnings(
+            db,
+            warning_task,
+            canonical_keys={
+                build_external_ref_canonical_key(ref) for ref in candidate_refs
+            },
+            warnings=warnings,
+        )
+    return valid_refs, actor
 
 
 async def trigger_ai_response_unified(
@@ -479,7 +604,6 @@ async def build_execution_request(
         ExecutionRequest ready for dispatch
     """
     from app.services.execution import TaskRequestBuilder
-    from shared.models import ExecutionRequest
     from shared.telemetry.context import get_request_id
 
     logger.info(
@@ -586,15 +710,46 @@ async def build_execution_request(
             runtime_model_config=runtime_model_config,
         )
         request.device_id = device_id or request.device_id
-        # Task spec is the runtime source of truth. Message-level external
-        # contexts are materialized into Task.spec before execution is built.
-        task_refs = extract_task_external_knowledge_refs(task)
-        if task_refs:
-            validate_external_knowledge_refs(
-                task_refs,
-                binding_level="conversation",
+
+        normalized_kb_refs = knowledge_base_refs
+        if normalized_kb_refs is None:
+            normalized_kb_refs = knowledge_base_names
+        processed_subtask_id = None
+        if normalized_kb_refs:
+            processed_subtask_id = (
+                user_subtask_id if user_subtask_id else assistant_subtask.id
             )
-            request.external_knowledge_refs = task_refs
+            logger.info(
+                "[build_execution_request] Will create KB contexts for subtask_id: "
+                "%d (user_subtask_id was %s)",
+                processed_subtask_id,
+                str(user_subtask_id),
+            )
+            await _create_kb_contexts_from_api_request(
+                db,
+                user.id,
+                processed_subtask_id,
+                normalized_kb_refs,
+                task=task,
+            )
+
+        (
+            _has_explicit_internal_kb,
+            has_explicit_external_knowledge,
+            explicit_external_refs,
+        ) = _inspect_message_knowledge_contexts(db, user_subtask_id)
+        external_refs, external_actor = _resolve_external_knowledge_scope(
+            db=db,
+            task=task,
+            team=team,
+            sender=user,
+            has_explicit_selection=has_explicit_external_knowledge,
+            explicit_refs=explicit_external_refs,
+        )
+        request.external_knowledge_refs = external_refs
+        if external_actor is not None:
+            request.external_knowledge_actor_user_id = external_actor.id
+            request.external_knowledge_actor_user_name = external_actor.user_name
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.
@@ -706,30 +861,6 @@ async def build_execution_request(
             "context" if current_request_id else "generated",
         )
 
-        # Process knowledge base refs from API request (OpenAPI v1/responses)
-        # This creates SubtaskContext records for KBs specified in the request
-        normalized_kb_refs = knowledge_base_refs
-        if normalized_kb_refs is None:
-            normalized_kb_refs = knowledge_base_names
-        processed_subtask_id = None
-        if normalized_kb_refs:
-            processed_subtask_id = (
-                user_subtask_id if user_subtask_id else assistant_subtask.id
-            )
-            logger.info(
-                "[build_execution_request] Will create KB contexts for subtask_id: %d (user_subtask_id was %s)",
-                processed_subtask_id,
-                str(user_subtask_id),
-            )
-            await _create_kb_contexts_from_api_request(
-                db,
-                user.id,
-                processed_subtask_id,
-                normalized_kb_refs,
-                task=task,
-                user_name=user.user_name,
-            )
-
         # Process contexts (attachments, knowledge bases, etc.)
         # If we created KB contexts, we need to process them regardless of whether it's user_subtask or assistant subtask
         context_subtask_id = (
@@ -741,6 +872,7 @@ async def build_execution_request(
                 request,
                 context_subtask_id,
                 user.id,
+                has_explicit_internal_knowledge=_has_explicit_internal_kb,
             )
             if (
                 device_id
@@ -760,6 +892,7 @@ async def build_execution_request(
                         user=user,
                     )
 
+        db.commit()
         return request
 
     finally:
@@ -771,6 +904,7 @@ async def _process_contexts(
     request: "ExecutionRequest",
     user_subtask_id: int,
     user_id: int,
+    has_explicit_internal_knowledge: bool = False,
 ) -> "ExecutionRequest":
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 
@@ -796,6 +930,8 @@ async def _process_contexts(
         message=request.prompt,
         base_system_prompt=request.system_prompt,
         task_id=request.task_id,
+        external_knowledge_refs=request.external_knowledge_refs,
+        has_explicit_internal_knowledge=has_explicit_internal_knowledge,
         context_window=model_context_window,
         model_config=request.model_config,
         inline_attachment_content=inline_attachment_content,
@@ -848,8 +984,8 @@ async def _create_kb_contexts_from_api_request(
     user_id: int,
     user_subtask_id: int,
     knowledge_base_names: List[Dict[str, Any]],
-    task=None,
-    user_name: Optional[str] = None,
+    *,
+    task: TaskResource,
 ) -> None:
     """Create SubtaskContext records for knowledge bases from API request.
 
@@ -862,8 +998,7 @@ async def _create_kb_contexts_from_api_request(
         user_id: User ID for permission checking
         user_subtask_id: User subtask ID to attach contexts to
         knowledge_base_names: List of dicts with 'namespace' and 'name' keys
-        task: Optional task for syncing selected KBs to task-level refs
-        user_name: Optional user name used as boundBy during task-level sync
+        task: Task whose knowledge bindings should be updated
     """
     from app.services.openapi.kb_context import KnowledgeBaseContextCreator
 
@@ -873,7 +1008,6 @@ async def _create_kb_contexts_from_api_request(
             user_subtask_id,
             knowledge_base_names,
             task=task,
-            user_name=user_name,
         )
         logger.info(
             "[build_execution_request] Created %d KB contexts from API request "
@@ -885,11 +1019,10 @@ async def _create_kb_contexts_from_api_request(
         # Re-raise HTTPException from KnowledgeBaseNameResolver to propagate
         # permission errors (403) and not-found errors (404) to the caller
         raise
-    except Exception as e:
-        # Log error but don't fail the request - KB context creation is best-effort
-        logger.warning(
+    except Exception:
+        logger.exception(
             "[build_execution_request] Failed to create KB contexts from API request "
-            "for subtask %d: %s",
+            "for subtask %d",
             user_subtask_id,
-            e,
         )
+        raise

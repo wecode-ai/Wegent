@@ -433,13 +433,18 @@
   "knowledgeBinding": {
     "title": "Knowledge Sources",
     "count": "{{count}} bound",
+    "internalKnowledge": "Internal knowledge base",
     "externalKnowledge": "External knowledge source",
+    "externalKnowledgeSection": "External knowledge sources",
+    "selectedExternalTargets": "{{count}} targets selected",
     "empty": "No knowledge sources bound",
+    "noAvailableExternal": "No available external knowledge sources",
     "loadFailed": "Failed to load knowledge sources",
     "externalLoadFailed": "External knowledge sources could not be loaded. Internal knowledge bases remain available.",
     "remove": "Remove {{name}}",
     "removeSuccess": "Removed \"{{name}}\"",
-    "removeFailed": "Failed to remove knowledge source"
+    "removeFailed": "Failed to remove knowledge source",
+    "warningUnsupportedBinding": "This child target was ignored because the whole knowledge source is already bound."
   },
   "groupChat": {
     "mentionHint": "In group chat, use @ to mention an agent to get AI responses",
@@ -745,7 +750,7 @@
     "loadFailed": "Failed to load DingTalk documents",
     "syncFailed": "Failed to sync DingTalk documents",
     "notConfigured": "DingTalk Docs MCP is not configured. Please enable it in Settings > Integrations.",
-    "goToConfigure": "Go to configure",
+    "goToConfigure": "Go to settings",
     "docBadgeHint": "DingTalk Doc",
     "searchPlaceholder": "Search documents...",
     "referencedDocsLabel": "Referenced DingTalk Documents:",

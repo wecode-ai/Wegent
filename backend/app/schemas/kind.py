@@ -173,6 +173,24 @@ class KnowledgeBaseDefaultRef(BaseModel):
 
     id: int
     name: str
+    document_ids: Optional[List[int]] = None
+    document_names: Optional[List[str]] = None
+    folder_ids: Optional[List[int]] = None
+    folder_names: Optional[List[str]] = None
+    include_subfolders: Optional[bool] = True
+    scope_restricted: Optional[bool] = None
+
+
+class ContextWarning(BaseModel):
+    """Task-level warning for a knowledge binding that could not be materialized."""
+
+    type: Literal["knowledge_base", "external_knowledge"]
+    reason: str
+    provider: Optional[str] = None
+    id: Optional[str] = None
+    name: Optional[str] = None
+    message: str
+    metadata: Optional[Dict[str, Any]] = None
 
 
 # Ghost CRD schemas
@@ -182,6 +200,7 @@ class GhostSpec(BaseModel):
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
     defaultKnowledgeBaseRefs: Optional[List[KnowledgeBaseDefaultRef]] = None
+    defaultExternalKnowledgeRefs: Optional[List[ExternalKnowledgeRef]] = None
     skills: Optional[List[str]] = None  # Skill names list
     preload_skills: Optional[List[str]] = Field(
         None,
@@ -418,6 +437,7 @@ class ShellList(BaseModel):
 class GhostRef(BaseModel):
     """Reference to a Ghost"""
 
+    id: Optional[int] = None
     name: str
     namespace: str = "default"
 
@@ -471,6 +491,7 @@ class BotList(BaseModel):
 class BotTeamRef(BaseModel):
     """Reference to a Bot in Team"""
 
+    id: Optional[int] = None
     name: str
     namespace: str = "default"
 
@@ -578,6 +599,7 @@ class WorkspaceList(BaseModel):
 class TeamTaskRef(BaseModel):
     """Reference to a Team"""
 
+    id: Optional[int] = None
     name: str
     namespace: str = "default"
     user_id: Optional[int] = Field(
@@ -676,6 +698,7 @@ class TaskSpec(BaseModel):
         None  # Per-KB scope refs for OpenAPI follow-up inheritance
     )
     externalKnowledgeRefs: List[ExternalKnowledgeRef] = Field(default_factory=list)
+    contextWarnings: List[ContextWarning] = Field(default_factory=list)
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
     execution: Optional[TaskExecutionSpec] = None
     fork: Optional[TaskForkSpec] = None

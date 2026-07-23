@@ -31,8 +31,10 @@ def _make_member(
     bot_namespace: str = "default",
     require_confirmation: bool = False,
     context_passing: str = "none",
+    bot_id: int | None = None,
 ):
     member = MagicMock()
+    member.botRef.id = bot_id
     member.botRef.name = bot_name
     member.botRef.namespace = bot_namespace
     member.requireConfirmation = require_confirmation
@@ -61,6 +63,7 @@ def _make_task_crd(
     team_user_id: int = 1,
 ):
     task_crd = MagicMock()
+    task_crd.spec.teamRef.id = None
     task_crd.spec.teamRef.name = team_name
     task_crd.spec.teamRef.namespace = team_namespace
     task_crd.spec.teamRef.user_id = team_user_id
@@ -864,6 +867,102 @@ class TestPipelineAutoAdvance:
             result = strategy.get_auto_advance_info(db, 1, 1, "COMPLETED")
         assert result is None
 
+    def test_auto_advance_matches_member_by_bot_id_after_rename(self):
+        """Bot renamed but member ref has stable id -> still match correct stage."""
+        strategy = self._make_strategy()
+        db = _make_db()
+
+        bot_0 = _make_bot(10, "bot-renamed")
+        bot_1 = _make_bot(20, "bot-1")
+        members = [
+            _make_member("bot-0", bot_id=10, require_confirmation=False),
+            _make_member("bot-1", require_confirmation=False),
+        ]
+
+        subtask = _make_subtask(bot_id=10)
+        task_resource = MagicMock()
+        task_resource.user_id = 1
+        task_resource.json = {}
+        task_crd = _make_task_crd(current_stage=0)
+        team_crd = _make_team_crd(members)
+        team_resource = MagicMock()
+        team_resource.user_id = 1
+        team_resource.json = {}
+        db.query.return_value.filter.return_value.first.return_value = team_resource
+
+        with (
+            patch.object(strategy, "_should_require_confirmation", return_value=False),
+            patch("app.schemas.kind.Task") as mock_task_schema,
+            patch("app.schemas.kind.Team") as mock_team_schema,
+            patch("app.stores.tasks.subtask_store.get_by_id", return_value=subtask),
+            patch(
+                "app.stores.tasks.task_store.get_regular_active_task",
+                return_value=task_resource,
+            ),
+            patch("app.services.readers.kinds.kindReader") as mock_reader,
+        ):
+            mock_task_schema.model_validate.return_value = task_crd
+            mock_team_schema.model_validate.return_value = team_crd
+            mock_reader.get_by_id.return_value = bot_0
+            mock_reader.get_by_name_and_namespace.return_value = bot_1
+
+            result = strategy.get_auto_advance_info(db, 1, 1, "COMPLETED")
+
+        assert result == {
+            "next_stage_index": 1,
+            "next_bot_id": 20,
+            "next_bot_name": "bot-1",
+            "context_passing": "none",
+        }
+
+    def test_auto_advance_fallback_to_name_for_legacy_no_id_ref(self):
+        """Legacy member without botRef.id still matches by name+namespace."""
+        strategy = self._make_strategy()
+        db = _make_db()
+
+        bot_0 = _make_bot(10, "bot-0")
+        bot_1 = _make_bot(20, "bot-1")
+        members = [
+            _make_member("bot-0", require_confirmation=False),
+            _make_member("bot-1", require_confirmation=False),
+        ]
+
+        subtask = _make_subtask(bot_id=10)
+        task_resource = MagicMock()
+        task_resource.user_id = 1
+        task_resource.json = {}
+        task_crd = _make_task_crd(current_stage=0)
+        team_crd = _make_team_crd(members)
+        team_resource = MagicMock()
+        team_resource.user_id = 1
+        team_resource.json = {}
+        db.query.return_value.filter.return_value.first.return_value = team_resource
+
+        with (
+            patch.object(strategy, "_should_require_confirmation", return_value=False),
+            patch("app.schemas.kind.Task") as mock_task_schema,
+            patch("app.schemas.kind.Team") as mock_team_schema,
+            patch("app.stores.tasks.subtask_store.get_by_id", return_value=subtask),
+            patch(
+                "app.stores.tasks.task_store.get_regular_active_task",
+                return_value=task_resource,
+            ),
+            patch("app.services.readers.kinds.kindReader") as mock_reader,
+        ):
+            mock_task_schema.model_validate.return_value = task_crd
+            mock_team_schema.model_validate.return_value = team_crd
+            mock_reader.get_by_id.return_value = bot_0
+            mock_reader.get_by_name_and_namespace.return_value = bot_1
+
+            result = strategy.get_auto_advance_info(db, 1, 1, "COMPLETED")
+
+        assert result == {
+            "next_stage_index": 1,
+            "next_bot_id": 20,
+            "next_bot_name": "bot-1",
+            "context_passing": "none",
+        }
+
 
 class TestPipelineConfirm:
     def test_pipeline_confirm_uses_task_store_for_previous_stage_output(self):
@@ -924,3 +1023,168 @@ class TestPipelineConfirm:
         assert result["handoff_message"] == "Previous stage output:\nDone"
         assert task_crd.spec.currentStage == 1
         get_latest_assistant.assert_called_once()
+
+
+class TestShouldSetPendingConfirmationOnComplete:
+    """Tests for PipelineStageService.should_set_pending_confirmation_on_complete."""
+
+    def _make_task_crd_for_confirmation(self, current_stage=0):
+        task_crd = _make_task_crd(current_stage=current_stage)
+        task_crd.status.status = "RUNNING"
+        return task_crd
+
+    def _make_subtask(self, bot_id: int = 10):
+        subtask = MagicMock()
+        subtask.bot_ids = [bot_id]
+        subtask.status = SubtaskStatus.COMPLETED
+        return subtask
+
+    def _make_team_crd(self, members):
+        team_crd = MagicMock()
+        team_crd.spec.members = members
+        team_crd.spec.collaborationModel = "pipeline"
+        return team_crd
+
+    def test_matches_member_by_bot_id_after_rename(self):
+        """Bot renamed but member ref has stable id -> still find correct stage."""
+        service = PipelineStageService()
+        db = MagicMock()
+
+        task = MagicMock()
+        task_crd = self._make_task_crd_for_confirmation(current_stage=0)
+        team = MagicMock()
+        team.user_id = 1
+        team.json = {}
+        current_member = _make_member("stage-one", bot_id=10, require_confirmation=True)
+        next_member = _make_member("stage-two", bot_id=20)
+        team_crd = self._make_team_crd([current_member, next_member])
+        bot = _make_bot(10, "stage-one-renamed")
+        subtask = self._make_subtask(bot_id=10)
+
+        with (
+            patch.object(service, "_get_task", return_value=task),
+            patch.object(service, "_get_task_crd", return_value=task_crd),
+            patch.object(service, "get_team_for_task", return_value=team),
+            patch(
+                "app.services.adapters.pipeline_stage.Team.model_validate",
+                return_value=team_crd,
+            ),
+            patch(
+                "app.services.adapters.pipeline_stage.task_stores.subtask_store.get_by_id",
+                return_value=subtask,
+            ),
+            patch("app.services.readers.kinds.kindReader.get_by_id", return_value=bot),
+        ):
+            result = service.should_set_pending_confirmation_on_complete(
+                db, task_id=1, subtask_id=101
+            )
+
+        assert result is True
+
+    def test_does_not_fallback_to_same_name_bot(self):
+        """ID present but points elsewhere -> do not match same-name member."""
+        service = PipelineStageService()
+        db = MagicMock()
+
+        task = MagicMock()
+        task_crd = self._make_task_crd_for_confirmation(current_stage=0)
+        team = MagicMock()
+        team.user_id = 1
+        team.json = {}
+        current_member = _make_member("stage-one", bot_id=10, require_confirmation=True)
+        next_member = _make_member("stage-two", bot_id=20)
+        team_crd = self._make_team_crd([current_member, next_member])
+        # Another bot shares the name but has a different id.
+        other_bot = _make_bot(99, "stage-one")
+        subtask = self._make_subtask(bot_id=99)
+
+        with (
+            patch.object(service, "_get_task", return_value=task),
+            patch.object(service, "_get_task_crd", return_value=task_crd),
+            patch.object(service, "get_team_for_task", return_value=team),
+            patch(
+                "app.services.adapters.pipeline_stage.Team.model_validate",
+                return_value=team_crd,
+            ),
+            patch(
+                "app.services.adapters.pipeline_stage.task_stores.subtask_store.get_by_id",
+                return_value=subtask,
+            ),
+            patch(
+                "app.services.readers.kinds.kindReader.get_by_id",
+                return_value=other_bot,
+            ),
+        ):
+            result = service.should_set_pending_confirmation_on_complete(
+                db, task_id=1, subtask_id=101
+            )
+
+        assert result is False
+
+    def test_fallback_to_name_for_legacy_no_id_ref(self):
+        """Legacy member without botRef.id still matches by name+namespace."""
+        service = PipelineStageService()
+        db = MagicMock()
+
+        task = MagicMock()
+        task_crd = self._make_task_crd_for_confirmation(current_stage=0)
+        team = MagicMock()
+        team.user_id = 1
+        team.json = {}
+        current_member = _make_member("stage-one", require_confirmation=True)
+        next_member = _make_member("stage-two")
+        team_crd = self._make_team_crd([current_member, next_member])
+        bot = _make_bot(10, "stage-one")
+        subtask = self._make_subtask(bot_id=10)
+
+        with (
+            patch.object(service, "_get_task", return_value=task),
+            patch.object(service, "_get_task_crd", return_value=task_crd),
+            patch.object(service, "get_team_for_task", return_value=team),
+            patch(
+                "app.services.adapters.pipeline_stage.Team.model_validate",
+                return_value=team_crd,
+            ),
+            patch(
+                "app.services.adapters.pipeline_stage.task_stores.subtask_store.get_by_id",
+                return_value=subtask,
+            ),
+            patch("app.services.readers.kinds.kindReader.get_by_id", return_value=bot),
+        ):
+            result = service.should_set_pending_confirmation_on_complete(
+                db, task_id=1, subtask_id=101
+            )
+
+        assert result is True
+
+
+class TestTeamMemberBotMatches:
+    """Direct tests for the _team_member_bot_matches helper."""
+
+    def test_matches_by_id_when_id_present(self):
+        member = _make_member("old-name", bot_id=10)
+        bot = _make_bot(10, "renamed")
+        from app.services.adapters.pipeline_stage import _team_member_bot_matches
+
+        assert _team_member_bot_matches(member, bot) is True
+
+    def test_does_not_fallback_to_name_when_id_mismatches(self):
+        member = _make_member("same-name", bot_id=10)
+        bot = _make_bot(99, "same-name")
+        from app.services.adapters.pipeline_stage import _team_member_bot_matches
+
+        assert _team_member_bot_matches(member, bot) is False
+
+    def test_fallback_to_name_when_no_id(self):
+        member = _make_member("bot-0")
+        bot = _make_bot(10, "bot-0")
+        from app.services.adapters.pipeline_stage import _team_member_bot_matches
+
+        assert _team_member_bot_matches(member, bot) is True
+
+    def test_name_fallback_respects_namespace(self):
+        member = _make_member("bot-0", bot_namespace="ns-a")
+        bot = _make_bot(10, "bot-0", namespace="ns-b")
+        from app.services.adapters.pipeline_stage import _team_member_bot_matches
+
+        assert _team_member_bot_matches(member, bot) is False

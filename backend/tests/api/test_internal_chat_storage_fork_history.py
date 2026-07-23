@@ -58,7 +58,7 @@ def _patch_internal_history(monkeypatch, items, *, resolver_applies_limit=False)
     monkeypatch.setattr(
         chat_storage,
         "subtask_to_messages",
-        lambda subtask, db, is_group_chat=False: [
+        lambda subtask, db, is_group_chat=False, model_config=None: [
             {
                 "id": str(subtask.id),
                 "role": subtask.role.value.lower(),

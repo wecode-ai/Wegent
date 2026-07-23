@@ -18,7 +18,15 @@ logger = logging.getLogger(__name__)
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
-from app.schemas.kind import Bot, Ghost, Model, Shell, SkillRefMeta, Team
+from app.schemas.external_knowledge import ExternalKnowledgeRef
+from app.schemas.kind import (
+    Bot,
+    Ghost,
+    Model,
+    Shell,
+    SkillRefMeta,
+    Team,
+)
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
@@ -27,7 +35,12 @@ from app.services.adapters.shell_utils import (
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.chat.external_knowledge_refs import (
+    filter_valid_external_knowledge_refs,
+)
+from app.services.chat.knowledge_binding_resolver import KnowledgeBindingResolver
+from app.services.kind_reference import resolve_kind_reference
+from app.services.rag.sources import ExternalRefValidationError, validate_external_refs
 from app.services.skill_resolution import build_skill_ref_meta
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
@@ -66,52 +79,75 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         db: Session,
         refs: Optional[List[Any]],
         user_id: int,
-        namespace: str,
     ) -> None:
-        """Restrict group bots to current-group and organization knowledge bases."""
+        """Require every default knowledge base to be accessible to the Bot owner."""
         if not refs:
             return
 
-        inaccessible_refs = [
-            ref.name
-            for ref in refs
-            if not KnowledgeService.can_directly_access_knowledge_base(
-                db,
-                ref.id,
-                user_id,
-            )
-        ]
-        if inaccessible_refs:
+        _valid_refs, warnings = KnowledgeBindingResolver(db).filter_internal_bindings(
+            refs=[{"id": ref.id} for ref in refs],
+            actor_user_id=user_id,
+        )
+        if warnings:
             raise HTTPException(
                 status_code=400,
-                detail="Default knowledge bases are not directly accessible",
+                detail="One or more default knowledge bases are not accessible",
             )
 
-        if namespace == "default":
+    def _validate_default_external_knowledge_refs(
+        self,
+        refs: Optional[List[ExternalKnowledgeRef]],
+        user_id: int,
+    ) -> None:
+        """Validate external defaults before saving them on a Ghost."""
+        if not refs:
             return
 
-        grouped_kbs = KnowledgeService.get_all_knowledge_bases_grouped(
-            db=db,
-            user_id=user_id,
-        )
-
-        allowed_ids = {kb.id for kb in grouped_kbs.organization.knowledge_bases}
-        current_group = next(
-            (group for group in grouped_kbs.groups if group.group_name == namespace),
-            None,
-        )
-        if current_group is not None:
-            allowed_ids.update(kb.id for kb in current_group.knowledge_bases)
-
-        invalid_refs = [ref.name for ref in refs if ref.id not in allowed_ids]
-        if invalid_refs:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Group bots can only bind knowledge bases from the current "
-                    "group or the organization"
-                ),
+        try:
+            validate_external_refs(
+                refs,
+                binding_level="agent",
+                actor_user_id=user_id,
             )
+        except ExternalRefValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def _filter_defaults_for_owner(
+        self,
+        db: Session,
+        obj_in: BotCreate,
+        user_id: int,
+    ) -> tuple[BotCreate, list[dict[str, Any]]]:
+        """Filter copied defaults once against the new owner and return warnings."""
+        internal_refs = obj_in.default_knowledge_base_refs or []
+        valid_internal, internal_warnings = KnowledgeBindingResolver(
+            db
+        ).filter_internal_bindings(
+            refs=[{"id": ref.id} for ref in internal_refs],
+            actor_user_id=user_id,
+        )
+        valid_internal_ids = {ref["id"] for ref in valid_internal}
+
+        external_refs = obj_in.default_external_knowledge_refs or []
+        valid_external, external_warnings = filter_valid_external_knowledge_refs(
+            [ref.model_dump(exclude_none=True) for ref in external_refs],
+            binding_level="agent",
+            actor_user_id=user_id,
+        )
+        return (
+            obj_in.model_copy(
+                update={
+                    "default_knowledge_base_refs": [
+                        ref for ref in internal_refs if ref.id in valid_internal_ids
+                    ],
+                    "default_external_knowledge_refs": [
+                        ExternalKnowledgeRef.model_validate(ref)
+                        for ref in valid_external
+                    ],
+                }
+            ),
+            internal_warnings + external_warnings,
+        )
 
     def _encrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -329,7 +365,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     # Use get_shell_info_by_name from shell_utils instead
 
     def create_with_user(
-        self, db: Session, *, obj_in: BotCreate, user_id: int
+        self,
+        db: Session,
+        *,
+        obj_in: BotCreate,
+        user_id: int,
+        filter_inaccessible_defaults: bool = False,
     ) -> Dict[str, Any]:
         """
         Create user Bot using kinds table.
@@ -340,6 +381,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         import logging
 
         logger = logging.getLogger(__name__)
+
+        context_warnings: list[dict[str, Any]] = []
+        if filter_inaccessible_defaults:
+            obj_in, context_warnings = self._filter_defaults_for_owner(
+                db,
+                obj_in,
+                user_id,
+            )
 
         # Use namespace from request, default to 'default'
         namespace = obj_in.namespace or "default"
@@ -367,12 +416,16 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             self._validate_skills(db, obj_in.skills, user_id, namespace)
         if obj_in.preload_skills:
             self._validate_skills(db, obj_in.preload_skills, user_id, namespace)
-        self._validate_default_knowledge_bases(
-            db,
-            obj_in.default_knowledge_base_refs,
-            user_id,
-            namespace,
-        )
+        if not filter_inaccessible_defaults:
+            self._validate_default_knowledge_bases(
+                db,
+                obj_in.default_knowledge_base_refs,
+                user_id,
+            )
+            self._validate_default_external_knowledge_refs(
+                obj_in.default_external_knowledge_refs,
+                user_id,
+            )
 
         # Encrypt sensitive data in agent_config before storing
         encrypted_agent_config = self._encrypt_agent_config(obj_in.agent_config)
@@ -384,7 +437,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         }
         if obj_in.default_knowledge_base_refs is not None:
             ghost_spec["defaultKnowledgeBaseRefs"] = [
-                ref.model_dump() for ref in obj_in.default_knowledge_base_refs
+                ref.model_dump(exclude_none=True, exclude_unset=True)
+                for ref in obj_in.default_knowledge_base_refs
+            ]
+        if obj_in.default_external_knowledge_refs is not None:
+            ghost_spec["defaultExternalKnowledgeRefs"] = [
+                ref.model_dump(exclude_none=True, exclude_unset=True)
+                for ref in obj_in.default_external_knowledge_refs
             ]
         if obj_in.skills:
             ghost_spec["skills"] = obj_in.skills
@@ -443,6 +502,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             is_active=True,
         )
         db.add(ghost)
+        db.flush()
 
         # Determine model reference
         # If agent_config is predefined model format (only bind_model), reference existing model
@@ -526,7 +586,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         bot_json = {
             "kind": "Bot",
             "spec": {
-                "ghostRef": {"name": ghost_name, "namespace": namespace},
+                "ghostRef": {
+                    "id": ghost.id,
+                    "name": ghost_name,
+                    "namespace": namespace,
+                },
                 "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
                 "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
             },
@@ -561,7 +625,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         shell = get_shell_by_name(db, shell_ref_name, user_id)
 
         # Return bot-like structure
-        return self._convert_to_bot_dict(bot, ghost, shell, model, obj_in.agent_config)
+        result = self._convert_to_bot_dict(
+            bot, ghost, shell, model, obj_in.agent_config
+        )
+        if context_warnings:
+            result["context_warnings"] = context_warnings
+        return result
 
     def query_bots_by_namespaces(
         self,
@@ -715,9 +784,20 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             shell = None
             model = None
             if bot_crd:
-                ghost = ghost_map.get(
-                    (bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace)
-                )
+                ghost = ghost_map.get(bot_crd.spec.ghostRef.id)
+                if (
+                    ghost
+                    and bot_crd.spec.ghostRef.id is not None
+                    and (
+                        ghost.name != bot_crd.spec.ghostRef.name
+                        or ghost.namespace != bot_crd.spec.ghostRef.namespace
+                    )
+                ):
+                    ghost = None
+                if ghost is None and bot_crd.spec.ghostRef.id is None:
+                    ghost = ghost_map.get(
+                        (bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace)
+                    )
                 shell = shell_map.get(
                     (bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
                 )
@@ -749,9 +829,24 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
+        if not self._can_access_bot(db, bot=bot, user_id=user_id):
+            raise HTTPException(status_code=404, detail="Bot not found")
+
         # Get related Ghost, Shell, Model (use bot.user_id for component queries)
         ghost, shell, model = self._get_bot_components(db, bot, bot.user_id)
         return self._convert_to_bot_dict(bot, ghost, shell, model)
+
+    @staticmethod
+    def _can_access_bot(db: Session, *, bot: Kind, user_id: int) -> bool:
+        """Apply the existing owner/public/group access model before loading Bot data."""
+        if bot.user_id in {user_id, 0}:
+            return True
+        if bot.namespace == "default":
+            return False
+        from app.schemas.namespace import GroupRole
+        from app.services.group_permission import check_group_permission
+
+        return check_group_permission(db, user_id, bot.namespace, GroupRole.Reporter)
 
     def get_bot_detail(
         self, db: Session, *, bot_id: int, user_id: int
@@ -828,7 +923,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 db,
                 obj_in.default_knowledge_base_refs,
                 user_id,
-                bot.namespace or "default",
+            )
+        if "default_external_knowledge_refs" in update_data:
+            self._validate_default_external_knowledge_refs(
+                obj_in.default_external_knowledge_refs,
+                user_id,
             )
 
         # Track the agent_config to return (for predefined models)
@@ -837,12 +936,19 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Update components based on update_data
         if "name" in update_data:
             new_name = update_data["name"]
+            old_name = bot.name
             # Update bot
             bot.name = new_name
             bot_crd = Bot.model_validate(bot.json)
             bot_crd.metadata.name = new_name
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")  # Mark JSON field as modified
+            if new_name != old_name:
+                self._update_stable_team_refs_after_bot_rename(
+                    db,
+                    bot=bot,
+                    old_name=old_name,
+                )
         if "shell_name" in update_data:
             # Update Bot's shellRef to point directly to the user-selected Shell
             new_shell_name = update_data["shell_name"]
@@ -1074,7 +1180,23 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ghost_crd.spec.defaultKnowledgeBaseRefs = (
                 obj_in.default_knowledge_base_refs or []
             )
-            ghost.json = ghost_crd.model_dump()
+            ghost_json = ghost_crd.model_dump()
+            ghost_json["spec"]["defaultKnowledgeBaseRefs"] = [
+                ref.model_dump(exclude_none=True, exclude_unset=True)
+                for ref in (obj_in.default_knowledge_base_refs or [])
+            ]
+            ghost.json = ghost_json
+            flag_modified(ghost, "json")
+            db.add(ghost)
+
+        if "default_external_knowledge_refs" in update_data and ghost:
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_spec = ghost_crd.model_dump()
+            ghost_spec["spec"]["defaultExternalKnowledgeRefs"] = [
+                ref.model_dump(exclude_none=True, exclude_unset=True)
+                for ref in (obj_in.default_external_knowledge_refs or [])
+            ]
+            ghost.json = ghost_spec
             flag_modified(ghost, "json")
             db.add(ghost)
 
@@ -1160,9 +1282,37 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         return self._convert_to_bot_dict(bot, ghost, shell, model, return_agent_config)
 
-    def _get_teams_using_bot(
-        self, db: Session, bot_name: str, bot_namespace: str, user_id: int
-    ) -> List[Kind]:
+    def _update_stable_team_refs_after_bot_rename(
+        self,
+        db: Session,
+        *,
+        bot: Kind,
+        old_name: str,
+    ) -> None:
+        """Refresh snapshots for ID-backed Team refs after a Bot rename."""
+        teams = db.query(Kind).filter(Kind.kind == "Team", Kind.is_active == True).all()
+        for team in teams:
+            team_crd = Team.model_validate(team.json)
+            changed = False
+            for member in team_crd.spec.members:
+                if member.botRef.id != bot.id:
+                    continue
+                member.botRef.name = bot.name
+                member.botRef.namespace = bot.namespace
+                changed = True
+            if not changed:
+                continue
+            team.json = team_crd.model_dump()
+            flag_modified(team, "json")
+            db.add(team)
+            logger.info(
+                "Updated Team %s Bot ref after rename %s -> %s",
+                team.id,
+                old_name,
+                bot.name,
+            )
+
+    def _get_teams_using_bot(self, db: Session, bot: Kind, user_id: int) -> List[Kind]:
         """
         Get all teams that reference this bot.
 
@@ -1187,10 +1337,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         for team in teams:
             team_crd = Team.model_validate(team.json)
             for member in team_crd.spec.members:
-                if (
-                    member.botRef.name == bot_name
-                    and member.botRef.namespace == bot_namespace
-                ):
+                # A stable reference is authoritative.  Only old members that
+                # genuinely lack an ID can use the legacy coordinates, and a
+                # legacy personal ref must belong to the Team owner.
+                if member.botRef.id is not None:
+                    matches = member.botRef.id == bot.id
+                else:
+                    matches = (
+                        member.botRef.name == bot.name
+                        and member.botRef.namespace == bot.namespace
+                        and (
+                            bot.namespace != "default"
+                            or bot.user_id in {team.user_id, 0}
+                        )
+                    )
+                if matches:
                     teams_using_bot.append(team)
                     break
 
@@ -1246,13 +1407,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
-        bot_name = bot.name
-        bot_namespace = bot.namespace
-
         # Get teams that use this bot
-        teams_using_bot = self._get_teams_using_bot(
-            db, bot_name, bot_namespace, user_id
-        )
+        teams_using_bot = self._get_teams_using_bot(db, bot, user_id)
 
         # Get running tasks for those teams
         running_tasks = self._get_running_tasks_for_teams(db, teams_using_bot)
@@ -1292,12 +1448,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             raise HTTPException(status_code=404, detail="Bot not found")
 
         bot_name = bot.name
-        bot_namespace = bot.namespace
 
         # Get teams that use this bot
-        teams_using_bot = self._get_teams_using_bot(
-            db, bot_name, bot_namespace, user_id
-        )
+        teams_using_bot = self._get_teams_using_bot(db, bot, user_id)
 
         # Check for running tasks if not force delete
         if not force:
@@ -1400,19 +1553,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             f"[DEBUG] _get_bot_components: bot.name={bot.name}, modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}"
         )
 
-        # Determine if this is a group resource
-        is_group_resource = bot.namespace and bot.namespace != "default"
-
-        # Get ghost - for group resources, don't filter by user_id
-        ghost_query = db.query(Kind).filter(
-            Kind.kind == "Ghost",
-            Kind.name == bot_crd.spec.ghostRef.name,
-            Kind.namespace == bot_crd.spec.ghostRef.namespace,
-            Kind.is_active == True,
-        )
-        if not is_group_resource:
-            ghost_query = ghost_query.filter(Kind.user_id == user_id)
-        ghost = ghost_query.first()
+        ghost = resolve_kind_reference(
+            db,
+            kind="Ghost",
+            ref=bot_crd.spec.ghostRef,
+            actor_user_id=user_id,
+        ).resource
 
         # Get shell - try user's custom shells first, then public shells
         shell_ref_name = bot_crd.spec.shellRef.name
@@ -1449,7 +1595,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         Returns:
           - bot_crds: {bot.id: Bot} mapping to avoid repeated parsing
-          - ghost_map: {(name, namespace): Kind}
+          - ghost_map: {id: Kind} plus legacy {(name, namespace): Kind} keys
           - shell_map: {(name, namespace): Kind}
           - model_map: {(name, namespace): Kind}
         """
@@ -1459,6 +1605,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Separate keys for personal and group resources
         personal_ghost_keys = set()
         group_ghost_keys = set()
+        personal_ghost_ids = set()
+        group_ghost_ids = set()
         personal_model_keys = set()
         group_model_keys = set()
         shell_keys = set()
@@ -1470,12 +1618,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot_crds[bot.id] = bot_crd
 
             is_group_resource = bot.namespace and bot.namespace != "default"
-            ghost_key = (bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace)
-
-            if is_group_resource:
-                group_ghost_keys.add(ghost_key)
+            ghost_id = bot_crd.spec.ghostRef.id
+            if ghost_id is not None:
+                if is_group_resource:
+                    group_ghost_ids.add(ghost_id)
+                else:
+                    personal_ghost_ids.add(ghost_id)
             else:
-                personal_ghost_keys.add(ghost_key)
+                ghost_key = (
+                    bot_crd.spec.ghostRef.name,
+                    bot_crd.spec.ghostRef.namespace,
+                )
+                if is_group_resource:
+                    group_ghost_keys.add(ghost_key)
+                else:
+                    personal_ghost_keys.add(ghost_key)
 
             shell_keys.add(
                 (bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
@@ -1508,6 +1665,31 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         ghosts = []
         models = []
+
+        if personal_ghost_ids:
+            personal_ghosts = (
+                db.query(Kind)
+                .filter(
+                    Kind.id.in_(personal_ghost_ids),
+                    Kind.kind == "Ghost",
+                    Kind.user_id.in_([user_id, 0]),
+                    Kind.is_active.is_(True),
+                )
+                .all()
+            )
+            ghosts.extend(personal_ghosts)
+
+        if group_ghost_ids:
+            group_ghosts = (
+                db.query(Kind)
+                .filter(
+                    Kind.id.in_(group_ghost_ids),
+                    Kind.kind == "Ghost",
+                    Kind.is_active.is_(True),
+                )
+                .all()
+            )
+            ghosts.extend(group_ghosts)
 
         # Query personal ghosts (with user_id filter)
         if personal_ghost_keys:
@@ -1561,6 +1743,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 models.extend(group_models)
 
         ghost_map = {(g.name, g.namespace): g for g in ghosts}
+        ghost_map.update({g.id: g for g in ghosts})
         # shell_map is already populated by get_shells_by_names_batch
         model_map = {(m.name, m.namespace): m for m in models}
 
@@ -1753,13 +1936,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         skill_refs = {}
         preload_skill_refs = {}
         default_knowledge_base_refs = []
+        default_external_knowledge_refs = []
         if ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
             skills = ghost_crd.spec.skills or []
             preload_skills = ghost_crd.spec.preload_skills or []
             default_knowledge_base_refs = [
-                ref.model_dump()
+                ref.model_dump(exclude_none=True, exclude_unset=True)
                 for ref in (ghost_crd.spec.defaultKnowledgeBaseRefs or [])
+            ]
+            default_external_knowledge_refs = [
+                ref.model_dump(exclude_none=True)
+                for ref in (ghost_crd.spec.defaultExternalKnowledgeRefs or [])
             ]
             skill_refs = (
                 {
@@ -1789,6 +1977,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
             "default_knowledge_base_refs": default_knowledge_base_refs,
+            "default_external_knowledge_refs": default_external_knowledge_refs,
             "skills": skills,
             "skill_refs": skill_refs,
             "preload_skills": preload_skills,
@@ -2145,6 +2334,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 KnowledgeBaseDefaultRef(**ref)
                 for ref in bot_dict["default_knowledge_base_refs"]
             ]
+        external_refs = None
+        if bot_dict.get("default_external_knowledge_refs"):
+            external_refs = [
+                ExternalKnowledgeRef(**ref)
+                for ref in bot_dict["default_external_knowledge_refs"]
+            ]
 
         # Apply skill_id_mapping to skill_refs and preload_skill_refs if provided
         skill_refs_raw = bot_dict.get("skill_refs") or {}
@@ -2178,6 +2373,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             system_prompt=bot_dict.get("system_prompt"),
             mcp_servers=bot_dict.get("mcp_servers"),
             default_knowledge_base_refs=kb_refs,
+            default_external_knowledge_refs=external_refs,
             skills=bot_dict.get("skills"),
             skill_refs=skill_refs_meta,
             preload_skills=bot_dict.get("preload_skills"),
@@ -2185,7 +2381,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             namespace=namespace,
         )
 
-        return self.create_with_user(db=db, obj_in=bot_create, user_id=user_id)
+        return self.create_with_user(
+            db=db,
+            obj_in=bot_create,
+            user_id=user_id,
+            filter_inaccessible_defaults=True,
+        )
 
 
 bot_kinds_service = BotKindsService(Kind)

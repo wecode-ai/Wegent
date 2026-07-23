@@ -28,13 +28,22 @@ This is different from the external knowledge MCP. The external knowledge MCP le
 
 The registry is the boundary between core and providers. Core only uses the registry to find providers and must not import downstream implementations. Downstream deployments register providers at startup. If a provider is missing or unavailable, core should mark that source as failed or ignored instead of failing the whole retrieval request.
 
+### DingTalk MCP Service Boundary
+
+DingTalk external knowledge uses two separate MCP services: WikiSpace MCP owns knowledge-base listing, metadata, and management; Docs MCP owns `list_nodes`, `search_documents`, and `get_document_content`. A WikiSpace ref still uses its `source_id` and local synced directory for access-scope validation, but content retrieval must always use Docs MCP.
+
+Docs retrieval first searches document metadata with `keyword`, `pageSize`, and optional `workspaceIds`, then reads content with `nodeId`. An explicit document ref reads content directly; knowledge-base and folder refs use bounded candidate counts with bounded pagination, concurrency, and timeouts. MCP errors, missing tools, invalid parameters, and unrecognized responses are `failed`; only a successful empty search is `no_hit`.
+
 ## Task-Level Runtime Binding
 
-`externalKnowledgeRefs` is a Task-level runtime binding. It describes which external knowledge sources are selected for the current task run. It is not a default Ghost, Bot, or Team configuration.
+`Ghost.spec.defaultExternalKnowledgeRefs` stores each Bot's default external knowledge. When a Task is created, member Ghost defaults are unioned, gated as the Team owner (`team.user_id`), and materialized into `Task.spec.externalKnowledgeRefs`.
 
 Key constraints:
 
-- Do not write external knowledge sources as Ghost default knowledge configuration.
+- Agent defaults are saved and run as the Team owner. Sharing an agent does not change that owner.
+- A message-level explicit selection is gated as the sender and applies only to that execution. It must not update Ghost defaults or Task refs.
+- Copying an agent to a new owner revalidates copied defaults as the new `team.user_id`.
+- The effective external actor is request-scoped execution data. Do not persist it in the ref or infer it from `boundBy`.
 - Do not store provider-private credentials in Task spec.
 - Do not persist raw external URLs in source payloads. Use a stable, verifiable, provider-interpretable `source_uri` when a source needs to be located.
 - Task detail, WebSocket payloads, and Chat Shell metadata should only pass provider-neutral fields.
@@ -56,7 +65,7 @@ Key constraints:
 
 ### Management Entry and API
 
-External knowledge sources form Task-level bindings like built-in knowledge bases and can affect follow-up messages. Clearing the composer selection does not remove a Task-level binding. Removing a binding only affects future execution requests and must not rewrite context shown on historical messages.
+Task-level external bindings are the default snapshot for future messages. Composer selections override that snapshot only for the current message; the next message without an explicit selection restores the Task snapshot. Removing a Task binding affects future default execution requests and must not rewrite historical message context.
 
 The frontend should reuse the existing task/group management entry and its Knowledge tab. Built-in knowledge bases and external knowledge sources should appear in one list instead of maintaining a separate "bound external knowledge" manager inside the composer context selector. External rows should use a short provider badge, such as `AP`.
 
@@ -65,6 +74,7 @@ Backend exposes these Task-level external binding APIs:
 | Method | Path                                                  | Description                                                 |
 | ------ | ----------------------------------------------------- | ----------------------------------------------------------- |
 | `GET`  | `/api/tasks/{task_id}/external-knowledge-refs`        | Return external knowledge refs bound to the current Task.   |
+| `POST` | `/api/tasks/{task_id}/external-knowledge-refs`        | Persist refs gated as the Task's Team owner.                |
 | `POST` | `/api/tasks/{task_id}/external-knowledge-refs/remove` | Remove one external knowledge ref by normalized target key. |
 
 The remove request body is:
@@ -88,11 +98,14 @@ Management UI must treat external binding load failures as non-blocking: built-i
 
 `internal_retrieve` merges built-in knowledge base records and external provider records for Chat Shell. The recommended flow is:
 
-1. Read `externalKnowledgeRefs` from Task spec.
-2. Run built-in knowledge base retrieval first, preserving existing permissions and index behavior.
-3. Group external references by provider and call the registered `RetrievalSourceProvider`.
-4. Convert external records into unified context chunks and provenance fields.
-5. Merge results and return a retrieval summary.
+1. If the current message has explicit external knowledge contexts, use only those refs for this execution and skip Task/default external refs.
+2. Otherwise, read `externalKnowledgeRefs` from Task spec and resolve the actor from the persisted Team owner.
+3. Run built-in knowledge base retrieval first, preserving existing permissions and index behavior.
+4. Group external references by provider before calling the registered `RetrievalSourceProvider`.
+5. Convert external records into unified context chunks and provenance fields.
+6. Merge results and return a retrieval summary.
+
+The two paths never fall back to each other, `boundBy`, or service/tenant credentials. A missing owner, revoked authorization, unconfigured provider, or invalid ref removes that source from the execution and produces a sanitized warning.
 
 External provider errors must be isolated per source. If one source times out, fails authorization, or returns no records, only that source status should be affected; built-in knowledge base hits and other provider results should still be returned.
 

@@ -10,17 +10,24 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.external_knowledge import ExternalKnowledgeRef
+from app.schemas.kind import ContextWarning
 from app.services.chat.external_knowledge_refs import (
+    build_external_ref_canonical_key,
     extract_task_external_knowledge_refs,
+    filter_valid_external_knowledge_refs,
+    lock_task_for_knowledge_update,
     remove_task_external_knowledge_ref,
+    replace_task_context_warnings,
+    sync_task_external_knowledge_refs,
 )
+from app.services.chat.knowledge_binding_resolver import KnowledgeBindingResolver
 from app.services.knowledge import TaskKnowledgeBaseService
 from app.services.rag.sources import ExternalRefValidationError
 from app.stores.tasks import task_access_store
@@ -53,6 +60,10 @@ class BoundKnowledgeBaseResponse(BaseModel):
     document_count: int
     bound_by: str
     bound_at: str
+    scope_restricted: bool = False
+    document_ids: List[int] = Field(default_factory=list)
+    folder_ids: List[int] = Field(default_factory=list)
+    include_subfolders: bool = True
 
 
 class BoundKnowledgeBaseListResponse(BaseModel):
@@ -76,6 +87,7 @@ class BoundExternalKnowledgeRefListResponse(BaseModel):
 
     items: List[ExternalKnowledgeRef]
     total: int
+    context_warnings: List[ContextWarning] = Field(default_factory=list)
 
 
 class RemoveExternalKnowledgeRefRequest(BaseModel):
@@ -84,8 +96,22 @@ class RemoveExternalKnowledgeRefRequest(BaseModel):
     ref: ExternalKnowledgeRef
 
 
+class BindExternalKnowledgeRefsRequest(BaseModel):
+    """Request to bind external knowledge refs to a task."""
+
+    refs: List[ExternalKnowledgeRef]
+
+
 class RemoveExternalKnowledgeRefResponse(BaseModel):
     """Response for removing one external knowledge ref."""
+
+    message: str
+    items: List[ExternalKnowledgeRef]
+    total: int
+
+
+class BindExternalKnowledgeRefsResponse(BaseModel):
+    """Response for binding external knowledge refs."""
 
     message: str
     items: List[ExternalKnowledgeRef]
@@ -137,6 +163,10 @@ def get_bound_knowledge_bases(
                 document_count=kb.document_count,
                 bound_by=kb.bound_by,
                 bound_at=kb.bound_at,
+                scope_restricted=kb.scope_restricted,
+                document_ids=kb.document_ids,
+                folder_ids=kb.folder_ids,
+                include_subfolders=kb.include_subfolders,
             )
             for kb in bound_kbs
         ],
@@ -187,6 +217,7 @@ def unbind_knowledge_base(
     task_id: int,
     kb_name: str,
     kb_namespace: str = "default",
+    kb_id: Optional[int] = None,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -200,6 +231,7 @@ def unbind_knowledge_base(
         kb_name=kb_name,
         kb_namespace=kb_namespace,
         user_id=current_user.id,
+        kb_id=kb_id,
     )
 
     return UnbindKnowledgeBaseResponse(
@@ -224,7 +256,100 @@ def get_bound_external_knowledge_refs(
     """
     task = _get_accessible_task_or_404(db, task_id, current_user.id)
     refs = extract_task_external_knowledge_refs(task)
-    return BoundExternalKnowledgeRefListResponse(items=refs, total=len(refs))
+    spec = (task.json or {}).get("spec") or {}
+    return BoundExternalKnowledgeRefListResponse(
+        items=refs,
+        total=len(refs),
+        context_warnings=spec.get("contextWarnings") or [],
+    )
+
+
+@router.post(
+    "/{task_id}/external-knowledge-refs",
+    response_model=BindExternalKnowledgeRefsResponse,
+)
+def bind_external_knowledge_refs(
+    task_id: int,
+    request: BindExternalKnowledgeRefsRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Bind external knowledge refs to a task.
+    User must have access to the task; persistent refs are gated by Team owner.
+    """
+    task = _get_accessible_task_or_404(db, task_id, current_user.id)
+    task = lock_task_for_knowledge_update(db, task)
+    raw_refs = [ref.model_dump(exclude_none=True) for ref in request.refs]
+    sender_refs, sender_warnings = filter_valid_external_knowledge_refs(
+        raw_refs,
+        binding_level="conversation",
+        actor_user_id=current_user.id,
+    )
+    actor = KnowledgeBindingResolver(db).resolve_task_owner_user(task=task)
+    if actor is None:
+        warnings = sender_warnings + [
+            {
+                "type": "external_knowledge",
+                "reason": "actor_not_found",
+                "message": "Task knowledge owner is no longer available.",
+                "metadata": {"canonicalKey": build_external_ref_canonical_key(ref)},
+            }
+            for ref in raw_refs
+        ]
+        replace_task_context_warnings(
+            db,
+            task,
+            canonical_keys={build_external_ref_canonical_key(ref) for ref in raw_refs},
+            warnings=warnings,
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Task knowledge owner is no longer available",
+        )
+    valid_refs, owner_warnings = filter_valid_external_knowledge_refs(
+        sender_refs,
+        binding_level="conversation",
+        actor_user_id=actor.id,
+    )
+    warnings = sender_warnings + owner_warnings
+    replace_task_context_warnings(
+        db,
+        task,
+        canonical_keys={build_external_ref_canonical_key(ref) for ref in raw_refs},
+        warnings=warnings,
+    )
+    if not valid_refs:
+        # Keep the warning visible even though the binding request is rejected.
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No selected external knowledge refs are available for the current user",
+        )
+
+    try:
+        refs = sync_task_external_knowledge_refs(
+            db,
+            task,
+            valid_refs,
+        )
+        db.commit()
+    except ExternalRefValidationError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception:
+        db.rollback()
+        raise
+
+    return BindExternalKnowledgeRefsResponse(
+        message="External knowledge refs bound successfully",
+        items=refs,
+        total=len(refs),
+    )
 
 
 @router.post(

@@ -15,7 +15,6 @@ jest.mock('@/hooks/useTranslation', () => ({
       ({
         'common:actions.remove': 'Remove',
         'common:bot.agent_config': 'Model',
-        'common:bot.default_knowledge_bases': 'Knowledge bases',
         'common:bot.fine_tune_prompt': 'Optimize',
         'common:bot.model_select': 'Select model',
         'common:bot.no_model_binding': 'No model',
@@ -25,7 +24,9 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:skills.manage_skills_button': 'Manage',
         'common:skills.select_skill_to_add': 'Select skill',
         'common:skills.skills_section': 'Skills',
-        'settings:team.simple.core.knowledge_description': 'Used to initialize new chats.',
+        'settings:team.simple.core.default_knowledge_scope.description':
+          'Used to initialize new chats.',
+        'settings:team.simple.core.default_knowledge_scope.label': 'Default knowledge scope',
         'settings:team.simple.core.model_description': 'Uses the default model when unset.',
         'settings:team.simple.core.prompt_description': 'Defines the agent behavior.',
         'settings:team.simple.core.skills_description': 'Adds tool capabilities.',
@@ -67,6 +68,21 @@ jest.mock('@/features/settings/components/skills/RichSkillSelector', () => ({
 
 jest.mock('@/features/settings/components/skills/SkillManagementModal', () => () => null)
 jest.mock('@/features/prompt-tune/components/PromptFineTuneDialog', () => () => null)
+jest.mock('@/features/settings/components/knowledge/AgentDefaultKnowledgeScopeSelector', () => ({
+  AgentDefaultKnowledgeScopeSelector: ({
+    onDefaultKnowledgeBaseRefsChange,
+  }: {
+    onDefaultKnowledgeBaseRefsChange: (value: Array<{ id: number; name: string }>) => void
+  }) => (
+    <button
+      type="button"
+      onClick={() => onDefaultKnowledgeBaseRefsChange([{ id: 10, name: 'Product Docs' }])}
+    >
+      Add knowledge
+    </button>
+  ),
+}))
+
 jest.mock('@/features/settings/components/knowledge/KnowledgeBaseMultiSelector', () => ({
   KnowledgeBaseMultiSelector: ({
     onChange,
@@ -101,6 +117,7 @@ describe('SimpleBotCoreConfigForm', () => {
     const onModelChange = jest.fn()
     const onSkillsChange = jest.fn()
     const onKnowledgeChange = jest.fn()
+    const onExternalKnowledgeChange = jest.fn()
     const onPromptChange = jest.fn()
 
     render(
@@ -118,6 +135,8 @@ describe('SimpleBotCoreConfigForm', () => {
         onReloadSkills={jest.fn()}
         defaultKnowledgeBaseRefs={[]}
         onDefaultKnowledgeBaseRefsChange={onKnowledgeChange}
+        defaultExternalKnowledgeRefs={[]}
+        onDefaultExternalKnowledgeRefsChange={onExternalKnowledgeChange}
         prompt=""
         onPromptChange={onPromptChange}
       />
@@ -127,7 +146,7 @@ describe('SimpleBotCoreConfigForm', () => {
     expect(screen.getByText('Uses the default model when unset.')).toBeInTheDocument()
     expect(screen.getByText('Skills')).toBeInTheDocument()
     expect(screen.getByText('Adds tool capabilities.')).toBeInTheDocument()
-    expect(screen.getByText('Knowledge bases')).toBeInTheDocument()
+    expect(screen.getByText('Default knowledge scope')).toBeInTheDocument()
     expect(screen.getByText('Prompt')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('simple-model-select'))

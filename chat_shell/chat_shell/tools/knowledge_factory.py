@@ -57,6 +57,8 @@ async def prepare_knowledge_base_tools(
     auth_token: str = "",
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL,
     external_knowledge_refs: Optional[list[dict]] = None,
+    external_knowledge_actor_user_id: Optional[int] = None,
+    external_knowledge_actor_user_name: Optional[str] = None,
 ) -> KnowledgeBaseToolsResult:
     """Prepare knowledge base tools and enhanced system prompt.
 
@@ -133,6 +135,8 @@ async def prepare_knowledge_base_tools(
         knowledge_base_scopes=knowledge_base_scopes or [],
         user_id=user_id,
         user_name=user_name,
+        external_knowledge_actor_user_id=external_knowledge_actor_user_id,
+        external_knowledge_actor_user_name=external_knowledge_actor_user_name,
         auth_token=auth_token,
         db_session=db,
         user_subtask_id=user_subtask_id,
@@ -199,6 +203,8 @@ async def prepare_knowledge_base_tools(
             external_knowledge_refs=external_refs,
             user_id=user_id,
             user_name=user_name,
+            external_knowledge_actor_user_id=external_knowledge_actor_user_id,
+            external_knowledge_actor_user_name=external_knowledge_actor_user_name,
             auth_token=auth_token,
         )
         knowledge_list_documents_tool._call_counter = KBToolCallCounter(

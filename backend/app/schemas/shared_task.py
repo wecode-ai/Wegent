@@ -109,13 +109,11 @@ class PublicContextData(BaseModel):
 
     # External knowledge-specific fields (optional)
     external_provider: Optional[str] = None
-    external_mode: Optional[str] = None
-    external_id: Optional[str] = None
-    external_scope: Optional[str] = None
+    external_provider_label: Optional[str] = None
+    external_source_name: Optional[str] = None
+    external_target_name: Optional[str] = None
     external_target_type: Optional[str] = None
-    external_node_id: Optional[str] = None
-    external_document_id: Optional[str] = None
-    external_parent_id: Optional[str] = None
+    retrieval_status: Optional[dict[str, Any]] = None
 
     # Table-specific fields (optional)
     document_id: Optional[int] = None

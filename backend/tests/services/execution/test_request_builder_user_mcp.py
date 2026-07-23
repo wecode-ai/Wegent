@@ -440,9 +440,10 @@ class TestUserScopedMcpInjection:
             id=None, name="dingtalk-docs", user_id=0, namespace="default"
         )
 
-        mock_query = mocker.Mock()
-        mock_query.filter.return_value.first.return_value = ghost
-        mocker.patch.object(builder.db, "query", return_value=mock_query)
+        mocker.patch(
+            "app.services.execution.request_builder.resolve_kind_reference",
+            return_value=SimpleNamespace(resource=ghost),
+        )
         find_skill_by_ref = mocker.patch.object(
             builder, "_find_skill_by_ref", return_value=skill
         )
@@ -506,9 +507,10 @@ class TestUserScopedMcpInjection:
                 },
             },
         )
-        mock_query = mocker.Mock()
-        mock_query.filter.return_value.first.return_value = None
-        mocker.patch.object(builder.db, "query", return_value=mock_query)
+        mocker.patch(
+            "app.services.execution.request_builder.resolve_kind_reference",
+            return_value=SimpleNamespace(resource=None),
+        )
 
         result = builder._get_bot_skills(
             bot=bot,

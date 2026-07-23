@@ -5,6 +5,7 @@
 import { apiClient } from './client'
 import { Bot, PaginationParams, SuccessMessage } from '../types/api'
 import type { CheckRunningTasksResponse } from './common'
+import type { ExternalKnowledgeRef } from '@/types/context'
 
 export interface SkillRefMeta {
   skill_id: number
@@ -15,6 +16,12 @@ export interface SkillRefMeta {
 export interface KnowledgeBaseDefaultRef {
   id: number
   name: string
+  document_ids?: number[]
+  document_names?: string[]
+  folder_ids?: number[]
+  folder_names?: string[]
+  include_subfolders?: boolean
+  scope_restricted?: boolean
 }
 
 // Bot Request/Response Types
@@ -25,6 +32,7 @@ export interface CreateBotRequest {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
+  default_external_knowledge_refs?: ExternalKnowledgeRef[]
   skills?: string[]
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
@@ -39,6 +47,7 @@ export interface UpdateBotRequest {
   system_prompt?: string
   mcp_servers?: Record<string, unknown>
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
+  default_external_knowledge_refs?: ExternalKnowledgeRef[]
   skills?: string[]
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt

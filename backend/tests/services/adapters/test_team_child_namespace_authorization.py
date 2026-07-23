@@ -377,7 +377,11 @@ def test_authorized_parent_team_defaults_are_resolved_dynamically(
         user_id=child_member.id,
     )
 
-    assert initial_refs == []
+    assert len(initial_refs) == 1
+    assert initial_refs[0]["id"] == kb.id
+    assert initial_refs[0]["name"] == "Parent KB"
+    assert initial_refs[0]["boundBy"] == owner.user_name
+    assert initial_refs[0]["boundAt"]
     assert resolved_ids == [kb.id]
 
     owner_membership = (

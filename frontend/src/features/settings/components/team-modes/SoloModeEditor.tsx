@@ -44,6 +44,7 @@ export interface SoloModeEditorProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  popoverContainer?: HTMLElement | null
 }
 
 export default function SoloModeEditor({
@@ -60,6 +61,7 @@ export default function SoloModeEditor({
   botEditRef,
   scope,
   groupName,
+  popoverContainer,
 }: SoloModeEditorProps) {
   const { t } = useTranslation()
 
@@ -310,6 +312,7 @@ export default function SoloModeEditor({
               allowedAgents={allowedAgents}
               scope={scope}
               groupName={groupName}
+              popoverContainer={popoverContainer}
             />
           </div>
         ) : selectedBotId !== null ? (
@@ -330,6 +333,7 @@ export default function SoloModeEditor({
               allowedAgents={allowedAgents}
               scope={scope}
               groupName={groupName}
+              popoverContainer={popoverContainer}
             />
           </div>
         ) : (

@@ -236,6 +236,7 @@ export interface RetrievalSourceStatus {
   record_count: number
   citation_count: number
   mode?: 'rag_retrieval' | 'direct_injection' | string | null
+  canonical_ref_key?: string | null
 }
 
 /** Gemini Deep Research grounding annotation */

@@ -81,17 +81,25 @@ import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/li
 const COLLAPSE_SELECTORS_THRESHOLD = 420
 
 function buildExternalRefFromContext(context: SubtaskContextBrief): ExternalKnowledgeRef | null {
+  if (context.external_ref) {
+    return {
+      ...context.external_ref,
+      provider: context.external_ref.provider,
+      mode: context.external_ref.mode,
+    }
+  }
   if (!context.external_provider || !context.external_mode) return null
   return {
     provider: context.external_provider,
     mode: context.external_mode,
     id: context.external_id ?? undefined,
-    name: context.name,
+    name: context.external_source_name ?? context.name,
     scope: context.external_scope ?? undefined,
     target_type: context.external_target_type ?? undefined,
     node_id: context.external_node_id ?? undefined,
     document_id: context.external_document_id ?? undefined,
     parent_id: context.external_parent_id ?? undefined,
+    target_name: context.external_target_name ?? undefined,
   }
 }
 
@@ -180,8 +188,6 @@ interface ChatAreaProps {
     namespace: string
     document_count?: number
   } | null
-  /** Callback when a new task is created (used for binding knowledge base) */
-  onTaskCreated?: (taskId: number) => void
   /** Knowledge base ID for knowledge type tasks */
   knowledgeBaseId?: number
   /** Selected document IDs from DocumentPanel (for notebook mode context injection) */
@@ -216,7 +222,6 @@ function ChatAreaContent({
   onShareButtonRender,
   onRefreshTeams,
   initialKnowledgeBase,
-  onTaskCreated,
   knowledgeBaseId,
   selectedDocumentIds,
   disabledReason,
@@ -712,7 +717,6 @@ function ChatAreaContent({
     scrollToBottom,
     selectedContexts: chatState.selectedContexts,
     resetContexts: chatState.resetContexts,
-    onTaskCreated,
     selectedDocumentIds,
     // Skill selection - pass user-selected skills to backend
     // Uses full skill info (name, namespace, is_public) for backend to determine preload vs download

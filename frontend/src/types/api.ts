@@ -85,6 +85,12 @@ export interface SkillRef {
 export interface KnowledgeBaseDefaultRef {
   id: number
   name: string
+  document_ids?: number[]
+  document_names?: string[]
+  folder_ids?: number[]
+  folder_names?: string[]
+  include_subfolders?: boolean
+  scope_restricted?: boolean
 }
 
 export interface Bot {
@@ -97,6 +103,7 @@ export interface Bot {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
+  default_external_knowledge_refs?: ExternalKnowledgeRef[]
   skills?: string[] // Skills associated with this bot
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
@@ -104,6 +111,16 @@ export interface Bot {
   is_active: boolean
   created_at: string
   updated_at: string
+}
+
+export interface ContextWarning {
+  type: 'knowledge_base' | 'external_knowledge'
+  reason: string
+  provider?: string | null
+  id?: string | null
+  name?: string | null
+  message: string
+  metadata?: Record<string, unknown> | null
 }
 
 // Skill Types (CRD format)
@@ -330,6 +347,7 @@ export interface TaskDetail {
   preserve_executor?: boolean // Whether to preserve executor pod after task completion
   requested_skills?: SkillRef[] | null // User-selected skills for this task
   external_knowledge_refs?: ExternalKnowledgeRef[] | null // Task-level external knowledge bindings
+  context_warnings?: ContextWarning[] | null // Task-level knowledge binding warnings
 }
 
 export interface TaskRuntimeActiveStream {
@@ -685,7 +703,11 @@ export interface SubtaskContextBrief {
     url?: string
   } | null
   // External knowledge fields
+  external_ref?: ExternalKnowledgeRef | null
   external_provider?: string | null
+  external_provider_label?: string | null
+  external_source_name?: string | null
+  external_target_name?: string | null
   external_mode?: string | null
   external_id?: string | null
   external_scope?: string | null
@@ -693,6 +715,11 @@ export interface SubtaskContextBrief {
   external_node_id?: string | null
   external_document_id?: string | null
   external_parent_id?: string | null
+  retrieval_status?: {
+    searched: boolean
+    ignored: boolean
+    warning_reason?: string | null
+  } | null
   // External web content fields
   video_count?: number | null
   site?: string | null

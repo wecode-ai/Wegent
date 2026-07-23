@@ -12,7 +12,7 @@ import base64
 import logging
 import urllib.parse
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -28,6 +28,7 @@ from app.models.subtask import SubtaskStatus
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.context_display import build_public_context_display_fields
 from app.schemas.shared_task import (
     JoinSharedTaskResponse,
     PublicSharedTaskResponse,
@@ -37,6 +38,8 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.services.kind_reference import resolve_kind_reference
+from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
@@ -289,6 +292,72 @@ class SharedTaskService:
 
         return share_info
 
+    def _get_public_task_display_config(
+        self, db: Session, task: TaskResource
+    ) -> Dict[str, Any]:
+        """Resolve the Team display config for a public shared task."""
+        try:
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.get("spec", {})
+            team_ref = spec.get("teamRef", {})
+            if not isinstance(team_ref, dict):
+                return {}
+
+            team_name = team_ref.get("name")
+            team_namespace = team_ref.get("namespace", "default")
+            if not team_name:
+                return {}
+
+            team_ref_user_id = team_ref.get("user_id")
+            team_ref_id = team_ref.get("id")
+            if team_ref_id is not None:
+                resolved = resolve_kind_reference(
+                    db,
+                    kind="Team",
+                    ref={
+                        "id": team_ref_id,
+                        "name": team_name,
+                        "namespace": team_namespace,
+                        "user_id": team_ref_user_id,
+                    },
+                    actor_user_id=task.user_id,
+                )
+                team = resolved.resource
+            elif team_ref_user_id is not None:
+                team = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == team_ref_user_id,
+                        Kind.kind == KindType.TEAM.value,
+                        Kind.namespace == team_namespace,
+                        Kind.name == team_name,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+            else:
+                team = kindReader.get_by_name_and_namespace(
+                    db,
+                    task.user_id,
+                    KindType.TEAM,
+                    team_namespace,
+                    team_name,
+                )
+
+            if not team or not isinstance(team.json, dict):
+                return {}
+            display_config = team.json.get("spec", {}).get("displayConfig", {})
+            if not isinstance(display_config, dict):
+                return {}
+            return {
+                key: value for key, value in display_config.items() if value is not None
+            }
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve public shared task display config: %s", exc
+            )
+            return {}
+
     def _copy_task_with_subtasks(
         self,
         db: Session,
@@ -436,8 +505,10 @@ class SharedTaskService:
 
         # Parse the original task JSON and update the team reference
         task_crd = Task.model_validate(original_task.json)
+        task_crd.spec.teamRef.id = new_team.id
         task_crd.spec.teamRef.name = new_team.name
         task_crd.spec.teamRef.namespace = new_team.namespace
+        task_crd.spec.teamRef.user_id = new_team.user_id
 
         # Check if this is a code task
         task_type = "chat"  # default
@@ -844,21 +915,9 @@ class SharedTaskService:
                     "status": ctx.status,
                 }
 
-                # Add type-specific fields
-                if ctx.context_type == ContextType.ATTACHMENT.value:
-                    ctx_dict.update(
-                        {
-                            "file_extension": ctx.file_extension,
-                            "file_size": ctx.file_size,
-                            "mime_type": ctx.mime_type,
-                        }
-                    )
-                elif ctx.context_type == ContextType.KNOWLEDGE_BASE.value:
-                    ctx_dict.update(
-                        {
-                            "document_count": ctx.document_count,
-                        }
-                    )
+                ctx_dict.update(
+                    build_public_context_display_fields(ctx.context_type, ctx.type_data)
+                )
 
                 public_contexts.append(ctx_dict)
 

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from app.services.kind_reference import resolve_kind_reference
 from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
 from shared.models.execution import ExecutionRequest
@@ -1033,17 +1034,12 @@ def get_bot_system_prompt(
     system_prompt = ""
 
     # Get Ghost for system prompt
-    ghost = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Ghost",
-            Kind.name == bot_crd.spec.ghostRef.name,
-            Kind.namespace == bot_crd.spec.ghostRef.namespace,
-            Kind.is_active == True,
-        )
-        .first()
-    )
+    ghost = resolve_kind_reference(
+        db,
+        kind="Ghost",
+        ref=bot_crd.spec.ghostRef,
+        actor_user_id=user_id,
+    ).resource
 
     if ghost and ghost.json:
         ghost_crd = Ghost.model_validate(ghost.json)

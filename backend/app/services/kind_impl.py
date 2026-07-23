@@ -18,6 +18,7 @@ from app.models.task import TaskResource
 from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
+from app.services.kind_reference import resolve_kind_reference
 from app.stores.tasks import subtask_store, task_store
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
@@ -169,21 +170,17 @@ class BotKindService(KindBaseService):
         ghost_name = bot_crd.spec.ghostRef.name
         ghost_namespace = bot_crd.spec.ghostRef.namespace or "default"
 
-        ghost = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Ghost",
-                Kind.namespace == ghost_namespace,
-                Kind.name == ghost_name,
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        ghost = resolve_kind_reference(
+            db,
+            kind="Ghost",
+            ref=bot_crd.spec.ghostRef,
+            actor_user_id=user_id,
+        ).resource
         if not ghost:
             raise NotFoundException(
                 f"Ghost '{ghost_name}' not found in namespace '{ghost_namespace}'"
             )
+        resource["spec"]["ghostRef"]["id"] = ghost.id
 
         # Check if referenced shell exists (check user's Shell first, then public shells)
         shell_name = bot_crd.spec.shellRef.name
@@ -323,26 +320,22 @@ class TeamKindService(KindBaseService):
         team_crd = Team.model_validate(resource)
 
         # Check if all referenced bots exist
-        for member in team_crd.spec.members:
+        for index, member in enumerate(team_crd.spec.members):
             bot_name = member.botRef.name
             bot_namespace = member.botRef.namespace or "default"
 
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Bot",
-                    Kind.namespace == bot_namespace,
-                    Kind.name == bot_name,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            bot = resolve_kind_reference(
+                db,
+                kind="Bot",
+                ref=member.botRef,
+                actor_user_id=user_id,
+            ).resource
 
             if not bot:
                 raise NotFoundException(
                     f"Bot '{bot_name}' not found in namespace '{bot_namespace}'"
                 )
+            resource["spec"]["members"][index]["botRef"]["id"] = bot.id
 
 
 class WorkspaceKindService(TaskResourceBaseService):
@@ -374,22 +367,18 @@ class TaskKindService(TaskResourceBaseService):
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace or "default"
 
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Team",
-                Kind.namespace == team_namespace,
-                Kind.name == team_name,
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        team = resolve_kind_reference(
+            db,
+            kind="Team",
+            ref=task_crd.spec.teamRef,
+            actor_user_id=user_id,
+        ).resource
 
         if not team:
             raise NotFoundException(
                 f"Team '{team_name}' not found in namespace '{team_namespace}'"
             )
+        resource["spec"]["teamRef"]["id"] = team.id
 
         # Check if referenced workspace exists
         workspace_name = task_crd.spec.workspaceRef.name

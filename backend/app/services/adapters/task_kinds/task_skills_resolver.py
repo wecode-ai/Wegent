@@ -19,6 +19,7 @@ from app.schemas.kind import Bot, Ghost, Task, Team
 from app.services.kind_ref_resolver import (
     batch_load_kinds_by_refs as _batch_load_kinds_by_refs,
 )
+from app.services.kind_reference import resolve_kind_reference
 from app.services.skill_binding_service import (
     SkillBindingContext,
     skill_binding_service,
@@ -59,9 +60,22 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
     requested_skill_refs = parse_requested_skill_refs_from_labels(labels)
     user_selected_skills = parse_additional_skill_names_from_labels(labels)
 
-    team = kindReader.get_by_name_and_namespace(
-        db, task_owner_id, KindType.TEAM, team_namespace, team_name
-    )
+    team_ref = task_crd.spec.teamRef
+    if getattr(team_ref, "id", None) is not None:
+        team = resolve_kind_reference(
+            db,
+            kind="Team",
+            ref=team_ref,
+            actor_user_id=getattr(team_ref, "user_id", None) or task_owner_id,
+        ).resource
+    else:
+        team = kindReader.get_by_name_and_namespace(
+            db,
+            getattr(team_ref, "user_id", None) or task_owner_id,
+            KindType.TEAM,
+            team_namespace,
+            team_name,
+        )
     team_owner_id = _resolve_team_owner_id(task=task, task_crd=task_crd, team=team)
     binding_context = _build_skill_binding_context(
         task=task,
@@ -122,36 +136,59 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
     skill_refs: Dict[str, Dict[str, Any]] = {}
     preload_skill_refs: Dict[str, Dict[str, Any]] = {}
 
-    bot_refs = {
+    members = team_crd.spec.members or []
+    legacy_bot_refs = {
         (member.botRef.namespace, member.botRef.name)
-        for member in (team_crd.spec.members or [])
-        if getattr(member, "botRef", None)
+        for member in members
+        if getattr(member.botRef, "id", None) is None
     }
-    bot_by_ref = _batch_load_kinds_by_refs(
-        db, user_id=team_owner_id, kind_type=KindType.BOT, refs=bot_refs
+    legacy_bots = _batch_load_kinds_by_refs(
+        db,
+        user_id=team_owner_id,
+        kind_type=KindType.BOT,
+        refs=legacy_bot_refs,
     )
 
-    bot_crd_by_ref = {}
-    ghost_refs: Set[Tuple[str, str]] = set()
-    for ref, bot in bot_by_ref.items():
-        if not bot:
-            continue
-        bot_crd = Bot.model_validate(bot.json)
-        bot_crd_by_ref[ref] = bot_crd
-        if bot_crd.spec.ghostRef:
-            ghost_refs.add(
-                (bot_crd.spec.ghostRef.namespace, bot_crd.spec.ghostRef.name)
-            )
+    bot_crds = []
+    for member in members:
+        bot_ref = member.botRef
+        if getattr(bot_ref, "id", None) is not None:
+            bot = resolve_kind_reference(
+                db,
+                kind="Bot",
+                ref=bot_ref,
+                actor_user_id=team_owner_id,
+            ).resource
+        else:
+            bot = legacy_bots.get((bot_ref.namespace, bot_ref.name))
+        if bot and bot.json:
+            bot_crds.append(Bot.model_validate(bot.json))
 
-    ghost_by_ref = _batch_load_kinds_by_refs(
-        db, user_id=team_owner_id, kind_type=KindType.GHOST, refs=ghost_refs
+    legacy_ghost_refs = {
+        (bot_crd.spec.ghostRef.namespace, bot_crd.spec.ghostRef.name)
+        for bot_crd in bot_crds
+        if bot_crd.spec.ghostRef and getattr(bot_crd.spec.ghostRef, "id", None) is None
+    }
+    legacy_ghosts = _batch_load_kinds_by_refs(
+        db,
+        user_id=team_owner_id,
+        kind_type=KindType.GHOST,
+        refs=legacy_ghost_refs,
     )
 
-    for bot_crd in bot_crd_by_ref.values():
+    for bot_crd in bot_crds:
         if not bot_crd.spec.ghostRef:
             continue
-        ghost_ref = (bot_crd.spec.ghostRef.namespace, bot_crd.spec.ghostRef.name)
-        ghost = ghost_by_ref.get(ghost_ref)
+        ghost_ref = bot_crd.spec.ghostRef
+        if getattr(ghost_ref, "id", None) is not None:
+            ghost = resolve_kind_reference(
+                db,
+                kind="Ghost",
+                ref=ghost_ref,
+                actor_user_id=team_owner_id,
+            ).resource
+        else:
+            ghost = legacy_ghosts.get((ghost_ref.namespace, ghost_ref.name))
         if ghost and ghost.json:
             ghost_crd = Ghost.model_validate(ghost.json)
             if ghost_crd.spec.skills:

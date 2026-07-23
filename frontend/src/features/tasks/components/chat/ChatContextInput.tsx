@@ -55,29 +55,6 @@ export default function ChatContextInput({
     [onContextsChange]
   )
 
-  // Handle batch selection for group knowledge bases
-  // This is critical to avoid the closure problem when selecting multiple items
-  const handleSelectMultiple = useCallback(
-    (contextsToAdd: ContextItem[]) => {
-      onContextsChange(prev => {
-        const existingIds = new Set(prev.map(ctx => ctx.id))
-        const nextContexts = contextsToAdd.filter(ctx => !existingIds.has(ctx.id))
-        if (nextContexts.length === 0) return prev
-        return [...prev, ...nextContexts]
-      })
-    },
-    [onContextsChange]
-  )
-
-  // Handle batch deselection for group knowledge bases
-  const handleDeselectMultiple = useCallback(
-    (ids: (number | string)[]) => {
-      const idSet = new Set(ids)
-      onContextsChange(prev => prev.filter(ctx => !idSet.has(ctx.id)))
-    },
-    [onContextsChange]
-  )
-
   const handleReplaceContexts = useCallback(
     (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => {
       const idSet = new Set(idsToRemove)
@@ -103,8 +80,6 @@ export default function ChatContextInput({
       selectedContexts={selectedContexts}
       onSelect={handleSelect}
       onDeselect={handleDeselect}
-      onSelectMultiple={handleSelectMultiple}
-      onDeselectMultiple={handleDeselectMultiple}
       onReplaceContexts={handleReplaceContexts}
       excludeKnowledgeBaseId={excludeKnowledgeBaseId}
     >

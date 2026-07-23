@@ -22,7 +22,7 @@ class TestKbLsTool:
     @pytest.mark.asyncio
     async def test_http_mode_lists_docs_with_pagination(self) -> None:
         """HTTP mode should pass offset/limit and surface pagination metadata."""
-        tool = KbLsTool(knowledge_base_ids=[3])
+        tool = KbLsTool(knowledge_base_ids=[3], auth_token="test-token")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -173,6 +173,8 @@ class TestKnowledgeListDocumentsTool:
             ],
             user_id=2,
             user_name="wuhua3",
+            external_knowledge_actor_user_id=2,
+            external_knowledge_actor_user_name="wuhua3",
             auth_token="user-token",
         )
         internal_response = MagicMock()
@@ -326,6 +328,7 @@ class TestKnowledgeListDocumentsTool:
             knowledge_base_ids=[107],
             external_knowledge_refs=[{"provider": "demo", "id": "demo-kb-1"}],
             user_id=2,
+            external_knowledge_actor_user_id=2,
             auth_token="user-token",
         )
         internal_response = MagicMock()
@@ -379,6 +382,7 @@ class TestKnowledgeListDocumentsTool:
         tool = KnowledgeListDocumentsTool(
             external_knowledge_refs=[{"provider": "demo", "id": "demo-kb-1"}],
             user_id=2,
+            external_knowledge_actor_user_id=2,
         )
         external_response = MagicMock()
         external_response.status_code = 503
@@ -416,6 +420,7 @@ class TestKnowledgeListDocumentsTool:
                 }
             ],
             user_id=2,
+            external_knowledge_actor_user_id=2,
         )
         external_response = MagicMock()
         external_response.status_code = 200
@@ -476,6 +481,7 @@ class TestKbHeadTool:
             knowledge_base_ids=[3, 4],
             user_id=7,
             user_subtask_id=8,
+            auth_token="test-token",
         )
         mock_response = MagicMock()
         mock_response.status_code = 200

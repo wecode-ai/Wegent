@@ -253,15 +253,16 @@ class KnowledgeBaseNameResolver:
 
         if scope_restricted:
             try:
-                resolved_document_ids = (
-                    KnowledgeFolderService.resolve_document_ids_for_scope(
-                        db=self.db,
-                        knowledge_base_id=kb_id,
-                        user_id=self.user_id,
-                        folder_ids=folder_ids,
-                        document_ids=explicit_document_ids,
-                        include_subfolders=include_subfolders,
-                    )
+                resolved_document_ids = KnowledgeFolderService.resolve_document_ids_for_scope(
+                    db=self.db,
+                    knowledge_base_id=kb_id,
+                    user_id=self.user_id,
+                    # Match the caller convention used by the other internal
+                    # callers: an unused dimension is None, never []. A
+                    # folder-only scope legitimately carries empty documents.
+                    folder_ids=folder_ids or None,
+                    document_ids=explicit_document_ids or None,
+                    include_subfolders=include_subfolders,
                 )
             except ValueError as exc:
                 raise HTTPException(

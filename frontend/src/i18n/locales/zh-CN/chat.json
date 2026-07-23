@@ -433,13 +433,18 @@
   "knowledgeBinding": {
     "title": "知识来源",
     "count": "已绑定 {{count}} 个",
+    "internalKnowledge": "内部知识库",
     "externalKnowledge": "外部知识来源",
+    "externalKnowledgeSection": "外部知识来源",
+    "selectedExternalTargets": "已选 {{count}} 个目标",
     "empty": "暂未绑定知识来源",
+    "noAvailableExternal": "没有可用的外部知识来源",
     "loadFailed": "加载知识来源失败",
     "externalLoadFailed": "外部知识来源加载失败，内部知识库仍可管理。",
     "remove": "移除 {{name}}",
     "removeSuccess": "已移除「{{name}}」",
-    "removeFailed": "移除知识来源失败"
+    "removeFailed": "移除知识来源失败",
+    "warningUnsupportedBinding": "已绑定整个知识源，因此该子文档绑定已忽略。"
   },
   "groupChat": {
     "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",
@@ -745,7 +750,7 @@
     "loadFailed": "加载钉钉文档失败",
     "syncFailed": "同步钉钉文档失败",
     "notConfigured": "未配置钉钉文档 MCP，请先在集成设置中启用",
-    "goToConfigure": "前往配置",
+    "goToConfigure": "前往设置",
     "docBadgeHint": "钉钉文档",
     "searchPlaceholder": "搜索文档...",
     "referencedDocsLabel": "引用的钉钉文档：",

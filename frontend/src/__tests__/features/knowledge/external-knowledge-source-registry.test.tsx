@@ -207,6 +207,92 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     expect(await screen.findByTestId('knowledge-picker-external-kb-lib-1')).toBeInTheDocument()
   })
 
+  it('keeps long external knowledge names single-line while exposing full path metadata', async () => {
+    const longKnowledgeBaseName = 'AP 企业知识库 2026 年度跨部门集成联调与权限验收说明资料全集'
+    const longRootFolder = '项目资料'
+    const longFolder = '需求说明'
+    const longDocument = '2026 年度跨部门集成联调与权限验收说明文档最终版.docx'
+    const fullDocumentPath = `${longRootFolder} / ${longFolder} / ${longDocument}`
+
+    mockListFakeKnowledgeBases.mockResolvedValue({
+      items: [
+        {
+          provider: FAKE_PROVIDER,
+          knowledge_base_id: 'lib-long',
+          knowledge_base_name: longKnowledgeBaseName,
+          scope: 'organization',
+          document_count: 1,
+        },
+      ],
+      has_more: false,
+    })
+    mockListFakeNodes.mockResolvedValue({
+      items: [
+        {
+          node_id: 'folder:project',
+          name: longRootFolder,
+          node_type: 'folder',
+          children: [
+            {
+              node_id: 'folder:requirements',
+              name: longFolder,
+              node_type: 'folder',
+              children: [
+                {
+                  node_id: 'document:final-doc',
+                  raw_id: 'final-doc',
+                  name: longDocument,
+                  node_type: 'document',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      has_more: false,
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
+      ).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+
+    const kbRow = await screen.findByTestId('knowledge-picker-external-kb-lib-long')
+    expect(kbRow).not.toHaveAttribute('title')
+    expect(kbRow).toHaveAttribute('aria-label', longKnowledgeBaseName)
+    expect(kbRow.querySelector('[aria-label]')).toHaveClass('truncate')
+    fireEvent.click(kbRow)
+
+    const nestedFolder = await screen.findByTestId(
+      'knowledge-picker-external-node-folder:requirements'
+    )
+    expect(nestedFolder).not.toHaveAttribute('title')
+    expect(nestedFolder).toHaveAttribute('aria-label', `${longRootFolder} / ${longFolder}`)
+    fireEvent.click(nestedFolder)
+
+    const documentRow = await screen.findByTestId(
+      'knowledge-picker-external-node-document:final-doc'
+    )
+    expect(documentRow).not.toHaveAttribute('title')
+    expect(documentRow).toHaveAttribute('aria-label', fullDocumentPath)
+    expect(documentRow.querySelector('[aria-label]')).toHaveClass('truncate')
+  })
+
   it('pages through all external knowledge bases for the active scope', async () => {
     mockListFakeKnowledgeBases.mockImplementation((params?: { offset?: number }) =>
       Promise.resolve({

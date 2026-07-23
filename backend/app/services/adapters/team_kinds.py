@@ -35,6 +35,7 @@ from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
+from app.services.kind_reference import resolve_kind_reference
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.stores.tasks import task_store
@@ -52,6 +53,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     ACCESS_RANK_NATIVE = 0
     ACCESS_RANK_USER_SHARE = 1
     ACCESS_RANK_NAMESPACE_AUTHORIZATION = 2
+
+    @staticmethod
+    def _is_valid_team_bot_reference(team: Kind, ref: Any, bot: Kind | None) -> bool:
+        """Validate an ID-backed bot ref after the team itself is authorized."""
+        if bot is None:
+            return False
+        if bot.name != ref.name or bot.namespace != ref.namespace:
+            return False
+        if team.namespace == "default" and bot.user_id not in {team.user_id, 0}:
+            return False
+        return True
 
     # List of sensitive keys that should be decrypted when reading
     SENSITIVE_CONFIG_KEYS = [
@@ -200,7 +212,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
 
             member = {
-                "botRef": {"name": bot.name, "namespace": bot.namespace},
+                "botRef": {
+                    "id": bot.id,
+                    "name": bot.name,
+                    "namespace": bot.namespace,
+                },
                 "prompt": bot_prompt or "",
                 "role": role or "",
                 "requireConfirmation": require_confirmation or False,
@@ -552,8 +568,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Collect all bot refs from all teams
         # Separate personal bots from group bots since group bots can be created by any group member
-        all_bot_refs = []  # List of (user_id, name, namespace) for personal teams
+        all_bot_refs = []  # List of (user_id, name, namespace) for legacy refs
         group_bot_refs = set()  # Set of (name, namespace) for group teams
+        personal_bot_ids = []  # List of (user_id, bot_id) for personal refs
+        group_bot_ids = set()
         context_user_ids = set()
         for team_data in teams_data:
             context_user_ids.add(team_data.context_user_id)
@@ -562,6 +580,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 team_data.team_namespace and team_data.team_namespace != "default"
             )
             for member in team_crd.spec.members:
+                if member.botRef.id is not None:
+                    if is_group_team:
+                        group_bot_ids.add(member.botRef.id)
+                    else:
+                        personal_bot_ids.append(
+                            (team_data.context_user_id, member.botRef.id)
+                        )
+                    continue
                 if is_group_team:
                     # For group teams, bots can be created by any group member
                     group_bot_refs.add(
@@ -584,6 +610,25 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         bots_cache = {}  # (user_id, name, namespace) -> Kind for personal bots
         group_bots_cache = {}  # (name, namespace) -> Kind for group bots
+        bots_by_id = {}
+
+        bot_id_conditions = [
+            and_(Kind.id == bot_id, Kind.user_id == owner_id)
+            for owner_id, bot_id in personal_bot_ids
+        ]
+        if group_bot_ids:
+            bot_id_conditions.append(Kind.id.in_(group_bot_ids))
+        if bot_id_conditions:
+            bots_by_id = {
+                bot.id: bot
+                for bot in db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.is_active.is_(True),
+                    or_(*bot_id_conditions),
+                )
+                .all()
+            }
 
         # Query personal bots (with user_id filter)
         if all_bot_refs:
@@ -630,27 +675,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         all_shell_refs = set()  # (user_id, name, namespace)
         all_model_refs = set()  # (user_id, name, namespace)
 
-        # Collect from personal bots
-        for bot in bots_cache.values():
-            bot_crd = Bot.model_validate(bot.json)
-            all_shell_refs.add(
-                (
-                    bot.user_id,
-                    bot_crd.spec.shellRef.name,
-                    bot_crd.spec.shellRef.namespace,
-                )
-            )
-            if bot_crd.spec.modelRef:
-                all_model_refs.add(
-                    (
-                        bot.user_id,
-                        bot_crd.spec.modelRef.name,
-                        bot_crd.spec.modelRef.namespace,
-                    )
-                )
-
-        # Collect from group bots
-        for bot in group_bots_cache.values():
+        # Include both stable-ID and legacy name-backed references.  ID-backed
+        # bots are kept separately so they are not accidentally resolved by a
+        # same-name resource, but their shell/model dependencies still need the
+        # same batch preloading as legacy bots.
+        referenced_bots = {
+            bot.id: bot
+            for bot in [
+                *bots_by_id.values(),
+                *bots_cache.values(),
+                *group_bots_cache.values(),
+            ]
+        }
+        for bot in referenced_bots.values():
             bot_crd = Bot.model_validate(bot.json)
             all_shell_refs.add(
                 (
@@ -781,6 +818,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Build cache dict for passing to conversion methods
         preloaded_cache = {
+            "bots_by_id": bots_by_id,
             "bots": bots_cache,
             "group_bots": group_bots_cache,  # Add group bots cache for group resources
             "shells": shells_cache,
@@ -846,7 +884,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Get Team by ID and user ID (only active teams)
         """
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        from app.services.share.team_share_service import team_share_service
+
+        team = team_share_service.get_resource(db, team_id, user_id)
+
+        if team is None:
+            candidate = kindReader.get_by_id(db, KindType.TEAM, team_id)
+            if candidate and candidate.namespace != "default":
+                from app.schemas.namespace import GroupRole
+                from app.services.group_permission import check_group_permission
+
+                if check_group_permission(
+                    db, user_id, candidate.namespace, GroupRole.Reporter
+                ):
+                    team = candidate
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1042,7 +1093,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     )
 
                 member = TeamMember(
-                    botRef=BotTeamRef(name=bot.name, namespace=bot.namespace),
+                    botRef=BotTeamRef(
+                        id=bot.id,
+                        name=bot.name,
+                        namespace=bot.namespace,
+                    ),
                     prompt=bot_prompt or "",
                     role=role or "",
                     requireConfirmation=require_confirmation or False,
@@ -1454,7 +1509,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             # Find bot in kinds table
             # For group resources, use get_group; otherwise use get_by_name_and_namespace
             t_find_bot = time.time()
-            if is_group_resource:
+            if member.botRef.id is not None:
+                bot = kindReader.get_by_id(db, KindType.BOT, member.botRef.id)
+                if not self._is_valid_team_bot_reference(team, member.botRef, bot):
+                    bot = None
+            elif is_group_resource:
                 bot = kindReader.get_group(
                     db, KindType.BOT, member.botRef.namespace, member.botRef.name
                 )
@@ -1628,6 +1687,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         shell_types = set()
 
         bots_cache = cache.get("bots", {})
+        bots_by_id = cache.get("bots_by_id", {})
         group_bots_cache = cache.get(
             "group_bots", {}
         )  # (name, namespace) -> Kind for group bots
@@ -1640,8 +1700,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         for member in team_crd.spec.members:
             # Find bot in cache
-            # For group resources, lookup by (name, namespace) only
-            if is_group_resource:
+            if member.botRef.id is not None:
+                bot = bots_by_id.get(member.botRef.id)
+                if not self._is_valid_team_bot_reference(team, member.botRef, bot):
+                    bot = None
+            elif is_group_resource:
                 bot = group_bots_cache.get(
                     (member.botRef.name, member.botRef.namespace)
                 )
@@ -1682,14 +1745,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         agent_type = None
         if bots:
             first_bot_id = bots[0]["bot_id"]
-            # Find first bot in cache (check both caches for group resources)
-            first_bot = None
-            if is_group_resource:
+            first_bot = bots_by_id.get(first_bot_id)
+            if first_bot is None and is_group_resource:
                 for key, bot in group_bots_cache.items():
                     if bot.id == first_bot_id:
                         first_bot = bot
                         break
-            else:
+            elif first_bot is None:
                 for key, bot in bots_cache.items():
                     if bot.id == first_bot_id:
                         first_bot = bot
@@ -2309,26 +2371,45 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Iterate through team members to get bot → ghost → skills
         for member in team_crd.spec.members or []:
-            bot = kindReader.get_by_name_and_namespace(
-                db,
-                team_owner_id,
-                KindType.BOT,
-                member.botRef.namespace,
-                member.botRef.name,
-            )
+            if member.botRef.id is not None:
+                bot = kindReader.get_by_id(db, KindType.BOT, member.botRef.id)
+                if not self._is_valid_team_bot_reference(team, member.botRef, bot):
+                    bot = None
+            else:
+                bot = kindReader.get_by_name_and_namespace(
+                    db,
+                    team_owner_id,
+                    KindType.BOT,
+                    member.botRef.namespace,
+                    member.botRef.name,
+                )
             if not bot:
                 continue
 
             bot_crd = Bot.model_validate(bot.json)
 
             # Get ghost (stores skills)
-            ghost = kindReader.get_by_name_and_namespace(
-                db,
-                team_owner_id,
-                KindType.GHOST,
-                bot_crd.spec.ghostRef.namespace,
-                bot_crd.spec.ghostRef.name,
-            )
+            if bot_crd.spec.ghostRef.id is not None:
+                ghost = kindReader.get_by_id(
+                    db, KindType.GHOST, bot_crd.spec.ghostRef.id
+                )
+                if ghost and (
+                    ghost.name != bot_crd.spec.ghostRef.name
+                    or ghost.namespace != bot_crd.spec.ghostRef.namespace
+                    or (
+                        bot.namespace == "default"
+                        and ghost.user_id not in {bot.user_id, 0}
+                    )
+                ):
+                    ghost = None
+            else:
+                ghost = kindReader.get_by_name_and_namespace(
+                    db,
+                    team_owner_id,
+                    KindType.GHOST,
+                    bot_crd.spec.ghostRef.namespace,
+                    bot_crd.spec.ghostRef.name,
+                )
             if ghost and ghost.json:
                 ghost_crd = Ghost.model_validate(ghost.json)
                 if ghost_crd.spec.skills:
@@ -2406,17 +2487,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             bot_ref = leader_member.get("botRef", {})
 
             # Find the original bot Kind record
-            original_bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Bot",
-                    Kind.name == bot_ref.get("name"),
-                    Kind.namespace == bot_ref.get("namespace", original.namespace),
-                    Kind.user_id == original.user_id,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            original_bot = resolve_kind_reference(
+                db,
+                kind="Bot",
+                ref=bot_ref,
+                actor_user_id=original.user_id,
+            ).resource
             if not original_bot:
                 raise HTTPException(status_code=400, detail="Leader bot not found")
 
@@ -2463,17 +2539,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             # When copying to a different namespace, clone each bot into the target namespace.
             for member in members:
                 bot_ref = member.get("botRef", {})
-                bot = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "Bot",
-                        Kind.name == bot_ref.get("name"),
-                        Kind.namespace == bot_ref.get("namespace", original.namespace),
-                        Kind.user_id == original.user_id,
-                        Kind.is_active == True,
-                    )
-                    .first()
-                )
+                bot = resolve_kind_reference(
+                    db,
+                    kind="Bot",
+                    ref=bot_ref,
+                    actor_user_id=original.user_id,
+                ).resource
                 if bot:
                     if dest_namespace != original.namespace:
                         # Clone the bot into the destination namespace
@@ -2565,16 +2636,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Look up the ghost that holds skill_refs
         bot_spec = bot.json.get("spec", {})
         ghost_ref = bot_spec.get("ghostRef", {})
-        ghost = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Ghost",
-                Kind.name == ghost_ref.get("name"),
-                Kind.namespace == ghost_ref.get("namespace", bot.namespace),
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        ghost = resolve_kind_reference(
+            db,
+            kind="Ghost",
+            ref=ghost_ref,
+            actor_user_id=bot.user_id,
+        ).resource
         if not ghost:
             return {}
         spec = ghost.json.get("spec", {})
@@ -2654,33 +2721,24 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         for member in members:
             bot_ref = member.get("botRef", {})
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Bot",
-                    Kind.name == bot_ref.get("name"),
-                    Kind.namespace == bot_ref.get("namespace", team.namespace),
-                    Kind.user_id == team.user_id,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            bot = resolve_kind_reference(
+                db,
+                kind="Bot",
+                ref=bot_ref,
+                actor_user_id=team.user_id,
+            ).resource
             if not bot:
                 continue
 
             bot_spec = bot.json.get("spec", {})
             # Skills are stored in the ghost's spec, not the bot's spec
             ghost_ref = bot_spec.get("ghostRef", {})
-            ghost = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Ghost",
-                    Kind.name == ghost_ref.get("name"),
-                    Kind.namespace == ghost_ref.get("namespace", bot.namespace),
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            ghost = resolve_kind_reference(
+                db,
+                kind="Ghost",
+                ref=ghost_ref,
+                actor_user_id=bot.user_id,
+            ).resource
             if not ghost:
                 continue
             ghost_spec = ghost.json.get("spec", {})

@@ -292,7 +292,8 @@ def _link_payload_contexts(
         attachment_ids = [attachment_id]
 
     contexts = getattr(payload, "contexts", None)
-    if not attachment_ids and not contexts:
+    knowledge_base_id = getattr(payload, "knowledge_base_id", None)
+    if not attachment_ids and not contexts and knowledge_base_id is None:
         return []
 
     return link_contexts_to_subtask(
@@ -302,7 +303,7 @@ def _link_payload_contexts(
         attachment_ids=attachment_ids or None,
         contexts=contexts,
         task=task,
-        user_name=user.user_name,
+        knowledge_base_id=knowledge_base_id,
     )
 
 
