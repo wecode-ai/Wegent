@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { ArrowLeftRight, MessageCircle, MessageSquareWarning } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
@@ -401,6 +410,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
   const paneKey = getWorkbenchPaneKey(pane)
+  const turnNavigationPortalTargetId = `message-turn-navigation-overlay-${useId()}`
   const [initialBlankBrowserMigration] = useState<PendingBlankBrowserMigration | null>(() =>
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
@@ -1628,6 +1638,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       </WorkbenchPaneActiveOnly>
       <div className="relative flex min-h-0 flex-1 overflow-visible">
         <div
+          id={turnNavigationPortalTargetId}
+          data-testid="message-turn-navigation-overlay"
+          className={cn(
+            'pointer-events-none absolute bottom-0 left-0 z-popover',
+            showPageTopBar ? 'top-11' : 'top-0'
+          )}
+          style={{ width: chatColumnWidth }}
+        />
+        <div
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
           className={cn(
@@ -1662,6 +1681,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 className="h-full"
                 scrollTestId="desktop-chat-scroll"
                 externalScrollRef={workbenchScrollRef}
+                turnNavigationPortalTargetId={turnNavigationPortalTargetId}
                 scrollerClassName="overflow-visible scrollbar-none"
                 messageListClassName={cn(
                   DESKTOP_MESSAGE_LIST_CLASS,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { RuntimeTurnNavigationItem } from '@/types/api'
@@ -27,6 +28,7 @@ interface MessageTurnNavigationProps {
   contentRef: RefObject<HTMLDivElement | null>
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onNavigationLoadStateChange?: (loading: boolean) => void
+  portalTargetId?: string
 }
 
 interface UserTurn {
@@ -50,6 +52,7 @@ export function MessageTurnNavigation({
   contentRef,
   onLoadTurnNavigationItem,
   onNavigationLoadStateChange,
+  portalTargetId,
 }: MessageTurnNavigationProps) {
   const { t } = useTranslation('chat')
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
@@ -277,7 +280,7 @@ export function MessageTurnNavigation({
   const hoveredMarkerIndex =
     hoveredMarkerId === null ? -1 : markers.findIndex(marker => marker.id === hoveredMarkerId)
 
-  return (
+  const navigation = (
     <nav
       aria-label={t('message_navigation.label', '历史发言导航')}
       className="pointer-events-none absolute top-1/2 z-popover hidden -translate-y-1/2 lg:block"
@@ -370,6 +373,13 @@ export function MessageTurnNavigation({
       ))}
     </nav>
   )
+
+  if (portalTargetId) {
+    const portalTarget = document.getElementById(portalTargetId)
+    return portalTarget ? createPortal(navigation, portalTarget) : null
+  }
+
+  return navigation
 }
 
 function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {

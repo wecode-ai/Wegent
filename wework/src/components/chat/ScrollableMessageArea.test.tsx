@@ -535,6 +535,7 @@ describe('ScrollableMessageArea', () => {
     const navigation = screen.getByTestId('message-turn-navigation')
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(navigation).toHaveAccessibleName('历史发言导航')
+    expect(navigation).toHaveClass('absolute')
     expect(navigation).toHaveClass('z-popover')
     expect(Number.parseFloat(navigation.style.height)).toBeCloseTo(18.222)
     expect(markers).toHaveLength(2)
@@ -563,6 +564,52 @@ describe('ScrollableMessageArea', () => {
     fireEvent.blur(markers[0])
     expect(screen.getAllByText('第一条用户需求')).toHaveLength(2)
     expect(screen.getAllByText('第一条回复摘要')).toHaveLength(2)
+  })
+
+  test('renders message navigation in an overlay outside the external scroller', () => {
+    const externalScrollRef = createRef<HTMLDivElement>()
+    const portalTargetId = 'external-navigation-overlay'
+    const messages = Array.from({ length: 2 }, (_, index) => ({
+      id: `external-navigation-user-${index}`,
+      role: 'user' as const,
+      content: `外层滚动消息 ${index + 1}`,
+      status: 'done' as const,
+      createdAt: `2026-05-29T00:00:0${index}.000Z`,
+    }))
+
+    render(
+      <div>
+        <div data-testid="external-navigation-overlay" id={portalTargetId} />
+        <div ref={externalScrollRef}>
+          <ScrollableMessageArea
+            messages={messages}
+            externalScrollRef={externalScrollRef}
+            turnNavigationPortalTargetId={portalTargetId}
+          />
+        </div>
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    mockRect(scroller, 0, 300)
+    messages.forEach((message, index) => {
+      mockRect(
+        screen.getByText(message.content).closest('[data-message-id]')!,
+        120 + index * 500,
+        180 + index * 500
+      )
+    })
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const navigation = screen.getByTestId('message-turn-navigation')
+    const overlay = screen.getByTestId('external-navigation-overlay')
+    expect(navigation).toHaveClass('absolute')
+    expect(overlay).toContainElement(navigation)
+    expect(externalScrollRef.current).not.toContainElement(navigation)
   })
 
   test('keeps message navigation marker spacing fixed when the rail overflows', () => {
