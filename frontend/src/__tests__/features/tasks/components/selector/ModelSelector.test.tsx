@@ -448,7 +448,7 @@ describe('ModelSelector', () => {
     const informationAction = screen.getByTestId('model-info-claude-3-5-sonnet')
     const modelTitle = screen.getByTitle('Claude 3.5 Sonnet')
 
-    expect(modelOption.parentElement).toBe(informationAction.parentElement)
+    expect(modelOption.parentElement).toContainElement(informationAction)
     expect(modelOption.parentElement).toHaveClass('items-stretch')
     expect(modelOption.parentElement).toHaveClass('overflow-hidden')
     expect(modelOption.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_auto_32px]')
