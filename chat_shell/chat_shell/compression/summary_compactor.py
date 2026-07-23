@@ -116,7 +116,14 @@ def _extract_text(message: BaseMessage) -> str:
 
 
 def _is_context_too_long_error(exc: Exception) -> bool:
-    """Best-effort classifier for compact-task overflow failures."""
+    """Best-effort classifier for compact-task overflow failures.
+
+    Matches by HTTP status (400/413), English markers, and common Chinese /
+    heteroglyph phrasings from non-OpenAI providers.
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status in (400, 413):
+        return True
     text = " ".join(
         part for part in (str(exc), getattr(exc, "message", None)) if part
     ).lower()
@@ -129,6 +136,13 @@ def _is_context_too_long_error(exc: Exception) -> bool:
         "request too large",
         "maximum number of tokens",
         "token limit exceeded",
+        "输入长度超过",
+        "输入过长",
+        "请求体过大",
+        "超过最大",
+        "超过上限",
+        "token 数量超过",
+        "上下文长度",
     )
     return any(marker in text for marker in markers)
 

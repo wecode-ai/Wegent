@@ -256,3 +256,17 @@ def test_trim_to_budget_single_pass_counts_each_message_once():
     # O(n): one count per original message + one framing count (+1 slack),
     # NOT O(n^2).
     assert call_count["n"] <= original_len + 2
+
+
+def test_is_context_too_long_error_matches_status_and_chinese():
+    from chat_shell.compression.summary_compactor import _is_context_too_long_error
+
+    class Boom(Exception):
+        def __init__(self, msg, status=None):
+            super().__init__(msg)
+            self.status_code = status
+
+    assert _is_context_too_long_error(Boom("输入长度超过最大限制"))
+    assert _is_context_too_long_error(Boom("请求体过大", status=413))
+    assert _is_context_too_long_error(Boom("token 数量超过上限"))
+    assert not _is_context_too_long_error(Boom("temporary network blip"))
