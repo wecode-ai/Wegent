@@ -432,6 +432,7 @@ describe('createLocalAppServices', () => {
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
     })
 
     await services.runtimeWorkApi?.createRuntimeTask({
@@ -503,6 +504,14 @@ describe('createLocalAppServices', () => {
         subtask_id: expect.any(String),
         team_id: 0,
         team_name: 'local-wework',
+        user_id: 9,
+        user_name: 'hongyu9',
+        user: {
+          id: 9,
+          name: 'hongyu9',
+          user_name: 'hongyu9',
+          email: 'hongyu9@example.com',
+        },
         task_title: 'Hello',
         subtask_title: 'Hello - Assistant',
         prompt: 'hello',

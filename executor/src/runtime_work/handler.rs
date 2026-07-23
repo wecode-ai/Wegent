@@ -31,6 +31,7 @@ use crate::{
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
         host::HookService,
+        model::HookUser,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::log_executor_event,
