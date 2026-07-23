@@ -78,7 +78,7 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
         </section>
       )}
 
-      <section>
+      <section className="px-4">
         <h3 className="text-sm font-medium text-text-primary">{t('models.input_output_types')}</h3>
         <dl className="mt-2 space-y-2 text-sm">
           <div className="flex items-start justify-between gap-4">
@@ -96,7 +96,7 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
         </dl>
       </section>
 
-      <section className="border-t border-border pt-4">
+      <section className="border-t border-border px-4 pt-4">
         <h3 className="text-sm font-medium text-text-primary">{t('models.model_limits')}</h3>
         <dl className="mt-2 space-y-2 text-sm">
           <div className="flex items-start justify-between gap-4">
