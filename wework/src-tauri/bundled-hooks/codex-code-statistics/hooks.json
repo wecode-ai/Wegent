@@ -1,0 +1,24 @@
+{
+  "PostToolUse": [
+    {
+      "matcher": "^apply_patch$",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "",
+          "commands": {
+            "macos-aarch64": "./bin/macos-aarch64/codex-code-statistics",
+            "macos-x86_64": "./bin/macos-x86_64/codex-code-statistics",
+            "linux-aarch64": "./bin/linux-aarch64/codex-code-statistics",
+            "linux-x86_64": "./bin/linux-x86_64/codex-code-statistics",
+            "windows-aarch64": "./bin/windows-aarch64/codex-code-statistics.exe",
+            "windows-x86_64": "./bin/windows-x86_64/codex-code-statistics.exe"
+          },
+          "timeout": 120,
+          "async": true,
+          "statusMessage": "Reporting Codex code statistics"
+        }
+      ]
+    }
+  ]
+}

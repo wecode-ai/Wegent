@@ -20,6 +20,8 @@ source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
 # shellcheck source=lib/wework-branding.sh
 source "$SCRIPT_DIR/lib/wework-branding.sh"
+# shellcheck source=lib/codex-code-statistics.sh
+source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
 
 BUILD_PROFILE="${WEWORK_BUILD_PROFILE:-release}"
 WINDOWS_BUILD_TARGET="${WINDOWS_BUILD_TARGET:-x86_64-pc-windows-msvc}"
@@ -253,6 +255,7 @@ if [ -n "$TAURI_BUNDLES" ]; then
   TAURI_ARGS+=(--bundles "$TAURI_BUNDLES")
 fi
 
+wework_build_windows_code_statistics_hook "$WEWORK_DIR" "$WINDOWS_BUILD_TARGET"
 WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
 pnpm exec tauri "${TAURI_ARGS[@]}"
 
@@ -266,6 +269,7 @@ if [ "$BUILD_PROFILE" = "dev" ]; then
 fi
 NSI_PATH="$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/$CARGO_PROFILE_DIR/nsis/x64/installer.nsi"
 if [ -f "$NSI_PATH" ]; then
+  wework_verify_windows_code_statistics_hook "$NSI_PATH" "$WINDOWS_BUILD_TARGET"
   echo "==> Patching NSIS desktop shortcut creation"
   uv run --project "$PROJECT_DIR/backend" python "$SCRIPT_DIR/patch-windows-nsis.py" "$NSI_PATH"
 
