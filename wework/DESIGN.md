@@ -653,6 +653,11 @@ semantics for all three.
 - Back returns to the previous meaningful context; Close dismisses a layer.
 - Opening or closing sidebars, previews, terminals, and settings preserves the
   active task and unsent composer input.
+- Opening the bottom workspace panel starts or restores its Terminal directly;
+  it must not show an IDE launcher or require an intermediate tool choice.
+- Workspace IDEs and native editors launch only from the titlebar “Open
+  location” control, including its local-editor picker and remote code-server
+  behavior.
 - Resizable panes keep useful minimum sizes and preserve user-owned allocation
   where the feature supports it.
 - External URLs, applications, and windows must be clear before activation.
