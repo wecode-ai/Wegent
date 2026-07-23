@@ -403,11 +403,7 @@ fn load_plugin(
 }
 
 fn command_health(directory: &Path, config: &CommandHookConfig) -> Option<HookHealth> {
-    let command = if cfg!(windows) {
-        config.command_windows.as_deref().unwrap_or(&config.command)
-    } else {
-        &config.command
-    };
+    let command = selected_command(config);
     let program = command.split_whitespace().next()?.trim_matches(['\'', '"']);
     let path = Path::new(program);
     if path.is_absolute() {
@@ -532,8 +528,18 @@ fn validate_hook(config: &CommandHookConfig) -> Result<(), String> {
     if config.handler_type != "command" {
         return Err(format!("unsupported hook type: {}", config.handler_type));
     }
-    if config.command.trim().is_empty() {
-        return Err("hook command is empty".to_owned());
+    if config.command.trim().is_empty() && config.commands.is_empty() {
+        return Err("hook command and platform commands are empty".to_owned());
+    }
+    for (target, command) in &config.commands {
+        if !valid_platform_target(target) {
+            return Err(format!("invalid hook platform target: {target}"));
+        }
+        if command.trim().is_empty() {
+            return Err(format!(
+                "hook command is empty for platform target: {target}"
+            ));
+        }
     }
     if !(1..=MAX_TIMEOUT_SECONDS).contains(&config.timeout) {
         return Err(format!(
@@ -543,10 +549,58 @@ fn validate_hook(config: &CommandHookConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn selected_command(config: &CommandHookConfig) -> &str {
+    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    if let Some(command) = config.commands.get(&target) {
+        return command;
+    }
+    if cfg!(windows) {
+        config.command_windows.as_deref().unwrap_or(&config.command)
+    } else {
+        &config.command
+    }
+}
+
+fn valid_platform_target(target: &str) -> bool {
+    matches!(
+        target,
+        "macos-aarch64"
+            | "macos-x86_64"
+            | "linux-aarch64"
+            | "linux-x86_64"
+            | "windows-aarch64"
+            | "windows-x86_64"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn validates_supported_platform_commands() {
+        let mut hook = CommandHookConfig {
+            handler_type: "command".to_owned(),
+            command: String::new(),
+            command_windows: None,
+            commands: [("macos-aarch64".to_owned(), "./bin/reporter".to_owned())]
+                .into_iter()
+                .collect(),
+            timeout: 10,
+            asynchronous: true,
+            status_message: None,
+        };
+
+        assert!(validate_hook(&hook).is_ok());
+        hook.commands
+            .insert("freebsd-x86_64".to_owned(), "./bin/reporter".to_owned());
+        assert_eq!(
+            validate_hook(&hook).unwrap_err(),
+            "invalid hook platform target: freebsd-x86_64"
+        );
+    }
+
     #[test]
     fn discovers_duplicates_as_unhealthy() {
         let home = tempdir().unwrap();

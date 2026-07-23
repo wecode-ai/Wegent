@@ -4,6 +4,43 @@
 
 use super::*;
 
+fn hook_user(request: &ExecutionRequest) -> HookUser {
+    let nested_user = request.extra.get("user").and_then(Value::as_object);
+    let id = request
+        .extra
+        .get("user_id")
+        .or_else(|| nested_user.and_then(|user| user.get("id")))
+        .and_then(hook_user_id);
+    let name = request
+        .user_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            nested_user.and_then(|user| {
+                ["name", "user_name", "username"]
+                    .iter()
+                    .find_map(|key| user.get(*key).and_then(Value::as_str))
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+        })
+        .unwrap_or("anonymous")
+        .to_owned();
+    HookUser { id, name }
+}
+
+fn hook_user_id(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_owned())
+        }
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn spawn_turn(&self, turn: SpawnTurnRequest) {
         let SpawnTurnRequest {
@@ -84,7 +121,9 @@ impl RuntimeWorkRpcHandler {
                         .expect("hook turn context lock should not be poisoned")
                         .clone();
                     if let (Some(active_turn), Some(cwd)) = (active_turn, mapper_request.cwd()) {
+                        let resolved_hook_user = hook_user(&mapper_request);
                         let context = CodexHookContext {
+                            user: resolved_hook_user.clone(),
                             session_id: active_turn.thread_id,
                             turn_id: active_turn.turn_id,
                             cwd: PathBuf::from(cwd),
@@ -92,7 +131,22 @@ impl RuntimeWorkRpcHandler {
                             permission_mode: "workspace-write".to_owned(),
                         };
                         match post_tool_use_from_notification(&context, &message) {
-                            Ok(Some(input)) => mapper_handler.hook_service.dispatch(input).await,
+                            Ok(Some(input)) => {
+                                log_executor_event(
+                                    "runtime work hook identity resolved",
+                                    &[
+                                        (
+                                            "request_user_name",
+                                            mapper_request
+                                                .user_name
+                                                .clone()
+                                                .unwrap_or_else(|| "<none>".to_owned()),
+                                        ),
+                                        ("hook_user_name", resolved_hook_user.name.clone()),
+                                    ],
+                                );
+                                mapper_handler.hook_service.dispatch(input).await
+                            }
                             Ok(None) => {}
                             Err(error) => log_executor_event(
                                 "runtime work hook notification mapping failed",
@@ -315,5 +369,38 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_standard_hook_user_from_execution_request() {
+        let mut request = ExecutionRequest {
+            user_name: Some("alice".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert("user_id".to_owned(), json!(42));
+
+        assert_eq!(
+            hook_user(&request),
+            HookUser {
+                id: Some("42".to_owned()),
+                name: "alice".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn resolves_anonymous_hook_user_without_private_config_fallbacks() {
+        assert_eq!(
+            hook_user(&ExecutionRequest::default()),
+            HookUser {
+                id: None,
+                name: "anonymous".to_owned(),
+            }
+        );
     }
 }

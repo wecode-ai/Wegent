@@ -171,6 +171,7 @@ export function WorkbenchProvider({
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
+        user: cloudConnection.user ?? user,
       }),
     [
       cloudConnection.apiBaseUrl,
@@ -179,7 +180,9 @@ export function WorkbenchProvider({
       cloudConnection.socketBaseUrl,
       cloudConnection.socketPath,
       cloudConnection.token,
+      cloudConnection.user,
       services,
+      user,
     ]
   )
   const executorClient = useMemo(() => {
