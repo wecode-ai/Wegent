@@ -44,6 +44,12 @@ Run the desktop streaming-memory regression on macOS:
 pnpm --filter wework e2e:desktop:memory
 ```
 
+Run the whole-process memory regression with 10 concurrently executing tasks:
+
+```bash
+pnpm --filter wework e2e:desktop:concurrent-memory
+```
+
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
 
 ```bash
@@ -101,6 +107,8 @@ The cloud-project scenario starts a real Backend, Redis, and a real Executor reg
 The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, insertion of the plugin reference into the chat composer, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for all four critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
 
 The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. Every 500 milliseconds it samples the aggregate physical footprint of all associated WebKit Web Content processes, writing the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 512 MiB, settled growth after completion to 256 MiB, and continued growth during the settled window to 32 MiB. The first two limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` and `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`.
+
+The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, WebKit Web Content/GPU/Networking processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. The gate requires the whole process group to stay below an 800 MiB peak. The scenario also switches between the first and last tasks to confirm that inactive panes leave layout and compositing while task content and running state remain intact.
 
 ## Responses API Mock
 
