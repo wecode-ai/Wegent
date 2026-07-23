@@ -117,7 +117,7 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
 
-修改该链路后运行 `pnpm --dir wework e2e:desktop:side-chat-attachment`。该场景会建立真实主线程，断言右栏约为 `420px`，在右栏上传并发送附件，并确认主 composer 始终没有继承右栏附件；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
+修改该链路后运行 `pnpm --dir wework e2e:desktop`。主桌面场景会断言右栏约为 `420px`，在右栏上传并发送附件，并确认主 composer 始终没有继承右栏附件；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
 
 ## 顶层页面切换
 

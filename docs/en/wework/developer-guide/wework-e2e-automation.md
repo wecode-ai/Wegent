@@ -38,16 +38,10 @@ Run only the plugin marketplace, install, chat-use, and uninstall flow:
 pnpm --filter wework e2e:desktop:plugins
 ```
 
-Run the desktop streaming-memory regression on macOS:
+Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash
 pnpm --filter wework e2e:desktop:memory
-```
-
-Run the whole-process memory regression with 10 concurrently executing tasks:
-
-```bash
-pnpm --filter wework e2e:desktop:concurrent-memory
 ```
 
 The command starts a test-only Vite server through `wework/playwright.config.ts`:

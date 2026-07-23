@@ -116,16 +116,11 @@ const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="cha
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
-const LIFECYCLE_ONLY = process.argv.includes('--lifecycle-only')
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
-const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
-const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
-const SIDE_CHAT_ATTACHMENT_ONLY = process.argv.includes('--side-chat-attachment-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
-const CONCURRENT_MEMORY_ONLY = process.argv.includes('--concurrent-memory-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -626,6 +621,25 @@ async function waitForControlValue(control, selector, expected, message) {
   throw new Error(message)
 }
 
+async function waitForControlSelectionOffset(control, selector, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    if (Number(await control.command('getSelectionOffset', selector)) === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForPersistedComposerInput(control, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if (snapshot.workbench?.composer?.currentInputLength === expected.length) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
 async function captureVerificationScreenshot(control, name, selector = 'body') {
   if (
     process.env.WEWORK_E2E_SCREENSHOTS === 'final' &&
@@ -904,7 +918,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   executorLogPath,
   setPhase,
 }) {
-  const lifecycleScreenshotName = name => (LIFECYCLE_ONLY ? name : `window-lifecycle-${name}`)
+  const lifecycleScreenshotName = name => `window-lifecycle-${name}`
   setPhase('background-streaming-task')
   control.setScenario('window_lifecycle')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -1174,6 +1188,11 @@ async function attachAndSendOnlyFile(control, composerSelector) {
 
 async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control }) {
   control.setScenario('attachment_only')
+  const rowsBeforeAttachmentOnly = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
 
   await attachAndSendOnlyFile(control, composerSelector)
   await captureVerificationScreenshot(control, '01-attachment-only-first-submitted.png')
@@ -1185,14 +1204,16 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
   const firstSnapshot = await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-')).length >= 1,
+      snapshot.testIds.some(
+        testId =>
+          testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
+      ),
     'The first attachment-only task did not appear in the sidebar'
   )
-  const firstRows = firstSnapshot.testIds.filter(testId =>
-    testId.startsWith('runtime-local-task-row-')
+  const firstTaskRow = firstSnapshot.testIds.find(
+    testId => testId.startsWith('runtime-local-task-row-') && !rowsBeforeAttachmentOnly.has(testId)
   )
-  const firstTaskRowTestId = firstRows.at(-1)
-  assert.ok(firstTaskRowTestId, 'The first attachment-only task did not expose a task row')
+  assert.ok(firstTaskRow, 'The first attachment-only task row was not found')
   await captureVerificationScreenshot(control, '02-attachment-only-first-completed.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -1207,17 +1228,24 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
 
   const twoTaskSnapshot = await waitForSnapshot(
     control,
-    snapshot => {
-      const rows = snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
-      return firstRows.every(testId => rows.includes(testId)) && rows.length >= firstRows.length + 1
-    },
+    snapshot =>
+      snapshot.testIds.includes(firstTaskRow) &&
+      snapshot.testIds.some(
+        testId =>
+          testId.startsWith('runtime-local-task-row-') &&
+          testId !== firstTaskRow &&
+          !rowsBeforeAttachmentOnly.has(testId)
+      ),
     'A same-title attachment-only task disappeared after the authoritative sidebar refresh'
   )
-  const expectedRows = twoTaskSnapshot.testIds.filter(testId =>
-    testId.startsWith('runtime-local-task-row-')
+  const secondTaskRow = twoTaskSnapshot.testIds.find(
+    testId =>
+      testId.startsWith('runtime-local-task-row-') &&
+      testId !== firstTaskRow &&
+      !rowsBeforeAttachmentOnly.has(testId)
   )
-  const secondTaskRowTestId = expectedRows.find(testId => !firstRows.includes(testId))
-  assert.ok(secondTaskRowTestId, 'The second attachment-only task did not expose a task row')
+  assert.ok(secondTaskRow, 'The second attachment-only task row was not found')
+  const expectedRows = [firstTaskRow, secondTaskRow]
   await captureVerificationScreenshot(control, '04-attachment-only-two-tasks-after-refresh.png')
 
   if (process.platform === 'darwin') {
@@ -1239,7 +1267,7 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   }
-  await control.command('clickWhenEnabled', `[data-testid="${secondTaskRowTestId}"]`, {
+  await control.command('clickWhenEnabled', `[data-testid="${secondTaskRow}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -1255,7 +1283,7 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
   await captureVerificationScreenshot(control, '05-attachment-only-current-image-after-reopen.png')
 
-  await control.command('clickWhenEnabled', `[data-testid="${firstTaskRowTestId}"]`, {
+  await control.command('clickWhenEnabled', `[data-testid="${firstTaskRow}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -1282,33 +1310,12 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
   }
 }
 
-async function verifySideChatAttachmentIsolation({ control }) {
+async function verifySideChatAttachmentIsolation({ control, taskRowTestId }) {
   const sideChatSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-chat-panel"]`
   const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
   const mainComposerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
   const sideComposerSelector = `${sideChatSelector} [data-testid="chat-message-input"]`
 
-  control.setScenario('initial')
-  await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, TASK_PROMPT)
-  await control.awaitScenarioRequestCount('initial', 1)
-  control.releaseInitialToolExecution()
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-    {
-      text: COMPLETION_TEXT,
-      timeoutMs: UI_TIMEOUT_MS,
-    }
-  )
-  const taskSnapshot = await waitForSnapshot(
-    control,
-    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
-    'The completed main conversation did not appear in the task sidebar'
-  )
-  const taskRowTestId = taskSnapshot.testIds.find(testId =>
-    testId.startsWith('runtime-local-task-row-')
-  )
-  assert.ok(taskRowTestId, 'The completed main conversation did not expose a task row')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command(
     'waitFor',
@@ -1392,6 +1399,7 @@ async function verifySideChatAttachmentIsolation({ control }) {
     'Sending the side chat leaked an attachment into the main composer'
   )
   await captureVerificationScreenshot(control, '03-side-chat-sent-main-clean.png')
+  await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
 
   const requests = control.scenarioRequests.get('side_chat_attachment') ?? []
   assert.equal(requests.length, 1, 'The side chat did not send exactly one model request')
@@ -4019,58 +4027,15 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
 
-    if (ATTACHMENT_ONLY_SIDEBAR) {
-      phase = 'attachment-only-sidebar'
-      await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
-      console.log(`Wework attachment-only sidebar E2E passed. Evidence: ${resultDir}`)
-      return
-    }
-
-    if (CONCURRENT_MEMORY_ONLY) {
-      phase = 'concurrent-memory'
-      await selectE2EModel(control)
-      await verifyConcurrentTaskMemory({ composerSelector, control })
-      console.log(`Wework concurrent memory E2E passed. Evidence: ${resultDir}`)
-      return
-    }
-
     if (MEMORY_ONLY) {
       phase = 'memory-growth'
       await selectE2EModel(control)
       await verifyMemoryGrowth({ composerSelector, control })
+      phase = 'concurrent-memory'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+      await verifyConcurrentTaskMemory({ composerSelector, control })
       console.log(`Wework desktop memory E2E passed. Evidence: ${resultDir}`)
-      return
-    }
-
-    if (SIDE_CHAT_ATTACHMENT_ONLY) {
-      phase = 'side-chat-attachment-isolation'
-      await verifySideChatAttachmentIsolation({ control })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework side-chat attachment E2E passed. Evidence: ${resultDir}`)
-      return
-    }
-
-    if (LIFECYCLE_ONLY) {
-      await verifyBackgroundTaskWindowLifecycle({
-        app,
-        appIdentifier,
-        composerSelector,
-        control,
-        executorLogPath,
-        setPhase: value => {
-          phase = value
-        },
-      })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework desktop lifecycle E2E passed. Diagnostics: ${resultDir}`)
       return
     }
 
@@ -4078,17 +4043,6 @@ async function main() {
     const initialModelLabel = await control.command('waitFor', activeModelSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    if (RECONNECT_ONLY) {
-      phase = 'reconnect'
-      await verifyReconnectRecovery({ composerSelector, control })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework desktop reconnect E2E passed. Evidence: ${resultDir}`)
-      return
-    }
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
     await withTimeout(
@@ -4309,22 +4263,39 @@ async function main() {
     assert.ok(taskRowTestId, 'The completed task row was not found')
 
     phase = 'blank-task-draft-restoration'
-    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command(
+      'clickWhenEnabled',
+      `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    )
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('fill', composerSelector, { value: UNSENT_BLANK_TASK_DRAFT })
+    await waitForPersistedComposerInput(
+      control,
+      UNSENT_BLANK_TASK_DRAFT,
+      'The blank task composer did not persist its draft before switching tasks'
+    )
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
-    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command(
+      'clickWhenEnabled',
+      `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    )
     await waitForControlValue(
       control,
       composerSelector,
       UNSENT_BLANK_TASK_DRAFT,
       'The blank task lost its unsent composer draft after switching tasks'
+    )
+    await waitForControlSelectionOffset(
+      control,
+      composerSelector,
+      UNSENT_BLANK_TASK_DRAFT.length,
+      'The restored blank task draft did not place the caret at the end'
     )
     await control.command('fill', composerSelector, { value: '' })
 
@@ -4418,6 +4389,15 @@ async function main() {
       REQUEST_USER_INPUT_PROMPT,
       'request_user_input'
     )
+    const requestInputDebugSnapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body')
+    )
+    const requestInputTaskId = requestInputDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+    assert.ok(requestInputTaskId, 'The request-user-input task did not expose its runtime task ID')
+    const requestInputTaskRowTestId = `runtime-local-task-row-${requestInputTaskId}`
+    await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4431,7 +4411,7 @@ async function main() {
       'Timed out waiting for the request-user-input SSE response'
     )
     await control.command('press', 'body', { key: 'Escape' })
-    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)
     await control.command('waitFor', '[data-testid="request-user-input-card"]', {
       text: REQUEST_USER_INPUT_QUESTION,
       visible: true,
@@ -4560,8 +4540,18 @@ async function main() {
     )
     assert.ok(secondTaskRowTestId, 'The second task row was not found')
     await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })
+    await waitForPersistedComposerInput(
+      control,
+      UNSENT_SECOND_TASK_DRAFT,
+      'The second task composer did not persist its draft before switching tasks'
+    )
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await control.command('fill', composerSelector, { value: UNSENT_FIRST_TASK_DRAFT })
+    await waitForPersistedComposerInput(
+      control,
+      UNSENT_FIRST_TASK_DRAFT,
+      'The first task composer did not persist its draft before switching tasks'
+    )
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     await waitForControlValue(
       control,
@@ -4701,6 +4691,14 @@ async function main() {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: UI_TIMEOUT_MS,
     })
+
+    phase = 'side-chat-attachment-isolation'
+    await verifySideChatAttachmentIsolation({ control, taskRowTestId })
+
+    phase = 'attachment-only-sidebar'
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+    await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
 
     await writeFile(
       join(resultDir, 'model-requests.json'),
