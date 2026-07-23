@@ -405,10 +405,30 @@ async function captureTotalMemorySample(control, phase) {
   }
 }
 
+async function waitForNewTaskRow(control, knownTaskRows, expectedText) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const candidates = snapshot.testIds.filter(
+      testId => testId.startsWith('runtime-local-task-row-') && !knownTaskRows.has(testId)
+    )
+    for (const testId of candidates) {
+      const rowText = await control.command('getText', `[data-testid="${testId}"]`)
+      if (rowText.includes(expectedText)) return testId
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
+}
+
 async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Concurrent memory E2E currently requires macOS')
   control.setScenario('concurrent_memory')
   const taskRows = []
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const knownTaskRows = new Set(
+    initialSnapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+  )
 
   for (let index = 1; index <= CONCURRENT_MEMORY_TASK_COUNT; index += 1) {
     if (index > 1) {
@@ -419,17 +439,8 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     await control.command('fill', composerSelector, { value: prompt })
     await control.command('press', composerSelector, { key: 'Enter' })
     await control.awaitScenarioRequestCount('concurrent_memory', index)
-    const snapshot = await waitForSnapshot(
-      control,
-      currentSnapshot =>
-        currentSnapshot.testIds.some(
-          testId => testId.startsWith('runtime-local-task-row-') && !taskRows.includes(testId)
-        ),
-      `Concurrent memory task ${index} did not appear in the sidebar`
-    )
-    const rows = snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
-    const nextRow = rows.find(row => !taskRows.includes(row))
-    assert.ok(nextRow, `Concurrent memory task ${index} did not create a new sidebar row`)
+    const nextRow = await waitForNewTaskRow(control, knownTaskRows, prompt)
+    knownTaskRows.add(nextRow)
     taskRows.push(nextRow)
   }
 
