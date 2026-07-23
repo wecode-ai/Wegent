@@ -146,6 +146,13 @@ export function selectedModelExecutionFields(
     if (catalogModelId) {
       modelOptions[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION] = catalogModelId
     }
+     
+    console.log('[wework] selectedModelExecutionFields', {
+      modelId: executionModel.modelName,
+      modelType: executionModel.modelType,
+      catalogModelId,
+      modelOptions,
+    })
     const contextWindow =
       selectedModel.config?.model_context_window ??
       selectedModel.config?.context_window ??

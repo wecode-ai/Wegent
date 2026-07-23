@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     env, fs,
-    io::ErrorKind,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     sync::OnceLock,
     time::{Duration, Instant},
@@ -27,6 +27,27 @@ use toml_edit::DocumentMut;
 
 use crate::logging::log_executor_event;
 
+const DEBUG_LOG_PATH: &str = "wework-apply-patch-debug";
+
+fn debug_log(label: &str, data: Value) {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let path = home.join("Desktop").join(DEBUG_LOG_PATH);
+    let line = json!({
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "layer": "executor-catalog",
+        "label": label,
+        "data": data,
+    })
+    .to_string();
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| writeln!(file, "{line}"));
+}
+
 pub(crate) const ROUTE: &str = "/v1/codex-router/models";
 pub(crate) const PROVIDER_ID: &str = "wework-router";
 pub(crate) const KIMI_K3_MODEL: &str = "wework-kimi-k3";
@@ -34,6 +55,9 @@ pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
 const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
 const GPT_56_TERRA_MODEL: &str = "gpt-5.6-terra";
 const GPT_56_LUNA_MODEL: &str = "gpt-5.6-luna";
+const WEWORK_GPT_56_SOL_MODEL: &str = "wework-gpt-5.6-sol";
+const WEWORK_GPT_56_TERRA_MODEL: &str = "wework-gpt-5.6-terra";
+const WEWORK_GPT_56_LUNA_MODEL: &str = "wework-gpt-5.6-luna";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_BASE_INSTRUCTIONS: &str =
     include_str!("../../../shared/assets/gptDefaultInstructions.md");
@@ -79,6 +103,26 @@ pub(crate) async fn handle(Query(query): Query<ModelsQuery>) -> Response {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or_default();
+    let model_summaries: Vec<Value> = catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .map(|m| {
+                    json!({
+                        "id": m.get("id").and_then(Value::as_str),
+                        "slug": m.get("slug").and_then(Value::as_str),
+                        "apply_patch_tool_type": m.get("apply_patch_tool_type").and_then(Value::as_str),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    debug_log(
+        "catalog_served",
+        json!({"model_count": model_count, "models": model_summaries}),
+    );
     log_executor_event(
         "codex router model catalog served",
         &[("model_count", model_count.to_string())],
@@ -99,6 +143,9 @@ pub(crate) fn models() -> Vec<Value> {
         gpt_56_sol_model_entry(),
         gpt_56_terra_model_entry(),
         gpt_56_luna_model_entry(),
+        wework_gpt_56_sol_model_entry(),
+        wework_gpt_56_terra_model_entry(),
+        wework_gpt_56_luna_model_entry(),
     ];
     models.extend(read_custom_models());
     models
@@ -294,6 +341,33 @@ fn gpt_56_luna_model_entry() -> Value {
     let mut entry = model_entry(GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"));
     entry["description"] =
         Value::String("GPT 5.6 Luna profile for agentic coding".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn wework_gpt_56_sol_model_entry() -> Value {
+    let mut entry = model_entry(WEWORK_GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"));
+    entry["description"] =
+        Value::String("Wework GPT 5.6 Sol compatibility profile".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn wework_gpt_56_terra_model_entry() -> Value {
+    let mut entry = model_entry(WEWORK_GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"));
+    entry["description"] =
+        Value::String("Wework GPT 5.6 Terra compatibility profile".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn wework_gpt_56_luna_model_entry() -> Value {
+    let mut entry = model_entry(WEWORK_GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"));
+    entry["description"] =
+        Value::String("Wework GPT 5.6 Luna compatibility profile".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
     entry
@@ -516,6 +590,26 @@ mod tests {
         assert_eq!(models[0]["supports_parallel_tool_calls"], false);
         assert_eq!(models[1]["slug"], KIMI_K27_MODEL);
         assert_eq!(models[1]["context_window"], 262_144);
+    }
+
+    #[test]
+    fn catalog_includes_wework_gpt_56_compatibility_profiles() {
+        let catalog = catalog();
+        let models = catalog["models"].as_array().expect("models array");
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|model| model["slug"].as_str())
+            .collect();
+        assert!(slugs.contains(&WEWORK_GPT_56_SOL_MODEL));
+        assert!(slugs.contains(&WEWORK_GPT_56_TERRA_MODEL));
+        assert!(slugs.contains(&WEWORK_GPT_56_LUNA_MODEL));
+
+        let sol = models
+            .iter()
+            .find(|model| model["slug"] == WEWORK_GPT_56_SOL_MODEL)
+            .expect("wework gpt-5.6-sol entry");
+        assert_eq!(sol["apply_patch_tool_type"], "freeform");
+        assert_eq!(sol["supports_parallel_tool_calls"], false);
     }
 
     #[test]

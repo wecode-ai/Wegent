@@ -49,6 +49,31 @@ if TYPE_CHECKING:
     from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
+
+_DEBUG_LOG_PATH = os.path.expanduser("~/Desktop/wework-apply-patch-debug")
+
+
+def _debug_log(label: str, data: Any) -> None:
+    """Append a structured debug line to the desktop log file."""
+    try:
+        from datetime import datetime, timezone
+
+        line = json.dumps(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "layer": "backend",
+                "label": label,
+                "data": data,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 CODEX_RUNTIME = "codex"
 RUNTIME_MODEL_TYPE = "runtime"
@@ -158,15 +183,27 @@ def _catalog_model_id_from_model_options(
 ) -> Optional[str]:
     """Extract catalog model id override from UI model options."""
     if not model_options:
+        _debug_log("catalog_model_id_extract", {"model_options": None, "result": None})
         return None
     catalog_id = (
         model_options.get("weworkCloudModelCatalogModelId")
         or model_options.get("codex_catalog_model_id")
         or model_options.get("codexCatalogModelId")
     )
-    if isinstance(catalog_id, str) and catalog_id.strip():
-        return catalog_id.strip()
-    return None
+    result = (
+        catalog_id.strip()
+        if isinstance(catalog_id, str) and catalog_id.strip()
+        else None
+    )
+    _debug_log(
+        "catalog_model_id_extract",
+        {
+            "model_options_keys": list(model_options.keys()),
+            "raw": catalog_id,
+            "result": result,
+        },
+    )
+    return result
 
 
 def _should_ignore_unavailable_task_model_override(payload: Any) -> bool:
@@ -234,6 +271,14 @@ def _build_codex_runtime_model_config(
             config["provider_name"] = str(provider_name)
         if catalog_model_id:
             config["codex_catalog_model_id"] = catalog_model_id
+        _debug_log(
+            "codex_runtime_model_config",
+            {
+                "model_name": model_name,
+                "catalog_model_id": catalog_model_id,
+                "config": config,
+            },
+        )
         return config
 
     resolved_config: Optional[Dict[str, Any]] = None
@@ -286,6 +331,14 @@ def _build_codex_runtime_model_config(
         resolved_config["provider_name"] = str(provider_name)
     if catalog_model_id:
         resolved_config["codex_catalog_model_id"] = catalog_model_id
+    _debug_log(
+        "codex_runtime_model_config",
+        {
+            "model_name": model_name,
+            "catalog_model_id": catalog_model_id,
+            "resolved_config": resolved_config,
+        },
+    )
     return resolved_config
 
 
@@ -588,6 +641,14 @@ async def build_execution_request(
         model_options = _model_options_from_payload(
             payload
         ) or _model_options_from_task(task)
+        _debug_log(
+            "build_execution_request_model_options",
+            {
+                "task_id": task.id,
+                "from_payload": _model_options_from_payload(payload) is not None,
+                "model_options": model_options,
+            },
+        )
         catalog_model_id = _catalog_model_id_from_model_options(model_options)
         if catalog_model_id:
             logger.info(
@@ -695,6 +756,15 @@ async def build_execution_request(
         effective_catalog_model_id = catalog_model_id or request.model_config.get(
             "codex_catalog_model_id"
         )
+        _debug_log(
+            "build_execution_request_before_catalog_inject",
+            {
+                "task_id": task.id,
+                "is_codex_model_config": _is_codex_model_config(request.model_config),
+                "effective_catalog_model_id": effective_catalog_model_id,
+                "model_config": request.model_config,
+            },
+        )
         if effective_catalog_model_id and _is_codex_model_config(request.model_config):
             request.model_config["codex_catalog_model_id"] = effective_catalog_model_id
             request.model_config["codex_responses_compat_proxy"] = True
@@ -702,6 +772,13 @@ async def build_execution_request(
                 "[build_execution_request] Applied catalog model id override: %s",
                 effective_catalog_model_id,
             )
+        _debug_log(
+            "build_execution_request_final_model_config",
+            {
+                "task_id": task.id,
+                "model_config": request.model_config,
+            },
+        )
 
         # Store reasoning_config in ExecutionRequest for downstream access
         request.reasoning_config = (

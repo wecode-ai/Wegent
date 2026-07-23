@@ -40,17 +40,17 @@ const CATALOG_MODEL_OPTIONS: ModelControlOption[] = [
     order: 0,
   },
   {
-    value: 'gpt-5.6-sol',
+    value: 'wework-gpt-5.6-sol',
     label: 'GPT 5.6 Sol',
     order: 10,
   },
   {
-    value: 'gpt-5.6-terra',
+    value: 'wework-gpt-5.6-terra',
     label: 'GPT 5.6 Terra',
     order: 20,
   },
   {
-    value: 'gpt-5.6-luna',
+    value: 'wework-gpt-5.6-luna',
     label: 'GPT 5.6 Luna',
     order: 30,
   },

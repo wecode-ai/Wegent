@@ -188,18 +188,18 @@ describe('runtimeModelSelection', () => {
 
     expect(
       selectedModelExecutionFields(cloudModel, {
-        catalogModelId: 'gpt-5.6-sol',
+        catalogModelId: 'wework-gpt-5.6-sol',
       })
     ).toEqual({
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
-        catalogModelId: 'gpt-5.6-sol',
+        catalogModelId: 'wework-gpt-5.6-sol',
         collaborationMode: 'default',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelContextWindow: '128000',
-        weworkCloudModelCatalogModelId: 'gpt-5.6-sol',
+        weworkCloudModelCatalogModelId: 'wework-gpt-5.6-sol',
       },
     })
   })
