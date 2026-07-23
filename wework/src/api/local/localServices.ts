@@ -301,6 +301,7 @@ interface LocalAppServicesDeps {
   request?: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   cloudModelGateway?: CloudModelGateway
+  user?: User
 }
 
 interface CloudModelGateway {
@@ -313,6 +314,7 @@ interface RuntimeWorkIpcOptions {
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
+  user?: User
   transportLabel?: 'Local' | 'Cloud'
 }
 
@@ -1122,6 +1124,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   newSession: boolean
   clientMessageId?: string
   ephemeral?: boolean
+  user: User
 }
 
 function buildLocalRuntimeExecutionRequest(
@@ -1161,13 +1164,13 @@ function buildLocalRuntimeExecutionRequest(
     task_title: input.title,
     subtask_title: `${input.title} - Assistant`,
     user: {
-      id: LOCAL_USER.id,
-      name: LOCAL_USER.user_name,
-      user_name: LOCAL_USER.user_name,
-      email: LOCAL_USER.email,
+      id: input.user.id,
+      name: input.user.user_name,
+      user_name: input.user.user_name,
+      email: input.user.email,
     },
-    user_id: LOCAL_USER.id,
-    user_name: LOCAL_USER.user_name,
+    user_id: input.user.id,
+    user_name: input.user.user_name,
     bot: [],
     model_config: modelConfig,
     prompt: input.message,
@@ -1290,7 +1293,8 @@ async function createLocalRuntimeTaskPayload(
   data: RuntimeTaskCreateRequest,
   localDeviceId: string,
   requestWithLocalDevice: RequestWithLocalDevice,
-  cloudModelGateway?: CloudModelGateway
+  cloudModelGateway: CloudModelGateway | undefined,
+  user: User
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
   const execution = executionWithWorkspace(data, runtimeWorkspace)
@@ -1329,6 +1333,7 @@ async function createLocalRuntimeTaskPayload(
       newSession: true,
       clientMessageId: normalizedData.clientMessageId,
       ephemeral: normalizedData.ephemeral,
+      user,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -1336,7 +1341,8 @@ async function createLocalRuntimeTaskPayload(
 function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
-  cloudModelGateway?: CloudModelGateway
+  cloudModelGateway: CloudModelGateway | undefined,
+  user: User
 ): Record<string, unknown> {
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
@@ -1389,6 +1395,7 @@ function createLocalRuntimeSendPayload(
         newSession: false,
         clientMessageId: normalizedData.clientMessageId,
         ephemeral: data.ephemeral,
+        user,
       }),
     } as unknown as Record<string, unknown>
   }
@@ -1419,6 +1426,7 @@ function createLocalRuntimeSendPayload(
       newSession: false,
       clientMessageId: normalizedData.clientMessageId,
       ephemeral: data.ephemeral,
+      user,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -1671,6 +1679,7 @@ export function createRuntimeWorkApiFromIpc(
   options: RuntimeWorkIpcOptions = {}
 ) {
   const transportLabel = options.transportLabel ?? 'Local'
+  const user = options.user ?? LOCAL_USER
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
@@ -1773,7 +1782,12 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1791,7 +1805,12 @@ export function createRuntimeWorkApiFromIpc(
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1844,7 +1863,12 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeInterruptAndSendRequest
     ): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
           taskId: payload.taskId,
@@ -2004,16 +2028,22 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         requestWithLocalDevice,
-        options.cloudModelGateway
+        options.cloudModelGateway,
+        user
       )
       debugLocalRuntimeCreatePayload(data, payload)
+      const executionRequest = recordValue(payload.executionRequest)
+      console.info('[Wework] Local runtime execution identity', {
+        taskId: stringValue(executionRequest.task_id),
+        userId: executionRequest.user_id ?? null,
+        userName: stringValue(executionRequest.user_name),
+      })
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
         payload,
         localDeviceId
       )
       const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
-      const executionRequest = recordValue(payload.executionRequest)
       const responseRecord = recordValue(response)
       const taskId =
         stringValue(responseRecord.taskId) ??
@@ -2266,6 +2296,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
+      user: deps.user,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
 

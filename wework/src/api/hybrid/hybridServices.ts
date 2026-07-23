@@ -49,6 +49,7 @@ import type {
   RuntimeWorkSearchItem,
   UnifiedModel,
   UnifiedModelListResponse,
+  User,
 } from '@/types/api'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -59,6 +60,7 @@ export interface HybridWorkbenchServicesOptions {
   socketBaseUrl: string
   socketPath: string
   token: string
+  user?: User
 }
 
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
@@ -313,7 +315,7 @@ export function createHybridWorkbenchServices(
     baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
     apiKey: options.token,
   }
-  const localServices = createLocalAppServices({ cloudModelGateway })
+  const localServices = createLocalAppServices({ cloudModelGateway, user: options.user })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
     socketPath: options.socketPath,
