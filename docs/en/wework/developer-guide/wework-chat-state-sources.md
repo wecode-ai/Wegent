@@ -76,6 +76,10 @@ When the composer is in plan mode or goal-draft mode, its bottom mode pill must 
 
 The mode pill's cancel button appears only on hover and is absolutely positioned over the left icon while that icon fades out. Do not expand the cancel button or add spacing that changes the pill width, because that causes the label to shift horizontally.
 
+## Composer Draft Buffering
+
+`BufferedChatInput` preserves a pane-level draft during editing and submission, while the external `value` remains the source of truth for the confirmed draft. After a non-empty draft is submitted, the local empty state must be associated with the expected empty external value instead of the text that was just submitted. Otherwise, returning the same text from a queue or guidance row for editing is mistaken for stale draft state and the composer remains empty. Changes to this path must cover the regression sequence “submit text → external value clears → edit the queued row to restore the same text.”
+
 ## Long Output Memory Boundary
 
 The Wework chat UI must not keep complete long-running output in React state. `WorkbenchMessage.content`, thinking/text/plan block `content`, and tool block `toolOutput` must enter `messages` through the shared preview-window path:
