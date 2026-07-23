@@ -473,11 +473,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoPanelRef = useRef<HTMLElement | null>(null)
   const [environmentInfoPanelElement, setEnvironmentInfoPanelElement] =
     useState<HTMLElement | null>(null)
+  const [environmentInfoChatTopRightContainer, setEnvironmentInfoChatTopRightContainer] =
+    useState<HTMLElement | null>(null)
+  const [panelTogglesWidth, setPanelTogglesWidth] = useState(72)
+  const panelTogglesRef = useRef<HTMLDivElement | null>(null)
   const setEnvironmentInfoPanelRef = useCallback((element: HTMLElement | null) => {
     environmentInfoPanelRef.current = element
   }, [])
   useLayoutEffect(() => {
     setEnvironmentInfoPanelElement(environmentInfoPanelRef.current)
+  }, [])
+  useLayoutEffect(() => {
+    const el = panelTogglesRef.current
+    if (!el) return
+
+    const updateWidth = () => {
+      setPanelTogglesWidth(el.getBoundingClientRect().width)
+    }
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
@@ -1304,7 +1322,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       | 'primary-target'
       | 'panel-toggles'
       | 'bottom-panel-toggle'
-      | 'right-panel-toggle'
+      | 'right-panel-toggle',
+    environmentInfoPopoverContainer: HTMLElement | null = environmentInfoPanelElement,
+    forceEnvironmentInfoDocked?: boolean
   ) => (
     <WorkspacePanelActions
       mode={mode}
@@ -1313,13 +1333,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workspaceTarget={workspaceTarget}
       workspaceSessionApi={workspaceSessionApi}
       environmentInfo={environmentInfo}
-      environmentInfoPopoverContainer={environmentInfoPanelElement}
+      environmentInfoPopoverContainer={environmentInfoPopoverContainer}
       environmentInfoVisible={Boolean(currentRuntimeTask)}
-      environmentInfoDocked={environmentInfoDocked}
+      environmentInfoDocked={forceEnvironmentInfoDocked ?? environmentInfoDocked}
       environmentInfoOpen={environmentInfoOpen}
       onEnvironmentInfoOpenChange={setEnvironmentInfoOpen}
       environmentInfoFloatingFooter={
-        !environmentInfoDocked && (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
+        !(forceEnvironmentInfoDocked ?? environmentInfoDocked) &&
+        (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
           <div data-testid="workbench-subagent-status-row">
             <SubagentStatusIndicator statuses={paneSession.subagentStatuses} />
           </div>
@@ -1342,6 +1363,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
+  const windowsEnvironmentInfoAction = renderWorkspacePanelActions(
+    'environment',
+    environmentInfoChatTopRightContainer,
+    true
+  )
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
   const paneTaskTitle =
     runtimeTaskTitle && !isTauri ? (
@@ -1410,6 +1436,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {mainHeaderEnvironmentAction}
     </>
   )
+  const windowsTitlebarMainActions = (
+    <>
+      {forkTaskButton}
+      {continueInImButton}
+      {mainHeaderProjectAction}
+      {windowsEnvironmentInfoAction}
+    </>
+  )
   const platform = getPlatform()
   const topRightActions = isTauri ? (
     platform === 'win' ? null : (
@@ -1429,7 +1463,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           data-testid="workbench-main-header-left-controls"
           className={cn(
-            'relative z-0 flex h-full shrink-0 items-center gap-7 pr-1',
+            'relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
             platform === 'mac' && MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS
           )}
         >
@@ -1531,13 +1565,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ) : undefined
   const windowsTitlebarMiddleContent =
     isTauri && platform === 'win' ? (
-      <div className="relative flex h-full w-full min-w-0 items-center overflow-hidden">
+      <div className="relative flex h-full w-full min-w-0 items-center">
         <div data-tauri-drag-region className="absolute inset-0 z-0" />
         {runtimeTaskTitle ? (
           <div
             data-testid="workbench-pane-task-title"
             className={cn(
-              'pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center truncate pl-4 text-sm font-medium leading-none text-text-primary',
+              'pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center truncate text-sm font-medium leading-none text-text-primary',
+              sidebarCollapsed ? 'pl-[8.5rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
           >
@@ -1548,25 +1583,50 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         )}
         <div
           data-testid="titlebar-main-actions"
-          className="relative z-10 flex h-full shrink-0 items-center justify-end gap-1 pr-1"
+          className="relative z-10 flex h-full shrink-0 items-center justify-end gap-1"
         >
-          {mainHeaderActions}
+          {windowsTitlebarMainActions}
+        </div>
+        <div
+          data-testid="workbench-chat-top-right-spacer"
+          className={cn(
+            'pointer-events-none shrink-0',
+            rightSplitResizing
+              ? 'transition-none'
+              : 'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
+          )}
+          style={{
+            width: rightPanelOpen
+              ? `${Math.max(
+                  0,
+                  workbenchContentWidth - rightSplitChatWidth - 138 - panelTogglesWidth
+                )}px`
+              : 0,
+          }}
+        />
+        <div
+          ref={setEnvironmentInfoChatTopRightContainer}
+          className={cn(
+            'pointer-events-none absolute top-[100%] z-popover h-0 w-[308px]',
+            rightSplitResizing
+              ? 'transition-none'
+              : 'transition-[right] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[right]'
+          )}
+          style={{
+            right: rightPanelOpen
+              ? `${Math.max(0, workbenchContentWidth - rightSplitChatWidth - 138)}px`
+              : `${panelTogglesWidth}px`,
+          }}
+        />
+        <div
+          ref={panelTogglesRef}
+          data-testid="workbench-panel-toggles"
+          className="relative z-10 flex h-full shrink-0 items-center gap-1 pr-1"
+        >
+          {panelChromeActions}
         </div>
       </div>
     ) : undefined
-  const bottomPanelToggle = renderWorkspacePanelActions('bottom-panel-toggle')
-  const rightPanelToggle = renderWorkspacePanelActions('right-panel-toggle')
-  const windowsPinnedPanelToggles =
-    isTauri && platform === 'win' ? (
-      <div
-        data-testid="workbench-pinned-panel-toggles"
-        className="pointer-events-auto absolute top-0 z-popover flex h-[38px] items-center gap-1 pr-0"
-        style={{ right: 0 }}
-      >
-        {bottomPanelToggle}
-        {rightPanelToggle}
-      </div>
-    ) : null
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
       return
@@ -2004,7 +2064,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
         </div>
       </div>
-      {paneActive && windowsPinnedPanelToggles}
       {bottomPanelContextsToRender.map(context => {
         const active = context.key === bottomPanelWorkspaceKey
         return (

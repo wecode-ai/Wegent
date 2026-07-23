@@ -37,10 +37,10 @@ describe('DesktopAppSwitcher', () => {
     window.history.pushState({}, '', '/')
   })
 
-  test('renders 任务 as a compact product menu with a divider', () => {
+  test('renders 任务 as a compact product menu without a divider', () => {
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
 
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveClass('pl-1', 'before:bg-border')
+    expect(screen.getByTestId('desktop-app-switcher')).not.toHaveClass('before:bg-border')
     expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
     expect(screen.getByTestId('chrome-tab-wework')).toHaveTextContent('任务')
     expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-haspopup', 'menu')

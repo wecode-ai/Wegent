@@ -2471,7 +2471,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).toHaveClass('rounded-tl-xl')
   })
 
-  test('pins panel toggles below the window controls on Windows', async () => {
+  test('places panel toggles in the Windows titlebar actions, next to the window controls', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2484,12 +2484,16 @@ describe('DesktopWorkbenchLayout', () => {
 
     renderWorkspacePanelLayout({ mainWidth: 1000 })
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    const panelToggles = screen.getByTestId('workbench-panel-toggles')
+    expect(panelToggles).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
+    )
+    expect(panelToggles).toContainElement(
+      screen.getByTestId('toggle-bottom-workspace-panel-button')
+    )
+    expect(screen.queryByTestId('workbench-pinned-panel-toggles')).not.toBeInTheDocument()
 
-    const toggles = screen.getByTestId('workbench-pinned-panel-toggles')
-    expect(toggles).toBeInTheDocument()
-    expect(toggles).toHaveStyle({ right: '0px' })
-    expect(toggles).not.toHaveClass('transition-[right]')
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {

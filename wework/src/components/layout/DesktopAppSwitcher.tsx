@@ -279,7 +279,7 @@ export function DesktopAppSwitcher({
       data-testid="desktop-app-switcher"
       aria-label={t('workbench.app_navigation', '应用导航')}
       className={cn(
-        'relative flex shrink-0 items-center pl-1 before:absolute before:left-0 before:h-4 before:w-px before:bg-border',
+        'relative flex shrink-0 items-center',
         className
       )}
     >

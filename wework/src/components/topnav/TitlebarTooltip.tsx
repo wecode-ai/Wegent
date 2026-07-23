@@ -30,7 +30,7 @@ export function TitlebarTooltip({
         role="tooltip"
         data-testid={testId}
         className={cn(
-          'pointer-events-none absolute top-[calc(100%+6px)] z-system-popover inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-xl border border-white/10 bg-[#2b2c2f]/95 px-3 text-sm font-medium leading-[18px] text-white opacity-0 shadow-[0_10px_28px_rgba(0,0,0,0.32)] ring-1 ring-black/10 backdrop-blur-md transition-opacity duration-150 group-hover:opacity-100',
+          'pointer-events-none absolute top-[calc(100%+6px)] z-system-popover inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border/50 bg-popover/95 px-3 text-sm font-medium leading-[18px] text-text-primary opacity-0 shadow-[0_10px_28px_rgba(0,0,0,0.32)] ring-1 ring-black/10 backdrop-blur-md transition-opacity duration-150 group-hover:opacity-100',
           tooltipAlignment[align]
         )}
       >
@@ -38,7 +38,7 @@ export function TitlebarTooltip({
         {shortcut ? (
           <KeyboardShortcut
             value={shortcut}
-            className="h-6 bg-white/10 px-2 text-sm text-white/95"
+            className="h-6 bg-text-primary/10 px-2 text-sm text-text-primary/95"
           />
         ) : null}
       </span>

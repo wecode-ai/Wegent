@@ -642,7 +642,7 @@ export function DesktopWorkbenchLayout() {
       data-window-focused={windowFocused}
       data-sidebar-translucent={background.imagePath && background.inSidebar ? undefined : 'false'}
       className={cn(
-        'relative z-chrome flex h-[38px] w-full shrink-0 items-center overflow-hidden',
+        'relative z-chrome flex h-[38px] w-full shrink-0 items-center',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : cn(
@@ -652,7 +652,7 @@ export function DesktopWorkbenchLayout() {
       )}
     >
       <div
-        className="pointer-events-auto absolute left-0 top-0 z-chrome flex h-full items-center gap-7 px-1"
+        className="pointer-events-auto absolute left-0 top-0 z-chrome flex h-full items-center gap-1 px-1"
         data-tauri-drag-region={false}
       >
         <DesktopWindowControls
@@ -679,7 +679,7 @@ export function DesktopWorkbenchLayout() {
         id={WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID}
         data-testid="workbench-windows-titlebar-middle"
         className={cn(
-          'absolute inset-y-0 overflow-hidden',
+          'absolute inset-y-0',
           background.imagePath && background.inSidebar
             ? 'bg-background/25'
             : cn(
