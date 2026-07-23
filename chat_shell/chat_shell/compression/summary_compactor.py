@@ -170,18 +170,10 @@ class SummaryCompactor:
         while True:
             attempt += 1
             trim_started = time.perf_counter()
-            trim_removed = 0
-            while self._is_compact_prompt_over_limit(working_messages):
-                if not self._remove_oldest_history_item(
-                    working_messages,
-                    current_user=current_user,
-                ):
-                    raise SummaryCompactNotApplicable(
-                        "Summary compact cannot reduce the request because the "
-                        "remaining floor still exceeds the compact-task input budget."
-                    )
-                removed += 1
-                trim_removed += 1
+            trim_removed = self._trim_to_budget(
+                working_messages, current_user=current_user
+            )
+            removed += trim_removed
             if trim_removed:
                 logger.info(
                     "[SummaryCompact] trim pass done: attempt=%d "
@@ -263,6 +255,60 @@ class SummaryCompactor:
                 "Summary compact returned an empty summary."
             )
         return summary_text
+
+    def _trim_to_budget(
+        self,
+        messages: list[BaseMessage],
+        *,
+        current_user: HumanMessage | None,
+    ) -> int:
+        """Drop oldest removable messages in one O(n) pass to fit the budget.
+
+        Token counts are computed once per message (not re-summed per removal).
+        System messages and the current user message are never dropped. Uses raw
+        per-message counts (a safe over-estimate of the sanitized prompt).
+        """
+        if self._max_compact_input_tokens is None:
+            return 0
+
+        counts = [
+            self._token_counter.count_messages([_message_to_counter_dict(m)])
+            for m in messages
+        ]
+        framing = self._token_counter.count_messages(
+            [
+                _message_to_counter_dict(
+                    SystemMessage(content=COMPACT_TASK_INSTRUCTION)
+                ),
+                _message_to_counter_dict(
+                    HumanMessage(content=COMPACT_TASK_FINAL_PROMPT)
+                ),
+            ]
+        )
+        total = sum(counts) + framing
+        budget = self._max_compact_input_tokens
+        if total <= budget:
+            return 0
+
+        drop: set[int] = set()
+        for i, message in enumerate(messages):
+            if total <= budget:
+                break
+            if isinstance(message, SystemMessage):
+                continue
+            if current_user is not None and message is current_user:
+                continue
+            drop.add(i)
+            total -= counts[i]
+
+        if total > budget:
+            raise SummaryCompactNotApplicable(
+                "Summary compact cannot reduce the request because the remaining "
+                "floor still exceeds the compact-task input budget."
+            )
+
+        messages[:] = [m for i, m in enumerate(messages) if i not in drop]
+        return len(drop)
 
     def _is_compact_prompt_over_limit(self, messages: list[BaseMessage]) -> bool:
         """Return True when the compact task prompt itself exceeds input budget."""

@@ -221,3 +221,38 @@ async def test_compact_raises_when_llm_returns_empty_summary():
             [HumanMessage(content="please continue")],
             preserve_initial_context=False,
         )
+
+
+def test_trim_to_budget_single_pass_counts_each_message_once():
+    counter = TokenCounter(model_name="gpt-4")
+    call_count = {"n": 0}
+    real = counter.count_messages
+
+    def counting(msgs):
+        call_count["n"] += 1
+        return real(msgs)
+
+    counter.count_messages = counting  # type: ignore[assignment]
+
+    # Budget above the instruction-framing floor but below the full total,
+    # so trimming is required and can succeed.
+    compactor = SummaryCompactor(
+        llm=object(),
+        token_counter=counter,
+        max_compact_input_tokens=300,
+    )
+    system = SystemMessage(content="sys")
+    current = HumanMessage(content="current question")
+    old = [HumanMessage(content="old " * 60) for _ in range(20)]
+    messages = [system, *old, current]
+    original_len = len(messages)
+
+    removed = compactor._trim_to_budget(messages, current_user=current)
+
+    # Budget met, system + current preserved.
+    assert system in messages
+    assert current in messages
+    assert removed > 0
+    # O(n): one count per original message + one framing count (+1 slack),
+    # NOT O(n^2).
+    assert call_count["n"] <= original_len + 2
