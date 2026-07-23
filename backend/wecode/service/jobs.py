@@ -12,6 +12,7 @@ monitor workers with the background jobs system via monkey-patching.
 import asyncio
 import logging
 import threading
+import time
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -284,7 +285,7 @@ async def _orphan_cleanup_due(interval_seconds: int) -> bool:
         last_run = float(raw)
     except (TypeError, ValueError):
         return True
-    return (datetime.now().timestamp() - last_run) >= interval_seconds
+    return (time.time() - last_run) >= interval_seconds
 
 
 async def _mark_orphan_cleanup_ran() -> None:
@@ -295,9 +296,7 @@ async def _mark_orphan_cleanup_ran() -> None:
     if client is None:
         return
     try:
-        await client.set(
-            ORPHAN_POD_CLEANUP_LAST_RUN_KEY, str(datetime.now().timestamp())
-        )
+        await client.set(ORPHAN_POD_CLEANUP_LAST_RUN_KEY, str(time.time()))
     except Exception as exc:
         logger.warning("+++ [job] Failed to record orphan cleanup last-run: %s", exc)
 
@@ -313,8 +312,9 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
     from app.db.session import AsyncSessionLocal
     from app.services.adapters.executor_job import job_service
     from wecode.config.orphan_pod_config import (
+        ORPHAN_POD_CLEANUP_IDLE_HOURS,
         ORPHAN_POD_CLEANUP_INTERVAL_SECONDS,
-        ORPHAN_POD_CLEANUP_STALE_HOURS,
+        ORPHAN_POD_CLEANUP_MAX_IDLE_HOURS,
         ORPHAN_POD_MIN_AGE_HOURS,
     )
 
@@ -339,9 +339,10 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
                     )
                 else:
                     logger.info(
-                        "+++ [job] Starting orphan pod cleanup task (older_than_hours=%d, stale_hours=%d)",
+                        "+++ [job] Starting orphan pod cleanup task (older_than_hours=%d, inactive_hours=%d, max_inactive_hours=%d)",
                         ORPHAN_POD_MIN_AGE_HOURS,
-                        ORPHAN_POD_CLEANUP_STALE_HOURS,
+                        ORPHAN_POD_CLEANUP_IDLE_HOURS,
+                        ORPHAN_POD_CLEANUP_MAX_IDLE_HOURS,
                     )
                     # Stamp the run before executing so that, even if the lock
                     # expires mid-run (e.g. watchdog renewal fails), another
@@ -352,7 +353,8 @@ async def _orphan_pod_cleanup_worker(stop_event: asyncio.Event):
                         await job_service.cleanup_orphan_pods(
                             db,
                             older_than_hours=ORPHAN_POD_MIN_AGE_HOURS,
-                            stale_hours=ORPHAN_POD_CLEANUP_STALE_HOURS,
+                            inactive_hours=ORPHAN_POD_CLEANUP_IDLE_HOURS,
+                            max_inactive_hours=ORPHAN_POD_CLEANUP_MAX_IDLE_HOURS,
                             dry_run=False,
                         )
         except Exception as e:

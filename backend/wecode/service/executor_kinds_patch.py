@@ -52,7 +52,8 @@ except Exception:
 async def get_old_pods_async(self, older_than_hours: int = 48) -> List[Dict[str, Any]]:
     """Fetch old executor pods with task_id and pod_name for orphan cleanup.
 
-    Returns a list of dicts with keys 'task_id' (str or None) and 'pod_name' (str).
+    Returns a list of dicts with keys 'task_id' (str or None), 'pod_name' (str)
+    and 'status' (kubectl-style display status, e.g. 'Running', 'OOMKilled').
     """
     try:
         logger.info(
@@ -140,12 +141,16 @@ async def cleanup_sandbox_by_task_id_async(
     self,
     task_id: int,
     archive_before_delete: bool = True,
+    delete_on_archive_failure: bool = False,
 ) -> Dict[str, Any]:
     """Archive and delete a sandbox runtime by task_id for orphan cleanup.
 
     Routes to executor_manager's sandbox cleanup-by-task endpoint, which
     archives the sandbox workspace (best-effort) before terminating it,
     mirroring the normal stale sandbox cleanup path.
+
+    When delete_on_archive_failure is True the sandbox is deleted even if the
+    archive step fails, so a broken archive cannot pin pods forever.
     """
     if not task_id or task_id <= 0:
         raise HTTPException(
@@ -155,6 +160,7 @@ async def cleanup_sandbox_by_task_id_async(
         payload = {
             "task_id": task_id,
             "archive_before_delete": archive_before_delete,
+            "delete_on_archive_failure": delete_on_archive_failure,
         }
         logger.info(
             "+++ sandbox.cleanup_by_task async request url=%s task_id=%d",

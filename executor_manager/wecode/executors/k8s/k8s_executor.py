@@ -1280,6 +1280,65 @@ class K8sExecutor(Executor):
             logger.error(f"Error listing Kubernetes pods: {e}")
             return {"status": "failed", "error_msg": f"Error: {e}", "task_ids": []}
 
+    @staticmethod
+    def _compute_pod_display_status(pod: Dict[str, Any]) -> str:
+        """Compute the STATUS value shown by ``kubectl get pods`` for a raw pod.
+
+        Mirrors kubectl's printer logic for regular containers, including the
+        multi-container "Completed"->Running/NotReady adjustment, so callers can
+        tell a healthy ``Running`` pod apart from abnormal ones (``OOMKilled``,
+        ``Error``, ``CrashLoopBackOff``, ``Evicted``, ``Terminating``, ...).
+        Init-container states are not modelled (a pod stuck in init still reports
+        a non-Running status, which is enough for abnormal-pod detection).
+
+        Args:
+            pod: Raw pod JSON as returned by the Kubernetes API.
+
+        Returns:
+            The display status string (e.g. "Running", "OOMKilled").
+        """
+        metadata = pod.get("metadata", {}) or {}
+        status = pod.get("status", {}) or {}
+
+        reason = status.get("phase", "") or ""
+        if status.get("reason"):
+            reason = status["reason"]
+
+        # Regular container states override the phase; iterate in reverse like
+        # kubectl so the first (lowest-index) container wins on a tie, while
+        # tracking whether any container is still running.
+        has_running = False
+        for container_status in reversed(status.get("containerStatuses", []) or []):
+            state = container_status.get("state", {}) or {}
+            waiting = state.get("waiting") or {}
+            terminated = state.get("terminated")
+            if waiting.get("reason"):
+                reason = waiting["reason"]
+            elif terminated and terminated.get("reason"):
+                reason = terminated["reason"]
+            elif terminated:
+                if terminated.get("signal"):
+                    reason = f"Signal:{terminated['signal']}"
+                else:
+                    reason = f"ExitCode:{terminated.get('exitCode', 0)}"
+            elif container_status.get("ready") and state.get("running") is not None:
+                has_running = True
+
+        # A container that Completed while another is still running is reported as
+        # Running (or NotReady) by kubectl, so a healthy multi-container pod is not
+        # misclassified as terminated.
+        if reason == "Completed" and has_running:
+            ready = any(
+                cond.get("type") == "Ready" and cond.get("status") == "True"
+                for cond in status.get("conditions", []) or []
+            )
+            reason = "Running" if ready else "NotReady"
+
+        if metadata.get("deletionTimestamp"):
+            reason = "Terminating"
+
+        return reason
+
     def get_old_task_ids(self, older_than_hours: int = 48) -> Dict[str, Any]:
         """Get old executor pods with task_id and pod_name for orphan cleanup.
 
@@ -1290,8 +1349,9 @@ class K8sExecutor(Executor):
             older_than_hours: Minimum pod age in hours.
 
         Returns:
-            Dict with status and pods list of {task_id, pod_name} dicts.
-            task_id is None when the label is missing.
+            Dict with status and pods list of {task_id, pod_name, status} dicts.
+            task_id is None when the label is missing; status is the kubectl-style
+            display status (e.g. "Running", "OOMKilled").
         """
         import re
 
@@ -1334,7 +1394,13 @@ class K8sExecutor(Executor):
                     continue
                 labels = metadata.get("labels", {})
                 task_id = labels.get("aigc.weibo.com/executor-task-id")
-                old_pods.append({"task_id": task_id, "pod_name": pod_name})
+                old_pods.append(
+                    {
+                        "task_id": task_id,
+                        "pod_name": pod_name,
+                        "status": self._compute_pod_display_status(pod),
+                    }
+                )
 
             elapsed = time.time() - start_time
             logger.info(
