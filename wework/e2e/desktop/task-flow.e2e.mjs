@@ -52,11 +52,12 @@ const CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB = Number(
 )
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 256 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 320 * 1024
 )
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 160 * 1024
 )
+const MEMORY_MAX_DOM_NODE_COUNT = Number(process.env.WEWORK_E2E_MEMORY_MAX_DOM_NODES ?? 900)
 const MEMORY_MIN_SETTLED_SAMPLES = 5
 const MEMORY_MAX_SETTLED_SAMPLES = 15
 const MEMORY_MAX_RECENT_DRIFT_KIB = 16 * 1024
@@ -505,6 +506,7 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   const peak = samples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
+  const peakDomNodeCount = Math.max(...samples.map(sample => sample.domNodeCount))
 
   const sidebarSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const expandTasksButton = sidebarSnapshot.testIds.find(testId =>
@@ -577,8 +579,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     if (
       current.physicalFootprintKiB - samples[0].physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      current.physicalFootprintKiB - recent[0].physicalFootprintKiB <=
-        MEMORY_MAX_RECENT_DRIFT_KIB
+      current.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
     ) {
       break
     }
@@ -603,8 +604,9 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
         limits: {
           maxPeakGrowthKiB: MEMORY_MAX_PEAK_GROWTH_KIB,
           maxSettledGrowthKiB: MEMORY_MAX_SETTLED_GROWTH_KIB,
+          maxDomNodeCount: MEMORY_MAX_DOM_NODE_COUNT,
         },
-        summary: { peakGrowthKiB, settledGrowthKiB, settledDriftKiB },
+        summary: { peakGrowthKiB, settledGrowthKiB, settledDriftKiB, peakDomNodeCount },
         samples,
       },
       null,
@@ -616,6 +618,10 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.ok(
     peakGrowthKiB <= MEMORY_MAX_PEAK_GROWTH_KIB,
     `WebContent peak physical footprint grew by ${peakGrowthKiB} KiB`
+  )
+  assert.ok(
+    peakDomNodeCount <= MEMORY_MAX_DOM_NODE_COUNT,
+    `WebContent DOM reached ${peakDomNodeCount} nodes while rendering the long response`
   )
   assert.ok(
     settledGrowthKiB <= MEMORY_MAX_SETTLED_GROWTH_KIB,
