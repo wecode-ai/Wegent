@@ -99,6 +99,16 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
+export function takeWritableCommandPoll(commandPolls) {
+  let poll = commandPolls.shift()
+  while (poll) {
+    clearTimeout(poll.timer)
+    if (!poll.closed && !poll.response.destroyed && !poll.response.writableEnded) return poll
+    poll = commandPolls.shift()
+  }
+  return undefined
+}
+
 async function stopOwnedSessionProcesses(session) {
   if (!Number.isInteger(session.launcherPid)) return
   await signalProcessGroup(session.launcherPid, 'TERM')
@@ -140,7 +150,7 @@ async function runServer(sessionPath, token) {
         const command = queue.shift()
         if (command) return json(response, 200, command)
 
-        const poll = { response, timer: undefined }
+        const poll = { response, timer: undefined, closed: false }
         poll.timer = setTimeout(() => {
           const index = commandPolls.indexOf(poll)
           if (index >= 0) commandPolls.splice(index, 1)
@@ -149,6 +159,7 @@ async function runServer(sessionPath, token) {
         }, defaultTimeoutMs)
         commandPolls.push(poll)
         response.once('close', () => {
+          poll.closed = true
           const index = commandPolls.indexOf(poll)
           if (index < 0) return
           commandPolls.splice(index, 1)
@@ -186,9 +197,8 @@ async function runServer(sessionPath, token) {
           pending.set(id, { resolve: resolvePromise, reject })
         )
         const nextCommand = { id, ...command }
-        const poll = commandPolls.shift()
+        const poll = takeWritableCommandPoll(commandPolls)
         if (poll) {
-          clearTimeout(poll.timer)
           json(poll.response, 200, nextCommand)
         } else {
           queue.push(nextCommand)
@@ -415,7 +425,9 @@ async function main() {
   console.log(typeof value.value === 'string' ? value.value : JSON.stringify(value.value, null, 2))
 }
 
-main().catch(error => {
-  console.error(`ai:verify: ${error.message ?? error}`)
-  process.exitCode = 1
-})
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`ai:verify: ${error.message ?? error}`)
+    process.exitCode = 1
+  })
+}
