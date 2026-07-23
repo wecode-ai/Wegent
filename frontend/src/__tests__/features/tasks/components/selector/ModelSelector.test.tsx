@@ -513,6 +513,18 @@ describe('ModelSelector', () => {
       'group-hover:visible',
       'group-hover:opacity-100'
     )
+    expect(
+      preview.querySelector('[data-testid="model-modality-input-text"] .lucide-type')
+    ).toBeInTheDocument()
+    expect(
+      preview.querySelector('[data-testid="model-modality-input-image"] .lucide-image')
+    ).toBeInTheDocument()
+    expect(
+      preview.querySelector('[data-testid="model-modality-input-video"] .lucide-video')
+    ).toBeInTheDocument()
+    expect(
+      preview.querySelector('[data-testid="model-modality-output-text"] .lucide-type')
+    ).toBeInTheDocument()
   })
 
   it('omits the cost index section when the model has no cost index', async () => {

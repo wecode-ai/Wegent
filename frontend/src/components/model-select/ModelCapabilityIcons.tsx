@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { getModelCapabilities } from '@/lib/model-capabilities'
+import { MODEL_MODALITY_ICON_STYLES } from './ModelModalityIcons'
 import type { GroupableModel } from './model-grouping'
 
 interface ModelCapabilityIconsProps {
@@ -37,13 +38,13 @@ export function ModelCapabilityIcons({
       key: 'image',
       label: t('common:models.image_understanding', '图片理解'),
       icon: Image,
-      className: 'border-sky-100 bg-sky-50 text-sky-600',
+      className: MODEL_MODALITY_ICON_STYLES.image,
     },
     supportsVideoUnderstanding(model) && {
       key: 'video',
       label: t('common:models.video_understanding', '视频理解'),
       icon: Video,
-      className: 'border-emerald-100 bg-emerald-50 text-emerald-600',
+      className: MODEL_MODALITY_ICON_STYLES.video,
     },
   ].filter(Boolean) as Array<{
     key: string

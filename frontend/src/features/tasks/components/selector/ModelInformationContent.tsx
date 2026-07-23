@@ -6,6 +6,10 @@
 
 import React from 'react'
 import { Info } from 'lucide-react'
+import {
+  ModelModalityIcons,
+  type ModelModality,
+} from '@/components/model-select/ModelModalityIcons'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getModelCapabilities } from '@/lib/model-capabilities'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
@@ -37,13 +41,12 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
   const { t } = useTranslation('common')
   const unavailable = t('models.details_unavailable')
   const tokenUnit = t('models.token_unit')
-  const modalitySeparator = t('models.modality_separator')
   const capabilities = getModelCapabilities(model)
-  const inputTypes = [
-    t('models.modality_text'),
-    capabilities.supportsImage && t('models.modality_image'),
-    capabilities.supportsVideo && t('models.modality_video'),
-  ].filter(Boolean)
+  const inputModalities: ModelModality[] = [
+    'text',
+    ...(capabilities.supportsImage ? (['image'] as const) : []),
+    ...(capabilities.supportsVideo ? (['video'] as const) : []),
+  ]
 
   return (
     <div className="space-y-5 pt-1">
@@ -80,11 +83,15 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
         <dl className="mt-2 space-y-2 text-sm">
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">{t('models.input_type')}</dt>
-            <dd className="text-right text-text-primary">{inputTypes.join(modalitySeparator)}</dd>
+            <dd className="text-right text-text-primary">
+              <ModelModalityIcons modalities={inputModalities} testIdPrefix="input" />
+            </dd>
           </div>
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">{t('models.output_type')}</dt>
-            <dd className="text-right text-text-primary">{t('models.modality_text')}</dd>
+            <dd className="text-right text-text-primary">
+              <ModelModalityIcons modalities={['text']} testIdPrefix="output" />
+            </dd>
           </div>
         </dl>
       </section>
