@@ -15,10 +15,12 @@ import {
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
+import { splitStaticMarkdownChunks } from './assistantMarkdownWindowing'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
 import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 
@@ -34,6 +36,7 @@ const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
+const STATIC_MARKDOWN_ROOT_MARGIN = '800px 0px'
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -41,6 +44,10 @@ interface AssistantMarkdownProps {
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   fileChanges?: TurnFileChangesSummary
 }
+
+type AssistantMarkdownPart =
+  | { kind: 'markdown'; content: string; windowed: boolean }
+  | { kind: 'visualization'; file: string }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
@@ -50,10 +57,16 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
-  const contentParts = useMemo(
-    () => splitCodexInlineVisualizations(bufferedContent),
-    [bufferedContent]
-  )
+  const windowStaticMarkdown = isTauriRuntime() && !isStreaming && variant === 'default'
+  const contentParts = useMemo(() => {
+    const parts = splitCodexInlineVisualizations(bufferedContent)
+    return parts.flatMap<AssistantMarkdownPart>(part => {
+      if (part.kind === 'visualization') return [part]
+      const chunks = windowStaticMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
+      const windowed = chunks.length > 1
+      return chunks.map(content => ({ kind: 'markdown', content, windowed }))
+    })
+  }, [bufferedContent, windowStaticMarkdown])
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
@@ -186,6 +199,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             file={part.file}
             fileChanges={fileChanges}
           />
+        ) : part.windowed ? (
+          <WindowedStaticMarkdownChunk key={`markdown-${index}`} content={part.content}>
+            <Streamdown
+              mode="static"
+              isAnimating={false}
+              controls={false}
+              linkSafety={{ enabled: false }}
+              lineNumbers={false}
+              urlTransform={url => url}
+              components={components}
+            >
+              {prepareAssistantMarkdownContent(part.content)}
+            </Streamdown>
+          </WindowedStaticMarkdownChunk>
         ) : (
           <Streamdown
             key={`markdown-${index}`}
@@ -204,6 +231,58 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     </div>
   )
 }, areAssistantMarkdownPropsEqual)
+
+function WindowedStaticMarkdownChunk({
+  content,
+  children,
+}: {
+  content: string
+  children: ReactNode
+}) {
+  const chunkRef = useRef<HTMLDivElement>(null)
+  const [nearViewport, setNearViewport] = useState(true)
+  const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return
+    const chunk = chunkRef.current
+    if (!chunk) return
+
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[0]
+        if (!entry) return
+        if (!entry.isIntersecting) {
+          const height = chunk.getBoundingClientRect().height
+          if (height > 0) setRetainedHeight(height)
+        }
+        setNearViewport(entry.isIntersecting)
+      },
+      { rootMargin: STATIC_MARKDOWN_ROOT_MARGIN }
+    )
+    observer.observe(chunk)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={chunkRef}
+      data-markdown-window-chunk
+      style={
+        nearViewport
+          ? undefined
+          : { minHeight: retainedHeight ?? estimateMarkdownChunkHeight(content) }
+      }
+    >
+      {nearViewport ? children : null}
+    </div>
+  )
+}
+
+function estimateMarkdownChunkHeight(content: string): number {
+  const lineCount = content.split('\n').length
+  return Math.max(120, Math.min(1_200, lineCount * 24))
+}
 
 type MarkdownCodeProps = {
   node?: HastElement
