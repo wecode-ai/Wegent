@@ -131,9 +131,10 @@ export function CachedWorkbenchPaneStack({
               data-active-workbench-pane={active ? 'true' : 'false'}
               data-testid={active ? activeTestId : undefined}
               aria-hidden={!active}
+              hidden={!active}
               className={cn(
                 'absolute inset-0 min-w-0 overflow-hidden',
-                active ? 'visible z-10' : 'invisible pointer-events-none z-0'
+                active ? 'z-10' : 'pointer-events-none z-0'
               )}
             >
               <CachedWorkbenchPane pane={pane} renderPane={renderPane} />
