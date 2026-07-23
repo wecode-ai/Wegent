@@ -1164,6 +1164,12 @@ async function attachAndSendOnlyFile(control, composerSelector) {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-image-preview"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
 }
 
 async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control }) {
@@ -1185,6 +1191,8 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
   const firstRows = firstSnapshot.testIds.filter(testId =>
     testId.startsWith('runtime-local-task-row-')
   )
+  const firstTaskRowTestId = firstRows.at(-1)
+  assert.ok(firstTaskRowTestId, 'The first attachment-only task did not expose a task row')
   await captureVerificationScreenshot(control, '02-attachment-only-first-completed.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -1208,6 +1216,8 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
   const expectedRows = twoTaskSnapshot.testIds.filter(testId =>
     testId.startsWith('runtime-local-task-row-')
   )
+  const secondTaskRowTestId = expectedRows.find(testId => !firstRows.includes(testId))
+  assert.ok(secondTaskRowTestId, 'The second attachment-only task did not expose a task row')
   await captureVerificationScreenshot(control, '04-attachment-only-two-tasks-after-refresh.png')
 
   if (process.platform === 'darwin') {
@@ -1229,7 +1239,37 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   }
-  await captureVerificationScreenshot(control, '05-attachment-only-two-tasks-after-reopen.png')
+  await control.command('clickWhenEnabled', `[data-testid="${secondTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_2`,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-image-preview"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  await captureVerificationScreenshot(control, '05-attachment-only-current-image-after-reopen.png')
+
+  await control.command('clickWhenEnabled', `[data-testid="${firstTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_1`,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-image-preview"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  await captureVerificationScreenshot(control, '06-attachment-only-first-image-after-reopen.png')
 
   const requests = control.scenarioRequests.get('attachment_only') ?? []
   assert.equal(requests.length, 2, 'Attachment-only flow did not send exactly two model requests')
