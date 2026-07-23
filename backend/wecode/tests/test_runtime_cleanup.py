@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import time
 from datetime import datetime, timedelta
 from unittest.mock import ANY, AsyncMock, Mock, patch
 
@@ -12,6 +13,7 @@ import wecode.service.executor_job_patch  # noqa: F401  ensure orphan pod method
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.adapters.executor_job import JobService
+from wecode.service.executor_job_patch import _pod_is_abnormal
 
 
 class RuntimeCleanupHelpers:
@@ -578,7 +580,8 @@ async def test_cleanup_stale_orphan_executors_delegates_each_pod_to_cleanup_stal
     first_call_kwargs = mock_cleanup.call_args_list[0].kwargs
     assert first_call_kwargs["task_id"] == 1001
     assert first_call_kwargs["pod_name"] == "wegent-task-1001-xyz"
-    assert first_call_kwargs["inactive_hours"] == 24  # stale_hours default
+    assert first_call_kwargs["inactive_hours"] == 24  # inactive_hours default
+    assert first_call_kwargs["max_inactive_hours"] == 24 * 7  # 7-day default
 
 
 @pytest.mark.unit
@@ -764,7 +767,7 @@ async def test_orphan_cleanup_not_due_within_interval():
     """A run recorded less than one interval ago is not due (global rate limit)."""
     from wecode.service.jobs import _orphan_cleanup_due
 
-    recent = datetime.now().timestamp() - 100
+    recent = time.time() - 100
     redis_client = Mock()
     redis_client.get = AsyncMock(return_value=str(recent))
 
@@ -778,7 +781,7 @@ async def test_orphan_cleanup_due_after_interval():
     """A run recorded more than one interval ago is due again."""
     from wecode.service.jobs import _orphan_cleanup_due
 
-    stale = datetime.now().timestamp() - 20000
+    stale = time.time() - 20000
     redis_client = Mock()
     redis_client.get = AsyncMock(return_value=str(stale))
 
@@ -815,7 +818,7 @@ async def test_mark_orphan_cleanup_ran_writes_timestamp():
     key_arg = redis_client.set.call_args.args[0]
     value_arg = redis_client.set.call_args.args[1]
     assert key_arg == ORPHAN_POD_CLEANUP_LAST_RUN_KEY
-    assert float(value_arg) == pytest.approx(datetime.now().timestamp(), abs=5)
+    assert float(value_arg) == pytest.approx(time.time(), abs=5)
 
 
 @pytest.mark.unit
@@ -840,6 +843,7 @@ async def test_cleanup_stale_orphan_sandbox_deletes_and_archives():
             task_id=5000,
             pod_name="sandbox-5000-abc",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             sandbox_payload={"last_activity_at": 0},
         )
 
@@ -847,8 +851,9 @@ async def test_cleanup_stale_orphan_sandbox_deletes_and_archives():
     assert result["skipped"] is False
     assert result["reason"] == "sandbox_deleted"
     assert result["archived"] is True
+    # last_activity_at=0 is idle well past max_inactive_hours -> force delete on archive failure
     ek_service.cleanup_sandbox_by_task_id_async.assert_awaited_once_with(
-        5000, archive_before_delete=True
+        5000, archive_before_delete=True, delete_on_archive_failure=True
     )
 
 
@@ -869,6 +874,7 @@ async def test_cleanup_stale_orphan_sandbox_failed():
             task_id=5001,
             pod_name="sandbox-5001-xyz",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             sandbox_payload={"last_activity_at": 0},
         )
 
@@ -899,6 +905,7 @@ async def test_cleanup_stale_orphan_sandbox_not_deleted():
             task_id=5002,
             pod_name="sandbox-5002-zzz",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             sandbox_payload={"last_activity_at": 0},
         )
 
@@ -932,6 +939,7 @@ async def test_cleanup_stale_orphan_sandbox_redis_cleared_but_pod_alive():
             task_id=5003,
             pod_name="sandbox-5003-aaa",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             sandbox_payload={"last_activity_at": 0},
         )
 
@@ -966,6 +974,7 @@ async def test_cleanup_stale_orphan_sandbox_redis_cleared_fallback_fails():
             task_id=5004,
             pod_name="sandbox-5004-bbb",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             sandbox_payload={"last_activity_at": 0},
         )
 
@@ -1000,6 +1009,7 @@ async def test_cleanup_stale_orphan_sandbox_redis_cleared_fallback_not_found():
             task_id=5005,
             pod_name="sandbox-5005-ccc",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             sandbox_payload={"last_activity_at": 0},
         )
 
@@ -1039,6 +1049,7 @@ async def test_cleanup_stale_orphan_executor_fallback_uses_shared_helper():
             task_id=6000,
             pod_name="wegent-task-6000-abc",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             db=AsyncMock(),
         )
 
@@ -1114,6 +1125,7 @@ async def test_cleanup_stale_orphan_executors_routes_sandbox_to_cleanup_stale_or
         task_id=6001,
         pod_name="sandbox-6001-abc",
         inactive_hours=24,
+        max_inactive_hours=24 * 7,
         sandbox_payload=ANY,
     )
     # executor pod -> _cleanup_stale_orphan_executor
@@ -1121,6 +1133,7 @@ async def test_cleanup_stale_orphan_executors_routes_sandbox_to_cleanup_stale_or
         task_id=6002,
         pod_name="wegent-task-6002-xyz",
         inactive_hours=24,
+        max_inactive_hours=24 * 7,
         db=ANY,
     )
 
@@ -1197,12 +1210,13 @@ async def test_cleanup_stale_orphan_sandbox_accepts_payload():
             task_id=7000,
             pod_name="sandbox-7000-pay",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             sandbox_payload={"sandbox_id": "7000", "last_activity_at": 0.0},
         )
 
     assert result["deleted"] is True
     ek_service.cleanup_sandbox_by_task_id_async.assert_awaited_once_with(
-        7000, archive_before_delete=True
+        7000, archive_before_delete=True, delete_on_archive_failure=True
     )
 
 
@@ -1211,7 +1225,7 @@ async def test_cleanup_stale_orphan_sandbox_accepts_payload():
 async def test_cleanup_stale_orphan_sandbox_not_stale_skipped():
     """When last_activity_at is within inactive_hours, sandbox is skipped."""
     job_service_instance = JobService(Mock())
-    recent_ts = datetime.now().timestamp() - 3600  # 1 hour ago
+    recent_ts = time.time() - 3600  # 1 hour ago
 
     with patch(
         "app.services.adapters.executor_job.executor_kinds_service"
@@ -1222,6 +1236,7 @@ async def test_cleanup_stale_orphan_sandbox_not_stale_skipped():
             task_id=7001,
             pod_name="sandbox-7001-stale",
             inactive_hours=24,
+            max_inactive_hours=24 * 7,
             sandbox_payload={
                 "sandbox_id": "7001",
                 "last_activity_at": recent_ts,
@@ -1232,3 +1247,206 @@ async def test_cleanup_stale_orphan_sandbox_not_stale_skipped():
     assert result["skipped"] is True
     assert result["reason"] == "not_stale"
     ek_service.cleanup_sandbox_by_task_id_async.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_orphan_sandbox_within_max_idle_keeps_archive_guard():
+    """Idle past inactive_hours but within max_inactive_hours: archive failure must
+    not force deletion, so delete_on_archive_failure is False."""
+    job_service_instance = JobService(Mock())
+    # 25h idle: past inactive_hours (24h) but well within max_inactive_hours (7d).
+    stale_ts = time.time() - 25 * 3600
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as ek_service:
+        ek_service.cleanup_sandbox_by_task_id_async = AsyncMock(
+            return_value={
+                "deleted": True,
+                "redis_cleared": True,
+                "archived": True,
+                "reason": "sandbox_deleted",
+            }
+        )
+
+        result = await job_service_instance._cleanup_stale_orphan_sandbox(
+            task_id=7002,
+            pod_name="sandbox-7002-idle",
+            inactive_hours=24,
+            max_inactive_hours=24 * 7,
+            sandbox_payload={"last_activity_at": stale_ts},
+        )
+
+    assert result["deleted"] is True
+    ek_service.cleanup_sandbox_by_task_id_async.assert_awaited_once_with(
+        7002, archive_before_delete=True, delete_on_archive_failure=False
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_force_deletes_abnormal_pod_when_normal_skips():
+    """An abnormal (non-Running) pod skipped by the normal path is force-deleted.
+
+    Even when _cleanup_stale_orphan_executor skips a pod as not_stale, an
+    OOMKilled pod is already dead and must be force-deleted by name.
+    """
+    job_service_instance = JobService(Mock())
+    old_pods = [
+        {"task_id": "1001", "pod_name": "wegent-task-1001-oom", "status": "OOMKilled"}
+    ]
+
+    with (
+        patch(
+            "wecode.service.executor_job_patch.get_executor_runtime_client"
+        ) as mock_get_client,
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+        patch.object(
+            job_service_instance,
+            "_cleanup_stale_orphan_executor",
+            new_callable=AsyncMock,
+            return_value={
+                "task_id": 1001,
+                "pod_name": "wegent-task-1001-oom",
+                "deleted": False,
+                "skipped": True,
+                "reason": "not_stale",
+            },
+        ),
+    ):
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+        executor_service.delete_pod_by_name_async = AsyncMock(
+            return_value={"status": "success"}
+        )
+
+        mock_runtime_client = Mock()
+        mock_runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        mock_get_client.return_value = mock_runtime_client
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert len(result["deleted"]) == 1
+    assert result["deleted"][0]["task_id"] == 1001
+    assert result["skipped"] == []
+    executor_service.delete_pod_by_name_async.assert_awaited_once_with(
+        "wegent-task-1001-oom"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_force_deletes_abnormal_pod_after_cleanup_error():
+    """A cleanup exception must not stop an abnormal pod from being force-deleted."""
+    job_service_instance = JobService(Mock())
+    old_pods = [
+        {"task_id": "1002", "pod_name": "wegent-task-1002-err", "status": "Error"}
+    ]
+
+    with (
+        patch(
+            "wecode.service.executor_job_patch.get_executor_runtime_client"
+        ) as mock_get_client,
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+        patch.object(
+            job_service_instance,
+            "_cleanup_stale_orphan_executor",
+            new_callable=AsyncMock,
+            side_effect=Exception("executor_manager unreachable"),
+        ),
+    ):
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+        executor_service.delete_pod_by_name_async = AsyncMock(
+            return_value={"status": "success"}
+        )
+
+        mock_runtime_client = Mock()
+        mock_runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        mock_get_client.return_value = mock_runtime_client
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert len(result["deleted"]) == 1
+    assert result["deleted"][0]["task_id"] == 1002
+    assert result["failed"] == []
+    executor_service.delete_pod_by_name_async.assert_awaited_once_with(
+        "wegent-task-1002-err"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_running_pod_not_force_deleted_when_skipped():
+    """A healthy Running pod skipped as not_stale must not be force-deleted."""
+    job_service_instance = JobService(Mock())
+    old_pods = [
+        {"task_id": "1003", "pod_name": "wegent-task-1003-run", "status": "Running"}
+    ]
+
+    with (
+        patch(
+            "wecode.service.executor_job_patch.get_executor_runtime_client"
+        ) as mock_get_client,
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+        patch.object(
+            job_service_instance,
+            "_cleanup_stale_orphan_executor",
+            new_callable=AsyncMock,
+            return_value={
+                "task_id": 1003,
+                "pod_name": "wegent-task-1003-run",
+                "deleted": False,
+                "skipped": True,
+                "reason": "not_stale",
+            },
+        ),
+    ):
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+        executor_service.delete_pod_by_name_async = AsyncMock()
+
+        mock_runtime_client = Mock()
+        mock_runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        mock_get_client.return_value = mock_runtime_client
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert result["deleted"] == []
+    assert len(result["skipped"]) == 1
+    assert result["skipped"][0]["reason"] == "not_stale"
+    executor_service.delete_pod_by_name_async.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "pod_info, expected",
+    [
+        # Empty / missing / whitespace status must NOT be treated as abnormal:
+        # an unknown status is not evidence the pod is dead, and force-deleting
+        # would risk killing an active (not_stale) pod.
+        ({"status": ""}, False),
+        ({"status": "   "}, False),
+        ({"status": None}, False),
+        ({}, False),
+        # Running is healthy.
+        ({"status": "Running"}, False),
+        # Any known non-Running status is abnormal.
+        ({"status": "OOMKilled"}, True),
+        ({"status": "Error"}, True),
+        ({"status": "CrashLoopBackOff"}, True),
+        ({"status": "Unknown"}, True),
+    ],
+)
+def test_pod_is_abnormal(pod_info, expected):
+    assert _pod_is_abnormal(pod_info) is expected

@@ -14,7 +14,7 @@ Patches JobService with:
 """
 
 import logging
-from datetime import datetime, timezone
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
@@ -83,6 +83,7 @@ async def _cleanup_stale_orphan_executor(
     task_id: int,
     pod_name: str,
     inactive_hours: int,
+    max_inactive_hours: int,
     db,
 ) -> Dict[str, object]:
     """Clean up a single orphan pod following the two-step pipeline:
@@ -90,10 +91,18 @@ async def _cleanup_stale_orphan_executor(
     Step 1: call cleanup_stale_task_executor (matches script cleanup_stale_tasks.sh)
     Step 2: on executor_not_found, delete K8s pod by pod_name directly
             (matches script delete_notfound_pods.sh / kubectl delete pod)
+
+    Once idle past max_inactive_hours the executor is force-deleted even if
+    workspace archiving keeps failing, so a broken archive cannot pin pods forever.
     """
-    # Step 1: try the normal stale cleanup path (patched version, handles 404)
+    # Step 1: try the normal stale cleanup path (patched version, handles 404).
+    # max_inactive_hours forces deletion past the idle window even if archiving fails.
     cleanup_result = await self.cleanup_stale_task_executor(
-        db, task_id=task_id, inactive_hours=inactive_hours, dry_run=False
+        db,
+        task_id=task_id,
+        inactive_hours=inactive_hours,
+        max_inactive_hours=max_inactive_hours,
+        dry_run=False,
     )
 
     if cleanup_result.get("deleted"):
@@ -132,12 +141,17 @@ async def _cleanup_stale_orphan_sandbox(
     task_id: int,
     pod_name: str,
     inactive_hours: int,
+    max_inactive_hours: int,
     sandbox_payload: Dict[str, Any],
 ) -> Dict[str, object]:
     """Clean up a single orphan sandbox pod, archiving before deletion.
 
     When sandbox_payload is provided, validates last_activity_at against
     inactive_hours before proceeding, mirroring _cleanup_stale_sandbox_for_task.
+
+    Once idle past max_inactive_hours the sandbox is deleted even when workspace
+    archiving fails (delete_on_archive_failure), so a broken archive cannot pin
+    pods forever.
     """
     result: Dict[str, Any] = {
         "task_id": task_id,
@@ -155,17 +169,24 @@ async def _cleanup_stale_orphan_sandbox(
         )
         return {**result, "reason": "invalid_sandbox_payload"}
 
+    now_ts = time.time()
     eligible_after = last_activity_at + inactive_hours * 3600
-    if datetime.now(timezone.utc).timestamp() < eligible_after:
+    if now_ts < eligible_after:
         logger.info(
             f"+++ [executor_job] Orphan sandbox not yet stale task_id={task_id} pod_name={pod_name} last_activity_at={last_activity_at} eligible_after={eligible_after}"
         )
         return {**result, "reason": "not_stale"}
 
+    # Once idle past max_inactive_hours, force deletion even when archiving fails so
+    # a broken archive cannot pin the pod forever.
+    delete_on_archive_failure = now_ts >= last_activity_at + max_inactive_hours * 3600
+
     ek_service = _executor_job_mod.executor_kinds_service
     try:
         cleanup_result = await ek_service.cleanup_sandbox_by_task_id_async(
-            task_id, archive_before_delete=True
+            task_id,
+            archive_before_delete=True,
+            delete_on_archive_failure=delete_on_archive_failure,
         )
     except Exception as exc:
         logger.warning(
@@ -211,7 +232,8 @@ async def cleanup_orphan_pods(
     db,
     *,
     older_than_hours: int = 48,
-    stale_hours: int = 24,
+    inactive_hours: int = 24,
+    max_inactive_hours: int = 24 * 7,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """Scan K8s for old pods with no DB subtask records or stale and clean them up.
@@ -219,17 +241,20 @@ async def cleanup_orphan_pods(
     Mirrors the pod_delete/ pipeline:
     1. get_old_pods_async: list old pods by name pattern (wegent-task|sandbox)
     2. For each pod with a valid task_id > ORPHAN_POD_MIN_TASK_ID and no DB records:
-       - call cleanup_stale_task_executor with stale_hours (INACTIVE_HOURS=24)
+       - call cleanup_stale_task_executor with inactive_hours (INACTIVE_HOURS=24)
        - if executor_not_found, delete K8s pod by name directly
     3. Pods with no task_id label or task_id <= threshold are skipped entirely,
        matching the original scripts' awk '$1+0 > 1000' guard.
 
     Args:
         older_than_hours: minimum pod age to scan (default 48h = 2 days)
-        stale_hours: inactive_hours passed to cleanup_stale_task_executor (default 24h)
+        inactive_hours: idle window passed to cleanup_stale_task_executor and the
+            sandbox eligibility gate (default 24h)
+        max_inactive_hours: once idle past this, pods are force-deleted even if
+            workspace archiving fails (default 7 days)
     """
     logger.info(
-        f"+++ [executor_job] Starting orphan pod cleanup older_than_hours={older_than_hours} stale_hours={stale_hours} dry_run={dry_run}"
+        f"+++ [executor_job] Starting orphan pod cleanup older_than_hours={older_than_hours} inactive_hours={inactive_hours} max_inactive_hours={max_inactive_hours} dry_run={dry_run}"
     )
     result: Dict[str, Any] = {
         "target": "orphan_pods",
@@ -255,7 +280,8 @@ async def cleanup_orphan_pods(
                 pod_info=pod_info,
                 result=result,
                 db=db,
-                stale_hours=stale_hours,
+                inactive_hours=inactive_hours,
+                max_inactive_hours=max_inactive_hours,
                 dry_run=dry_run,
             )
         except Exception as exc:
@@ -277,13 +303,28 @@ async def cleanup_orphan_pods(
     return result
 
 
+def _pod_is_abnormal(pod_info: Dict[str, Any]) -> bool:
+    """Return True when an old pod is in an abnormal (non-Running) K8s state.
+
+    ``status`` is the kubectl-style display status surfaced by get_old_pods_async
+    (e.g. "Running", "OOMKilled", "Error", "CrashLoopBackOff"). Only "Running" is
+    healthy for these long-lived executor/sandbox pods, so anything else on a pod
+    old enough to be scanned is treated as abnormal and eligible for force delete.
+    Missing/empty status is treated as normal to stay backward-compatible with an
+    older executor_manager that does not report status.
+    """
+    status = (pod_info.get("status") or "").strip()
+    return bool(status) and status.lower() != "running"
+
+
 async def _cleanup_orphan_pod(
     self,
     *,
     pod_info: Dict[str, Any],
     result: Dict[str, Any],
     db,
-    stale_hours: int,
+    inactive_hours: int,
+    max_inactive_hours: int,
     dry_run: bool,
 ) -> None:
     """Validate and clean up a single orphan pod, appending outcome to result."""
@@ -327,15 +368,26 @@ async def _cleanup_orphan_pod(
         )
         return
 
+    cleanup_result: Dict[str, Any] = {
+        "task_id": task_id,
+        "pod_name": pod_name,
+        "deleted": False,
+        "skipped": False,
+    }
+
     runtime_client = get_executor_runtime_client()
     sandbox_payload, sandbox_error = await runtime_client.get_sandbox(str(task_id))
 
+    # Step 1: run the normal sandbox/executor cleanup. Capture any failure into
+    # cleanup_result instead of returning, so the abnormal-pod force delete below
+    # still runs even when this step raises.
     try:
         if sandbox_payload is not None:
             cleanup_result = await self._cleanup_stale_orphan_sandbox(
                 task_id=task_id,
                 pod_name=pod_name,
-                inactive_hours=stale_hours,
+                inactive_hours=inactive_hours,
+                max_inactive_hours=max_inactive_hours,
                 sandbox_payload=sandbox_payload,
             )
         else:
@@ -346,51 +398,67 @@ async def _cleanup_orphan_pod(
             cleanup_result = await self._cleanup_stale_orphan_executor(
                 task_id=task_id,
                 pod_name=pod_name,
-                inactive_hours=stale_hours,
+                inactive_hours=inactive_hours,
+                max_inactive_hours=max_inactive_hours,
                 db=db,
             )
     except Exception as exc:
         logger.error(
             f"+++ [executor_job] Error cleaning orphan pod task_id={task_id} pod_name={pod_name} error={exc}"
         )
-        failed_entry: Dict[str, Any] = {
-            "task_id": task_id,
-            "pod_name": pod_name,
-            "reason": (
-                "http_error" if isinstance(exc, HTTPException) else "unexpected_error"
-            ),
-            "error": str(exc),
-        }
+        cleanup_result["reason"] = (
+            "http_error" if isinstance(exc, HTTPException) else "unexpected_error"
+        )
+        cleanup_result["error"] = str(exc)
         if isinstance(exc, HTTPException):
-            failed_entry["status_code"] = exc.status_code
-            failed_entry["detail"] = exc.detail
-        result["failed"].append(failed_entry)
-        return
+            cleanup_result["status_code"] = exc.status_code
+            cleanup_result["detail"] = exc.detail
+
     logger.info(
         f"+++ [executor_job] _cleanup_orphan_pod done task_id={task_id} pod_name={pod_name} cleanup_result={cleanup_result}"
     )
+
+    # Step 2: last resort — if the normal path left the pod alive (skipped as
+    # not_stale, or raised) and the pod is in an abnormal state (OOMKilled, Error,
+    # CrashLoopBackOff, ...), it is already dead and cannot be archived, so
+    # force-delete it by name. Dead pods must never pin resources indefinitely.
+    if not cleanup_result.get("deleted") and _pod_is_abnormal(pod_info):
+        pod_status = pod_info.get("status")
+        logger.info(
+            f"+++ [executor_job] Force-deleting abnormal orphan pod task_id={task_id} pod_name={pod_name} status={pod_status}"
+        )
+        fallback = await _fallback_delete_pod_by_name(
+            task_id=task_id,
+            pod_name=pod_name,
+            trigger_reason=f"abnormal_pod_status({pod_status})",
+        )
+        if fallback["deleted"]:
+            cleanup_result["deleted"] = True
+            cleanup_result["skipped"] = False
+            cleanup_result["reason"] = "abnormal_pod_force_deleted"
+
     _append_pod_result(result, cleanup_result, task_id=task_id)
 
 
 def _append_pod_result(
     result: Dict[str, Any],
-    cleanup_result: Dict[str, object],
+    cleanup_result: Dict[str, Any],
     task_id: Optional[int],
 ) -> None:
-    """Append a single pod cleanup result to the aggregated result dict."""
-    pod_name = cleanup_result.get("pod_name")
-    entry: Dict[str, Any] = {"pod_name": pod_name}
+    """Route a single pod cleanup result into the aggregated result buckets.
+
+    cleanup_result already carries task_id, pod_name, reason and any diagnostic
+    fields, so it is routed as-is rather than rebuilding a new entry.
+    """
     if task_id is not None:
-        entry["task_id"] = task_id
+        cleanup_result.setdefault("task_id", task_id)
 
     if cleanup_result.get("deleted"):
-        result["deleted"].append(entry)
+        result["deleted"].append(cleanup_result)
     elif cleanup_result.get("skipped"):
-        entry["reason"] = cleanup_result.get("reason")
-        result["skipped"].append(entry)
+        result["skipped"].append(cleanup_result)
     else:
-        entry["reason"] = cleanup_result.get("reason")
-        result["failed"].append(entry)
+        result["failed"].append(cleanup_result)
 
 
 async def _cleanup_stale_task_executor_wecode(
@@ -399,6 +467,7 @@ async def _cleanup_stale_task_executor_wecode(
     *,
     task_id: int,
     inactive_hours: int = 24,
+    max_inactive_hours: int = 24 * 7,
     dry_run: bool = False,
 ):
     """Override cleanup_stale_task_executor with orphan pod support.
@@ -407,11 +476,16 @@ async def _cleanup_stale_task_executor_wecode(
     the orphan K8s pod by task_id label instead of returning executor_not_found.
     """
     logger.info(
-        f"+++ [executor_job] cleanup_stale_task_executor_wecode task_id={task_id} inactive_hours={inactive_hours} dry_run={dry_run}"
+        f"+++ [executor_job] cleanup_stale_task_executor_wecode task_id={task_id} inactive_hours={inactive_hours} max_inactive_hours={max_inactive_hours} dry_run={dry_run}"
     )
     try:
         result = await _original_cleanup_stale_task_executor(
-            self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=dry_run
+            self,
+            db,
+            task_id=task_id,
+            inactive_hours=inactive_hours,
+            max_inactive_hours=max_inactive_hours,
+            dry_run=dry_run,
         )
     except HTTPException as exc:
         if exc.status_code == 404:

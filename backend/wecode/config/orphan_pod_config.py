@@ -31,11 +31,11 @@ ORPHAN_POD_CLEANUP_INTERVAL_SECONDS = int(
     os.getenv("ORPHAN_POD_CLEANUP_INTERVAL_SECONDS", "10800")
 )
 ORPHAN_POD_MIN_AGE_HOURS = int(os.getenv("ORPHAN_POD_MIN_AGE_HOURS", "48"))
-ORPHAN_POD_CLEANUP_STALE_HOURS = int(os.getenv("ORPHAN_POD_CLEANUP_STALE_HOURS", "24"))
+ORPHAN_POD_CLEANUP_IDLE_HOURS = int(os.getenv("ORPHAN_POD_CLEANUP_IDLE_HOURS", "24"))
 # Once a pod has been idle longer than this, force-delete it even when the normal
 # archive-then-delete path failed, to prevent archive failures from leaking pods.
-ORPHAN_POD_FORCE_CLEANUP_IDLE_HOURS = int(
-    os.getenv("ORPHAN_POD_FORCE_CLEANUP_IDLE_HOURS", "120")
+ORPHAN_POD_CLEANUP_MAX_IDLE_HOURS = int(
+    os.getenv("ORPHAN_POD_CLEANUP_MAX_IDLE_HOURS", "168")  # 7 days
 )
 # Mirrors the awk '$1+0 > 1000' guard in delete_notfound_pods.sh: skip pods whose
 # task_id label is missing or not a valid integer above this threshold.
