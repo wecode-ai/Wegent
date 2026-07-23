@@ -34,6 +34,8 @@ Windows 和 Linux 使用界面中显示的对应组合键。
 
 在“设置 → 模型”中点击“添加模型”后，先选择提供商。选择 Kimi Coding 时，Wework 从服务端读取模型列表；K3 会自动使用内置的 Codex Catalog profile，包括 256K 上下文和默认 `low` 推理等级。
 
+每个自定义模型都可以设置可选的“分组”，模型选择器会使用该名称组织模型。Kimi Coding 默认填写“Kimi”，用户可以修改或清空；未设置分组的模型统一显示在“自定义模型”下。
+
 选择“完全自定义”可以配置兼容 OpenAI Responses、Chat Completions 或 Anthropic Messages 的接口。模型能力使用结构化表单维护，不需要编辑 Catalog JSON：
 
 - 最大上下文同时用于运行时和 Catalog，不需要重复填写。
