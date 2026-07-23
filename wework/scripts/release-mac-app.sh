@@ -31,7 +31,7 @@ APPLE_BUILD_TEAM_ID="${APPLE_BUILD_TEAM_ID:-}"
 APPLE_BUILD_PASSWORD="${APPLE_BUILD_PASSWORD:-}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-universal-apple-darwin}"
 PRINT_NEXT_VERSION_ONLY="false"
-RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
+RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-1}"
 BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-}"
 
 usage() {
@@ -50,7 +50,7 @@ Options:
   --notary-profile <name>    Keychain profile name used by xcrun notarytool.
   --macos-build-target <target>
                               macOS Rust/Tauri target. Default: universal-apple-darwin.
-  --devtools                  Enable Web Inspector support in the release build.
+  --devtools                  Enable Web Inspector support (enabled by default).
   --brand-config <path>       Brand identity JSON used for this app bundle.
   --print-next-version        Only print the next version and exit.
   -h, --help                 Show this help message.

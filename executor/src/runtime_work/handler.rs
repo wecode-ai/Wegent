@@ -66,7 +66,7 @@ use super::{
     events::{emit_response_event, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
-        archived_conversations_response, codex_thread_is_active, search_result_item,
+        archived_conversations_response, runtime_status_is_running, search_result_item,
         workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{

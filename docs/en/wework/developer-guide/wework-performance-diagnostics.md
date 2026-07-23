@@ -120,19 +120,7 @@ The latest 300 events are kept in memory and exposed through `window.__WEWORK_PE
 
 ## Capturing Evidence
 
-Normal release builds do not compile Tauri Web Inspector support. To investigate a release build, first create a diagnostics build:
-
-```bash
-pnpm --filter wework build:mac:devtools
-```
-
-To create an updater-compatible diagnostics build through the macOS release script, use:
-
-```bash
-bash wework/scripts/release-mac-app.sh --target local --devtools
-```
-
-You can also set `WEWORK_RELEASE_DEVTOOLS=1`. After launching the diagnostics build, press the hidden shortcut to open **Developer Commands**, then select **Open Web Inspector**. To open it automatically at startup, use:
+Release builds compile Tauri Web Inspector support by default, while the main WebView remains non-inspectable so its native WebKit context menu does not contain Inspect Element. When the user selects **Open Web Inspector** from the hidden **Developer Commands** menu, the native command dynamically enables `WKWebView.isInspectable` and opens the Inspector. This command is independent of the Performance Diagnostics switch and requires macOS 13.3 or newer. The built-in browser is a separate WebView and retains right-click Inspect Element. Set `WEWORK_RELEASE_DEVTOOLS=0` when a distribution must omit Inspector support. To open it automatically for a local diagnostic launch, use:
 
 ```bash
 WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork

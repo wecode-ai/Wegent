@@ -26,6 +26,7 @@ const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
 
 interface ConversationScrollSnapshot {
   scrollTop: number
+  pinnedToBottom: boolean
   anchorMessageId?: string
   anchorOffsetTop?: number
   anchorDocumentTop?: number
@@ -826,8 +827,12 @@ function createScrollSnapshot(
   content: HTMLElement | null,
   scrollTop?: number
 ): ConversationScrollSnapshot {
+  const resolvedScrollTop = scrollTop ?? scroller.scrollTop
   const snapshot: ConversationScrollSnapshot = {
-    scrollTop: scrollTop ?? scroller.scrollTop,
+    scrollTop: resolvedScrollTop,
+    pinnedToBottom:
+      scroller.scrollHeight - scroller.clientHeight - resolvedScrollTop <=
+      SCROLLED_TO_BOTTOM_THRESHOLD,
   }
   if (scrollTop !== undefined || !content) return snapshot
 
@@ -863,6 +868,10 @@ function getRestoredScrollTop(
   content: HTMLElement | null,
   snapshot: ConversationScrollSnapshot
 ): number {
+  if (snapshot.pinnedToBottom) {
+    return Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  }
+
   if (!content || !snapshot.anchorMessageId || snapshot.anchorOffsetTop === undefined) {
     return Math.max(0, snapshot.scrollTop)
   }

@@ -21,6 +21,7 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -588,6 +589,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return element.textContent?.trim() ?? ''
     }
+    case 'getSelectionOffset': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const selection = window.getSelection()
+      if (!selection?.anchorNode || !element.contains(selection.anchorNode)) return '-1'
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.setEnd(selection.anchorNode, selection.anchorOffset)
+      return String(range.toString().length)
+    }
     case 'snapshot':
       return desktopControlSnapshot(command.selector)
     case 'scrollIntoView': {
@@ -631,6 +642,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
+    case 'getWorkbenchDebugSnapshot':
+      return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerDown':

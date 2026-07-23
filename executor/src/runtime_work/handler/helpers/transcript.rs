@@ -140,10 +140,6 @@ fn transcript_limit(payload: &Value) -> Option<usize> {
         .filter(|value| *value > 0)
 }
 
-fn codex_thread_has_active_turn(thread: &Value) -> bool {
-    codex_thread_is_active(thread)
-}
-
 fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
     let messages = cached_messages(link);
     if !runtime_has_provider_transcript_reader(&link.runtime) {

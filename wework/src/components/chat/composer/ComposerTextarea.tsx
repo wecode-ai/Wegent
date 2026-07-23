@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from '@/hooks/useTranslation'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
+import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
   openNativeWorkspacePathPicker,
@@ -708,6 +709,27 @@ export function ComposerTextarea({
     window.addEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
     return () => {
       window.removeEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
+    }
+  }, [closeAutocompleteMenu])
+
+  useEffect(() => {
+    let focusFrame: number | null = null
+    const handleNewChatFocusRequest = () => {
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
+      focusFrame = window.requestAnimationFrame(() => {
+        focusFrame = null
+        const editor = editorRef.current
+        if (!editor) return
+        editor.setValue(valueRef.current, valueRef.current.length)
+        editor.focus()
+        closeAutocompleteMenu()
+      })
+    }
+
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
+    return () => {
+      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
     }
   }, [closeAutocompleteMenu])
 

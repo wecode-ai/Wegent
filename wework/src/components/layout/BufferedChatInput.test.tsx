@@ -42,6 +42,15 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('persists ordinary text while the composer is still mounted', async () => {
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'unfinished draft')
+
+    expect(onChange).toHaveBeenLastCalledWith('unfinished draft')
+  })
+
   test('restores a buffered draft after switching chat scopes', async () => {
     const drafts = new Map<string, string>()
     const onBlankChange = vi.fn((value: string) => drafts.set('blank', value))
