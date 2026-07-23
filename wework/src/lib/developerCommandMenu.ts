@@ -219,7 +219,7 @@ function getDeveloperCommands(): DeveloperCommand[] {
     {
       id: 'open-web-inspector',
       label: 'Open Web Inspector',
-      description: 'Open Tauri Web Inspector for heap and CPU profiling in diagnostic builds.',
+      description: 'Capture JavaScript heap snapshots and allocation profiles.',
       run: async () => {
         if (!isTauriRuntime()) {
           console.warn('[Wework dev] Web Inspector is only available in the Tauri app.')
