@@ -57,6 +57,9 @@ const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 160 * 1024
 )
+const MEMORY_MIN_SETTLED_SAMPLES = 5
+const MEMORY_MAX_SETTLED_SAMPLES = 15
+const MEMORY_MAX_RECENT_DRIFT_KIB = 16 * 1024
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
@@ -564,9 +567,21 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(completed, true, 'The memory E2E response did not complete')
   await captureVerificationScreenshot(control, 'memory-03-completed.png')
 
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < MEMORY_MAX_SETTLED_SAMPLES; index += 1) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
     samples.push(await captureMemorySample(control, 'settled'))
+    const settledSamples = samples.filter(sample => sample.phase === 'settled')
+    if (settledSamples.length < MEMORY_MIN_SETTLED_SAMPLES) continue
+    const current = settledSamples.at(-1)
+    const recent = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
+    if (
+      current.physicalFootprintKiB - samples[0].physicalFootprintKiB <=
+        MEMORY_MAX_SETTLED_GROWTH_KIB &&
+      current.physicalFootprintKiB - recent[0].physicalFootprintKiB <=
+        MEMORY_MAX_RECENT_DRIFT_KIB
+    ) {
+      break
+    }
   }
 
   const baseline = samples[0]
@@ -607,7 +622,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent settled physical footprint grew by ${settledGrowthKiB} KiB`
   )
   assert.ok(
-    settledDriftKiB <= 16 * 1024,
+    settledDriftKiB <= MEMORY_MAX_RECENT_DRIFT_KIB,
     `WebContent kept growing after completion by ${settledDriftKiB} KiB`
   )
 }

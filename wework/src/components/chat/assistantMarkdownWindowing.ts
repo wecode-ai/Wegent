@@ -1,4 +1,4 @@
-const STATIC_MARKDOWN_WINDOW_THRESHOLD = 8_000
+const STATIC_MARKDOWN_WINDOW_THRESHOLD = 4_000
 const STATIC_MARKDOWN_CHUNK_TARGET = 1_200
 
 export function splitStaticMarkdownChunks(content: string): string[] {
