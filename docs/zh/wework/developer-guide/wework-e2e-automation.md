@@ -108,7 +108,7 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 512 MiB、完成后的稳定态增长不超过 256 MiB、稳定期继续增长不超过 32 MiB；前两个阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 调整。
 
-并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、WebKit Web Content/GPU/Networking、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。门禁要求整个进程组峰值低于 800 MiB，可通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB` 调整；场景还会在首尾任务之间切换，确认未激活 pane 退出布局和合成的同时，任务内容与运行状态仍被保留。
+并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、WebKit Web Content/GPU/Networking、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。门禁要求整个进程组峰值低于 800 MiB，可通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB` 调整；场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
 
 ## Responses API Mock
 
