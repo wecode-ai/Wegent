@@ -541,6 +541,46 @@ describe('ChatInput', () => {
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
 
+  test('restores queued message text into the composer when editing', async () => {
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queuedMessages, setQueuedMessages] = useState<QueuedWorkbenchMessage[]>([
+        {
+          id: 'queued-1',
+          content: '先检查引导条里的文本',
+          status: 'queued',
+          createdAt: '2026-05-25T15:08:00.000+08:00',
+        },
+      ])
+
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          queuedMessages={queuedMessages}
+          onEditQueuedMessage={id => {
+            const message = queuedMessages.find(item => item.id === id)
+            if (!message) return
+            setValue(message.content)
+            setQueuedMessages(current => current.filter(item => item.id !== id))
+          }}
+        />
+      )
+    }
+
+    render(<Harness />)
+
+    await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-message-input')).toHaveTextContent('先检查引导条里的文本')
+    )
+  })
+
   test('shows lightweight interrupt action while guidance is sending', async () => {
     const onInterruptAndSendQueuedMessage = vi.fn()
 
