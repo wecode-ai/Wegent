@@ -9,7 +9,7 @@ import {
   type LocalModelWebSearchMode,
 } from './localModelSettings'
 
-export type LocalModelProviderProfileId = 'custom' | 'kimi-coding'
+export type LocalModelProviderProfileId = 'custom' | 'deepseek' | 'glm' | 'kimi' | 'kimi-coding'
 
 export interface LocalModelProviderProfile {
   id: LocalModelProviderProfileId
@@ -65,6 +65,68 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
         contextWindow: KIMI_CODING_CONTEXT_WINDOW,
         codexCatalogModelId: KIMI_K27_CATALOG_MODEL_ID,
       },
+    },
+  },
+  {
+    id: 'kimi',
+    displayName: 'Kimi',
+    description: 'Kimi API Open Platform',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    apiFormat: 'openai-chat-completions',
+    requestPath: '/chat/completions',
+    modelsPath: '/models',
+    toolProfile: 'function',
+    group: 'Kimi',
+    contextWindow: 1_000_000,
+    webSearchMode: 'disabled',
+    imageGenerationEnabled: false,
+    modelDefaults: {
+      'kimi-k3': { contextWindow: 1_000_000 },
+      'kimi-k2.7-code': { contextWindow: 262_144 },
+      'kimi-k2.7-code-highspeed': { contextWindow: 262_144 },
+      'kimi-k2.6': { contextWindow: 262_144 },
+      'kimi-k2.5': { contextWindow: 262_144 },
+      'moonshot-v1-8k': { contextWindow: 8_192 },
+      'moonshot-v1-32k': { contextWindow: 32_768 },
+      'moonshot-v1-128k': { contextWindow: 131_072 },
+      'moonshot-v1-8k-vision-preview': { contextWindow: 8_192 },
+      'moonshot-v1-32k-vision-preview': { contextWindow: 32_768 },
+      'moonshot-v1-128k-vision-preview': { contextWindow: 131_072 },
+    },
+  },
+  {
+    id: 'deepseek',
+    displayName: 'DeepSeek',
+    description: 'DeepSeek API',
+    baseUrl: 'https://api.deepseek.com',
+    apiFormat: 'openai-chat-completions',
+    requestPath: '/chat/completions',
+    modelsPath: '/models',
+    toolProfile: 'function',
+    group: 'DeepSeek',
+    contextWindow: 1_000_000,
+    webSearchMode: 'disabled',
+    imageGenerationEnabled: false,
+    modelDefaults: {
+      'deepseek-v4-flash': { contextWindow: 1_000_000 },
+      'deepseek-v4-pro': { contextWindow: 1_000_000 },
+    },
+  },
+  {
+    id: 'glm',
+    displayName: 'GLM',
+    description: 'Zhipu AI Open Platform API',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    apiFormat: 'openai-chat-completions',
+    requestPath: '/chat/completions',
+    modelsPath: '/models',
+    toolProfile: 'function',
+    group: 'GLM',
+    contextWindow: 200_000,
+    webSearchMode: 'disabled',
+    imageGenerationEnabled: false,
+    modelDefaults: {
+      'glm-5.2': { contextWindow: 1_000_000 },
     },
   },
   {

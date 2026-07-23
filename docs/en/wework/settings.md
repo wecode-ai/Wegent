@@ -20,7 +20,7 @@ Common macOS shortcuts include:
 
 ## Custom Codex models
 
-In **Settings → Models**, click **Add model** and choose a provider first. For Kimi Coding, Wework discovers the provider's models. K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
+In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, and GLM. After entering the corresponding platform API key, Wework discovers available models through the provider's `/models` endpoint. Each profile supplies its connection URL, Chat Completions protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
 
 Each custom model has an optional **Group** field that controls how it appears in the model picker. Kimi Coding defaults this field to **Kimi**, but users can edit or clear it. Models without a group appear under **Custom models**.
 
