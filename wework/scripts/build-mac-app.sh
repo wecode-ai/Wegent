@@ -21,6 +21,8 @@ source "$SCRIPT_DIR/lib/wework-branding.sh"
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 # shellcheck source=lib/wework-macos-sidecar.sh
 source "$SCRIPT_DIR/lib/wework-macos-sidecar.sh"
+# shellcheck source=lib/codex-code-statistics.sh
+source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
 
 BUILD_PROFILE="${WEWORK_BUILD_PROFILE:-release}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
@@ -312,6 +314,13 @@ wework_build_macos_executor_sidecar \
   "$WEWORK_DIR" \
   "$MACOS_BUILD_TARGET" \
   "$BUILD_PROFILE"
+wework_build_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET"
+if [ "$NO_SIGN" != "1" ]; then
+  wework_sign_code_statistics_hook \
+    "$WEWORK_DIR" \
+    "$MACOS_BUILD_TARGET" \
+    "${APPLE_SIGNING_IDENTITY:-}"
+fi
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \
@@ -329,4 +338,7 @@ if [ -n "$MACOS_BUILD_TARGET" ]; then
   tauri_target_root="$tauri_target_root/$MACOS_BUILD_TARGET"
 fi
 wework_verify_macos_app_executor_sidecar "$tauri_target_root/$profile_dir/bundle"
+wework_verify_code_statistics_hook \
+  "$tauri_target_root/$profile_dir/bundle" \
+  "$MACOS_BUILD_TARGET"
 notarize_built_macos_dmgs "$BUILD_STARTED_AT"

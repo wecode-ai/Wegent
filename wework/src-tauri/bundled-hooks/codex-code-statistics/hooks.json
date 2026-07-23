@@ -14,7 +14,7 @@
             "windows-aarch64": "./bin/windows-aarch64/codex-code-statistics.exe",
             "windows-x86_64": "./bin/windows-x86_64/codex-code-statistics.exe"
           },
-          "timeout": 30,
+          "timeout": 120,
           "async": true,
           "statusMessage": "Reporting Codex code statistics"
         }

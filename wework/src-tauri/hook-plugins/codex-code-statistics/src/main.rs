@@ -79,7 +79,7 @@ async fn run() -> Result<(), String> {
     let git_url = git_remote_url(&input.cwd);
     let headers = report_headers(&input)?;
     let client = Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(30))
         .build()
         .map_err(|error| format!("failed to build report client: {error}"))?;
     let report_url =
@@ -260,6 +260,7 @@ async fn send_with_retry(
             }
             Err(error) => last_error = format!("report request failed: {error}"),
         }
+        eprintln!("file change report attempt {attempt}/{MAX_ATTEMPTS} failed: {last_error}");
         if attempt < MAX_ATTEMPTS {
             sleep(Duration::from_millis(500 * (1 << (attempt - 1)))).await;
         }
