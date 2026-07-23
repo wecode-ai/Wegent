@@ -70,6 +70,7 @@ impl RuntimeWorkRpcHandler {
 
         link.status = "archived".to_owned();
         link.running = false;
+        link.continuable = false;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
         log_runtime_archive_link("runtime task archive stored link", &link, true);
@@ -199,6 +200,7 @@ impl RuntimeWorkRpcHandler {
 
         link.status = "active".to_owned();
         link.running = false;
+        link.continuable = true;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
         Ok(task_action_success(&link))

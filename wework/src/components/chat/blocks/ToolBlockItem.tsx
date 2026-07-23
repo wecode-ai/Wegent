@@ -1,13 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
-import { Streamdown } from 'streamdown'
 import { useTranslation } from '@/hooks/useTranslation'
+import { terminalOutputToText } from '@/lib/terminal-text'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { AssistantMarkdown } from '../AssistantMarkdown'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
 import { resolveDirectMarkdownImageSrc } from '../assistantMarkdownLinks'
-import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import {
   getToolActivityFilePaths,
@@ -41,7 +41,7 @@ interface ToolBlockItemProps {
   fileEditDurations?: ReadonlyMap<string, FileEditDuration>
   forceExpanded?: boolean
   stateKey?: string
-  onOpenWorkspaceFile?: (path: string) => void
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
@@ -79,10 +79,22 @@ export function ToolBlockItem({
   }, [block.type, expanded, onExpandedChange])
 
   if (block.type === 'thinking') {
-    return <ThinkingBlockItem block={block} isRunning={isRunning} />
+    return (
+      <ThinkingBlockItem
+        block={block}
+        isRunning={isRunning}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
   }
   if (block.type === 'text') {
-    return <ProcessTextBlockItem block={block} isRunning={isRunning} />
+    return (
+      <ProcessTextBlockItem
+        block={block}
+        isRunning={isRunning}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
   }
   if (block.type === 'plan') {
     return <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
@@ -622,9 +634,11 @@ function basename(path: string): string {
 function ThinkingBlockItem({
   block,
   isRunning,
+  onOpenWorkspaceFile,
 }: {
   block: Extract<ProcessingBlock, { type: 'thinking' }>
   isRunning: boolean
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
@@ -679,7 +693,11 @@ function ThinkingBlockItem({
           className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
           data-testid="thinking-detail"
         >
-          <ProcessMarkdown content={block.content} />
+          <AssistantMarkdown
+            content={block.content}
+            variant="process"
+            onOpenFile={onOpenWorkspaceFile}
+          />
         </div>
       )}
     </div>
@@ -689,9 +707,11 @@ function ThinkingBlockItem({
 function ProcessTextBlockItem({
   block,
   isRunning,
+  onOpenWorkspaceFile,
 }: {
   block: Extract<ProcessingBlock, { type: 'text' }>
   isRunning: boolean
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
 
@@ -707,82 +727,15 @@ function ProcessTextBlockItem({
       data-testid="process-text-block"
     >
       <div className="min-w-0">
-        <ProcessMarkdown content={block.content} />
+        <AssistantMarkdown
+          content={block.content}
+          isStreaming={isRunning}
+          variant="process"
+          onOpenFile={onOpenWorkspaceFile}
+        />
       </div>
     </div>
   )
-}
-
-function ProcessMarkdown({ content }: { content: string }) {
-  return (
-    <div className="thinking-markdown min-w-0 break-words leading-6 text-text-secondary">
-      <Streamdown
-        mode="streaming"
-        controls={false}
-        lineNumbers={false}
-        urlTransform={url => url}
-        components={{
-          p: ({ children }) => <p className="mb-1.5 min-w-0 break-words leading-6">{children}</p>,
-          ul: ({ children }) => <ul className="mb-1.5 list-disc space-y-0.5 pl-5">{children}</ul>,
-          ol: ({ children }) => (
-            <ol className="mb-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>
-          ),
-          li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
-          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-          code: ({ className, children, node, ...props }) => {
-            const match = /language-(\w*)/.exec(className || '')
-            const text = reactNodeToText(children)
-            const isBlock =
-              ('data-block' in props && Boolean(props['data-block'])) ||
-              node?.properties?.dataBlock === 'true' ||
-              Boolean(match) ||
-              text.includes('\n')
-            if (isBlock) {
-              const lang = match ? match[1] || '' : ''
-              return (
-                <MarkdownCodeBlock lang={lang} compact>
-                  {text || children}
-                </MarkdownCodeBlock>
-              )
-            }
-            return (
-              <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-                {children}
-              </code>
-            )
-          },
-          inlineCode: ({ children }) => (
-            <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-              {children}
-            </code>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
-              {children}
-            </blockquote>
-          ),
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              className="break-words text-primary underline"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {content}
-      </Streamdown>
-    </div>
-  )
-}
-
-function reactNodeToText(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(reactNodeToText).join('')
-  return ''
 }
 
 type GenericToolLabels = {
@@ -1150,11 +1103,20 @@ function BashBlockDetail({
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
-  const outputText =
-    typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
+  const rawOutputText = useMemo(
+    () => (typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''),
+    [output]
+  )
+  const outputText = useMemo(() => terminalOutputToText(rawOutputText), [rawOutputText])
+  const outputRef = useRef<HTMLPreElement>(null)
   const isDone = block.status === 'done'
   const isError = block.status === 'error'
   const [copied, setCopied] = useState(false)
+
+  useLayoutEffect(() => {
+    const outputElement = outputRef.current
+    if (outputElement) outputElement.scrollTop = outputElement.scrollHeight
+  }, [outputText])
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(command ?? '')
@@ -1235,8 +1197,12 @@ function BashBlockDetail({
               ) : null}
             </div>
           ) : null}
-          <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary">
-            {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
+          <pre
+            ref={outputRef}
+            className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary"
+            data-testid="shell-tool-output"
+          >
+            {outputText}
           </pre>
         </>
       )}

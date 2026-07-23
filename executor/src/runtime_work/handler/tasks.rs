@@ -464,6 +464,8 @@ impl RuntimeWorkRpcHandler {
             .update_task(&local_task_id, |link| {
                 link.status = "cancelled".to_owned();
                 link.running = false;
+                link.thread_status = "idle".to_owned();
+                link.turn_status = Some("interrupted".to_owned());
                 link.updated_at = now_ms();
                 link.completed_at = Some(link.updated_at);
             })
@@ -516,6 +518,8 @@ impl RuntimeWorkRpcHandler {
             link.workspace_path = workspace_path.to_owned();
             link.status = "running".to_owned();
             link.running = true;
+            link.thread_status = "active".to_owned();
+            link.turn_status = Some("inProgress".to_owned());
             link.ephemeral = link.ephemeral || request.ephemeral;
             link.updated_at = now_ms();
             if let Some(message) = message.clone() {

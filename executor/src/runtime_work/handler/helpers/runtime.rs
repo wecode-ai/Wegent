@@ -44,6 +44,7 @@ fn archived_link_from_payload_item(
     }
     link.status = "archived".to_owned();
     link.running = false;
+    link.continuable = false;
     link
 }
 

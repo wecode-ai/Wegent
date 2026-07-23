@@ -68,6 +68,12 @@ Debug 面板的快照会附带当前 runtime pane 的轻量内存摘要，用于
 
 前端显示对话时仍以 transcript/message action 生成的 `WorkbenchMessage` 为准；任务列表和状态轮询只用于状态、标题、运行态和 workspace 信息。排查“列表很慢”或“切换任务内存上涨”时，应优先确认是否又把原始消息或命令输出加入了 runtime list/handle/transcript 元数据路径。
 
+### Pane 缓存与资源生命周期
+
+桌面工作台最多缓存 10 个普通 pane，并按最近使用顺序淘汰。非活跃且已停止运行的 pane 会释放 transcript 消息、历史 DOM、分页范围、导航索引和 processing 展开状态；再次切回时从 runtime transcript 原始数据重新加载。当前 pane 的远离视口历史消息也只保留高度占位，滚动靠近时再恢复内容。
+
+Terminal 和内置浏览器属于有状态活动资源，不跟随普通 pane 淘汰。只要 pane 中仍有 Terminal 或浏览器标签，它就保持挂载，以保留终端进程和网页会话；关闭对应资源后，该 pane 才重新受普通缓存上限约束。修改这条边界时，必须同时覆盖普通 pane 的 LRU 淘汰、资源 pane 保活、历史消息窗口化和桌面内存 E2E。
+
 ## 本地 Codex 流式日志
 
 本地 executor 的 Codex 调试日志默认保留 delta 详情，便于定位流式输出顺序、阶段识别和最终内容覆盖问题。默认会记录 Codex 原始 delta 与运行态分类摘要。

@@ -6,6 +6,22 @@ import {
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
+describe('runtime transcript status', () => {
+  test('does not infer streaming from an active conversation status', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-history',
+        role: 'assistant',
+        content: 'Finished answer',
+        status: 'active',
+        subtaskId: 'turn-1',
+      },
+    ])
+
+    expect(message.status).toBe('done')
+  })
+})
+
 describe('createRuntimeTaskStreamHandlers', () => {
   afterEach(() => {
     vi.restoreAllMocks()
