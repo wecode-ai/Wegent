@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { ToolBlockItem } from './ToolBlockItem'
@@ -465,6 +465,33 @@ describe('ToolBlockItem', () => {
     expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('.collapsible')
     expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('css')
     expect(screen.queryByTestId('markdown-code-wrap-button')).not.toBeInTheDocument()
+  })
+
+  test('opens streaming process text file links with line numbers in the workspace', () => {
+    const onOpenWorkspaceFile = vi.fn()
+
+    render(
+      <ToolBlockItem
+        block={{
+          ...streamingTextBlock,
+          content:
+            '[workbenchPaneStack.test.tsx](/Users/dev/Wegent/wework/src/components/layout/workbenchPaneStack.test.tsx:184)',
+        }}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
+
+    expect(
+      screen.queryByRole('link', { name: /workbenchPaneStack\.test\.tsx/ })
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 184)')
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/Users/dev/Wegent/wework/src/components/layout/workbenchPaneStack.test.tsx',
+      { lineStart: 184, lineEnd: undefined }
+    )
   })
 
   test('renders markdown code labels as md and toggles line wrapping', async () => {

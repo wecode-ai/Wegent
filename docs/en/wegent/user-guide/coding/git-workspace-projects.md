@@ -124,6 +124,8 @@ The file preview does not save or modify files. You can select a code range in t
 
 When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines.
 
+Streaming progress text shown before the assistant's final response uses the same file-link behavior. Absolute paths are not resolved as web links against the Wework page URL; clicking a link with line numbers opens the workspace file directly at the referenced lines.
+
 File link destinations can use Markdown angle-bracket syntax, such as `[file](</absolute/path/file.ts:18>)`. Wework removes the surrounding angle brackets before resolving the absolute path and line number, so the brackets do not become part of the filesystem path.
 
 ## Use the Right-Side Browser
