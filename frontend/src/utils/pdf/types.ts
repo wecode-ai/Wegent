@@ -22,15 +22,6 @@ export interface ExportAttachment {
 }
 
 /**
- * Knowledge base info for PDF export
- */
-export interface ExportKnowledgeBase {
-  id: number
-  name: string
-  document_count?: number
-}
-
-/**
  * Message structure for PDF export
  */
 export interface ExportMessage {
@@ -41,7 +32,6 @@ export interface ExportMessage {
   userName?: string
   teamName?: string
   attachments?: ExportAttachment[]
-  knowledgeBases?: ExportKnowledgeBase[]
 }
 
 /**
