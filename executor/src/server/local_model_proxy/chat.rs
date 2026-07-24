@@ -164,11 +164,8 @@ fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
                 } else {
                     "Put only the custom tool's raw input in the function's `input` field. Do not add Markdown fences or explanatory text.\n\n".to_owned()
                 };
-                let description = if name == "apply_patch" {
-                    contract
-                } else {
-                    format!("{contract}Original tool definition:\n```json\n{definition}\n```")
-                };
+                let description =
+                    format!("{contract}Original tool definition:\n```json\n{definition}\n```");
                 return Some(json!({
                     "type": "function",
                     "function": {
@@ -1625,7 +1622,7 @@ mod tests {
         assert!(context.is_custom("apply_patch"));
         assert!(converted["tools"][0]["function"]["description"]
             .as_str()
-            .is_some_and(|value| !value.contains("Original tool definition:")));
+            .is_some_and(|value| value.contains("Original tool definition:")));
         let description = converted["tools"][0]["function"]["description"]
             .as_str()
             .expect("custom tool description");
