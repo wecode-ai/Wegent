@@ -33,6 +33,7 @@ interface ProjectChatComposerProps {
   activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   attachments: Attachment[]
   codeComments?: CodeCommentContext[]
@@ -81,6 +82,7 @@ export function ProjectChatComposer({
   activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
+  onModelSelectorOpenChange,
   isModelSelectionReady,
   attachments,
   codeComments = [],
@@ -250,7 +252,7 @@ export function ProjectChatComposer({
           onOpenSkillFile={onOpenSkillFile}
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-secondary outline-none placeholder:text-text-muted/55"
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           onListLocalApps={onListLocalApps}
@@ -272,6 +274,7 @@ export function ProjectChatComposer({
           activeModel={activeModel}
           selectedModelOptions={selectedModelOptions}
           modelSelectorOpenSignal={modelSelectorOpenSignal}
+          onModelSelectorOpenChange={onModelSelectorOpenChange}
           isModelSelectionReady={isModelSelectionReady}
           onSelectModel={onSelectModel}
           onSelectModelAndOptions={onSelectModelAndOptions}

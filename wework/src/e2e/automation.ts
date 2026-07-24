@@ -308,9 +308,34 @@ function desktopControlSnapshot(selector = 'body'): string {
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
-  const snapshot = await invoke<string>('capture_main_webview')
-  if (element === document.body) return snapshot
-  return cropDesktopControlScreenshot(snapshot, element.getBoundingClientRect())
+  if (element === document.body) return invoke<string>('capture_main_webview')
+  const rect = element.getBoundingClientRect()
+  if (selector !== '[data-testid="model-selector-menu"]') {
+    const snapshot = await invoke<string>('capture_main_webview')
+    return cropDesktopControlScreenshot(snapshot, rect)
+  }
+  // NSView snapshots can omit WebKit's separately composited fixed-position popovers.
+  // Mirror the target into the document layer so element evidence captures what is visible.
+  const captureClone = element.cloneNode(true) as HTMLElement
+  Object.assign(captureClone.style, {
+    animation: 'none',
+    height: `${rect.height}px`,
+    left: `${rect.left + window.scrollX}px`,
+    maxHeight: 'none',
+    position: 'absolute',
+    top: `${rect.top + window.scrollY}px`,
+    transform: 'none',
+    width: `${rect.width}px`,
+    zIndex: '2147483647',
+  })
+  document.body.appendChild(captureClone)
+  try {
+    await new Promise<void>(resolve => window.setTimeout(resolve, 50))
+    const snapshot = await invoke<string>('capture_main_webview')
+    return cropDesktopControlScreenshot(snapshot, rect)
+  } finally {
+    captureClone.remove()
+  }
 }
 
 async function cropDesktopControlScreenshot(snapshot: string, rect: DOMRect): Promise<string> {
