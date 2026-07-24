@@ -54,7 +54,7 @@ jobs:
           uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
         with:
           files: ./backend/coverage.xml
           flags: backend
@@ -151,7 +151,7 @@ jobs:
           uv run pytest tests/ --cov=executors --cov-report=xml --cov-report=term-missing -v -s
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
         with:
           files: ./executor_manager/coverage.xml
           flags: executor-manager
@@ -209,7 +209,7 @@ jobs:
           fi
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
         with:
           files: ./shared/coverage.xml
           flags: shared
@@ -254,7 +254,7 @@ jobs:
           uv run pytest tests/ --cov=knowledge_engine --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
         with:
           files: ./knowledge_engine/coverage.xml
           flags: knowledge-engine
@@ -269,7 +269,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -300,7 +300,7 @@ jobs:
         run: pnpm --filter wecode-ai-assistant run test --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
         with:
           files: ./frontend/coverage/coverage-final.json
           flags: frontend
@@ -333,7 +333,7 @@ jobs:
         run: pnpm --filter wework exec vitest run --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
         with:
           files: ./wework/coverage/coverage-final.json
           flags: wework
@@ -373,7 +373,7 @@ jobs:
           pytest tests/ --ignore=tests/test_integration.py --cov=wegent --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
         with:
           files: ./wegent-cli/coverage.xml
           flags: wegent-cli
