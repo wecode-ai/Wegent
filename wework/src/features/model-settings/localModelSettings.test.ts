@@ -32,14 +32,13 @@ describe('localModelSettings', () => {
         toolProfile: 'custom',
       })
     ).toThrow('Native custom tools require')
-    expect(() =>
-      saveLocalModelConfig({
-        modelId: 'invalid-function',
-        baseUrl: 'https://responses.example/v1',
-        apiFormat: 'openai-responses',
-        toolProfile: 'function',
-      })
-    ).toThrow('Function tool conversion requires')
+    const functionResponses = saveLocalModelConfig({
+      modelId: 'function-responses',
+      baseUrl: 'https://responses.example/v1',
+      apiFormat: 'openai-responses',
+      toolProfile: 'function',
+    })
+    expect(functionResponses.toolProfile).toBe('function')
   })
 
   beforeEach(() => {

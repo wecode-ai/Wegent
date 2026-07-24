@@ -376,7 +376,7 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
   if (!model) return []
   const metadata = getModelUiMetadata(model)
   const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel)
-  return familyConfig.controls
+  const controls = familyConfig.controls
     .filter(control => {
       if ((control.scope ?? 'family') === 'family') return true
       return metadata.supportedControls.has(control.id)
@@ -400,6 +400,8 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
         options,
       }
     })
+
+  return controls
 }
 
 export function getModelDisplayLabel(

@@ -402,7 +402,7 @@ describe('createHybridWorkbenchServices', () => {
     ])
   })
 
-  it('only displays Backend models that explicitly support the Responses API', async () => {
+  it('displays cloud models that support Responses, Chat Completions, or Anthropic Messages protocols', async () => {
     mocks.localListModels.mockResolvedValue({ data: [chatCompletionsModel] })
     mocks.cloudListModels.mockResolvedValue({
       data: [chatCompletionsModel, responsesModel],
@@ -414,6 +414,7 @@ describe('createHybridWorkbenchServices', () => {
       const refreshed = await services.modelApi.listModels()
       expect(refreshed.data.map(model => model.name)).toEqual([
         'chat-completions-model',
+        'cloud:public:chat-completions-model',
         'cloud:public:responses-model',
       ])
     })
@@ -421,9 +422,11 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(response.data.map(model => model.name)).toEqual([
       'chat-completions-model',
+      'cloud:public:chat-completions-model',
       'cloud:public:responses-model',
     ])
     expect(getModelExecutionOverride(response.data[1])?.source).toBe('cloud')
+    expect(getModelExecutionOverride(response.data[2])?.source).toBe('cloud')
   })
 
   it('does not wait for an unresponsive cloud model request', async () => {

@@ -118,6 +118,9 @@ const SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET = 160
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
+const PASTED_ZIP_FILENAME = 'pasted-feedback.zip'
+const PASTED_ZIP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_ZIP_COMPLETE'
+const PASTED_ZIP_BASE64 = Buffer.from('PK\x03\x04WEWORK_E2E_ZIP').toString('base64')
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
@@ -1667,6 +1670,36 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
   }
 }
 
+async function verifyPastedZipAttachment({ composerSelector, control }) {
+  control.setScenario('pasted_zip_attachment')
+  await control.command('snapshot', 'body')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('pasteFile', composerSelector, {
+    filename: PASTED_ZIP_FILENAME,
+    mimeType: 'application/zip',
+    value: PASTED_ZIP_BASE64,
+  })
+  await control.command('waitFor', '[data-testid="attachment-badge"]', {
+    text: PASTED_ZIP_FILENAME,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('pasted_zip_attachment', 1)
+  await control.command('waitFor', '[data-testid="message-document-attachment"]', {
+    text: PASTED_ZIP_FILENAME,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PASTED_ZIP_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'pasted-zip-attachment.png')
+}
+
 async function verifySideChatAttachmentIsolation({ control, taskRowTestId }) {
   const sideChatSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-chat-panel"]`
   const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
@@ -2517,6 +2550,7 @@ class DesktopE2EServer {
         'reconnect',
         'fresh_chat',
         'attachment_only',
+        'pasted_zip_attachment',
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
@@ -3158,6 +3192,25 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'pasted_zip_attachment') {
+      this.recordScenarioRequest('pasted_zip_attachment', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(PASTED_ZIP_FILENAME),
+        'The pasted ZIP filename was not forwarded to the real Codex request'
+      )
+      assert.ok(
+        requestText.includes('application/zip'),
+        'The pasted ZIP MIME type was not forwarded to the real Codex request'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PASTED_ZIP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'side_chat_attachment') {
       this.recordScenarioRequest('side_chat_attachment', modelRequest)
       const requestText = JSON.stringify(body)
@@ -3438,10 +3491,24 @@ class DesktopE2EServer {
       `${model.protocol} did not receive a shell tool: ${names.join(', ')}`
     )
     if (model.protocol === 'responses') {
-      assert.equal(tool.type, 'custom', 'Responses apply_patch was not a custom tool')
-      assert.equal(tool.format?.type, 'grammar', 'Responses apply_patch grammar was missing')
-      assert.equal(tool.format?.syntax, 'lark', 'Responses apply_patch grammar was not Lark')
-      assert.ok(tool.format?.definition, 'Responses apply_patch grammar definition was empty')
+      assert.equal(tool.type, 'function', 'Responses apply_patch was not converted to function')
+      const description = tool.description ?? ''
+      this.assertApplyPatchOutputContract(model, description)
+      assert.deepEqual(
+        tool.parameters,
+        {
+          type: 'object',
+          properties: {
+            input: {
+              type: 'string',
+              description: CUSTOM_TOOL_INPUT_DESCRIPTION,
+            },
+          },
+          required: ['input'],
+          additionalProperties: false,
+        },
+        'Responses apply_patch wrapper schema was not preserved'
+      )
       return
     }
     if (model.protocol === 'chat') {
@@ -3513,7 +3580,7 @@ class DesktopE2EServer {
   assertLocalToolOutput(model, body) {
     const patch = localProtocolPatch(model)
     if (model.protocol === 'responses') {
-      const output = body.input?.find(item => item?.type === 'custom_tool_call_output')
+      const output = body.input?.find(item => item?.type === 'function_call_output')
       assert.equal(
         output?.call_id,
         'local-responses-tool',
@@ -3553,7 +3620,7 @@ class DesktopE2EServer {
       const id = `local-${model.protocol}-tool`
       this.writeSse(response, [
         responseCreated(id),
-        customToolCall(id, 'apply_patch', patch),
+        ...functionCall(id, 'apply_patch', { input: patch }),
         responseCompleted(id),
       ])
       return
@@ -5104,22 +5171,21 @@ async function main() {
     phase = 'workspace-resources-across-conversation-switch'
     const activeBrowserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
     const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
-    const activeRightPanelToggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-right-workspace-panel-button"]`
+    const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
+    const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
+    const rightBrowserTabCloseSelector = '[data-testid="right-workspace-browser-tab-close-button"]'
     const retainedBrowserUrl = 'https://example.com/session-state'
-    await control.command('waitFor', activeRightPanelToggleSelector, {
+    await control.command('waitFor', rightPanelToggleSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await control.command('click', activeRightPanelToggleSelector)
+    await control.command('click', rightPanelToggleSelector)
     await control.command(
       'click',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
     )
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-bottom-workspace-panel-button"]`
-    )
+    await control.command('click', bottomPanelToggleSelector)
     await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     const secondTaskWorkspaceSnapshot = JSON.parse(
@@ -5155,10 +5221,7 @@ async function main() {
       'click',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="close-bottom-workspace-tab-button"]`
     )
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-tab-close-button"]`
-    )
+    await control.command('click', rightBrowserTabCloseSelector)
 
     await control.command('fill', composerSelector, { value: '' })
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
@@ -5293,6 +5356,9 @@ async function main() {
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
     await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
+
+    phase = 'pasted-zip-attachment'
+    await verifyPastedZipAttachment({ composerSelector, control })
 
     await writeFile(
       join(resultDir, 'model-requests.json'),
