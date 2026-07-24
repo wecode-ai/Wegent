@@ -39,6 +39,8 @@ pub(crate) struct RuntimeTaskLink {
     pub runtime_handle: Value,
     pub parent: Option<Value>,
     pub ephemeral: bool,
+    pub runtime_project_key: Option<String>,
+    pub runtime_workspace_roots: Vec<String>,
     #[serde(skip)]
     pub list_order: Option<usize>,
     #[serde(skip)]
@@ -72,6 +74,8 @@ impl RuntimeTaskLink {
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -107,6 +111,8 @@ impl RuntimeTaskLink {
             runtime_handle,
             parent: Some(parent),
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -194,6 +200,13 @@ impl RuntimeTaskLink {
                 .unwrap_or_else(|| json!({})),
             parent: local_link.as_ref().and_then(|link| link.parent.clone()),
             ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
+            runtime_project_key: local_link
+                .as_ref()
+                .and_then(|link| link.runtime_project_key.clone()),
+            runtime_workspace_roots: local_link
+                .as_ref()
+                .map(|link| link.runtime_workspace_roots.clone())
+                .unwrap_or_default(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -222,6 +235,8 @@ impl RuntimeTaskLink {
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
+            runtime_project_key: self.runtime_project_key.clone(),
+            runtime_workspace_roots: self.runtime_workspace_roots.clone(),
             list_order: self.list_order,
             group_workspace_path: self.group_workspace_path.clone(),
             group_project_key: self.group_project_key.clone(),
@@ -273,6 +288,8 @@ impl Default for RuntimeTaskLink {
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,

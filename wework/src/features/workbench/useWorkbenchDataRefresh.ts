@@ -41,6 +41,7 @@ import {
   reconcileCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
 } from './remoteRuntimeWorkCache'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 interface UseWorkbenchDataRefreshOptions {
   user: User
@@ -105,6 +106,30 @@ function mergeRuntimeTaskAddresses(
   return [...addresses.values()]
 }
 
+function removeRuntimeProject(
+  runtimeWork: RuntimeWorkListResponse,
+  projectId: number
+): RuntimeWorkListResponse {
+  const projects = runtimeWork.projects.filter(
+    project => runtimeProjectUiId(project.project) !== projectId
+  )
+  const totalTasks =
+    projects.reduce(
+      (projectTotal, project) =>
+        projectTotal +
+        project.deviceWorkspaces.reduce(
+          (workspaceTotal, workspace) => workspaceTotal + workspace.tasks.length,
+          0
+        ),
+      0
+    ) +
+    runtimeWork.chats.reduce(
+      (workspaceTotal, workspace) => workspaceTotal + workspace.tasks.length,
+      0
+    )
+  return { ...runtimeWork, projects, totalTasks }
+}
+
 export function useWorkbenchDataRefresh({
   user,
   state,
@@ -129,6 +154,7 @@ export function useWorkbenchDataRefresh({
   const cloudRuntimeStateRef = useRef<CloudRuntimeState>(cloudRuntimeState)
   const cloudBackgroundApiRef = useRef(services.cloudBackgroundApi)
   const runtimeWorkRef = useRef(state.runtimeWork)
+  const localRuntimeWorkRef = useRef<RuntimeWorkListResponse | null>(null)
   const devicesRef = useRef(state.devices)
   const archivedRuntimeTaskAddressesRef = useRef<RuntimeTaskAddress[]>([])
   const cloudWorkStatus = useMemo(
@@ -322,9 +348,10 @@ export function useWorkbenchDataRefresh({
         return
       }
 
+      const latestLocalRuntimeWork = localRuntimeWorkRef.current ?? baseRuntimeWork
       if (runtimeWorkResult?.status === 'fulfilled') {
         releaseConfirmedArchivedRuntimeTasks(
-          mergeRuntimeWorkLists(baseRuntimeWork, runtimeWorkResult.value, {
+          mergeRuntimeWorkLists(latestLocalRuntimeWork, runtimeWorkResult.value, {
             devices: [
               ...baseDevices,
               ...(devicesResult?.status === 'fulfilled' ? devicesResult.value : []),
@@ -366,7 +393,7 @@ export function useWorkbenchDataRefresh({
       updateCloudRuntimeState(nextCloudState)
 
       const devices = resolveDeviceListWithCache(selectVisibleDevices(baseDevices, nextCloudState))
-      const runtimeWork = selectVisibleRuntimeWork(baseRuntimeWork, nextCloudState, devices)
+      const runtimeWork = selectVisibleRuntimeWork(latestLocalRuntimeWork, nextCloudState, devices)
 
       dispatch({
         type: 'lists_refreshed',
@@ -439,6 +466,7 @@ export function useWorkbenchDataRefresh({
         const runtimeWork =
           runtimeWorkResult.status === 'fulfilled' ? runtimeWorkResult.value : EMPTY_RUNTIME_WORK
         if (runtimeWorkResult.status === 'fulfilled') {
+          localRuntimeWorkRef.current = runtimeWork
           dispatch({
             type: 'runtime_work_refreshed',
             runtimeWork: selectVisibleRuntimeWork(
@@ -494,6 +522,9 @@ export function useWorkbenchDataRefresh({
     const visibleDevices = resolveDeviceListWithCache(
       selectVisibleDevices(devices, cloudRuntimeStateRef.current)
     )
+    if (runtimeWorkResult) {
+      localRuntimeWorkRef.current = runtimeWorkResult
+    }
     const localRuntimeWork = runtimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
     if (runtimeWorkResult && !services.cloudBackgroundApi?.listRuntimeWork) {
       releaseConfirmedArchivedRuntimeTasks(runtimeWorkResult)
@@ -552,6 +583,11 @@ export function useWorkbenchDataRefresh({
     [executorClient]
   )
 
+  const markRuntimeProjectRemoved = useCallback((projectId: number) => {
+    if (!localRuntimeWorkRef.current) return
+    localRuntimeWorkRef.current = removeRuntimeProject(localRuntimeWorkRef.current, projectId)
+  }, [])
+
   const refreshDevices = useCallback(
     async (options?: { useCacheFallback?: boolean }) => {
       const devices = await loadDevicesForRefresh(options)
@@ -588,6 +624,7 @@ export function useWorkbenchDataRefresh({
   return {
     cloudWorkStatus,
     markRuntimeTasksArchived,
+    markRuntimeProjectRemoved,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,

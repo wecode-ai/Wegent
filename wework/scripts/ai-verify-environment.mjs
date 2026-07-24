@@ -42,6 +42,7 @@ export function buildAiVerifyEnvironment(
     DEVICE_SESSION_GATEWAY_PORT: '0',
     WEGENT_EXECUTOR_HOME: executorHome,
     WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'true',
+    WEWORK_DISABLE_BACKGROUND_THROTTLING: '1',
     WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
     WEGENT_EXECUTOR_LOG_DIR: sessionDirectory,
     WEWORK_APP_CONFIG_DIR: join(sessionDirectory, 'app-config'),

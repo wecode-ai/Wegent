@@ -16,6 +16,19 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        if let (Some(project_key), Some(project_name)) = (
+            request.runtime_project_key.as_deref(),
+            request.runtime_project_name.as_deref(),
+        ) {
+            if !request.runtime_workspace_roots.is_empty() {
+                upsert_codex_global_local_project(
+                    project_key,
+                    project_name,
+                    &request.runtime_workspace_roots,
+                )
+                .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+            }
+        }
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
@@ -30,6 +43,8 @@ impl RuntimeWorkRpcHandler {
             title.clone(),
         );
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
+        link.runtime_project_key = request.runtime_project_key.clone();
+        link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
@@ -108,6 +123,17 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
+        if request.runtime_project_key.is_none() {
+            request.runtime_project_key = existing_link
+                .as_ref()
+                .and_then(|link| link.runtime_project_key.clone());
+        }
+        if request.runtime_workspace_roots.is_empty() {
+            request.runtime_workspace_roots = existing_link
+                .as_ref()
+                .map(|link| link.runtime_workspace_roots.clone())
+                .unwrap_or_default();
+        }
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
@@ -521,6 +547,12 @@ impl RuntimeWorkRpcHandler {
             link.thread_status = "active".to_owned();
             link.turn_status = Some("inProgress".to_owned());
             link.ephemeral = link.ephemeral || request.ephemeral;
+            if request.runtime_project_key.is_some() {
+                link.runtime_project_key = request.runtime_project_key.clone();
+            }
+            if !request.runtime_workspace_roots.is_empty() {
+                link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
+            }
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
             if let Some(message) = message.clone() {
@@ -538,6 +570,8 @@ impl RuntimeWorkRpcHandler {
         );
         link.thread_id = Some(thread_id.to_owned());
         link.ephemeral = request.ephemeral;
+        link.runtime_project_key = request.runtime_project_key.clone();
+        link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
         if let Some(message) = message {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);

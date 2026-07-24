@@ -14,6 +14,7 @@ import {
 } from '@/lib/device-capabilities'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -499,6 +500,30 @@ export function useWorkbenchRuntimeMessaging({
         projectId,
         state.selectedDeviceWorkspaceId
       )
+      const selectedRuntimeProject = projectId
+        ? state.runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
+            ?.project
+        : null
+      const selectedRuntimeProjectWork = projectId
+        ? state.runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
+        : null
+      const configuredRuntimeRoots =
+        selectedRuntimeProject?.roots?.map(root => root.path.trim()).filter(Boolean) ?? []
+      const runtimeWorkspaceRoots =
+        selectedRuntimeProject?.source === 'local_project'
+          ? Array.from(
+              new Set(
+                (configuredRuntimeRoots.length > 0
+                  ? configuredRuntimeRoots
+                  : (selectedRuntimeProjectWork?.deviceWorkspaces.map(
+                      workspace => workspace.workspacePath
+                    ) ?? [])
+                )
+                  .map(root => root.trim())
+                  .filter(Boolean)
+              )
+            )
+          : []
       let runtimeTaskTarget: Pick<
         RuntimeTaskCreateRequest,
         'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
@@ -592,6 +617,13 @@ export function useWorkbenchRuntimeMessaging({
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
         execution: payload.execution,
+        ...(selectedRuntimeProject?.source === 'local_project'
+          ? {
+              runtimeProjectKey: selectedRuntimeProject.key,
+              runtimeProjectName: selectedRuntimeProject.name,
+              runtimeWorkspaceRoots,
+            }
+          : {}),
         ...(options?.ephemeral ? { ephemeral: true } : {}),
         ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),

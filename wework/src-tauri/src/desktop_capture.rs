@@ -19,10 +19,14 @@ async fn capture_main_webview_impl(app: tauri::AppHandle) -> Result<String, Stri
         })
         .map_err(|error| format!("Failed to access main webview: {error}"))?;
 
-    receiver
+    let snapshot = receiver
         .recv()
         .await
-        .ok_or_else(|| "Main webview snapshot was cancelled".to_string())?
+        .ok_or_else(|| "Main webview snapshot was cancelled".to_string())??;
+    let _ = webview.show();
+    let _ = webview.unminimize();
+    let _ = webview.set_focus();
+    Ok(snapshot)
 }
 
 #[cfg(target_os = "macos")]

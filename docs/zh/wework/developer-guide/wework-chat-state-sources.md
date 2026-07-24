@@ -44,6 +44,34 @@ sidebar_position: 18
 7. `chat:done`、`chat:error`、取消事件通过 reducer 结算 assistant 消息，并触发 work list 刷新。
 8. 如果 runtime work 与消息状态不一致，不做兜底结算；必须修正缺失的 stream event、transcript 数据或 reducer action。
 
+## 本地多目录项目与任务归属
+
+本地 Codex 项目可以包含一个有序的根目录列表。第一项是主根，用于 composer
+默认工作区和执行请求的 `cwd`；完整、去重后的根目录列表是项目级执行上下文，不能
+缩减为当前 workspace。
+
+多目录上下文按以下主链路传递：
+
+1. Wework 从 runtime project 的 `roots` 读取目录；仅在该字段缺失时才从
+   `deviceWorkspaces` 派生，并在创建任务和发送消息时传递
+   `runtimeProjectKey`、`runtimeProjectName` 和 `runtimeWorkspaceRoots`。
+2. local services 将这些字段写入 execution request metadata。
+3. executor 把项目 key 和根目录列表保存到 `RuntimeTaskLink`，并在 Codex
+   `thread/start`、`thread/fork`、`thread/resume` 和 `turn/start` 请求中传递
+   `runtimeWorkspaceRoots`。
+4. follow-up 请求缺少项目 metadata 时，executor 从现有 `RuntimeTaskLink`
+   恢复这些字段，保证同一 thread 和重新打开后的会话继续使用相同项目范围。
+5. Codex 全局线程归属优先使用显式 project key，再进行路径匹配，避免一个多目录
+   项目在侧栏中被拆成多个项目。
+
+`runtimeWork` 的本地快照是本地任务展示的当前事实。异步云端刷新必须与刷新完成时的
+最新本地快照合并，不能用请求发起前捕获的旧状态覆盖新建任务。用户选择“新建会话”
+只清空当前聊天 pane，不归档或删除原任务；原任务继续显示在项目下，并可重新打开。
+环境弹层必须展示和复制项目的全部根目录，而不是只显示主根。
+
+这些规则只改变本地 Codex 项目。远程和云端任务仍遵循其原有的单 workspace 选择
+语义，不能因为本地多目录支持而隐式扩大远程执行范围。
+
 ### 网页搜索工具块
 
 Codex 的网页搜索在 `item/started` 时可能还没有查询动作，在 `item/completed` 时才提供最终的 `action`。executor 必须用相同 block id 发出更新，把状态结算为 `done`，并将最终 `action` 写入 `tool_input`；否则 Wework 会一直显示“正在搜索网页”，展开后也没有内容。实时事件和历史 transcript 必须生成一致的 `web_search` 工具块。

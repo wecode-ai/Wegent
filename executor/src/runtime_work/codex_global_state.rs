@@ -452,6 +452,7 @@ pub(crate) fn upsert_codex_global_local_project(
 pub(crate) fn register_codex_global_thread_workspace_root(
     thread_id: &str,
     workspace_path: &str,
+    project_key: Option<&str>,
 ) -> Result<Option<String>, String> {
     let thread_id = thread_id.trim();
     if thread_id.is_empty() {
@@ -464,8 +465,12 @@ pub(crate) fn register_codex_global_thread_workspace_root(
 
     let state_path = codex_global_state_path();
     let mut payload = read_state_payload(&state_path).unwrap_or_default();
-    let workspace_root = index_from_payload(&payload)
-        .project_for_path(&normalized_workspace)
+    let project_key = project_key.and_then(clean_text);
+    let project_index = index_from_payload(&payload);
+    let workspace_root = project_key
+        .as_deref()
+        .and_then(|key| project_index.project_for_key(key))
+        .or_else(|| project_index.project_for_path(&normalized_workspace))
         .map(|project| project.workspace_path.clone())
         .unwrap_or(normalized_workspace);
 
@@ -481,10 +486,29 @@ pub(crate) fn register_codex_global_thread_workspace_root(
         .is_some_and(|hint| hint == workspace_root);
     let projectless_ids = text_list(payload.get(PROJECTLESS_THREAD_IDS_KEY));
     let was_projectless = projectless_ids.iter().any(|value| value == thread_id);
-    if existing_hint_matches && !was_projectless {
+    let existing_assignment_matches = project_key.as_deref().map_or(true, |project_key| {
+        payload
+            .get(THREAD_PROJECT_ASSIGNMENTS_KEY)
+            .and_then(Value::as_object)
+            .and_then(|assignments| assignments.get(thread_id))
+            .and_then(|assignment| assignment.get("projectId"))
+            .and_then(clean_string)
+            .as_deref()
+            == Some(project_key)
+    });
+    if existing_hint_matches && existing_assignment_matches && !was_projectless {
         return Ok(None);
     }
 
+    if let Some(project_key) = project_key {
+        let assignments = payload
+            .entry(THREAD_PROJECT_ASSIGNMENTS_KEY.to_owned())
+            .or_insert_with(|| Value::Object(Map::new()));
+        let Some(assignments) = assignments.as_object_mut() else {
+            return Err("thread-project-assignments must be an object".to_owned());
+        };
+        assignments.insert(thread_id.to_owned(), json!({"projectId": project_key}));
+    }
     hints.insert(thread_id.to_owned(), Value::String(workspace_root.clone()));
     payload.insert(
         THREAD_WORKSPACE_ROOT_HINTS_KEY.to_owned(),

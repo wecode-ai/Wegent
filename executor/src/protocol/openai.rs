@@ -85,6 +85,19 @@ impl OpenAIResponsesRequest {
             workspace_source: get_string(&metadata, "workspace_source"),
             project_workspace_path: get_string(&metadata, "project_workspace_path")
                 .or_else(|| project_workspace_path(&metadata)),
+            runtime_workspace_roots: metadata
+                .get("runtime_workspace_roots")
+                .or_else(|| metadata.get("runtimeWorkspaceRoots"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            runtime_project_key: get_string(&metadata, "runtime_project_key")
+                .or_else(|| get_string(&metadata, "runtimeProjectKey")),
+            runtime_project_name: get_string(&metadata, "runtime_project_name")
+                .or_else(|| get_string(&metadata, "runtimeProjectName")),
             device_id: get_string(&metadata, "device_id"),
             message_id: get_i64_optional(&metadata, "message_id"),
             executor_name: get_string(&metadata, "executor_name"),

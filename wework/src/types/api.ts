@@ -1039,6 +1039,9 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  runtimeProjectKey?: string
+  runtimeProjectName?: string
+  runtimeWorkspaceRoots?: string[]
   taskId?: string
   teamId: number
   runtime: RuntimeName
