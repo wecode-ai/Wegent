@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Circle,
   CircleDot,
+  CircleCheck,
   Copy,
   Clock3,
   Ellipsis,
@@ -19,15 +20,31 @@ import {
   Trash2,
   TriangleAlert,
   X,
+  FileText,
+  Folder,
+  Plus,
+  FolderOpen,
+  Pencil,
 } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { buildRuntimeTaskRoute, toBrowserPath } from '@/lib/navigation'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { Delivery } from '@/api/deliveries'
 import type { Attachment, RuntimeGoal, RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
+import {
+  deleteTodoWorkspaceEntry,
+  getTodoWorkspacePath,
+  listTodoWorkspace,
+  renameTodoWorkspaceEntry,
+  writeTodoWorkspaceFile,
+  type TodoWorkspaceEntry,
+} from './todoModel'
+import type { TodoWorkType } from './todoModel'
+import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 
-export type TodoViewState = 'backlog' | 'started' | 'review' | 'completed'
+export type TodoViewState = 'inbox' | 'backlog' | 'started' | 'review' | 'completed'
 
 export interface TodoDetailItem {
   id: string
@@ -49,6 +66,17 @@ export interface TodoDetailItem {
   updatedAt?: string | number | null
   address?: RuntimeTaskAddress
   task?: RuntimeTaskSummary
+  parentId?: string
+  children?: TodoDetailItem[]
+  workTypeKey?: string
+  workTypeName?: string
+  blocker?: string
+  nextAction?: string
+  collaborators?: Array<{ type: 'human' | 'ai' | 'unassigned'; id?: string; name?: string }>
+  confirmer?: string
+  workspaceItemId?: string
+  waitingFor?: string[]
+  events?: Array<{ id: string; summary: string; createdAt: string }>
 }
 
 interface TodoDetailPanelProps {
@@ -60,10 +88,24 @@ interface TodoDetailPanelProps {
   onRun?: () => Promise<void> | void
   onDelete?: () => void
   onAttachmentsChange?: (attachments: Attachment[]) => void
+  onAddChild?: (workTypeKey: string, workTypeName: string) => void
+  onApplyWorkflow?: () => void
+  onConfigureWorkflow?: () => void
+  workTypes?: TodoWorkType[]
+  onSelectChild?: (item: TodoDetailItem) => void
+  onUpdateItem?: (patch: {
+    state?: TodoViewState
+    assigneeType?: 'unassigned' | 'ai' | 'human'
+    blocker?: string
+    nextAction?: string
+  }) => void
+  onConfirm?: () => void
+  deliveries?: Delivery[]
 }
 
 const STATE_DETAILS: Record<TodoViewState, { labelKey: string; fallback: string; color: string }> =
   {
+    inbox: { labelKey: 'todo.state_inbox', fallback: '收集箱', color: '#858E97' },
     backlog: { labelKey: 'todo.state_backlog', fallback: '待处理', color: '#858E97' },
     started: { labelKey: 'todo.state_started', fallback: '进行中', color: '#F59E0B' },
     review: { labelKey: 'todo.state_review', fallback: '待确认', color: '#8B5CF6' },
@@ -79,9 +121,18 @@ export function TodoDetailPanel({
   onRun,
   onDelete,
   onAttachmentsChange,
+  onAddChild,
+  onApplyWorkflow,
+  onConfigureWorkflow,
+  workTypes = [],
+  onSelectChild,
+  onUpdateItem,
+  onConfirm,
+  deliveries = [],
 }: TodoDetailPanelProps) {
   const { t } = useTranslation('common')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const workspaceFileInputRef = useRef<HTMLInputElement>(null)
   const [goal, setGoal] = useState<RuntimeGoal | null>(null)
   const [copied, setCopied] = useState(false)
   const [fullScreen, setFullScreen] = useState(false)
@@ -90,6 +141,8 @@ export function TodoDetailPanel({
   const [runError, setRunError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [workspaceEntries, setWorkspaceEntries] = useState<TodoWorkspaceEntry[]>([])
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const state = STATE_DETAILS[item.state]
   useEscapeKey(onClose, true)
 
@@ -106,6 +159,66 @@ export function TodoDetailPanel({
       cancelled = true
     }
   }, [item.address, services?.runtimeWorkApi])
+
+  useEffect(() => {
+    if (!item.workspaceItemId) return
+    void listTodoWorkspace(item.workspaceItemId)
+      .then(setWorkspaceEntries)
+      .catch(() => setWorkspaceEntries([]))
+  }, [item.workspaceItemId, item.updatedAt])
+
+  const refreshWorkspace = async () => {
+    if (!item.workspaceItemId) return
+    setWorkspaceEntries(await listTodoWorkspace(item.workspaceItemId))
+  }
+
+  const uploadWorkspaceFile = async (file: File | undefined) => {
+    if (!file || !item.workspaceItemId) return
+    setWorkspaceError(null)
+    const safeName = file.name.replaceAll('/', '_').replaceAll('\\', '_')
+    const path = item.parentId
+      ? `work/${item.workTypeKey ?? 'general'}/${safeName}`
+      : `context/${safeName}`
+    const result = await writeTodoWorkspaceFile(item.workspaceItemId, path, file)
+    if (!result) {
+      setWorkspaceError(t('todo.workspace_write_failed', '写入共享工作区失败'))
+      return
+    }
+    await refreshWorkspace()
+  }
+
+  const renameWorkspaceEntry = async (entry: TodoWorkspaceEntry) => {
+    if (!item.workspaceItemId) return
+    const nextName = window.prompt(t('todo.rename_to', '重命名为'), entry.name)?.trim()
+    if (!nextName || nextName === entry.name) return
+    const parent = entry.path.includes('/')
+      ? entry.path.slice(0, entry.path.lastIndexOf('/') + 1)
+      : ''
+    try {
+      await renameTodoWorkspaceEntry(item.workspaceItemId, entry.path, `${parent}${nextName}`)
+      await refreshWorkspace()
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const deleteWorkspaceEntry = async (entry: TodoWorkspaceEntry) => {
+    if (!item.workspaceItemId) return
+    if (!window.confirm(t('todo.delete_workspace_entry_confirm', '确定删除这个工作区文件吗？')))
+      return
+    try {
+      await deleteTodoWorkspaceEntry(item.workspaceItemId, entry.path)
+      await refreshWorkspace()
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const revealWorkspace = async () => {
+    if (!item.workspaceItemId) return
+    const path = await getTodoWorkspacePath(item.workspaceItemId)
+    if (path) await revealLocalFile(path)
+  }
 
   const copyTaskLink = async () => {
     const content = item.address
@@ -124,7 +237,7 @@ export function TodoDetailPanel({
       await onRun()
     } catch (error) {
       setRunError(
-        error instanceof Error ? error.message : t('todo.run_failed', 'TODO 运行失败，请重试')
+        error instanceof Error ? error.message : t('todo.run_failed', '任务运行失败，请重试')
       )
     } finally {
       setRunning(false)
@@ -200,9 +313,7 @@ export function TodoDetailPanel({
           </span>
           <IconButton
             testId="todo-detail-copy-link"
-            label={
-              item.address ? t('todo.copy_link', '复制链接') : t('todo.copy_todo', '复制 TODO')
-            }
+            label={item.address ? t('todo.copy_link', '复制链接') : t('todo.copy_todo', '复制任务')}
             icon={item.address ? Link2 : Copy}
             bordered
             onClick={() => void copyTaskLink()}
@@ -224,9 +335,7 @@ export function TodoDetailPanel({
                   testId="todo-detail-menu-copy"
                   icon={item.address ? Link2 : Copy}
                   label={
-                    item.address
-                      ? t('todo.copy_link', '复制链接')
-                      : t('todo.copy_todo', '复制 TODO')
+                    item.address ? t('todo.copy_link', '复制链接') : t('todo.copy_todo', '复制任务')
                   }
                   onClick={() => {
                     setMoreOpen(false)
@@ -248,7 +357,7 @@ export function TodoDetailPanel({
                   <DetailMenuButton
                     testId="todo-detail-menu-delete"
                     icon={Trash2}
-                    label={t('todo.delete_todo', '删除 TODO')}
+                    label={t('todo.delete_todo', '删除任务')}
                     destructive
                     onClick={() => {
                       setMoreOpen(false)
@@ -285,6 +394,39 @@ export function TodoDetailPanel({
           {item.title}
         </h2>
 
+        {deliveries.length > 0 && (
+          <section className="mt-[18px]" data-testid="todo-detail-deliveries">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-text-primary">
+                {t('delivery.snapshot', '交付')}
+              </h3>
+              <span className="text-xs text-text-muted">
+                {t('delivery.snapshot_count', '{{count}} 份快照', { count: deliveries.length })}
+              </span>
+            </div>
+            <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
+              {deliveries.map(delivery => (
+                <div key={delivery.id} className="flex min-h-11 items-center gap-3 px-3 py-2">
+                  <FileText className="h-4 w-4 shrink-0 text-text-muted" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-text-primary">
+                      {t('delivery.immutable_snapshot', '不可变交付快照')}
+                    </p>
+                    <p className="truncate text-xs text-text-muted">
+                      {formatDetailDate(delivery.delivered_at)}
+                    </p>
+                  </div>
+                  <span className="text-xs text-text-secondary">
+                    {t('delivery.asset_count', '{{count}} 个文件', {
+                      count: delivery.assets.length,
+                    })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <section className="mt-[18px]">
           <h3 className="text-xs font-semibold text-[#8A9299]">{t('todo.description', '描述')}</h3>
           <p className="mt-2 text-xs leading-6 text-[#4E565E] dark:text-text-secondary">
@@ -306,18 +448,298 @@ export function TodoDetailPanel({
           </section>
         )}
 
+        {onUpdateItem && (
+          <section className="mt-[18px] grid gap-2 sm:grid-cols-2">
+            <label className="rounded-lg border border-border bg-muted/30 p-3">
+              <span className="text-xs font-semibold text-text-muted">
+                {t('todo.blocked', '阻塞')}
+              </span>
+              <input
+                data-testid="todo-detail-blocker-input"
+                defaultValue={item.blocker}
+                onBlur={event => onUpdateItem({ blocker: event.target.value.trim() })}
+                placeholder={t('todo.blocker_placeholder', '没有阻塞')}
+                className="mt-1 h-7 w-full bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted"
+              />
+            </label>
+            <label className="rounded-lg border border-border bg-muted/30 p-3">
+              <span className="text-xs font-semibold text-text-muted">
+                {t('todo.next_action', '下一步')}
+              </span>
+              <input
+                data-testid="todo-detail-next-action-input"
+                defaultValue={item.nextAction}
+                onBlur={event => onUpdateItem({ nextAction: event.target.value.trim() })}
+                placeholder={t('todo.next_action_placeholder', '写下明确的下一步')}
+                className="mt-1 h-7 w-full bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted"
+              />
+            </label>
+          </section>
+        )}
+
+        {!onUpdateItem && (item.blocker || item.nextAction) && (
+          <section className="mt-[18px] grid gap-2 sm:grid-cols-2">
+            {item.blocker && (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+                <p className="text-xs font-semibold text-destructive">
+                  {t('todo.blocked', '阻塞')}
+                </p>
+                <p className="mt-1 text-xs text-text-secondary">{item.blocker}</p>
+              </div>
+            )}
+            {item.nextAction && (
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
+                <p className="text-xs font-semibold text-text-muted">
+                  {t('todo.next_action', '下一步')}
+                </p>
+                <p className="mt-1 text-xs text-text-secondary">{item.nextAction}</p>
+              </div>
+            )}
+          </section>
+        )}
+
+        {item.kind === 'draft' && (
+          <section className="mt-[18px]" data-testid="todo-detail-workflow">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-text-primary">
+                {t('todo.workflow', '工作流')}
+              </h3>
+              {onAddChild && item.children && item.children.length > 0 && (
+                <div className="flex items-center gap-1">
+                  {workTypes.map(({ key, name }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      data-testid={`todo-add-stage-${key}`}
+                      onClick={() => onAddChild(key, name)}
+                      className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+                    >
+                      <Plus className="h-3 w-3" />
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {item.children && item.children.length > 0 ? (
+              <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
+                {item.children.map(child => (
+                  <button
+                    key={child.id}
+                    type="button"
+                    data-testid={`todo-stage-${child.id}`}
+                    onClick={() => onSelectChild?.(child)}
+                    className="flex min-h-12 w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted/50"
+                  >
+                    <span className="min-w-12 rounded bg-primary/10 px-1.5 py-1 text-center text-xs font-medium text-primary">
+                      {child.workTypeName || child.workTypeKey || t('todo.stage', '阶段')}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-text-primary">
+                        {child.title}
+                      </p>
+                      <p className="truncate text-xs text-text-muted">
+                        {child.assignee || t('todo.assignee_unassigned_short', '未指定')}
+                      </p>
+                    </div>
+                    {child.blocker ? (
+                      <span className="max-w-36 truncate text-xs text-destructive">
+                        {t('todo.blocked', '阻塞')}：{child.blocker}
+                      </span>
+                    ) : child.waitingFor && child.waitingFor.length > 0 ? (
+                      <span className="max-w-40 truncate text-xs text-amber-600">
+                        {t('todo.waiting_for', '等待')}：{child.waitingFor.join('、')}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-text-secondary">
+                        {t(
+                          STATE_DETAILS[child.state].labelKey,
+                          STATE_DETAILS[child.state].fallback
+                        )}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : workTypes.length > 0 ? (
+              <div className="mt-2 rounded-lg border border-dashed border-border px-4 py-4">
+                <p className="text-xs font-medium text-text-primary">
+                  {t('todo.workflow_not_applied', '这个事项还没有应用项目流程')}
+                </p>
+                <p className="mt-1 text-xs text-text-muted">
+                  {t(
+                    'todo.workflow_apply_hint',
+                    '应用后会创建 {{count}} 个阶段，并分配对应负责人。',
+                    {
+                      count: workTypes.length,
+                    }
+                  )}
+                </p>
+                <button
+                  type="button"
+                  data-testid="todo-apply-workflow"
+                  onClick={onApplyWorkflow}
+                  className="mt-3 h-8 rounded-md bg-primary px-3 text-xs font-medium text-primary-contrast hover:bg-primary/90"
+                >
+                  {t('todo.apply_project_workflow', '应用项目流程')}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-2 rounded-lg border border-dashed border-border px-4 py-4">
+                <p className="text-xs font-medium text-text-primary">
+                  {t('todo.workflow_not_configured', '当前项目还没有设置事项流程')}
+                </p>
+                <p className="mt-1 text-xs text-text-muted">
+                  {t(
+                    'todo.workflow_configure_hint',
+                    '简单事项可以不设置；需要多人协作时，可从模板开始配置。'
+                  )}
+                </p>
+                <button
+                  type="button"
+                  data-testid="todo-configure-workflow"
+                  onClick={onConfigureWorkflow}
+                  className="mt-3 h-8 rounded-md border border-border bg-surface px-3 text-xs font-medium text-text-primary hover:bg-muted"
+                >
+                  {t('todo.configure_project_workflow', '设置项目流程')}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {item.workspaceItemId && (
+          <section className="mt-[18px]" data-testid="todo-detail-shared-workspace">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-text-primary">
+                {t('todo.shared_workspace', '共享工作区')}
+              </h3>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  data-testid="todo-workspace-upload"
+                  onClick={() => workspaceFileInputRef.current?.click()}
+                  className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                >
+                  <Plus className="h-3 w-3" />
+                  {t('todo.add_file', '添加文件')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="todo-workspace-reveal"
+                  onClick={() => void revealWorkspace()}
+                  className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                >
+                  <FolderOpen className="h-3 w-3" />
+                  {t('todo.open_directory', '打开目录')}
+                </button>
+                <input
+                  ref={workspaceFileInputRef}
+                  data-testid="todo-workspace-file-input"
+                  type="file"
+                  className="hidden"
+                  onChange={event => {
+                    void uploadWorkspaceFile(event.target.files?.[0])
+                    event.target.value = ''
+                  }}
+                />
+              </div>
+            </div>
+            <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
+              {workspaceEntries.map(entry => (
+                <div key={entry.path} className="flex h-9 items-center gap-2 px-3 text-xs">
+                  {entry.nodeType === 'directory' ? (
+                    <Folder className="h-3.5 w-3.5 text-text-muted" />
+                  ) : (
+                    <FileText className="h-3.5 w-3.5 text-text-muted" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate font-mono text-text-secondary">
+                    {entry.path}
+                  </span>
+                  {entry.nodeType === 'file' && (
+                    <span className="text-text-muted">{formatBytes(entry.size)}</span>
+                  )}
+                  {entry.nodeType === 'file' && (
+                    <button
+                      type="button"
+                      data-testid={`todo-workspace-open-${entry.path}`}
+                      onClick={() => void openLocalFile(entry.absolutePath)}
+                      className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-muted hover:text-text-primary"
+                      aria-label={t('todo.open_file', '打开文件')}
+                    >
+                      <ArrowUpRight className="h-3 w-3" />
+                    </button>
+                  )}
+                  {!['README.md', 'context', 'work'].includes(entry.path) && (
+                    <>
+                      <button
+                        type="button"
+                        data-testid={`todo-workspace-rename-${entry.path}`}
+                        onClick={() => void renameWorkspaceEntry(entry)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-muted hover:text-text-primary"
+                        aria-label={t('todo.rename', '重命名')}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`todo-workspace-delete-${entry.path}`}
+                        onClick={() => void deleteWorkspaceEntry(entry)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={t('todo.delete', '删除')}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+            {workspaceError && (
+              <p data-testid="todo-workspace-error" className="mt-2 text-xs text-destructive">
+                {workspaceError}
+              </p>
+            )}
+          </section>
+        )}
+
         <section className="mt-[18px]">
           <h3 className="mb-2 text-sm font-semibold text-[#343A40] dark:text-text-primary">
             Properties
           </h3>
           <div className="space-y-1.5">
             <PropertyRow>
-              <Property
-                icon={CircleDot}
-                label={t('todo.status', '状态')}
-                value={t(state.labelKey, state.fallback)}
-                valueColor={state.color}
-              />
+              {onUpdateItem ? (
+                <EditableProperty icon={CircleDot} label={t('todo.status', '状态')}>
+                  <select
+                    data-testid="todo-detail-state-select"
+                    value={item.state}
+                    onChange={event => onUpdateItem({ state: event.target.value as TodoViewState })}
+                    className="h-7 w-full bg-transparent text-xs text-text-primary outline-none"
+                  >
+                    {Object.entries(STATE_DETAILS).map(([key, detail]) => (
+                      <option key={key} value={key}>
+                        {t(detail.labelKey, detail.fallback)}
+                      </option>
+                    ))}
+                  </select>
+                  {item.waitingFor && item.waitingFor.length > 0 && (
+                    <span
+                      data-testid="todo-detail-dependency-warning"
+                      className="block truncate text-xs text-amber-600"
+                    >
+                      {t('todo.waiting_for', '等待')}：{item.waitingFor.join('、')}
+                    </span>
+                  )}
+                </EditableProperty>
+              ) : (
+                <Property
+                  icon={CircleDot}
+                  label={t('todo.status', '状态')}
+                  value={t(state.labelKey, state.fallback)}
+                  valueColor={state.color}
+                />
+              )}
               <Property
                 icon={Clock3}
                 label={t('todo.priority', '优先级')}
@@ -325,11 +747,32 @@ export function TodoDetailPanel({
               />
             </PropertyRow>
             <PropertyRow>
-              <Property
-                icon={Bot}
-                label={t('todo.assignee', '负责人')}
-                value={item.assignee || item.runtime || 'AI'}
-              />
+              {onUpdateItem ? (
+                <EditableProperty icon={Bot} label={t('todo.assignee', '负责人')}>
+                  <select
+                    data-testid="todo-detail-assignee-select"
+                    value={item.assigneeType ?? 'unassigned'}
+                    onChange={event =>
+                      onUpdateItem({
+                        assigneeType: event.target.value as 'unassigned' | 'ai' | 'human',
+                      })
+                    }
+                    className="h-7 w-full bg-transparent text-xs text-text-primary outline-none"
+                  >
+                    <option value="unassigned">
+                      {t('todo.assignee_unassigned_short', '未指定')}
+                    </option>
+                    <option value="human">{t('todo.assignee_human', '员工')}</option>
+                    <option value="ai">{t('todo.assignee_ai', 'AI 智能体')}</option>
+                  </select>
+                </EditableProperty>
+              ) : (
+                <Property
+                  icon={Bot}
+                  label={t('todo.assignee', '负责人')}
+                  value={item.assignee || item.runtime || 'AI'}
+                />
+              )}
               <Property
                 icon={CalendarDays}
                 label={t('todo.due_date', '截止时间')}
@@ -403,14 +846,25 @@ export function TodoDetailPanel({
 
         <section className="mt-[18px]">
           <h3 className="text-xs font-semibold text-[#41474D] dark:text-text-primary">Activity</h3>
-          <div className="mt-2 flex items-start gap-2">
-            <span className="mt-1.5 h-2 w-2 rounded-full bg-[#14B8A6]" />
-            <div>
-              <p className="text-xs text-[#596169] dark:text-text-secondary">
-                {activityText(item, t)}
-              </p>
-              <p className="mt-1 text-xs text-[#929AA1]">{formatDetailDate(item.updatedAt)}</p>
-            </div>
+          <div className="mt-2 space-y-2">
+            {(item.events?.length
+              ? [...item.events].reverse()
+              : [
+                  {
+                    id: 'current',
+                    summary: activityText(item, t),
+                    createdAt: String(item.updatedAt),
+                  },
+                ]
+            ).map(event => (
+              <div key={event.id} className="flex items-start gap-2">
+                <span className="mt-1.5 h-2 w-2 rounded-full bg-[#14B8A6]" />
+                <div>
+                  <p className="text-xs text-[#596169] dark:text-text-secondary">{event.summary}</p>
+                  <p className="mt-1 text-xs text-[#929AA1]">{formatDetailDate(event.createdAt)}</p>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       </div>
@@ -448,7 +902,22 @@ export function TodoDetailPanel({
               className="flex h-[34px] items-center gap-1.5 rounded-md bg-[#14B8A6] px-3.5 text-xs font-bold text-white hover:bg-[#0FA797]"
             >
               <Play className="h-3.5 w-3.5 fill-current" />
-              {running ? t('todo.running', '运行中…') : t('todo.run', '运行 TODO')}
+              {running
+                ? t('todo.running', '运行中…')
+                : item.state === 'completed' && deliveries.length > 0
+                  ? t('delivery.start_follow_up', '开启新任务')
+                  : t('todo.run', '运行任务')}
+            </button>
+          )}
+          {onConfirm && item.state === 'review' && (
+            <button
+              type="button"
+              data-testid="todo-detail-confirm"
+              onClick={onConfirm}
+              className="flex h-[34px] items-center gap-1.5 rounded-md bg-primary px-3.5 text-xs font-semibold text-primary-contrast hover:bg-primary/90"
+            >
+              <CircleCheck className="h-3.5 w-3.5" />
+              {t('todo.confirm_complete', '确认完成')}
             </button>
           )}
         </div>
@@ -518,6 +987,26 @@ function PropertyRow({ children }: { children: ReactNode }) {
   return <div className="grid h-[38px] grid-cols-2 gap-3">{children}</div>
 }
 
+function EditableProperty({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: typeof Circle
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <label className="flex min-w-0 items-center gap-2 rounded-md bg-[#F7F8F9] px-2.5 dark:bg-muted">
+      <span className="flex shrink-0 items-center gap-1.5 text-xs text-[#7A838B]">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </span>
+      <span className="min-w-0 flex-1">{children}</span>
+    </label>
+  )
+}
+
 function Property({
   icon: Icon,
   label,
@@ -560,9 +1049,15 @@ function formatDetailDate(value: string | number | null | undefined): string {
   }).format(date)
 }
 
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
 function activityText(item: TodoDetailItem, t: ReturnType<typeof useTranslation>['t']): string {
-  if (item.state === 'completed') return t('todo.activity_completed', '任务已完成并同步到 TODO')
+  if (item.state === 'completed') return t('todo.activity_completed', '任务已完成并同步')
   if (item.state === 'review') return t('todo.activity_review', '任务正在等待确认')
   if (item.state === 'started') return t('todo.activity_started', '任务正在运行')
-  return t('todo.activity_created', 'TODO 已创建')
+  return t('todo.activity_created', '任务已创建')
 }

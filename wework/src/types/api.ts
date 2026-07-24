@@ -1035,6 +1035,9 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
+  deliveryId?: string
+  cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface RuntimeTaskCreateResponse {

@@ -519,6 +519,8 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_ACCESS_KEY: str = ""
     ATTACHMENT_S3_SECRET_KEY: str = ""
     ATTACHMENT_S3_BUCKET: str = "attachments"
+    DELIVERY_S3_BUCKET: str = "wegent-deliveries"
+    DELIVERY_MAX_ASSET_SIZE_MB: int = 2048
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
 

@@ -314,6 +314,7 @@ export function createHybridWorkbenchServices(
   const cloudModelGateway = {
     baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
     apiKey: options.token,
+    mcpUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/mcp/delivery/sse`,
   }
   const localServices = createLocalAppServices({ cloudModelGateway, user: options.user })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({

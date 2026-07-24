@@ -3473,7 +3473,9 @@ def _build_runtime_execution_request(
         task=task,
         user=user,
         team=team,
-        message=request.message,
+        message=_message_with_application_context(
+            request.message, request.additional_context
+        ),
         preload_skills=request.additional_skills,
         override_model_name=override_model_name,
         force_override=force_override,
@@ -3483,7 +3485,52 @@ def _build_runtime_execution_request(
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_model_options(db, execution_request, user, payload)
     _apply_runtime_attachments(db, execution_request, user_id, request.attachment_ids)
+    from app.core.config import settings
+    from app.schemas.base_role import BaseRole
+    from app.services.auth import create_task_token
+    from app.services.cloud_projects.access import require_cloud_project_role
+    from app.services.delivery import delivery_service
+
+    if request.delivery_id:
+        delivery_service.get_delivery(db, request.delivery_id, user_id)
+    if request.cloud_project_id:
+        require_cloud_project_role(
+            db, request.cloud_project_id, user_id, BaseRole.Reporter
+        )
+    token = create_task_token(
+        task_id=task.id,
+        subtask_id=subtask.id,
+        user_id=user.id,
+        user_name=user.user_name,
+    )
+    execution_request.mcp_servers.append(
+        {
+            "name": "wegent-delivery",
+            "url": (
+                f"{settings.BACKEND_INTERNAL_URL.rstrip('/')}"
+                f"{settings.API_PREFIX}/mcp/delivery/sse"
+            ),
+            "type": "streamable-http",
+            "headers": {"Authorization": f"Bearer {token}"},
+        }
+    )
     return execution_request
+
+
+def _message_with_application_context(
+    message: str, context: Optional[dict[str, dict[str, Any]]]
+) -> str:
+    entries: list[str] = []
+    for name, entry in (context or {}).items():
+        if entry.get("kind") != "application":
+            continue
+        value = entry.get("value")
+        if isinstance(value, str) and value.strip():
+            entries.append(f"[{name}]\n{value.strip()}")
+    if not entries:
+        return message
+    context_text = "\n\n".join(entries)
+    return f"<application_context>\n{context_text}\n</application_context>\n\n{message}"
 
 
 def _runtime_execution_ids() -> tuple[int, int]:

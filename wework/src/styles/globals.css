@@ -63,6 +63,29 @@
   --z-system-popover: 1010;
 }
 
+.task-description-editor .tiptap p.is-editor-empty:first-child::before {
+  color: rgb(var(--color-text-muted));
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.task-description-editor .tiptap ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.task-description-editor .tiptap ul[data-type='taskList'] li {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.task-description-editor .tiptap ul[data-type='taskList'] li > div {
+  flex: 1;
+}
+
 @keyframes suffix-roll-out-up {
   to {
     transform: translateY(-110%);
