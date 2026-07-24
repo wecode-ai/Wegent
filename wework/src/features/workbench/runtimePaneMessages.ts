@@ -471,6 +471,7 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     id: role === 'user' && clientMessageId ? clientMessageId : message.id,
     role,
     subtaskId,
+    turnId: message.turnId ?? message.turn_id ?? undefined,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
     contentTruncated: contentTruncated || undefined,
     contentOriginalChars: contentTruncated ? runtimeMessageOriginalChars(message) : undefined,

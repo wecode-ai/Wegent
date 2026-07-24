@@ -1,4 +1,5 @@
 {
+  "continue_in_new_task": "Continue in new task",
   "message_navigation": {
     "label": "Previous message navigation",
     "jump_to_message": "Jump to message {{index}}",

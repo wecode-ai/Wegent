@@ -5,6 +5,84 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let source = self.task_link_from_payload(&payload, false).await?;
+        if source.running && self.is_active_local_task(&source.local_task_id) {
+            return Ok(
+                json!({"success": false, "accepted": false, "error": "runtime task is already running", "code": "bad_request"}),
+            );
+        }
+        let requested_turn_id = string_field(&payload, "lastTurnId")
+            .or_else(|| string_field(&payload, "last_turn_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "lastTurnId is required"))?;
+        let source_thread_id = runtime_session_id_from_payload(&payload)
+            .or_else(|| runtime_session_id_from_link(&source))
+            .ok_or_else(|| AppIpcError::new("bad_request", "source task session is not ready"))?;
+        let read_response = self
+            .call_codex_thread_method(
+                "thread/read",
+                json!({"threadId": source_thread_id, "includeTurns": true}),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("fork_failed", error))?;
+        let thread = read_response.get("thread").unwrap_or(&read_response);
+        let last_turn_id = thread
+            .get("turns")
+            .and_then(Value::as_array)
+            .and_then(|turns| {
+                turns.iter().find_map(|turn| {
+                    let id = string_field(turn, "id")?;
+                    let subtask_id = string_field(turn, "subtaskId")
+                        .or_else(|| string_field(turn, "subtask_id"));
+                    (id == requested_turn_id || subtask_id.as_deref() == Some(&requested_turn_id))
+                        .then_some(id)
+                })
+            })
+            .ok_or_else(|| AppIpcError::new("bad_request", "fork turn was not found"))?;
+        let response = match self
+            .call_codex_thread_method(
+                "thread/fork",
+                json!({
+                    "threadId": source_thread_id,
+                    "lastTurnId": last_turn_id,
+                    "cwd": source.workspace_path,
+                    "excludeTurns": true,
+                }),
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => return Ok(task_action_failure(&source, error)),
+        };
+        let thread = response.get("thread").unwrap_or(&response);
+        let thread_id = string_field(thread, "id").ok_or_else(|| {
+            AppIpcError::new("invalid_response", "thread/fork did not return thread.id")
+        })?;
+        let local_task_id = thread_id.clone();
+        let title = string_field(&payload, "title").unwrap_or_else(|| source.title.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.clone(),
+            source.workspace_path.clone(),
+            title,
+        );
+        link.thread_id = Some(thread_id);
+        link.running = false;
+        link.status = "active".to_owned();
+        link.thread_status = "idle".to_owned();
+        link.turn_status = Some("completed".to_owned());
+        link.parent = Some(
+            json!({"taskId": source.local_task_id, "threadId": source_thread_id, "lastTurnId": last_turn_id}),
+        );
+        self.upsert_local_task(link);
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "source": {"deviceId": self.device_id, "taskId": source.local_task_id},
+            "target": {"deviceId": self.device_id, "taskId": local_task_id},
+            "runtime": "codex",
+        }))
+    }
+
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))

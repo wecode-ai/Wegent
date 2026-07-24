@@ -392,7 +392,10 @@ export function useWorkbenchRuntimeTasks({
   )
 
   const forkCurrentRuntimeTask = useCallback(
-    async (target: RuntimeTaskForkTarget) => {
+    async (
+      target: RuntimeTaskForkTarget,
+      options: { lastTurnId?: string; title?: string } = {}
+    ) => {
       if (!state.currentRuntimeTask) {
         dispatch({ type: 'error_set', error: 'No runtime task is selected' })
         return
@@ -401,6 +404,7 @@ export function useWorkbenchRuntimeTasks({
       const response = await executorClient.runtime.forkRuntimeTask({
         source: state.currentRuntimeTask,
         target,
+        ...options,
       })
       if (!response.accepted) {
         dispatch({ type: 'error_set', error: response.error || 'Failed to fork runtime task' })

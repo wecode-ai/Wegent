@@ -939,6 +939,7 @@ fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64, t
         "status": "done",
         "createdAt": item_timestamp(item).unwrap_or(created_at),
         "subtaskId": turn_id,
+        "turnId": turn_id,
     });
     if let Some(client_message_id) =
         string_field(item, "clientId").or_else(|| string_field(item, "client_id"))
@@ -1307,6 +1308,7 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "content": draft.assistant_parts.join("\n\n"),
         "status": draft.status,
         "subtaskId": draft.subtask_id,
+        "turnId": draft.turn_id,
         "createdAt": draft.created_at,
         "blocks": draft.blocks,
     });

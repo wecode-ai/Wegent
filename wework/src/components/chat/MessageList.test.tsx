@@ -4048,6 +4048,25 @@ describe('MessageList', () => {
     expect(writeText).toHaveBeenCalledWith('好的，以下是作文内容。')
   })
 
+  test('continues a completed Codex turn in a new task', async () => {
+    const onForkMessage = vi.fn()
+    const message = {
+      id: 'assistant-turn-1',
+      role: 'assistant' as const,
+      content: '已完成当前修改。',
+      status: 'done' as const,
+      turnId: 'turn-1',
+      createdAt: '2026-05-25T18:38:00.000+08:00',
+    }
+
+    render(<MessageList messages={[message]} onForkMessage={onForkMessage} />)
+
+    const button = screen.getByTestId('fork-message-button')
+    expect(button).toHaveAttribute('aria-label', '在新任务中继续')
+    await userEvent.click(button)
+    expect(onForkMessage).toHaveBeenCalledWith(message)
+  })
+
   test('hides assistant hover actions while the response is streaming', () => {
     render(
       <MessageList

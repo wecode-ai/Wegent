@@ -2247,6 +2247,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onOpenAssistantPlan={openAssistantPlan}
                 onEditLastUserMessage={paneSession.editLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
+                onForkMessage={message => {
+                  const forkTurnId = message.turnId || message.subtaskId
+                  if (!currentRuntimeTask || !forkTurnId) return
+                  void forkCurrentRuntimeTask(
+                    {
+                      deviceId: currentRuntimeTask.deviceId,
+                      workspacePath: currentRuntimeTask.workspacePath,
+                    },
+                    { lastTurnId: forkTurnId }
+                  )
+                }}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                 onAddSelectionToConversation={addSelectionToConversation}

@@ -19,6 +19,7 @@ import {
   File as FileIcon,
   FileText,
   Folder,
+  GitFork,
   LibraryBig,
   ListTodo,
   MessageSquare,
@@ -110,6 +111,7 @@ interface MessageListProps {
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
+  onForkMessage?: (message: WorkbenchMessage) => void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
@@ -181,6 +183,7 @@ export const MessageList = memo(function MessageList({
   onOpenAssistantPlan,
   onEditLastUserMessage,
   canEditLastUserMessage = false,
+  onForkMessage,
   onLoadFullTranscript,
   loadingFullTranscript = false,
   hideRequestUserInputBlocks,
@@ -559,6 +562,11 @@ export const MessageList = memo(function MessageList({
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                onFork={
+                  onForkMessage && (message.turnId || message.subtaskId)
+                    ? () => onForkMessage(message)
+                    : undefined
+                }
               />
             )}
           </WindowedMessageArticle>
@@ -1539,12 +1547,15 @@ function MessageHoverActions({
   align,
   visible,
   onEdit,
+  onFork,
 }: {
   message: WorkbenchMessage
   align: 'left' | 'right'
   visible: boolean
   onEdit?: () => void
+  onFork?: () => void
 }) {
+  const { t } = useTranslation('chat')
   const [copied, setCopied] = useState(false)
   const resetCopiedAfterHideRef = useRef(false)
   const time = formatMessageTime(message.createdAt)
@@ -1646,6 +1657,24 @@ function MessageHoverActions({
     </span>
   ) : null
 
+  const forkAction = onFork ? (
+    <span className="group/fork relative flex h-6 w-6 items-center justify-center">
+      <button
+        type="button"
+        data-testid="fork-message-button"
+        onClick={onFork}
+        title={t('continue_in_new_task')}
+        aria-label={t('continue_in_new_task')}
+        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-secondary"
+      >
+        <GitFork data-testid="fork-message-icon" className="h-3.5 w-3.5" />
+      </button>
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-base px-1.5 py-0.5 text-xs text-text-secondary opacity-0 shadow-sm transition-opacity group-hover/fork:opacity-100">
+        {t('continue_in_new_task')}
+      </span>
+    </span>
+  ) : null
+
   const timeLabel = time ? (
     <span
       data-testid="message-hover-time"
@@ -1676,6 +1705,7 @@ function MessageHoverActions({
         <>
           {editAction}
           {copyAction}
+          {forkAction}
           {timeLabel}
         </>
       )}
@@ -1856,6 +1886,7 @@ function AssistantMessage({
   loadingFullTranscript,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onFork,
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
@@ -1886,6 +1917,7 @@ function AssistantMessage({
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onFork?: () => void
 }) {
   const { t } = useTranslation('chat')
   const isCancelled = isCancelledAssistantMessage(message)
@@ -2090,7 +2122,12 @@ function AssistantMessage({
         {message.status !== 'streaming' &&
           !isCancelled &&
           (hasVisibleContent || message.status === 'failed') && (
-            <MessageHoverActions message={message} align="left" visible={areHoverActionsVisible} />
+            <MessageHoverActions
+              message={message}
+              align="left"
+              visible={areHoverActionsVisible}
+              onFork={onFork}
+            />
           )}
       </div>
     </div>

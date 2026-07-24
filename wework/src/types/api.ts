@@ -288,6 +288,8 @@ export interface NormalizedRuntimeMessage {
   messageIndex?: number | null
   message_index?: number | null
   subtaskId?: string | number | null
+  turnId?: string | null
+  turn_id?: string | null
   status?: string | null
   createdAt?: string | null
   completedAt?: string | number | null
@@ -1058,6 +1060,8 @@ export interface RuntimeTaskForkTarget {
 export interface RuntimeTaskForkRequest {
   source: RuntimeTaskAddress
   target: RuntimeTaskForkTarget
+  lastTurnId?: string
+  title?: string
 }
 
 export interface RuntimeTaskForkResponse {
