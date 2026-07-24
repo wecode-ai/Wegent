@@ -629,6 +629,88 @@ describe('ScrollableMessageArea', () => {
     portalTarget.remove()
   })
 
+  test('restores message navigation when a cached external scroller becomes visible', () => {
+    const resizeObservers: Array<{
+      callback: ResizeObserverCallback
+      targets: Set<Element>
+    }> = []
+    const originalResizeObserver = globalThis.ResizeObserver
+    class ResizeObserverMock {
+      private readonly entry: (typeof resizeObservers)[number]
+
+      constructor(callback: ResizeObserverCallback) {
+        this.entry = { callback, targets: new Set() }
+        resizeObservers.push(this.entry)
+      }
+
+      observe(target: Element) {
+        this.entry.targets.add(target)
+      }
+
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    try {
+      const externalScrollRef = createRef<HTMLDivElement>()
+      render(
+        <div ref={externalScrollRef}>
+          <ScrollableMessageArea
+            externalScrollRef={externalScrollRef}
+            messages={[
+              {
+                id: 'cached-user-1',
+                role: 'user',
+                content: '缓存会话第一条需求',
+                status: 'done',
+                createdAt: '2026-05-29T00:00:00.000Z',
+              },
+              {
+                id: 'cached-assistant-1',
+                role: 'assistant',
+                content: '缓存会话第一条回复',
+                status: 'done',
+                createdAt: '2026-05-29T00:00:01.000Z',
+              },
+              {
+                id: 'cached-user-2',
+                role: 'user',
+                content: '缓存会话第二条需求',
+                status: 'done',
+                createdAt: '2026-05-29T00:00:02.000Z',
+              },
+            ]}
+          />
+        </div>
+      )
+
+      const scroller = externalScrollRef.current!
+      Object.defineProperty(scroller, 'clientHeight', {
+        value: 300,
+        configurable: true,
+      })
+      Object.defineProperty(scroller, 'scrollHeight', {
+        value: 1200,
+        configurable: true,
+      })
+      mockRect(scroller, 0, 300)
+      mockRect(screen.getByText('缓存会话第一条需求').closest('[data-message-id]')!, 120, 180)
+      mockRect(screen.getByText('缓存会话第二条需求').closest('[data-message-id]')!, 620, 680)
+
+      const scrollerObserver = resizeObservers.find(observer => observer.targets.has(scroller))
+      expect(scrollerObserver).toBeDefined()
+      act(() => {
+        scrollerObserver!.callback([], {} as ResizeObserver)
+      })
+      flushScheduledTimers()
+
+      expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+    }
+  })
+
   test('keeps message navigation available while its portal target is unavailable', () => {
     render(
       <ScrollableMessageArea
@@ -814,6 +896,56 @@ describe('ScrollableMessageArea', () => {
     userAnchor.setAttribute('style', 'transform: translateY(120px)')
     await act(async () => Promise.resolve())
     flushScheduledTimers()
+
+    expect(screen.getByTestId('message-turn-navigation-marker')).toBeInTheDocument()
+  })
+
+  test('retries turn navigation while the virtualized layout is still settling', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'settling-user',
+            role: 'user',
+            content: 'Settling virtualized request',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: 'settling-assistant',
+            role: 'assistant',
+            content: 'Settling virtualized response',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(
+      screen.getByText('Settling virtualized request').closest('[data-message-id]')!,
+      120,
+      180
+    )
+
+    fireEvent.resize(window)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(screen.queryByTestId('message-turn-navigation-marker')).not.toBeInTheDocument()
+
+    scroller.scrollHeight = 1200
+    act(() => {
+      vi.advanceTimersByTime(80)
+    })
 
     expect(screen.getByTestId('message-turn-navigation-marker')).toBeInTheDocument()
   })

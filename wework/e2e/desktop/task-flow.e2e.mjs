@@ -4691,12 +4691,12 @@ async function main() {
       snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
       'The newly opened folder project was not shown in the sidebar'
     )
-    const projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
+    let projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
       testId.startsWith('project-menu-')
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
-    const projectId = projectMenuTestId.slice('project-menu-'.length)
-    const projectRowSelector = `[data-testid="project-row-${projectId}"]`
+    let projectId = projectMenuTestId.slice('project-menu-'.length)
+    let projectRowSelector = `[data-testid="project-row-${projectId}"]`
     await control.command('waitFor', projectRowSelector, {
       text: 'workspace',
       timeoutMs: UI_TIMEOUT_MS,
@@ -4773,9 +4773,21 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await control.command('waitFor', '[data-testid^="project-menu-"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
+    const reopenedProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.some(
+          testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+        ),
+      'The reopened folder project was not shown with its current identity'
+    )
+    const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+    )
+    assert.ok(reopenedProjectMenuTestId, 'The reopened folder project identity was not found')
+    projectMenuTestId = reopenedProjectMenuTestId
+    projectId = projectMenuTestId.slice('project-menu-'.length)
+    projectRowSelector = `[data-testid="project-row-${projectId}"]`
 
     if (MEMORY_ONLY) {
       phase = 'memory-growth'
