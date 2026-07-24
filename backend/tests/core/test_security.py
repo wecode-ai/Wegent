@@ -17,6 +17,7 @@ from app.core.security import (
     get_admin_user,
     get_auth_context,
     get_current_user,
+    get_current_user_optional,
     get_password_hash,
     verify_password,
     verify_token,
@@ -262,10 +263,11 @@ class TestGetCurrentUser:
         mock_oauth2 = mocker.patch("app.core.security.oauth2_scheme")
         mock_oauth2.return_value = test_token
 
-        # Mock decrypt_user_git_info to handle None git_info
-        mocker.patch(
+        decrypt_git_info = mocker.patch(
             "app.services.user.UserService.decrypt_user_git_info",
-            side_effect=lambda user: user,
+            side_effect=AssertionError(
+                "authentication must not decrypt Git credentials"
+            ),
         )
 
         user = get_current_user(token=test_token, db=test_db)
@@ -273,6 +275,23 @@ class TestGetCurrentUser:
         assert user is not None
         assert user.user_name == "testuser"
         assert user.is_active is True
+        decrypt_git_info.assert_not_called()
+
+    def test_get_current_user_optional_does_not_decrypt_git_credentials(
+        self, test_db: Session, test_user: User, test_token: str, mocker
+    ):
+        decrypt_git_info = mocker.patch(
+            "app.services.user.UserService.decrypt_user_git_info",
+            side_effect=AssertionError(
+                "authentication must not decrypt Git credentials"
+            ),
+        )
+
+        user = get_current_user_optional(token=test_token, db=test_db)
+
+        assert user is not None
+        assert user.user_name == test_user.user_name
+        decrypt_git_info.assert_not_called()
 
     def test_get_current_user_with_invalid_token(self, test_db: Session, mocker):
         """Test getting current user with invalid token raises HTTPException"""
@@ -289,9 +308,8 @@ class TestGetCurrentUser:
         with pytest.raises(HTTPException) as exc_info:
             get_current_user(token=token, db=test_db)
 
-        # user_service.get_user_by_name raises 404 when user not found
-        assert exc_info.value.status_code == 404
-        assert "not found" in exc_info.value.detail
+        assert exc_info.value.status_code == 401
+        assert "validate credentials" in exc_info.value.detail
 
     def test_get_current_user_with_inactive_user(
         self, test_db: Session, test_inactive_user: User, mocker

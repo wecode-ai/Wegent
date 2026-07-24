@@ -83,6 +83,32 @@ describe('EnvironmentInfoPopover', () => {
     expect(localStorage.getItem('wework.desktop.environmentInfo.open')).toBeNull()
   })
 
+  test('shows TODO binding and delivery actions for a local task', async () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+    const onDeliver = vi.fn()
+    const onManageTodo = vi.fn()
+
+    render(
+      <EnvironmentInfoPopover
+        info={{ additions: '', deletions: '', executionTarget: 'local' }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+        onDeliver={onDeliver}
+        onManageTodo={onManageTodo}
+      />
+    )
+
+    expect(screen.getByTestId('environment-todo-binding-button')).toHaveTextContent('关联项目空间')
+    expect(screen.getByTestId('environment-delivery-button')).toHaveTextContent('交付到任务…')
+    await userEvent.click(screen.getByTestId('environment-todo-binding-button'))
+    await userEvent.click(screen.getByTestId('environment-delivery-button'))
+    expect(onManageTodo).toHaveBeenCalledOnce()
+    expect(onDeliver).toHaveBeenCalledOnce()
+  })
+
   test('hides git controls and diff stats for a non-git workspace', () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)

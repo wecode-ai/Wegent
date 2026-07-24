@@ -1,5 +1,5 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -38,6 +38,7 @@ interface ComposerToolbarProps {
   onPause?: () => void
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
+  leadingContext?: ReactNode
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -70,6 +71,7 @@ export function ComposerToolbar({
   onPause,
   onQuickPhraseSelect,
   onSubmit,
+  leadingContext,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -112,6 +114,7 @@ export function ComposerToolbar({
           onSetGoal={onSetGoal}
         />
         <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
+        {leadingContext}
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (

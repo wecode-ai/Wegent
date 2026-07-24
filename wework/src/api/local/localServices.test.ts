@@ -1247,6 +1247,7 @@ describe('createLocalAppServices', () => {
       cloudModelGateway: {
         baseUrl: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         apiKey: 'cloud-login-token',
+        mcpUrl: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
       },
     })
 
@@ -1291,6 +1292,14 @@ describe('createLocalAppServices', () => {
         },
       })
     )
+    expect(payload.executionRequest.mcp_servers).toEqual([
+      {
+        name: 'wegent-delivery',
+        type: 'streamable-http',
+        url: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
+        headers: { Authorization: 'Bearer cloud-login-token' },
+      },
+    ])
     expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
   })
 
@@ -1346,6 +1355,51 @@ describe('createLocalAppServices', () => {
         },
       })
     )
+  })
+
+  test('injects trusted cloud collaboration context without changing the visible message', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const additionalContext = {
+      cloudCollaboration: {
+        kind: 'application' as const,
+        value: 'Current TODO: WEG-1. Use the wegent-delivery MCP tools when needed.',
+      },
+    }
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-cloud-context',
+      runtime: 'codex',
+      message: '这个 TODO 里有啥？',
+      additionalContext,
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-cloud-context',
+      },
+      message: '这个云项目是解决什么问题？',
+      additionalContext,
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(createPayload.message).toBe('这个 TODO 里有啥？')
+    expect(createPayload.executionRequest.prompt).toContain('<application_context>')
+    expect(createPayload.executionRequest.prompt).toContain('Current TODO: WEG-1')
+    expect(createPayload.executionRequest.prompt).toContain('这个 TODO 里有啥？')
+    expect(sendPayload.message).toBe('这个云项目是解决什么问题？')
+    expect(sendPayload.executionRequest.prompt).toContain('Current TODO: WEG-1')
   })
 
   test('adds configured local proxy to local runtime execution requests', async () => {

@@ -52,6 +52,9 @@ interface WorkspacePanelActionsProps {
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
   onOpenEnvironmentChangesReview: () => void
+  onDeliver?: () => void
+  todoLabel?: string
+  onManageTodo?: () => void
   rightPanelOpen: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
@@ -79,6 +82,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
   onOpenEnvironmentChangesReview,
+  onDeliver,
+  todoLabel,
+  onManageTodo,
   rightPanelOpen,
   bottomPanelOpen,
   onToggleRightPanel,
@@ -217,6 +223,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onCheckoutBranch={onCheckoutEnvironmentBranch}
           onCreateBranch={onCreateEnvironmentBranch}
           onOpenChangesReview={onOpenEnvironmentChangesReview}
+          onDeliver={onDeliver}
+          todoLabel={todoLabel}
+          onManageTodo={onManageTodo}
         />
       )}
       {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (

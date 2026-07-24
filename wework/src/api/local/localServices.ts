@@ -308,6 +308,7 @@ interface LocalAppServicesDeps {
 interface CloudModelGateway {
   baseUrl: string
   apiKey: string
+  mcpUrl?: string
 }
 
 interface RuntimeWorkIpcOptions {
@@ -1117,6 +1118,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
   cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
+  additionalContext?: RuntimeTaskCreateRequest['additionalContext']
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
   workspacePath?: string | null
@@ -1126,6 +1128,16 @@ interface BuildLocalRuntimeExecutionRequestInput {
   clientMessageId?: string
   ephemeral?: boolean
   user: User
+}
+
+function messageWithApplicationContext(
+  message: string,
+  context?: RuntimeTaskCreateRequest['additionalContext']
+): string {
+  const entries = Object.entries(context ?? {}).filter(([, entry]) => entry.kind === 'application')
+  if (entries.length === 0) return message
+  const contextText = entries.map(([name, entry]) => `[${name}]\n${entry.value}`).join('\n\n')
+  return `<application_context>\n${contextText}\n</application_context>\n\n${message}`
 }
 
 function buildLocalRuntimeExecutionRequest(
@@ -1173,8 +1185,20 @@ function buildLocalRuntimeExecutionRequest(
     user_id: input.user.id,
     user_name: input.user.user_name,
     bot: [],
+    mcp_servers: input.cloudModelGateway?.mcpUrl
+      ? [
+          {
+            name: 'wegent-delivery',
+            type: 'streamable-http',
+            url: input.cloudModelGateway.mcpUrl,
+            headers: {
+              Authorization: `Bearer ${input.cloudModelGateway.apiKey}`,
+            },
+          },
+        ]
+      : [],
     model_config: modelConfig,
-    prompt: input.message,
+    prompt: messageWithApplicationContext(input.message, input.additionalContext),
     enable_tools: true,
     enable_deep_thinking: true,
     skill_names: skillNames,
@@ -1326,6 +1350,7 @@ async function createLocalRuntimeTaskPayload(
       modelOptions: normalizedData.modelOptions,
       cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
+      additionalContext: normalizedData.additionalContext,
       attachments: normalizedData.attachments,
       localDeviceId,
       workspacePath: runtimeWorkspace.workspacePath,
@@ -1390,6 +1415,7 @@ function createLocalRuntimeSendPayload(
         modelOptions: normalizedData.modelOptions,
         cloudModelGateway,
         attachments: normalizedData.attachments,
+        additionalContext: normalizedData.additionalContext,
         localDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
@@ -1430,6 +1456,7 @@ function createLocalRuntimeSendPayload(
       modelOptions: normalizedData.modelOptions,
       cloudModelGateway,
       attachments: normalizedData.attachments,
+      additionalContext: normalizedData.additionalContext,
       localDeviceId,
       workspacePath,
       workspaceSource: 'local_path',

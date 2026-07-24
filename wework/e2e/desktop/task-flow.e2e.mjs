@@ -67,7 +67,7 @@ const MEMORY_MIN_BASELINE_SAMPLES = 5
 const MEMORY_MAX_BASELINE_SAMPLES = 15
 const MEMORY_MIN_SETTLED_SAMPLES = 5
 const MEMORY_MAX_SETTLED_SAMPLES = 15
-const MEMORY_MAX_RECENT_DRIFT_KIB = 16 * 1024
+const MEMORY_MAX_SAMPLE_RANGE_KIB = 16 * 1024
 const MEMORY_SAMPLE_WINDOW_SIZE = 3
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
@@ -129,8 +129,7 @@ const CLOUD_FOLLOW_UP_PROMPT =
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
-const ACTIVE_WORKBENCH_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 const MACOS_LAUNCH_SERVICES_REGISTER =
@@ -697,7 +696,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     if (
       settled.physicalFootprintKiB - baseline.physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      settled.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
+      memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB
     ) {
       break
     }
@@ -716,8 +715,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const recentSettledSamples = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
-  const settledDriftKiB =
-    settled.physicalFootprintKiB - recentSettledSamples[0].physicalFootprintKiB
+  const settledRangeKiB = memorySampleRangeKiB(recentSettledSamples)
   const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
 
   await writeFile(
@@ -732,7 +730,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
         summary: {
           peakGrowthKiB,
           settledGrowthKiB,
-          settledDriftKiB,
+          settledRangeKiB,
           peakDomNodeCount,
           settledDomNodeCount,
           baselineSampleCount: baselineSamples.length,
@@ -758,8 +756,8 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent settled physical footprint grew by ${settledGrowthKiB} KiB`
   )
   assert.ok(
-    settledDriftKiB <= MEMORY_MAX_RECENT_DRIFT_KIB,
-    `WebContent kept growing after completion by ${settledDriftKiB} KiB`
+    settledRangeKiB <= MEMORY_MAX_SAMPLE_RANGE_KIB,
+    `WebContent settled sample range reached ${settledRangeKiB} KiB`
   )
 }
 
@@ -772,10 +770,14 @@ async function captureStableMemorySamples(control, phase, minimumSamples, maximu
     samples.push(await captureMemorySample(control, phase))
     if (samples.length < minimumSamples) continue
     const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
-    const drift = recent.at(-1).physicalFootprintKiB - recent[0].physicalFootprintKiB
-    if (Math.abs(drift) <= MEMORY_MAX_RECENT_DRIFT_KIB) break
+    if (memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB) break
   }
   return samples
+}
+
+function memorySampleRangeKiB(samples) {
+  const footprints = samples.map(sample => sample.physicalFootprintKiB)
+  return Math.max(...footprints) - Math.min(...footprints)
 }
 
 function medianMemorySample(samples) {
@@ -4128,7 +4130,16 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   await closeBottomWorkspacePanel(control)
 
   control.setScenario('cloud_follow_up')
+  const runningTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-running-'
+  )
   await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
+  await waitForSnapshot(
+    control,
+    value => value.testIds.includes(runningTaskTestId),
+    'The cloud follow-up task never entered the running state'
+  )
   await withTimeout(
     control.awaitScenarioRequest('cloud_follow_up'),
     UI_TIMEOUT_MS,
@@ -4139,10 +4150,6 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  const runningTaskTestId = taskRowTestId.replace(
-    'runtime-local-task-row-',
-    'runtime-local-task-running-'
-  )
   await waitForSnapshot(
     control,
     value => !value.testIds.includes(runningTaskTestId),
@@ -5107,6 +5114,66 @@ async function main() {
       UNSENT_FIRST_TASK_DRAFT,
       'The first task lost its unsent composer draft after switching tasks'
     )
+
+    phase = 'workspace-resources-across-conversation-switch'
+    const activeBrowserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
+    const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
+    const activeRightPanelToggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-right-workspace-panel-button"]`
+    const retainedBrowserUrl = 'https://example.com/session-state'
+    await control.command('waitFor', activeRightPanelToggleSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', activeRightPanelToggleSelector)
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
+    )
+    await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
+    await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-bottom-workspace-panel-button"]`
+    )
+    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
+    const secondTaskWorkspaceSnapshot = JSON.parse(
+      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    assert.equal(
+      secondTaskWorkspaceSnapshot.testIds.includes('workspace-terminal-window'),
+      false,
+      'The first task terminal leaked into the second task'
+    )
+    assert.equal(
+      secondTaskWorkspaceSnapshot.testIds.includes('workspace-browser-panel'),
+      false,
+      'The first task browser leaked into the second task'
+    )
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
+    assert.equal(
+      await control.command('getValue', activeBrowserInputSelector),
+      retainedBrowserUrl,
+      'The Wework built-in browser URL was reset after switching conversations'
+    )
+    const restoredWorkspaceSnapshot = JSON.parse(
+      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    assert.ok(
+      restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
+      'The browser tab was not restored after switching conversations'
+    )
+    await captureVerificationScreenshot(control, 'workspace-resources-restored-after-switch.png')
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="close-bottom-workspace-tab-button"]`
+    )
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-tab-close-button"]`
+    )
+
     await control.command('fill', composerSelector, { value: '' })
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     await control.command('fill', composerSelector, { value: '' })

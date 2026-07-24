@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   composerSkillFilePath,
   findComposerMentionDeletionRange,
+  parseComposerMentions,
   replaceComposerMentionTrigger,
 } from './composerMentions'
 
@@ -72,5 +73,18 @@ describe('replaceComposerMentionTrigger', () => {
       value: `${GMAIL_REFERENCE} `,
       cursor: GMAIL_REFERENCE.length + 1,
     })
+  })
+})
+
+describe('cloud references', () => {
+  test('keeps cloud references atomic in the composer', () => {
+    const reference = '[$design.md](cloud://projects/11/files/42)'
+
+    expect(parseComposerMentions(reference)).toEqual([
+      expect.objectContaining({ name: 'design.md', reference, start: 0, end: reference.length }),
+    ])
+    expect(
+      findComposerMentionDeletionRange(reference, reference.length, reference.length, 'Backspace')
+    ).toEqual({ start: 0, end: reference.length, cursor: 0 })
   })
 })
