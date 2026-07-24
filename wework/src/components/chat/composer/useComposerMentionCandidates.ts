@@ -10,6 +10,7 @@ import {
   displaySkillSource,
   skillReference,
   type ComposerAppMentionCandidate,
+  type ComposerCloudMentionCandidate,
   type ComposerSkillMentionCandidate,
 } from './composerMentionCandidates'
 import { localSkillTestId } from './composerMentions'
@@ -18,7 +19,8 @@ export function useComposerMentionCandidates(
   apps: LocalDeviceApp[],
   skills: LocalDeviceSkill[],
   selectedModel: UnifiedModel | null | undefined,
-  query: string
+  query: string,
+  cloudCandidates: ComposerCloudMentionCandidate[] = []
 ) {
   const { t } = useTranslation('common')
   const appCandidates = useMemo<ComposerAppMentionCandidate[]>(
@@ -60,8 +62,8 @@ export function useComposerMentionCandidates(
     [selectedModel, skills, t]
   )
   const mentionCandidates = useMemo(
-    () => [...skillCandidates, ...appCandidates],
-    [appCandidates, skillCandidates]
+    () => [...cloudCandidates, ...skillCandidates, ...appCandidates],
+    [appCandidates, cloudCandidates, skillCandidates]
   )
   const filteredMentionCandidates = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()

@@ -29,6 +29,8 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 
 - Design verification cases as a QA test plan before running them. For every changed behavior, cover the preconditions, environment and test data, exact steps, expected results, negative and recovery paths, and cleanup. Record the actual result and retain reproducible evidence for failures and critical-path success.
 - Changes to a core user flow must add or update automated E2E regression coverage in the same change. Treat task creation and launch, agent interaction, local-runtime lifecycle, permissions, and failure recovery as core flows when they are affected.
+- Add Wework E2E regression cases under `e2e/desktop/` and integrate them with the existing desktop runner so the GitHub desktop E2E jobs execute them. Do not place desktop regressions behind standalone local-only entry points.
+- Reuse the existing `e2e:desktop` command and its established CI variants. Do not add a package script or GitHub Actions command for each scenario; extend the desktop runner or its scenario discovery instead. Add a new command only when the test requires a genuinely different CI environment or job boundary.
 - E2E coverage complements, but never replaces, verification in the real Tauri application.
 
 ## Real desktop verification

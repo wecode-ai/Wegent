@@ -62,6 +62,12 @@ Goal 条的运行态必须受当前 runtime task 的执行快照约束：当 App
 - 此派生只影响 Wework 的展示与计时，不会自动调用 goal 暂停接口。用户点击“暂停目标”才会持久化 `paused` 状态。
 - 任务重新处于 `running: true` 时，goal 继续使用 runtime goal API 返回的原始状态。
 
+Active Goal 的自动续跑状态由 root turn 生命周期事件单独驱动。收到
+`runtime.goal.continuation: started` 后，Goal 条必须持续显示“目标继续执行中”，包括
+assistant 已开始输出、思考或调用工具的阶段；assistant 输出开始不是 turn 结束信号，
+不得清除续跑状态。只有对应的 `settled` 事件、Goal 变为非 active 状态、Goal 被清除或
+pane 切换到其他任务时才清除该状态。
+
 用户停止一个带有 active goal 的当前回复时，Wework 必须先通过 runtime goal API
 持久化 `paused`，确认成功后再取消当前 turn。这个顺序先关闭自动续跑源，避免当前
 turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal 暂停失败，不得继续把

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createDeliveryApi } from './deliveries'
+import { createDeviceApi } from './devices'
 import { ApiError, createHttpClient } from './http'
 
 describe('createHttpClient', () => {
@@ -32,6 +34,69 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer token-1',
+      },
+    })
+  })
+
+  test('sends patch requests through the configured authenticated backend', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ version: 2 }),
+    })
+
+    const client = createHttpClient({
+      baseUrl: 'https://cloud.example.com/api',
+      getToken: () => 'cloud-token',
+    })
+    const result = await client.patch<{ version: number }>('/v1/loop-items/WEG-1', {
+      version: 1,
+      status: 'in_progress',
+    })
+
+    expect(result).toEqual({ version: 2 })
+    expect(fetchMock).toHaveBeenCalledWith('https://cloud.example.com/api/v1/loop-items/WEG-1', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer cloud-token',
+      },
+      body: JSON.stringify({ version: 1, status: 'in_progress' }),
+    })
+  })
+
+  test('uses one cloud connection for devices and cloud projects', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [], total: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [] }),
+      })
+    const client = createHttpClient({
+      baseUrl: 'http://localhost:8000/api',
+      getToken: () => 'cloud-token',
+    })
+
+    await createDeviceApi(client).listDevices()
+    await createDeliveryApi(client).listCloudProjects()
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://localhost:8000/api/devices', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer cloud-token',
+      },
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:8000/api/v1/cloud-projects', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer cloud-token',
       },
     })
   })

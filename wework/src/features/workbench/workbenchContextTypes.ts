@@ -19,6 +19,7 @@ import type {
   ProjectWithTasks,
   RuntimeGoalClearResponse,
   RuntimeGoalCreateInput,
+  RuntimeAdditionalContext,
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
@@ -82,6 +83,7 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {
@@ -95,6 +97,9 @@ export interface CreateProjectRuntimeTaskOptions {
   project: ProjectWithTasks
   attachments?: Attachment[]
   initialGoal?: RuntimeGoalCreateInput | null
+  collaborationMode?: 'default' | 'plan'
+  deliveryId?: string
+  cloudProjectId?: string
   onError?: (error: string) => void
 }
 
