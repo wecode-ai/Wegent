@@ -112,5 +112,10 @@ async def test_exit_durability_yields_post_compaction_state_after_recursion():
     assert any(m.additional_kwargs.get(SUMMARY_FLAG) for m in msgs)
     # Post-compaction completed tool pair (t2) survives.
     assert any(getattr(m, "tool_call_id", None) == "t2" for m in msgs)
+    # Pre-compaction content was actually REPLACED, not merely appended to:
+    # the input user and the pre-compaction tool pair are gone. This proves we
+    # read the post-replacement authoritative state, not just "summary present".
+    assert all(m.id != "u1" for m in msgs)
+    assert not any(getattr(m, "tool_call_id", None) == "t1" for m in msgs)
     # exit durability => a single committed checkpoint, not one per super-step.
     assert len(list(saver.list(config))) == 1
