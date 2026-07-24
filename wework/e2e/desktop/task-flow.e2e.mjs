@@ -4096,6 +4096,15 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  const runningTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-running-'
+  )
+  await waitForSnapshot(
+    control,
+    value => !value.testIds.includes(runningTaskTestId),
+    'The cloud follow-up task did not settle before project removal'
+  )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
   const projectMenuTestId = `project-menu-${projectId}`
