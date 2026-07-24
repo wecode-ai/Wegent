@@ -254,6 +254,8 @@ async def get_chat_history(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
             Used by subscription tasks to control history context size.
+        from_latest_compaction: If True (default), load from the latest summary-
+            compaction checkpoint instead of the full transcript.
 
     Returns:
         List of message dictionaries with 'role' and 'content' keys
@@ -322,6 +324,8 @@ async def _load_history_from_remote(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        from_latest_compaction: If True, request history from the latest summary-
+            compaction checkpoint instead of the full transcript.
     """
     logger.debug(
         "[history] _load_history_from_remote: START task_id=%d, is_group_chat=%s, "

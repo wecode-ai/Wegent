@@ -38,7 +38,7 @@ from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
-from shared.telemetry.decorators import trace_sync
+from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -833,6 +833,16 @@ async def expire_guidance(task_id: int, subtask_id: int):
 
 
 @router.get("/history/{session_id}", response_model=HistoryResponse)
+@trace_async(
+    "internal.chat_storage.get_history",
+    "internal.chat_storage",
+    extract_attributes=lambda *args, **kwargs: {
+        "chat.session_id": kwargs.get("session_id", ""),
+        "chat.from_latest_compaction": kwargs.get("from_latest_compaction", False),
+        "chat.limit": kwargs.get("limit") if kwargs.get("limit") is not None else -1,
+        "chat.is_group_chat": kwargs.get("is_group_chat", False),
+    },
+)
 async def get_chat_history(
     session_id: str,
     limit: Optional[int] = Query(
@@ -872,12 +882,14 @@ async def get_chat_history(
         )
 
     logger.info(
-        "get_chat_history:start session_id=%s task_id=%s before_message_id=%s limit=%s is_group_chat=%s statuses=%s",
+        "get_chat_history:start session_id=%s task_id=%s before_message_id=%s "
+        "limit=%s is_group_chat=%s from_latest_compaction=%s statuses=%s",
         session_id,
         task_id,
         before_message_id,
         limit,
         is_group_chat,
+        from_latest_compaction,
         [status.value for status in history_statuses],
     )
 

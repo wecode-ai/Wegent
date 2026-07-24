@@ -72,6 +72,7 @@ from chat_shell.compression.context_metrics import (
 from chat_shell.compression.summary_compactor import (
     SummaryCompactNotApplicable,
     SummaryCompactor,
+    SummaryCompactResult,
 )
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.tool_output import COMPACTED_FLAG
@@ -762,7 +763,9 @@ class UnifiedContextGuard:
                         exc_info=True,
                     )
         except asyncio.CancelledError:
-            return
+            # Cleanup is already handled above; re-raise so the cancellation is
+            # observed rather than swallowed (structured-concurrency correctness).
+            raise
 
     async def _compact_with_heartbeat(
         self,
@@ -771,7 +774,7 @@ class UnifiedContextGuard:
         snapshot: ContextMetricsSnapshot,
         before_tokens: int,
         created_at: str,
-    ):
+    ) -> SummaryCompactResult:
         """Run compaction while a heartbeat ticker keeps the SSE stream alive.
 
         The ticker is always cancelled (success, error, or cancellation) via the
