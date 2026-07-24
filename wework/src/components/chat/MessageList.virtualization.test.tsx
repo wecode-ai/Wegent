@@ -12,6 +12,11 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({
+  defaultRangeExtractor: (range: { startIndex: number; endIndex: number }) =>
+    Array.from(
+      { length: range.endIndex - range.startIndex + 1 },
+      (_, index) => range.startIndex + index
+    ),
   useVirtualizer: (options: { count: number }) => {
     useVirtualizerMock(options)
     return {
@@ -75,6 +80,36 @@ describe('MessageList Tauri virtualization', () => {
           expect.objectContaining({ key: 'user-0', size: 100, start: 32 }),
         ],
       })
+    )
+  })
+
+  test('keeps a navigation target in the virtual range while it settles', () => {
+    const messages = Array.from({ length: 100 }, (_, index) => ({
+      id: `user-${index}`,
+      role: 'user' as const,
+      content: `message ${index}`,
+      status: 'done' as const,
+      createdAt: '2026-07-24T00:00:00Z',
+    }))
+
+    render(
+      <MessageList
+        messages={messages}
+        scrollElementRef={{ current: document.createElement('div') }}
+        forceVirtualMessageId="user-80"
+      />
+    )
+
+    const options = useVirtualizerMock.mock.lastCall?.[0] as {
+      rangeExtractor: (range: {
+        startIndex: number
+        endIndex: number
+        overscan: number
+        count: number
+      }) => number[]
+    }
+    expect(options.rangeExtractor({ startIndex: 0, endIndex: 2, overscan: 2, count: 100 })).toEqual(
+      [0, 1, 2, 80]
     )
   })
 })
