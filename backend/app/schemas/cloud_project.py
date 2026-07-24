@@ -70,6 +70,11 @@ class LocalBindingResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("device_id", mode="before")
+    @classmethod
+    def normalize_empty_device_id(cls, value: object) -> object:
+        return None if value == "" else value
+
 
 class CloudProjectMemberCreate(BaseModel):
     user_id: int = Field(ge=1)
