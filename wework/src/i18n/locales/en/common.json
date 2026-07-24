@@ -3,7 +3,13 @@
     "home": "Home"
   },
   "common": {
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "window": {
+      "minimize": "Minimize",
+      "maximize": "Maximize",
+      "restore": "Restore",
+      "close": "Close"
+    }
   },
   "workbench": {
     "brand": "Wework",

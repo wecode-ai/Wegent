@@ -294,7 +294,7 @@ export function EnvironmentInfoPopover({
             data-testid="environment-info-popover"
             style={docked ? undefined : floatingPopoverStyle}
             className={cn(
-              'w-[300px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-md backdrop-blur-3xl backdrop-saturate-150',
+              'pointer-events-auto w-[300px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-md backdrop-blur-3xl backdrop-saturate-150',
               docked ? 'ml-2 mt-3' : 'fixed z-system'
             )}
           >

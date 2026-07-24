@@ -201,7 +201,7 @@ pub(super) fn log_runtime_work_list_diagnostic(
 ) {
 }
 
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(windows)))]
 fn current_process_max_rss_kb() -> Option<u64> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
@@ -216,4 +216,26 @@ fn current_process_max_rss_kb() -> Option<u64> {
     {
         Some(max_rss as u64)
     }
+}
+
+#[cfg(all(debug_assertions, windows))]
+fn current_process_max_rss_kb() -> Option<u64> {
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let mut counters = std::mem::MaybeUninit::<PROCESS_MEMORY_COUNTERS>::uninit();
+    let ok = unsafe {
+        GetProcessMemoryInfo(
+            GetCurrentProcess(),
+            counters.as_mut_ptr(),
+            std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    let counters = unsafe { counters.assume_init() };
+    Some((counters.PeakWorkingSetSize as u64).saturating_div(1024))
 }

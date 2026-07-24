@@ -4,7 +4,7 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import {
-  DEFAULT_KEYBINDINGS,
+  getDefaultKeybindings,
   GO_BACK_COMMAND,
   GO_FORWARD_COMMAND,
   INCREASE_FONT_SIZE_COMMAND,
@@ -125,11 +125,12 @@ export function KeyboardShortcutsSettingsPage() {
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
 
+  const defaultBindings = useMemo(() => getDefaultKeybindings(), [])
   const bindings = useMemo(() => mergeKeybindings(overrides), [overrides])
   const filteredCommands = useMemo(() => {
     const trimmedQuery = query.trim().toLowerCase()
-    if (!trimmedQuery) return DEFAULT_KEYBINDINGS
-    return DEFAULT_KEYBINDINGS.filter(item => {
+    if (!trimmedQuery) return defaultBindings
+    return defaultBindings.filter(item => {
       const labels = COMMAND_LABELS[item.command]
       const label = t(`workbench.${labels.label}`, commandFallback(item.command)).toLowerCase()
       const description = t(
@@ -142,7 +143,7 @@ export function KeyboardShortcutsSettingsPage() {
         description.includes(trimmedQuery)
       )
     })
-  }, [query, t])
+  }, [query, t, defaultBindings])
 
   const saveOverride = useCallback(
     async (command: string, key: string | null) => {
@@ -153,7 +154,7 @@ export function KeyboardShortcutsSettingsPage() {
         item =>
           normalizeKeybinding(item.key ?? '') !==
           normalizeKeybinding(
-            DEFAULT_KEYBINDINGS.find(base => base.command === item.command)?.defaultKey ?? ''
+            defaultBindings.find(base => base.command === item.command)?.defaultKey ?? ''
           )
       )
 
@@ -173,7 +174,7 @@ export function KeyboardShortcutsSettingsPage() {
         setSavingCommand(null)
       }
     },
-    [overrides, t]
+    [defaultBindings, overrides, t]
   )
 
   useEffect(() => {

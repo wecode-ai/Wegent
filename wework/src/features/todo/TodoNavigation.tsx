@@ -289,7 +289,7 @@ export function TodoSidebar({
         <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
         <div
           data-testid="todo-sidebar-chrome-controls"
-          className="absolute left-[92px] top-0 z-10 flex h-[38px] items-center gap-1"
+          className="absolute left-[92px] top-0 z-10 flex h-[38px] items-center gap-7"
         >
           <DesktopWindowControls
             sidebarCollapsed={false}

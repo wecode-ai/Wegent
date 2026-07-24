@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import path from 'node:path'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 
 describe('buildAiVerifyEnvironment', () => {
@@ -36,7 +37,7 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.DEVICE_SESSION_GATEWAY_PORT).toBe('0')
     expect(environment.WEGENT_EXECUTOR_HOME).toBe('/tmp/session/executor-home')
     expect(environment.WEGENT_EXECUTOR_PROJECTS_DIR).toBe(
-      '/tmp/session/executor-home/workspace/projects'
+      path.join('/tmp/session/executor-home', 'workspace', 'projects')
     )
     expect(environment.WEWORK_EXECUTOR_ISOLATION_OVERRIDE).toBe('true')
     expect(environment.WEGENT_EXECUTOR_APP_IPC_ADDR).toBeUndefined()
@@ -46,7 +47,7 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.WEGENT_EXECUTOR_SOURCE_DIR).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_SIDECAR).toBeUndefined()
     expect(environment.WEWORK_SHARED_EXECUTOR_HOME).toBeUndefined()
-    expect(environment.WEWORK_APP_CONFIG_DIR).toBe('/tmp/session/app-config')
+    expect(environment.WEWORK_APP_CONFIG_DIR).toBe(path.join('/tmp/session', 'app-config'))
     expect(environment.PATH).toBe('/usr/bin')
   })
 })

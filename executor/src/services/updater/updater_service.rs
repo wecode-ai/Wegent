@@ -277,7 +277,31 @@ fn free_space_bytes(path: &Path) -> Option<u64> {
     Some(available_blocks.saturating_mul(fragment_size))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn free_space_bytes(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+    let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide_path.push(0);
+    let mut free_bytes_available = 0u64;
+    let mut total_bytes = 0u64;
+    let mut total_free_bytes = 0u64;
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide_path.as_ptr(),
+            &mut free_bytes_available,
+            &mut total_bytes,
+            &mut total_free_bytes,
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    Some(free_bytes_available)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn free_space_bytes(_path: &Path) -> Option<u64> {
     None
 }
@@ -286,6 +310,7 @@ fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(std::env::temp_dir)
 }
 
+#[cfg(unix)]
 fn numeric_to_u64<T>(value: T) -> Option<u64>
 where
     T: TryInto<u64>,

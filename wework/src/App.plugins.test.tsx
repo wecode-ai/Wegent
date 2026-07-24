@@ -7,6 +7,17 @@ import type { InstalledPlugin, LocalDeviceSkill } from '@/types/api'
 import './i18n'
 import App from './App'
 
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    startDragging: vi.fn(),
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onResized: vi.fn().mockResolvedValue(vi.fn()),
+  }),
+}))
+
 const localCodexPluginMocks = vi.hoisted(() => ({
   listInstalledPlugins: vi.fn(),
   listSkills: vi.fn(),
@@ -653,6 +664,10 @@ describe('App plugins route', () => {
     sessionStorage.clear()
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
     workbenchValue.state.runtimeWork = null
     workbenchValue.state.currentRuntimeTask = null
     vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)

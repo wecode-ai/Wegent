@@ -5,7 +5,7 @@ import { chmod, cp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
-import { spawn } from 'node:child_process'
+import { extract } from 'tar'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -95,24 +95,10 @@ async function download(url, destination) {
   await pipeline(response.body, createWriteStream(destination))
 }
 
-function run(command, args, options = {}) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit', ...options })
-    child.on('error', reject)
-    child.on('exit', code => {
-      if (code === 0) {
-        resolvePromise()
-      } else {
-        reject(new Error(`${command} ${args.join(' ')} exited with ${code}`))
-      }
-    })
-  })
-}
-
 async function extractTarball(tarball, destination) {
   await rm(destination, { recursive: true, force: true })
   await mkdir(destination, { recursive: true })
-  await run('tar', ['-xzf', tarball, '-C', destination, '--strip-components', '1'])
+  await extract({ file: tarball, cwd: destination, strip: 1 })
 }
 
 async function prepareTarget(target, entry) {

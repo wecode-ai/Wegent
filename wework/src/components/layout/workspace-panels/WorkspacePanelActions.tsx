@@ -19,6 +19,7 @@ import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { openExternalUrl } from '@/lib/external-links'
+import { getPlatform } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
@@ -91,6 +92,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onToggleBottomPanel,
 }: WorkspacePanelActionsProps) {
   const { t } = useTranslation('common')
+  const platform = getPlatform()
   const [ideLoading, setIdeLoading] = useState(false)
   const [ideError, setIdeError] = useState<string | null>(null)
   const showEnvironmentInfo = environmentInfoVisible && (mode === 'all' || mode === 'environment')
@@ -298,7 +300,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           {showBottomPanelToggle && (
             <TitlebarTooltip
               label={t('workbench.toggle_bottom_workspace_panel_visible', '切换底部面板显示')}
-              shortcut="Command+J"
+              shortcut={platform === 'win' ? 'Control+J' : 'Command+J'}
               align="end"
             >
               <button
@@ -316,7 +318,11 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             </TitlebarTooltip>
           )}
           {showRightPanelToggle && (
-            <TitlebarTooltip label={rightPanelTitle} shortcut="Alt+Command+B" align="end">
+            <TitlebarTooltip
+              label={rightPanelTitle}
+              shortcut={platform === 'win' ? 'Alt+Control+B' : 'Alt+Command+B'}
+              align="end"
+            >
               <button
                 type="button"
                 data-testid="toggle-right-workspace-panel-button"

@@ -103,6 +103,10 @@ installStorageGlobal('localStorage')
 installStorageGlobal('sessionStorage')
 
 beforeEach(() => {
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',
+  })
   window.__WEWORK_RUNTIME_CONFIG__ = {
     appBasePath: '',
     apiBaseUrl: '/api',

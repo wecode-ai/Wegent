@@ -192,12 +192,17 @@ fn rebuild_and_spawn(
 }
 
 fn build_executor(manifest_path: &Path) -> Result<bool, String> {
+    let manifest_dir = manifest_path
+        .parent()
+        .ok_or_else(|| "Invalid manifest path: no parent directory".to_owned())?;
+    let target_dir = cargo_target_dir(manifest_dir);
     let output = Command::new("cargo")
         .arg("build")
         .arg("--manifest-path")
         .arg(manifest_path)
         .arg("--bin")
         .arg("wegent-executor")
+        .env("CARGO_TARGET_DIR", &target_dir)
         .output()
         .map_err(|error| format!("failed to run cargo build: {error}"))?;
     if !output.stdout.is_empty() {
@@ -221,7 +226,10 @@ fn debug_binary_path(manifest_dir: &Path) -> PathBuf {
 }
 
 fn cargo_target_dir(manifest_dir: &Path) -> PathBuf {
-    match env::var_os("CARGO_TARGET_DIR").filter(|value| !value.is_empty()) {
+    let target_dir = env::var_os("WEGENT_EXECUTOR_TARGET_DIR")
+        .filter(|value| !value.is_empty())
+        .or_else(|| env::var_os("CARGO_TARGET_DIR").filter(|value| !value.is_empty()));
+    match target_dir {
         Some(value) => {
             let path = PathBuf::from(value);
             if path.is_absolute() {

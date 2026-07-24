@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:mac": "bash scripts/dev-mac-app.sh",
+    "dev:windows": "node scripts/dev-windows-app.mjs",
     "tauri": "tauri",
     "prepare:codex": "node scripts/prepare-codex-binary.mjs",
     "build": "tsc -b && vite build",
@@ -126,6 +127,7 @@
     "postcss": "^8.5.15",
     "prettier": "^3.8.4",
     "tailwindcss": "^3.4.19",
+    "tar": "^7.5.20",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
