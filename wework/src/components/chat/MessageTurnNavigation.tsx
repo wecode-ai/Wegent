@@ -29,6 +29,7 @@ interface MessageTurnNavigationProps {
   contentRef: RefObject<HTMLDivElement | null>
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onNavigationLoadStateChange?: (loading: boolean) => void
+  onNavigationScrollTargetChange?: (messageId: string | null) => void
   portalTarget?: Element | null
 }
 
@@ -58,6 +59,7 @@ export function MessageTurnNavigation({
   contentRef,
   onLoadTurnNavigationItem,
   onNavigationLoadStateChange,
+  onNavigationScrollTargetChange,
   portalTarget,
 }: MessageTurnNavigationProps) {
   const { t } = useTranslation('chat')
@@ -81,19 +83,60 @@ export function MessageTurnNavigation({
     (scroller: HTMLDivElement, messageId: string, behavior: ScrollBehavior = 'auto') => {
       clearNavigationScrollTimers()
       const initialAnchor = findMessageAnchor(contentRef, messageId)
-      if (!initialAnchor) return
+      if (!initialAnchor) {
+        logTurnNavigation('anchor-missing', { messageId, behavior, ...getScrollMetrics(scroller) })
+        return
+      }
+      onNavigationScrollTargetChange?.(messageId)
+      logTurnNavigation('scroll-start', {
+        messageId,
+        behavior,
+        ...getScrollMetrics(scroller, initialAnchor),
+      })
       scrollToMessageAnchor(scroller, initialAnchor, behavior)
+      logTurnNavigation('scroll-initial-complete', {
+        messageId,
+        behavior,
+        ...getScrollMetrics(scroller, initialAnchor),
+      })
 
-      NAVIGATION_SCROLL_SETTLE_DELAYS_MS.forEach(delay => {
+      NAVIGATION_SCROLL_SETTLE_DELAYS_MS.forEach((delay, index) => {
         const timer = window.setTimeout(() => {
           const currentAnchor = findMessageAnchor(contentRef, messageId)
-          if (!currentAnchor) return
-          scrollToMarkerTarget(scroller, getMessageAnchorTargetTop(scroller, currentAnchor), 'auto')
+          if (currentAnchor) {
+            const targetTop = getMessageAnchorTargetTop(scroller, currentAnchor)
+            logTurnNavigation('scroll-settle-before', {
+              messageId,
+              delay,
+              targetTop,
+              ...getScrollMetrics(scroller, currentAnchor),
+            })
+            scrollToMarkerTarget(scroller, targetTop, 'auto')
+            logTurnNavigation('scroll-settle-after', {
+              messageId,
+              delay,
+              targetTop,
+              ...getScrollMetrics(scroller, currentAnchor),
+            })
+          } else {
+            logTurnNavigation('anchor-missing-during-settle', {
+              messageId,
+              delay,
+              ...getScrollMetrics(scroller),
+            })
+          }
+          if (index === NAVIGATION_SCROLL_SETTLE_DELAYS_MS.length - 1) {
+            onNavigationScrollTargetChange?.(null)
+            logTurnNavigation('scroll-finished', {
+              messageId,
+              ...getScrollMetrics(scroller, currentAnchor),
+            })
+          }
         }, delay)
         navigationScrollTimersRef.current.push(timer)
       })
     },
-    [clearNavigationScrollTimers, contentRef]
+    [clearNavigationScrollTimers, contentRef, onNavigationScrollTargetChange]
   )
 
   const userTurns = useMemo(() => {
@@ -269,6 +312,16 @@ export function MessageTurnNavigation({
       if (!scroller) return
 
       const currentAnchor = findMessageAnchor(contentRef, marker.id)
+      logTurnNavigation('marker-click', {
+        markerId: marker.id,
+        turnIndex: marker.turnIndex,
+        messageIndex: marker.messageIndex,
+        markerLoaded: marker.loaded,
+        anchorFound: Boolean(currentAnchor),
+        markerTargetTop: marker.targetTop,
+        activeMarkerId,
+        ...getScrollMetrics(scroller, currentAnchor),
+      })
       if (currentAnchor) {
         const gapMarker = findUnloadedMarkerBetween(markersRef.current, activeMarkerId, marker.id)
         if (gapMarker && onLoadTurnNavigationItem) {
@@ -323,7 +376,13 @@ export function MessageTurnNavigation({
     ]
   )
 
-  useEffect(() => clearNavigationScrollTimers, [clearNavigationScrollTimers])
+  useEffect(
+    () => () => {
+      clearNavigationScrollTimers()
+      onNavigationScrollTargetChange?.(null)
+    },
+    [clearNavigationScrollTimers, onNavigationScrollTargetChange]
+  )
 
   if (markers.length === 0) return null
 
@@ -645,6 +704,25 @@ function getMessageAnchorTargetTop(scroller: HTMLDivElement, anchor: HTMLElement
   const scrollerRect = scroller.getBoundingClientRect()
   const anchorRect = anchor.getBoundingClientRect()
   return Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
+}
+
+function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | null) {
+  const scrollerRect = scroller.getBoundingClientRect()
+  const anchorRect = anchor?.getBoundingClientRect()
+  return {
+    scrollTop: scroller.scrollTop,
+    scrollHeight: scroller.scrollHeight,
+    clientHeight: scroller.clientHeight,
+    distanceFromBottom: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+    scrollerTop: scrollerRect.top,
+    anchorTop: anchorRect?.top ?? null,
+    anchorHeight: anchorRect?.height ?? null,
+    anchorOffsetFromScroller: anchorRect ? anchorRect.top - scrollerRect.top : null,
+  }
+}
+
+function logTurnNavigation(event: string, details: Record<string, unknown>) {
+  console.warn(`[Wework] Message turn navigation ${event}`, details)
 }
 
 function getMessageAnchorById(content: HTMLElement) {
