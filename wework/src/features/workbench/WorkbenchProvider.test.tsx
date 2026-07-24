@@ -564,6 +564,21 @@ function DeviceStatusProbe() {
   return <span data-testid="device-status">{workbench.state.devices[0]?.status ?? 'missing'}</span>
 }
 
+function RuntimeRunningTasksProbe() {
+  const runtimeWork = useWorkbench().state.runtimeWork
+  const runningTaskIds = [
+    ...(runtimeWork?.projects.flatMap(project =>
+      project.deviceWorkspaces.flatMap(workspace =>
+        workspace.tasks.filter(task => task.running).map(task => task.taskId)
+      )
+    ) ?? []),
+    ...(runtimeWork?.chats.flatMap(workspace =>
+      workspace.tasks.filter(task => task.running).map(task => task.taskId)
+    ) ?? []),
+  ]
+  return <span data-testid="runtime-running-task-ids">{runningTaskIds.join('|') || 'none'}</span>
+}
+
 function RemoteRuntimeCacheProbe() {
   const runtimeWork = useWorkbench().state.runtimeWork
   const workspaces = runtimeWork?.projects.flatMap(project => project.deviceWorkspaces) ?? []
@@ -1757,6 +1772,84 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps a background runtime task settled when its terminal refresh is stale', async () => {
+    let backgroundStreamHandlers: ChatStreamHandlers | null = null
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (handlers.scope?.taskId === 'runtime-a') {
+        backgroundStreamHandlers = handlers
+      }
+      return vi.fn()
+    })
+    const runningRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'codex',
+                  running: true,
+                  goalStatus: 'active',
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      totalTasks: 1,
+    })
+    const staleTerminalRefresh = deferred<RuntimeWorkListResponse>()
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(runningRuntimeWork)
+      .mockImplementationOnce(() => staleTerminalRefresh.promise)
+    const runtimeWorkApi = createRuntimeWorkApiMock({ listRuntimeWork })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<RuntimeRunningTasksProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-running-task-ids')).toHaveTextContent('runtime-a')
+    )
+    await waitFor(() => expect(backgroundStreamHandlers?.onChatDone).toBeDefined())
+
+    await act(async () => {
+      backgroundStreamHandlers?.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: 'goal-final',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      staleTerminalRefresh.resolve(runningRuntimeWork)
+      await staleTerminalRefresh.promise
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-running-task-ids')).toHaveTextContent('none')
+    )
   })
 
   test('starts a fresh blank chat with a requested loaded skill selected', async () => {
@@ -3321,6 +3414,8 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         projectId: 7,
         deviceWorkspaceId: 11,
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
         teamId: 2,
         message: '修复 CI',
         initialGoal: {
@@ -3996,6 +4091,8 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         projectId: 7,
         deviceWorkspaceId: 22,
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
         message: '修复 CI',
       })
     )
@@ -8652,7 +8749,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('queued-notices')).not.toHaveTextContent('正在引导当前对话')
   })
 
-  test('sends queued guidance as a follow-up when the active turn is unavailable', async () => {
+  test('sends failed queued work directly when the active turn is unavailable', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -8761,11 +8858,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('queued-messages')).toHaveTextContent('failed:继续修')
     )
+    expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
 
     await userEvent.click(screen.getByText('guide first queued'))
 
-    await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    expect(guideRuntimeTask).not.toHaveBeenCalled()
     expect(sendRuntimeMessage).toHaveBeenLastCalledWith({
       address: {
         deviceId: 'device-1',

@@ -31,6 +31,10 @@ const WINDOW_LIFECYCLE_PROMPT =
   'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE: keep this response running until released.'
 const WINDOW_LIFECYCLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_COMPLETE'
 const WINDOW_LIFECYCLE_SCROLL_MARKER = 'WEWORK_DESKTOP_E2E_SCROLL_POSITION_MARKER'
+const GOAL_IDLE_PROMPT =
+  'WEWORK_DESKTOP_E2E_GOAL_IDLE: create an active goal and keep it active for one continuation.'
+const GOAL_IDLE_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
+const GOAL_IDLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_COMPLETE'
 const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
   ...Array.from({ length: 24 }, (_, index) =>
@@ -187,6 +191,9 @@ const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY ===
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
 const RETRY_ONLY = process.argv.includes('--retry-only')
+const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
+const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
+const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -776,14 +783,13 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     samples.push(await captureMemorySample(control, 'settled'))
     const settledSamples = samples.filter(sample => sample.phase === 'settled')
     if (settledSamples.length < MEMORY_MIN_SETTLED_SAMPLES) continue
-    const recent = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
     const settledWindow = settledSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
     const settled = medianMemorySample(settledWindow)
     assert.ok(settled, 'The memory E2E did not capture a settled sample window')
     if (
       settled.physicalFootprintKiB - baseline.physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB
+      memorySampleRangeKiB(settledWindow) <= MEMORY_MAX_SAMPLE_RANGE_KIB
     ) {
       break
     }
@@ -801,8 +807,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   await captureVerificationScreenshot(control, 'memory-04-settled.png')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
-  const recentSettledSamples = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
-  const settledRangeKiB = memorySampleRangeKiB(recentSettledSamples)
+  const settledRangeKiB = memorySampleRangeKiB(settledWindow)
   const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
 
   await writeFile(
@@ -1155,6 +1160,21 @@ async function waitForLogPattern(logPath, pattern, timeoutMs = UI_TIMEOUT_MS) {
   throw new Error(`Timed out waiting for ${pattern} in ${logPath}`)
 }
 
+async function waitForNewLogPattern(
+  logPath,
+  pattern,
+  previousContentLength,
+  timeoutMs = UI_TIMEOUT_MS
+) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const content = await readFile(logPath, 'utf8').catch(() => '')
+    if (pattern.test(content.slice(previousContentLength))) return content
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Timed out waiting for new ${pattern} in ${logPath}`)
+}
+
 async function reactivateMacApplication(appIdentifier) {
   await runChecked('open', ['-b', appIdentifier])
 }
@@ -1412,6 +1432,15 @@ async function verifyBackgroundTaskWindowLifecycle({
     snapshot => !snapshot.testIds.includes(runningTaskTestId),
     'The background task did not settle while another pane was active'
   )
+  const unreadTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-unread-dot-'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(unreadTaskTestId),
+    'The settled background task did not become unread'
+  )
   await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1421,8 +1450,9 @@ async function verifyBackgroundTaskWindowLifecycle({
     snapshot =>
       snapshot.testIds.includes('message-assistant') &&
       snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT) &&
+      !snapshot.testIds.includes(unreadTaskTestId) &&
       !snapshot.testIds.includes('thinking-indicator'),
-    'Switching to the completed background task did not show its latest settled state',
+    'Switching to the completed background task did not show its latest read state',
     UI_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
@@ -1673,7 +1703,12 @@ async function attachAndSendOnlyFile(control, composerSelector) {
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
 }
 
-async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control }) {
+async function verifyAttachmentOnlySidebarLifecycle({
+  app,
+  appIdentifier,
+  composerSelector,
+  control,
+}) {
   control.setScenario('attachment_only')
   const rowsBeforeAttachmentOnly = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -1737,7 +1772,10 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
 
   if (process.platform === 'darwin') {
     const readyCountBeforeClose = control.readyCount
+    const tauriLogPath = join(resultDir, `wework-tauri-${app.pid}.log`)
+    const tauriLogLengthBeforeClose = (await readFile(tauriLogPath, 'utf8').catch(() => '')).length
     await control.command('closeMainWindowToTray', 'body')
+    await waitForNewLogPattern(tauriLogPath, /windowWillClose:/, tauriLogLengthBeforeClose)
     await reactivateMacApplication(appIdentifier)
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeClose),
@@ -2314,6 +2352,161 @@ function selectViewImageTool(request, workspacePath) {
   })
 }
 
+async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }) {
+  control.setScenario('goal_idle')
+  const taskRowsBeforeGoal = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-goal-button"]')
+  await control.command('waitFor', '[data-testid="goal-draft-pill"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(control, composerSelector, GOAL_IDLE_PROMPT, 'goal_idle')
+  const goalTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeGoal,
+    'WEWORK_DESKTOP_E2E_GOAL_IDLE'
+  )
+  const goalTaskId = goalTaskRowTestId.replace('runtime-local-task-row-', '')
+  const goalUnreadTestId = `runtime-local-task-unread-dot-${goalTaskId}`
+  const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button') &&
+      snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalUnreadTestId),
+    'The running Goal turn did not render a consistent sidebar, composer, and message state'
+  )
+  const runningDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  assert.equal(
+    runningDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    true,
+    'The running Goal turn was not authoritative runtime work'
+  )
+  assert.equal(
+    runningDebugSnapshot.pane?.status?.isAssistantStreaming,
+    true,
+    'The running Goal turn did not expose a streaming assistant message'
+  )
+  assert.equal(
+    runningDebugSnapshot.pane?.status?.isBusy,
+    true,
+    'The running Goal turn did not keep the composer busy'
+  )
+
+  control.releaseGoalIdleInitialResponse()
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_idle', 2),
+    UI_TIMEOUT_MS,
+    'The active Goal did not start its automatic continuation'
+  )
+
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalTaskRowTestId) &&
+      snapshot.testIds.includes('goal-status-bar') &&
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button') &&
+      snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      snapshot.text.includes(GOAL_IDLE_PROMPT),
+    'The automatic Goal continuation did not preserve a consistent running state',
+    UI_TIMEOUT_MS
+  )
+  const continuingDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  assert.equal(
+    continuingDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    true,
+    'The automatic Goal continuation stopped being authoritative runtime work'
+  )
+  assert.equal(
+    continuingDebugSnapshot.pane?.goal?.status,
+    'active',
+    'The Goal stopped being active during its automatic continuation'
+  )
+  assert.equal(
+    continuingDebugSnapshot.pane?.status?.isBusy,
+    true,
+    'The automatic Goal continuation released the composer running state'
+  )
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalTaskRowTestId) &&
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      snapshot.testIds.includes(goalRunningTestId),
+    'The background Goal continuation stopped running or became unread'
+  )
+
+  control.releaseGoalIdleResponse()
+  await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GOAL_IDLE_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const completedDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  assert.equal(
+    completedDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    false,
+    `The completed Goal remained authoritative runtime work: ${JSON.stringify(
+      completedDebugSnapshot.workbench?.runningState ?? null
+    )}`
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('goal-status-bar'),
+    'Opening the completed Goal task did not render a consistent final state',
+    UI_TIMEOUT_MS
+  )
+  const settledDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  assert.equal(
+    settledDebugSnapshot.pane?.goal ?? null,
+    null,
+    'The completed Goal remained visible as an active pane goal'
+  )
+  assert.equal(
+    settledDebugSnapshot.pane?.status?.isBusy,
+    false,
+    'The completed Goal kept the composer busy'
+  )
+}
+
 class RealCloudEnvironment {
   constructor({ codexBinary, executorBinary, modelServerUrl, workspacePath }) {
     this.codexBinary = codexBinary
@@ -2618,6 +2811,16 @@ class DesktopE2EServer {
     this.windowLifecycleResponseStarted = new Promise(resolvePromise => {
       this.resolveWindowLifecycleResponseStarted = resolvePromise
     })
+    this.goalIdleInitialRelease = new Promise(resolvePromise => {
+      this.releaseGoalIdleInitial = resolvePromise
+    })
+    this.goalIdleContinuationRelease = new Promise(resolvePromise => {
+      this.releaseGoalIdleContinuation = resolvePromise
+    })
+    this.cloudFollowUpRelease = new Promise(resolvePromise => {
+      this.releaseCloudFollowUp = resolvePromise
+    })
+    this.goalIdleStage = 'initial'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.localProtocolStates = new Map(
@@ -2762,6 +2965,7 @@ class DesktopE2EServer {
         'follow_up',
         'request_user_input',
         'window_lifecycle',
+        'goal_idle',
         'turn_navigation',
         'cancellation',
         'retry',
@@ -2856,6 +3060,18 @@ class DesktopE2EServer {
 
   releaseWindowLifecycleResponse() {
     this.releaseWindowLifecycle()
+  }
+
+  releaseGoalIdleInitialResponse() {
+    this.releaseGoalIdleInitial()
+  }
+
+  releaseGoalIdleResponse() {
+    this.releaseGoalIdleContinuation()
+  }
+
+  releaseCloudFollowUpResponse() {
+    this.releaseCloudFollowUp()
   }
 
   releaseConcurrentMemoryResponses() {
@@ -3324,11 +3540,20 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
         'The real cloud Codex request did not contain the follow-up prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.cloudFollowUpRelease
+      response.end(
+        createSse([
+          assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+      )
       return
     }
 
@@ -3341,6 +3566,68 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'goal_idle') {
+      this.recordScenarioRequest('goal_idle', modelRequest)
+      if (this.goalIdleStage === 'initial') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_IDLE_PROMPT),
+          'The real Codex request did not contain the Goal idle prompt'
+        )
+        const stream = streamingTextEvents(responseId, GOAL_IDLE_INITIAL_TEXT)
+        this.goalIdleStage = 'continuation'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse(stream.start))
+        await this.goalIdleInitialRelease
+        response.write(
+          createSse([
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: GOAL_IDLE_INITIAL_TEXT,
+              offset: 0,
+            },
+          ])
+        )
+        response.end(createSse(stream.finish))
+        return
+      }
+      if (this.goalIdleStage === 'continuation') {
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.goalIdleStage = 'awaiting_update_output'
+        await this.goalIdleContinuationRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall('wework-e2e-goal-idle-complete', updateGoal.name, updateGoal.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        this.goalIdleStage,
+        'awaiting_update_output',
+        `Unexpected Goal idle model stage: ${this.goalIdleStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The Goal continuation did not return its update_goal output'
+      )
+      this.goalIdleStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_IDLE_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -4480,7 +4767,7 @@ async function verifyConnectedModelsOnLocalExecution({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="projects-create-button"]')
-  await control.command('click', '[data-testid="project-create-existing-option"]')
+  await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -4492,6 +4779,15 @@ async function verifyConnectedModelsOnLocalExecution({
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: 'workspace',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('waitFor', composerSelector, {
@@ -4522,16 +4818,26 @@ async function verifyConnectedModelsOnLocalExecution({
     workspacePath,
   })
 
-  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
-  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  const currentProjectSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+    'The local matrix project was not shown before removal'
+  )
+  const currentProjectMenuTestId = currentProjectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(currentProjectMenuTestId, 'The local matrix project did not expose its project menu')
+  const currentProjectId = currentProjectMenuTestId.slice('project-menu-'.length)
+  await control.command('click', `[data-testid="${currentProjectMenuTestId}"]`)
+  await control.command('click', `[data-testid="remove-project-${currentProjectId}"]`)
   await control.command(
     'clickWhenEnabled',
-    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+    `[data-testid="remove-project-dialog-${currentProjectId}-confirm-button"]`
   )
   await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes(projectMenuTestId),
+    snapshot => !snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
     'The local matrix project remained visible after removal'
   )
 }
@@ -4597,11 +4903,15 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     timeoutMs: UI_TIMEOUT_MS,
   })
   const projectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  const deviceStatusTestId = projectSnapshot.testIds.find(testId =>
-    testId.startsWith('project-device-status-')
+  const projectMenuTestIds = projectSnapshot.testIds.filter(testId =>
+    testId.startsWith('project-menu-')
   )
-  assert.ok(deviceStatusTestId, 'The cloud project did not expose its remote device status')
-  const projectId = deviceStatusTestId.slice('project-device-status-'.length)
+  assert.equal(
+    projectMenuTestIds.length,
+    1,
+    'The cloud flow did not expose exactly one remote project'
+  )
+  const projectId = projectMenuTestIds[0].slice('project-menu-'.length)
   await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
   await control.command(
     'clickWhenEnabled',
@@ -4707,17 +5017,28 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'runtime-local-task-row-',
     'runtime-local-task-running-'
   )
-  await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
-  await waitForSnapshot(
-    control,
-    value => value.testIds.includes(runningTaskTestId),
-    'The cloud follow-up task never entered the running state'
+  const unreadTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-unread-dot-'
   )
+  await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
   await withTimeout(
     control.awaitScenarioRequest('cloud_follow_up'),
     UI_TIMEOUT_MS,
     'The real cloud executor did not send the follow-up model request'
   )
+  await waitForSnapshot(
+    control,
+    value =>
+      value.testIds.includes(runningTaskTestId) &&
+      value.testIds.includes('pause-response-button') &&
+      value.testIds.includes('thinking-indicator') &&
+      !value.testIds.includes('send-message-button') &&
+      !value.testIds.includes(unreadTaskTestId),
+    'The cloud follow-up task did not render a consistent sidebar, composer, and message state',
+    UI_TIMEOUT_MS
+  )
+  control.releaseCloudFollowUpResponse()
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
@@ -4734,7 +5055,8 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     cases: REMOTE_MODEL_PROTOCOL_MATRIX_CASES,
     composerSelector,
     control,
-    newConversationSelector: `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`,
+    newConversationSelector:
+      '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]',
     screenshotPrefix: 'cloud-matrix',
     setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
     startIndex:
@@ -4743,17 +5065,22 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     workspacePath,
   })
 
-  const projectMenuTestId = `project-menu-${projectId}`
-  await waitForSnapshot(
+  const currentProjectSnapshot = await waitForSnapshot(
     control,
-    value => value.testIds.includes(projectMenuTestId),
+    value => value.testIds.some(testId => testId.startsWith('project-menu-')),
     'The cloud project was not shown in the sidebar'
   )
+  const currentProjectMenuTestId = currentProjectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(currentProjectMenuTestId, 'The cloud project did not expose its project menu')
+  const currentProjectId = currentProjectMenuTestId.slice('project-menu-'.length)
+  const projectMenuTestId = `project-menu-${currentProjectId}`
   await control.command('click', `[data-testid="${projectMenuTestId}"]`)
-  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  await control.command('click', `[data-testid="remove-project-${currentProjectId}"]`)
   await control.command(
     'clickWhenEnabled',
-    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+    `[data-testid="remove-project-dialog-${currentProjectId}-confirm-button"]`
   )
   await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
   await waitForSnapshot(
@@ -5120,6 +5447,68 @@ async function main() {
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       await verifyRetryFailureRestoration(control, ACTIVE_COMPOSER_SELECTOR)
       console.log(`Wework desktop retry-restoration E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (GOAL_IDLE_ONLY) {
+      phase = 'goal-idle-state-lifecycle'
+      await verifyActiveGoalIdleUnreadLifecycle({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      console.log(`Wework desktop Goal idle-state E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (TURN_NAVIGATION_ONLY) {
+      phase = 'turn-navigation-only'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      control.setScenario('turn_navigation')
+      for (let index = 0; index < TURN_NAVIGATION_REGRESSION_TURN_COUNT; index += 1) {
+        const turnNumber = index + 1
+        await sendPrompt(
+          control,
+          ACTIVE_COMPOSER_SELECTOR,
+          `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+        )
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+          {
+            text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`,
+            timeoutMs: UI_TIMEOUT_MS,
+          }
+        )
+      }
+      console.log(
+        'Turn navigation metrics:',
+        await control.command('getElementMetrics', '[data-testid="desktop-workbench-content"]')
+      )
+      await control.command('waitFor', '[data-testid="message-turn-navigation-marker"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (ATTACHMENT_ONLY) {
+      phase = 'attachment-only-sidebar'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyAttachmentOnlySidebarLifecycle({
+        app,
+        appIdentifier,
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      console.log(`Wework desktop attachment-only E2E passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -5801,6 +6190,9 @@ async function main() {
       },
     })
 
+    phase = 'goal-idle-unread'
+    await verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control })
+
     phase = 'cancellation'
     control.setScenario('cancellation')
     await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
@@ -5816,6 +6208,17 @@ async function main() {
     await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+    const cancelledTaskSnapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body')
+    )
+    const cancelledTaskId = cancelledTaskSnapshot.workbench?.currentRuntimeTask?.taskId
+    assert.ok(cancelledTaskId, 'The cancelled task did not expose its runtime task ID')
+    const cancelledTaskUnreadTestId = `runtime-local-task-unread-dot-${cancelledTaskId}`
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes(cancelledTaskUnreadTestId),
+      'Stopping the task being viewed incorrectly marked it unread'
+    )
     const cancellationText = await control.command('getText', 'body')
     assert.equal(
       cancellationText.includes(CANCELLATION_COMPLETION_TEXT),
@@ -6126,7 +6529,12 @@ async function main() {
     phase = 'attachment-only-sidebar'
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
-    await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
+    await verifyAttachmentOnlySidebarLifecycle({
+      app,
+      appIdentifier,
+      composerSelector,
+      control,
+    })
 
     phase = 'pasted-zip-attachment'
     await verifyPastedZipAttachment({ composerSelector, control })

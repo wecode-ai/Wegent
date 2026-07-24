@@ -1192,6 +1192,9 @@ export function WorkbenchProvider({
         onMessageAction: action => applyRuntimeConversationAction(address, action),
         onAssistantStart: () => markRuntimeTaskStarted(address),
         onAssistantSettled: () => markRuntimeTaskSettled(address),
+        onRefreshWorkLists: () => {
+          void refreshWorkLists().catch(() => undefined)
+        },
       })
     )
     return () => unsubscribers.forEach(unsubscribe => unsubscribe())
@@ -1200,6 +1203,7 @@ export function WorkbenchProvider({
     getLatestBackgroundRunningTasks,
     markRuntimeTaskSettled,
     markRuntimeTaskStarted,
+    refreshWorkLists,
     subscribeBackgroundRuntimeTaskStream,
   ])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
