@@ -204,6 +204,23 @@ describe('ModelCascadeContent', () => {
     )
   })
 
+  it('keeps desktop model actions in the third column when model attributes are empty', () => {
+    render(
+      <ModelCascadeContent
+        models={[models[0]]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+        renderModelActions={() => <button type="button">Model action</button>}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Model action' }).parentElement).toHaveClass(
+      'col-start-3'
+    )
+  })
+
   it('shows keyboard-accessible image and video capability tooltips in model rows', async () => {
     const capableModel: GroupableModel = {
       ...models[0],

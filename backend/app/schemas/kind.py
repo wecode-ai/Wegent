@@ -249,9 +249,9 @@ class ModelSpec(BaseModel):
         "Only applies when protocol is 'openai'.",
     )
 
-    costIndex: Optional[float] = Field(
+    costIndex: Optional[str] = Field(
         None,
-        gt=0,
+        coerce_numbers_to_str=True,
         description="Relative model usage cost. A value of 1 represents the baseline cost.",
     )
 
