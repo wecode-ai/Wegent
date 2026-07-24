@@ -29,7 +29,7 @@ describe('workbenchReducer', () => {
     expect(state.projects.map(project => project.id)).toEqual([8])
     expect(state.currentProject).toBeNull()
   })
-  
+
   test('removes a runtime project even while its optimistic task is fresh', () => {
     const runtimeWork = {
       projects: [
