@@ -533,6 +533,10 @@ def _normalize_content_for_storage(msg: AIMessage) -> str | list:
 def _serialize_compacted_additional_kwargs(msg: BaseMessage) -> dict[str, Any] | None:
     """Persist only compact markers needed for history reconstruction."""
     kwargs = dict(getattr(msg, "additional_kwargs", {}) or {})
+    if kwargs.get("checkpoint_retained") is True:
+        # Raw user message retained into the compaction checkpoint; keep it in
+        # messages_chain (passthrough content) so the checkpoint is self-contained.
+        return {"checkpoint_retained": True}
     if kwargs.get("compacted") is True:
         serialized = {"compacted": True}
         if kwargs.get("summary_compacted") is True:

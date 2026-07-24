@@ -351,6 +351,7 @@ class ChatService(ChatInterface):
                         "model": guard_model_type or "openai",
                     },
                     streaming=False,
+                    request_timeout=240,
                 )
                 context_config = get_model_context_config(
                     guard_model_id,
@@ -363,7 +364,8 @@ class ChatService(ChatInterface):
                         DEFAULT_RECENT_USER_TOKEN_LIMIT,
                         max(1, int(context_config.target_limit * 0.5)),
                     ),
-                    max_compact_input_tokens=context_config.available_tokens,
+                    max_compact_input_tokens=context_config.target_limit,
+                    request_timeout=240,
                 )
             context_guard = UnifiedContextGuard(
                 model_id=guard_model_id,

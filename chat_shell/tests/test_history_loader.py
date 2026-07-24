@@ -220,3 +220,71 @@ class TestGetChatHistory:
         )
 
         assert history == []
+
+
+@pytest.mark.asyncio
+async def test_get_history_sends_from_latest_compaction(monkeypatch):
+    from chat_shell.storage.remote import RemoteHistoryStore
+
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        http_version = "HTTP/1.1"
+        elapsed = None
+        headers: dict = {}
+
+        def raise_for_status(self):
+            pass
+
+        async def aread(self):
+            return b"{}"
+
+        async def aclose(self):
+            pass
+
+        def json(self):
+            return {"messages": []}
+
+    class _FakeClient:
+        def build_request(self, method, url, params=None, headers=None):
+            captured["params"] = params
+            return object()
+
+        async def send(self, *_a, **_k):
+            return _Resp()
+
+    store = RemoteHistoryStore(base_url="http://x", auth_token="t")
+
+    async def _get_client():
+        return _FakeClient()
+
+    monkeypatch.setattr(store, "_get_client", _get_client)
+
+    await store.get_history(session_id="task-1", from_latest_compaction=True)
+    assert captured["params"].get("from_latest_compaction") == "true"
+
+
+@pytest.mark.asyncio
+async def test_remote_restores_summary_marker_from_metadata(monkeypatch):
+    from chat_shell.history import loader
+    from chat_shell.storage.interfaces import Message
+
+    class _FakeStore:
+        async def get_history(self, **kwargs):
+            return [
+                Message(
+                    role="user",
+                    content="[COMPACT SUMMARY] body",
+                    id="s1",
+                    metadata={"summary_compacted": True},
+                ),
+                Message(role="user", content="real", id="u1"),
+            ]
+
+    monkeypatch.setattr(loader, "_get_remote_history_store", lambda: _FakeStore())
+
+    history = await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    assert history[0]["additional_kwargs"]["summary_compacted"] is True
+    assert not history[1].get("additional_kwargs")
