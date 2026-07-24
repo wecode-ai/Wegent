@@ -690,12 +690,14 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     samples.push(await captureMemorySample(control, 'settled'))
     const settledSamples = samples.filter(sample => sample.phase === 'settled')
     if (settledSamples.length < MEMORY_MIN_SETTLED_SAMPLES) continue
-    const current = settledSamples.at(-1)
     const recent = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
+    const settledWindow = settledSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+    const settled = medianMemorySample(settledWindow)
+    assert.ok(settled, 'The memory E2E did not capture a settled sample window')
     if (
-      current.physicalFootprintKiB - baseline.physicalFootprintKiB <=
+      settled.physicalFootprintKiB - baseline.physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      current.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
+      settled.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
     ) {
       break
     }
