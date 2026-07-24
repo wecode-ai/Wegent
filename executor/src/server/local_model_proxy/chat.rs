@@ -677,6 +677,9 @@ impl ResponsesCustomToolState {
 
     fn snapshot_input(&self, item_id: &str) -> Option<String> {
         let state = self.calls.get(item_id)?;
+        if state.arguments.is_empty() {
+            return None;
+        }
         extract_custom_tool_input(&state.name, &state.arguments)
     }
 }
@@ -695,8 +698,13 @@ fn extract_custom_tool_input(_name: &str, arguments: &str) -> Option<String> {
 
 fn function_call_item_to_custom(item: &mut Value, input: Option<&str>) {
     item["type"] = Value::String("custom_tool_call".to_owned());
+    let input = input.map(|value| value.to_owned()).or_else(|| {
+        item.get("arguments")
+            .and_then(Value::as_str)
+            .and_then(|arguments| extract_custom_tool_input("", arguments))
+    });
     if let Some(input) = input {
-        item["input"] = Value::String(input.to_owned());
+        item["input"] = Value::String(input);
     }
     if let Some(object) = item.as_object_mut() {
         object.remove("arguments");
@@ -894,11 +902,12 @@ fn rewrite_responses_sse_block(
         }
         Some("response.output_item.done") => {
             if let Some(item) = value.get_mut("item") {
-                if let Some(item_id) = item.get("id").and_then(Value::as_str) {
-                    let input = state.snapshot_input(item_id);
-                    if input.is_some() {
-                        function_call_item_to_custom(item, input.as_deref());
-                    }
+                if state.is_custom_item(item).is_some() {
+                    let input = item
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .and_then(|item_id| state.snapshot_input(item_id));
+                    function_call_item_to_custom(item, input.as_deref());
                 }
             }
             rewrite_event_data(block, &value)
@@ -907,11 +916,12 @@ fn rewrite_responses_sse_block(
             if let Some(response) = value.get_mut("response") {
                 if let Some(output) = response.get_mut("output").and_then(Value::as_array_mut) {
                     for item in output {
-                        if let Some(item_id) = item.get("id").and_then(Value::as_str) {
-                            if state.snapshot_input(item_id).is_some() {
-                                let input = state.snapshot_input(item_id);
-                                function_call_item_to_custom(item, input.as_deref());
-                            }
+                        if state.is_custom_item(item).is_some() {
+                            let input = item
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .and_then(|item_id| state.snapshot_input(item_id));
+                            function_call_item_to_custom(item, input.as_deref());
                         }
                     }
                 }
@@ -2181,6 +2191,39 @@ mod tests {
             output.contains("response.custom_tool_call_input.done"),
             "output: {output}"
         );
+    }
+
+    #[tokio::test]
+    async fn responses_sse_to_responses_extracts_input_from_done_item_without_delta() {
+        let mut context = ToolContext::default();
+        context.insert("apply_patch".to_owned(), ToolKind::Custom);
+
+        let output = convert_responses_stream(
+            concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_1\",\"name\":\"apply_patch\"}}\n\n",
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** End Patch\\\"}\"}}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** End Patch\\\"}\"}]}}\n\n"
+            ),
+            context,
+        )
+        .await;
+
+        assert!(
+            output.contains("\"type\":\"custom_tool_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("\"input\":\"*** Begin Patch\\n*** End Patch\""),
+            "output: {output}"
+        );
+        assert!(
+            !output.contains("\"type\":\"function_call\""),
+            "output: {output}"
+        );
+        assert!(!output.contains("\"arguments\""), "output: {output}");
     }
 
     #[tokio::test]
