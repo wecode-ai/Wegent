@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -19,7 +19,6 @@ const MARKER_ROW_GAP_PX = 20 / 9
 const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
 const NAVIGATION_VIEWPORT_PADDING_PX = 48
 const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [80, 160, 320, 640, 1000, 1600]
-const NAVIGATION_LAYOUT_RETRY_DELAYS_MS = [80, 160, 320, 640, 1000]
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
@@ -73,35 +72,7 @@ export function MessageTurnNavigation({
   const markersRef = useRef<MessageTurnMarker[]>([])
   const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
-  const layoutRetryTimerRef = useRef<number | null>(null)
-  const layoutRetryAttemptRef = useRef(0)
-  const calculateMarkersRef = useRef<(reason: string) => void>(() => {})
   const navigationScrollTimersRef = useRef<number[]>([])
-
-  const clearLayoutRetry = useCallback(() => {
-    if (layoutRetryTimerRef.current !== null) {
-      window.clearTimeout(layoutRetryTimerRef.current)
-      layoutRetryTimerRef.current = null
-    }
-  }, [])
-
-  const resetLayoutRetry = useCallback(() => {
-    clearLayoutRetry()
-    layoutRetryAttemptRef.current = 0
-  }, [clearLayoutRetry])
-
-  const scheduleLayoutRetry = useCallback(() => {
-    if (layoutRetryTimerRef.current !== null) return
-
-    const delay = NAVIGATION_LAYOUT_RETRY_DELAYS_MS[layoutRetryAttemptRef.current]
-    if (delay === undefined) return
-
-    layoutRetryAttemptRef.current += 1
-    layoutRetryTimerRef.current = window.setTimeout(() => {
-      layoutRetryTimerRef.current = null
-      calculateMarkersRef.current('layout-retry')
-    }, delay)
-  }, [])
 
   const clearNavigationScrollTimers = useCallback(() => {
     navigationScrollTimersRef.current.forEach(timer => window.clearTimeout(timer))
@@ -168,11 +139,7 @@ export function MessageTurnNavigation({
     [clearNavigationScrollTimers, contentRef, onNavigationScrollTargetChange]
   )
 
-  const userTurns = useMemo(() => {
-    return turnNavigation && turnNavigation.length > 0
-      ? buildUserTurnsFromNavigation(turnNavigation, messages)
-      : buildUserTurns(messages)
-  }, [messages, turnNavigation])
+  const userTurns = buildUserTurnsForNavigation(messages, turnNavigation)
 
   const updateActiveMarker = useCallback(
     (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
@@ -210,23 +177,13 @@ export function MessageTurnNavigation({
     (reason: string) => {
       const scroller = scrollRef.current
       const content = contentRef.current
-      if (!scroller || !content || userTurns.length === 0) {
-        resetLayoutRetry()
+      if (!scroller || !content || userTurns.length < 2) {
         markersRef.current = []
         setMarkers([])
         setActiveMarkerId(null)
         return
       }
 
-      if (scroller.scrollHeight <= scroller.clientHeight + 8) {
-        markersRef.current = []
-        setMarkers([])
-        setActiveMarkerId(null)
-        scheduleLayoutRetry()
-        return
-      }
-
-      resetLayoutRetry()
       const scrollerRect = scroller.getBoundingClientRect()
       const anchorByMessageId = getMessageAnchorById(content)
       const nextMarkers = userTurns.map(turn => {
@@ -252,12 +209,8 @@ export function MessageTurnNavigation({
       setMarkers(nextMarkers)
       updateActiveMarker(nextMarkers, reason)
     },
-    [contentRef, resetLayoutRetry, scheduleLayoutRetry, scrollRef, updateActiveMarker, userTurns]
+    [contentRef, scrollRef, updateActiveMarker, userTurns]
   )
-
-  useEffect(() => {
-    calculateMarkersRef.current = calculateMarkers
-  }, [calculateMarkers])
 
   const scheduleCalculateMarkers = useCallback(
     (reason: string) => {
@@ -282,9 +235,8 @@ export function MessageTurnNavigation({
   )
 
   useEffect(() => {
-    resetLayoutRetry()
     scheduleCalculateMarkers('messages-effect')
-  }, [resetLayoutRetry, scheduleCalculateMarkers])
+  }, [scheduleCalculateMarkers])
 
   useLayoutEffect(() => {
     if (!pendingScrollTarget) return
@@ -346,9 +298,8 @@ export function MessageTurnNavigation({
         clearTimeout(timerRef.current)
         timerRef.current = null
       }
-      clearLayoutRetry()
     }
-  }, [clearLayoutRetry, contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarker])
+  }, [contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarker])
 
   const handleMarkerClick = useCallback(
     async (marker: MessageTurnMarker) => {
@@ -529,6 +480,17 @@ export function MessageTurnNavigation({
   )
 
   return portalTarget ? createPortal(navigation, portalTarget) : navigation
+}
+
+function buildUserTurnsForNavigation(
+  messages: WorkbenchMessage[],
+  navigation?: RuntimeTurnNavigationItem[]
+): UserTurn[] {
+  const messageTurns = buildUserTurns(messages)
+  if (!navigation || navigation.length === 0) return messageTurns
+
+  const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
+  return navigationTurns.length >= messageTurns.length ? navigationTurns : messageTurns
 }
 
 function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
