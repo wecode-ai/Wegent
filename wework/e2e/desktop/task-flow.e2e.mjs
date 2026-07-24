@@ -67,7 +67,7 @@ const MEMORY_MIN_BASELINE_SAMPLES = 5
 const MEMORY_MAX_BASELINE_SAMPLES = 15
 const MEMORY_MIN_SETTLED_SAMPLES = 5
 const MEMORY_MAX_SETTLED_SAMPLES = 15
-const MEMORY_MAX_RECENT_DRIFT_KIB = 16 * 1024
+const MEMORY_MAX_SAMPLE_RANGE_KIB = 16 * 1024
 const MEMORY_SAMPLE_WINDOW_SIZE = 3
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
@@ -697,7 +697,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     if (
       settled.physicalFootprintKiB - baseline.physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      settled.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
+      memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB
     ) {
       break
     }
@@ -716,8 +716,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const recentSettledSamples = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
-  const settledDriftKiB =
-    settled.physicalFootprintKiB - recentSettledSamples[0].physicalFootprintKiB
+  const settledRangeKiB = memorySampleRangeKiB(recentSettledSamples)
   const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
 
   await writeFile(
@@ -732,7 +731,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
         summary: {
           peakGrowthKiB,
           settledGrowthKiB,
-          settledDriftKiB,
+          settledRangeKiB,
           peakDomNodeCount,
           settledDomNodeCount,
           baselineSampleCount: baselineSamples.length,
@@ -758,8 +757,8 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent settled physical footprint grew by ${settledGrowthKiB} KiB`
   )
   assert.ok(
-    settledDriftKiB <= MEMORY_MAX_RECENT_DRIFT_KIB,
-    `WebContent kept growing after completion by ${settledDriftKiB} KiB`
+    settledRangeKiB <= MEMORY_MAX_SAMPLE_RANGE_KIB,
+    `WebContent settled sample range reached ${settledRangeKiB} KiB`
   )
 }
 
@@ -772,10 +771,14 @@ async function captureStableMemorySamples(control, phase, minimumSamples, maximu
     samples.push(await captureMemorySample(control, phase))
     if (samples.length < minimumSamples) continue
     const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
-    const drift = recent.at(-1).physicalFootprintKiB - recent[0].physicalFootprintKiB
-    if (Math.abs(drift) <= MEMORY_MAX_RECENT_DRIFT_KIB) break
+    if (memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB) break
   }
   return samples
+}
+
+function memorySampleRangeKiB(samples) {
+  const footprints = samples.map(sample => sample.physicalFootprintKiB)
+  return Math.max(...footprints) - Math.min(...footprints)
 }
 
 function medianMemorySample(samples) {
@@ -4114,7 +4117,16 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   await closeBottomWorkspacePanel(control)
 
   control.setScenario('cloud_follow_up')
+  const runningTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-running-'
+  )
   await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
+  await waitForSnapshot(
+    control,
+    value => value.testIds.includes(runningTaskTestId),
+    'The cloud follow-up task never entered the running state'
+  )
   await withTimeout(
     control.awaitScenarioRequest('cloud_follow_up'),
     UI_TIMEOUT_MS,
@@ -4125,10 +4137,6 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  const runningTaskTestId = taskRowTestId.replace(
-    'runtime-local-task-row-',
-    'runtime-local-task-running-'
-  )
   await waitForSnapshot(
     control,
     value => !value.testIds.includes(runningTaskTestId),
