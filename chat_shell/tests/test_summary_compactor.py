@@ -272,6 +272,11 @@ def test_is_context_too_long_error_matches_status_and_chinese():
     assert _is_context_too_long_error(Boom("请求体过大", status=413))
     assert _is_context_too_long_error(Boom("token 数量超过上限"))
     assert not _is_context_too_long_error(Boom("temporary network blip"))
+    # 413 is unconditional overflow; a bare 400 is not (avoids retry storm).
+    assert _is_context_too_long_error(Boom("anything", status=413))
+    assert not _is_context_too_long_error(Boom("invalid parameter", status=400))
+    # A 400 that also carries a length marker still counts as overflow.
+    assert _is_context_too_long_error(Boom("输入长度超过限制", status=400))
 
 
 @pytest.mark.asyncio

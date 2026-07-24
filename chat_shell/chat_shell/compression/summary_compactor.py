@@ -123,8 +123,12 @@ def _is_context_too_long_error(exc: Exception) -> bool:
     Matches by HTTP status (400/413), English markers, and common Chinese /
     heteroglyph phrasings from non-OpenAI providers.
     """
+    # 413 (payload too large) is unconditionally an overflow. A bare 400 is
+    # ambiguous (invalid params, bad model config, malformed request), so it
+    # only counts as overflow when a length marker is also present — otherwise a
+    # non-overflow 400 would trigger a remove-one-message-and-retry storm.
     status = getattr(exc, "status_code", None)
-    if isinstance(status, int) and status in (400, 413):
+    if isinstance(status, int) and status == 413:
         return True
     text = " ".join(
         part for part in (str(exc), getattr(exc, "message", None)) if part
