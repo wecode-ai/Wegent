@@ -486,7 +486,7 @@ pub(crate) fn register_codex_global_thread_workspace_root(
         .is_some_and(|hint| hint == workspace_root);
     let projectless_ids = text_list(payload.get(PROJECTLESS_THREAD_IDS_KEY));
     let was_projectless = projectless_ids.iter().any(|value| value == thread_id);
-    let existing_assignment_matches = project_key.as_deref().is_none_or(|project_key| {
+    let existing_assignment_matches = project_key.as_deref().map_or(true, |project_key| {
         payload
             .get(THREAD_PROJECT_ASSIGNMENTS_KEY)
             .and_then(Value::as_object)
