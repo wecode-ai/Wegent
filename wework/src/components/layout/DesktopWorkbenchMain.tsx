@@ -2018,9 +2018,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             testId="workbench-topbar"
             className={cn(
               'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
-              background.imagePath && background.inTopBar
-                ? 'bg-background/20'
-                : 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
