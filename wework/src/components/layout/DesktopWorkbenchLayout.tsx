@@ -569,10 +569,6 @@ export function DesktopWorkbenchLayout() {
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onOpenPlugins={() => navigateTo('/plugins')}
       onRefreshDevices={onRefreshDevices}
-      onOpenBlankStandaloneProject={() => {
-        setBlankProjectDialogOpen(true)
-        setStandaloneWorkspaceDialogMode(null)
-      }}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
       }}

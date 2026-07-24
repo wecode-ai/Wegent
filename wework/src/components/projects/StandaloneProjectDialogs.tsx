@@ -16,6 +16,7 @@ import type { DeviceInfo } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse, RemoteDeviceStartupCommand } from '@/types/devices'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { joinPath } from './device-folder-path'
+import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
 
 export type StandaloneWorkspaceDialogMode = 'existing' | 'remote'
 export type StandaloneRemoteDialogIntent = 'project' | 'cloud-work' | 'add-device'
@@ -320,6 +321,8 @@ export function StandaloneFolderProjectDialog({
   const [activeStartupCommandKind, setActiveStartupCommandKind] = useState<string>('docker')
   const [nativePickerError, setNativePickerError] = useState<string | null>(null)
   const [nativePickerFallback, setNativePickerFallback] = useState(false)
+  const [selectedLocalRoots, setSelectedLocalRoots] = useState<string[]>([])
+  const [selectedLocalDeviceId, setSelectedLocalDeviceId] = useState('')
   const nativePickerStartedRef = useRef(false)
   const selectableDevices = useMemo(
     () => getUsableStandaloneDevices(devices, mode),
@@ -348,6 +351,8 @@ export function StandaloneFolderProjectDialog({
     nativePickerStartedRef.current = false
     setNativePickerError(null)
     setNativePickerFallback(false)
+    setSelectedLocalRoots([])
+    setSelectedLocalDeviceId('')
     onClose()
   }, [onClose])
 
@@ -390,6 +395,7 @@ export function StandaloneFolderProjectDialog({
     activeDevice !== null &&
     isLocalDevice(activeDevice) &&
     preferNativeLocalPicker &&
+    selectedLocalRoots.length === 0 &&
     !nativePickerFallback
   const nativePickerDeviceId = activeDevice?.device_id ?? null
 
@@ -446,17 +452,8 @@ export function StandaloneFolderProjectDialog({
             closeDialog()
             return
           }
-          if (selectedPaths.length > 1) {
-            await onOpenStandaloneWorkspace?.(
-              nativePickerDeviceId,
-              selectedPath,
-              undefined,
-              selectedPaths
-            )
-          } else {
-            await onOpenStandaloneWorkspace?.(nativePickerDeviceId, selectedPath)
-          }
-          closeDialog()
+          setSelectedLocalDeviceId(nativePickerDeviceId)
+          setSelectedLocalRoots(selectedPaths)
         } catch (error) {
           console.error('[Wework project] native picker failed', error)
           setNativePickerError(
@@ -494,6 +491,25 @@ export function StandaloneFolderProjectDialog({
   }
 
   if (!open) return null
+
+  if (selectedLocalRoots.length > 0) {
+    const selectedDevice =
+      devices.find(device => device.device_id === selectedLocalDeviceId) ?? null
+    return (
+      <LocalProjectCreateDialog
+        open
+        device={selectedDevice}
+        initialRoots={selectedLocalRoots}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onClose={closeDialog}
+        onCreate={async ({ deviceId, name, roots }) => {
+          await onOpenStandaloneWorkspace?.(deviceId, roots[0], name, roots)
+        }}
+      />
+    )
+  }
 
   if (shouldUseNativeLocalPicker) {
     if (!nativePickerError) return null
@@ -773,8 +789,13 @@ export function StandaloneFolderProjectDialog({
               onCreateDeviceDirectory={onCreateDeviceDirectory}
               onCancel={closeDialog}
               onConfirm={async result => {
-                await onOpenStandaloneWorkspace?.(result.deviceId, result.path)
-                closeDialog()
+                if (usesRemoteFolderPicker) {
+                  await onOpenStandaloneWorkspace?.(result.deviceId, result.path)
+                  closeDialog()
+                  return
+                }
+                setSelectedLocalDeviceId(result.deviceId)
+                setSelectedLocalRoots([result.path])
               }}
             />
             {usesRemoteFolderPicker && (

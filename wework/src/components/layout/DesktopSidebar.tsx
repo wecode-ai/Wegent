@@ -44,7 +44,6 @@ import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudC
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
-  StandaloneBlankProjectDialog,
   StandaloneFolderProjectDialog,
   type StandaloneRemoteDialogIntent,
   type StandaloneWorkspaceDialogMode,
@@ -189,7 +188,6 @@ interface DesktopSidebarProps {
   onOpenPlugins: () => void
   onOpenSites?: () => void
   onRefreshDevices?: () => Promise<void>
-  onOpenBlankStandaloneProject?: () => void
   onOpenStandaloneFolderProject?: (
     mode: StandaloneWorkspaceDialogMode,
     intent?: StandaloneRemoteDialogIntent
@@ -2559,7 +2557,6 @@ export function DesktopSidebar({
   onOpenPlugins,
   onOpenSites,
   onRefreshDevices,
-  onOpenBlankStandaloneProject,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
   onCreatePermanentWorktree,
@@ -2637,7 +2634,6 @@ export function DesktopSidebar({
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false)
-  const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
   const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
@@ -3373,53 +3369,27 @@ export function DesktopSidebar({
                         </button>
                       </div>
                       <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                        <div
+                        <button
+                          type="button"
                           data-testid="project-create-local-option"
-                          className="rounded-xl border border-border bg-background p-4 text-left"
+                          onClick={() => {
+                            setProjectCreateDialogOpen(false)
+                            if (onOpenStandaloneFolderProject) {
+                              onOpenStandaloneFolderProject('existing')
+                            } else {
+                              setStandaloneWorkspaceDialogMode('existing')
+                            }
+                          }}
+                          className="rounded-xl border border-border bg-background p-4 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                         >
                           <FolderOpen className="h-5 w-5 text-text-primary" />
                           <span className="mt-3 block text-base font-medium">
                             {t('workbench.local_project', '本地项目')}
                           </span>
                           <span className="mt-1 block text-sm leading-5 text-text-secondary">
-                            {t(
-                              'workbench.local_project_description',
-                              '选择或新建一个或多个本地文件夹。'
-                            )}
+                            {t('workbench.local_project_description', '选择一个或多个本地文件夹。')}
                           </span>
-                          <div className="mt-4 flex gap-2">
-                            <button
-                              type="button"
-                              data-testid="project-create-blank-option"
-                              onClick={() => {
-                                setProjectCreateDialogOpen(false)
-                                if (onOpenBlankStandaloneProject) {
-                                  onOpenBlankStandaloneProject()
-                                } else {
-                                  setBlankProjectDialogOpen(true)
-                                }
-                              }}
-                              className="h-8 flex-1 rounded-lg border border-border bg-surface px-2 text-sm font-medium hover:bg-muted"
-                            >
-                              {t('workbench.new_folder_project', '新建文件夹')}
-                            </button>
-                            <button
-                              type="button"
-                              data-testid="project-create-existing-option"
-                              onClick={() => {
-                                setProjectCreateDialogOpen(false)
-                                if (onOpenStandaloneFolderProject) {
-                                  onOpenStandaloneFolderProject('existing')
-                                } else {
-                                  setStandaloneWorkspaceDialogMode('existing')
-                                }
-                              }}
-                              className="h-8 flex-1 rounded-lg bg-text-primary px-2 text-sm font-medium text-background hover:bg-text-primary/90"
-                            >
-                              {t('workbench.choose_folder', '选择文件夹')}
-                            </button>
-                          </div>
-                        </div>
+                        </button>
                         <button
                           type="button"
                           data-testid="project-create-remote-option"
@@ -3729,16 +3699,6 @@ export function DesktopSidebar({
             />
           )}
 
-          <StandaloneBlankProjectDialog
-            open={blankProjectDialogOpen}
-            devices={devices}
-            preferredDeviceId={preferredDeviceId}
-            onClose={() => setBlankProjectDialogOpen(false)}
-            onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-            onListDeviceDirectories={onListDeviceDirectories}
-            onCreateDeviceDirectory={onCreateDeviceDirectory}
-            onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-          />
           <StandaloneFolderProjectDialog
             key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
             open={standaloneWorkspaceDialogMode !== null}

@@ -2793,8 +2793,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
     expect(screen.getByTestId('project-create-local-option')).toHaveTextContent('本地项目')
-    expect(screen.getByTestId('project-create-blank-option')).toHaveTextContent('新建文件夹')
-    expect(screen.getByTestId('project-create-existing-option')).toHaveTextContent('选择文件夹')
+    expect(screen.queryByTestId('project-create-blank-option')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-create-remote-option')).toHaveTextContent('云端项目')
     expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
@@ -2833,144 +2832,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
 
     expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('project-create-existing-option')).toBeInTheDocument()
+    expect(screen.getByTestId('project-create-local-option')).toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
 
     resolveRefreshDevices?.()
-  })
-
-  test('opens a standalone Codex workspace after creating a blank project in Documents', async () => {
-    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
-    const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
-    const onOpenStandaloneWorkspace = vi.fn()
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-        onCreateDeviceDirectory={onCreateDeviceDirectory}
-        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-        state={{
-          ...baseProps.state,
-          devices: [
-            {
-              id: 1,
-              device_id: 'local-device',
-              name: 'Local Device',
-              status: 'online',
-              is_default: true,
-              device_type: 'local',
-              bind_shell: 'claudecode',
-              executor_version: '1.8.5',
-            },
-          ],
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-blank-option'))
-    expect(screen.getByTestId('standalone-blank-project-dialog')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('save-standalone-blank-project-button'))
-
-    await waitFor(() =>
-      expect(onCreateDeviceDirectory).toHaveBeenCalledWith(
-        'local-device',
-        '/home/ubuntu/Documents/New project'
-      )
-    )
-    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
-      'local-device',
-      '/home/ubuntu/Documents/New project',
-      'New project'
-    )
-  })
-
-  test('keeps the blank project dialog open when runtime workspace registration fails', async () => {
-    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
-    const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
-    const onOpenStandaloneWorkspace = vi.fn().mockRejectedValue(new Error('register failed'))
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-        onCreateDeviceDirectory={onCreateDeviceDirectory}
-        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-        state={{
-          ...baseProps.state,
-          devices: [
-            {
-              id: 1,
-              device_id: 'local-device',
-              name: 'Local Device',
-              status: 'online',
-              is_default: true,
-              device_type: 'local',
-              bind_shell: 'claudecode',
-              executor_version: '1.8.5',
-            },
-          ],
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-blank-option'))
-    await userEvent.click(screen.getByTestId('save-standalone-blank-project-button'))
-
-    expect(await screen.findByText('register failed')).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-blank-project-dialog')).toBeInTheDocument()
-  })
-
-  test('renames a blank project directory when the requested name already exists', async () => {
-    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
-    const onListDeviceDirectories = vi.fn().mockResolvedValue(['New project', 'New project 2'])
-    const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
-    const onOpenStandaloneWorkspace = vi.fn()
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-        onListDeviceDirectories={onListDeviceDirectories}
-        onCreateDeviceDirectory={onCreateDeviceDirectory}
-        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-        state={{
-          ...baseProps.state,
-          devices: [
-            {
-              id: 1,
-              device_id: 'local-device',
-              name: 'Local Device',
-              status: 'online',
-              is_default: true,
-              device_type: 'local',
-              bind_shell: 'claudecode',
-              executor_version: '1.8.5',
-            },
-          ],
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-blank-option'))
-    await userEvent.click(screen.getByTestId('save-standalone-blank-project-button'))
-
-    await waitFor(() =>
-      expect(onListDeviceDirectories).toHaveBeenCalledWith('local-device', '/home/ubuntu/Documents')
-    )
-    expect(onCreateDeviceDirectory).toHaveBeenCalledWith(
-      'local-device',
-      '/home/ubuntu/Documents/New project 3'
-    )
-    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
-      'local-device',
-      '/home/ubuntu/Documents/New project 3',
-      'New project'
-    )
   })
 
   test('remote project device picker includes cloud and remote devices but not local devices', async () => {
@@ -3232,7 +3097,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
   })
 
-  test('opens a standalone Codex workspace from an existing local folder selected in Finder', async () => {
+  test('opens local project creation after selecting a folder in Finder', async () => {
     const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
     const onOpenStandaloneWorkspace = vi.fn()
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(
@@ -3269,14 +3134,22 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-local-option'))
 
     await waitFor(() =>
       expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
     )
     expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
+    expect(await screen.findByTestId('local-project-create-dialog')).toBeInTheDocument()
+    await userEvent.type(screen.getByTestId('local-project-create-name-input'), 'Product')
+    await userEvent.click(screen.getByTestId('confirm-local-project-create-button'))
     await waitFor(() =>
-      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith(
+        'device-1',
+        '/Users/alice/repo',
+        'Product',
+        ['/Users/alice/repo']
+      )
     )
     expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
   })
@@ -3308,7 +3181,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-local-option'))
 
     await waitFor(() =>
       expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
@@ -3316,7 +3189,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
   })
 
-  test('opens the native folder picker under React StrictMode', async () => {
+  test('opens the local project creation dialog under React StrictMode', async () => {
     const onOpenStandaloneWorkspace = vi.fn()
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(
       '/Users/alice/repo'
@@ -3347,14 +3220,13 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-local-option'))
 
     await waitFor(() =>
       expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
     )
-    await waitFor(() =>
-      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
-    )
+    expect(await screen.findByTestId('local-project-create-dialog')).toBeInTheDocument()
+    expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
   })
 
   test('keeps the native folder picker active while callback identities change', async () => {
@@ -3394,7 +3266,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-local-option'))
     await waitFor(() =>
       expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
     )
@@ -3409,9 +3281,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
     resolvePicker('/Users/alice/repo')
 
-    await waitFor(() =>
-      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
-    )
+    expect(await screen.findByTestId('local-project-create-dialog')).toBeInTheDocument()
+    expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
   })
 
   test('does not open the in-app folder dialog when the native folder picker is cancelled', async () => {
@@ -3441,7 +3312,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-local-option'))
 
     await waitFor(() =>
       expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
@@ -3479,7 +3350,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-local-option'))
 
     expect(await screen.findByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
@@ -3514,7 +3385,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-local-option'))
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()

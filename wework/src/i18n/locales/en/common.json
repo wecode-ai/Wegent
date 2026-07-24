@@ -310,7 +310,7 @@
     "create_project_title": "Create project",
     "create_project_description": "Choose where the project runs. You can switch its workspace folder later.",
     "local_project": "Local project",
-    "local_project_description": "Choose or create one or more local folders.",
+    "local_project_description": "Choose one or more local folders.",
     "cloud_project": "Cloud project",
     "cloud_project_description": "Use a project folder on a cloud device or remote host.",
     "new_folder_project": "New folder",

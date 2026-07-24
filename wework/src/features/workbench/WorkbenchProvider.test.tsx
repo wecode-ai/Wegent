@@ -731,6 +731,16 @@ function ProjectSendProbe() {
       </button>
       <button
         type="button"
+        onClick={() =>
+          void workbench.openStandaloneWorkspace('device-1', '/workspace/product', 'Product', [
+            '/workspace/product',
+          ])
+        }
+      >
+        create named local project
+      </button>
+      <button
+        type="button"
         onClick={() => {
           const deviceId = workbench.state.standaloneDeviceId
           const workspacePath = workbench.state.standaloneWorkspacePath
@@ -4374,6 +4384,28 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+  })
+
+  test('registers a named single-folder project through the local project flow', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+    await userEvent.click(await screen.findByText('create named local project'))
+
+    await waitFor(() => expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      projectKey: expect.any(String),
+      name: 'Product',
+      roots: ['/workspace/product'],
+      runtime: 'codex',
+    })
+    expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
   })
 
   test('creates a conversation workspace when sending without a selected project', async () => {

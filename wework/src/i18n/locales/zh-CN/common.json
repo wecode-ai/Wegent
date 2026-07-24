@@ -310,7 +310,7 @@
     "create_project_title": "创建项目",
     "create_project_description": "选择项目运行的位置。之后可以在项目中切换工作目录。",
     "local_project": "本地项目",
-    "local_project_description": "选择或新建一个或多个本地文件夹。",
+    "local_project_description": "选择一个或多个本地文件夹。",
     "cloud_project": "云端项目",
     "cloud_project_description": "使用云设备或远程主机上的项目目录。",
     "new_folder_project": "新建文件夹",

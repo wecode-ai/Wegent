@@ -709,7 +709,7 @@ export function WorkbenchProvider({
         }
       }
 
-      if (normalizedRoots.length > 1) {
+      if (projectRoots && normalizedRoots.length > 0) {
         const projectName =
           normalizedLabel ||
           normalizedWorkspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
@@ -726,6 +726,12 @@ export function WorkbenchProvider({
         }
         rememberExecutionDevice(requestDeviceId)
         await refreshWorkLists()
+        dispatch({
+          type: 'runtime_workspace_opened',
+          deviceId: requestDeviceId,
+          workspacePath: normalizedRoots[0],
+          label: projectName,
+        })
         navigateTo('/')
         return
       }
