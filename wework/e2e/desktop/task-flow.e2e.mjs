@@ -13,6 +13,7 @@ import { stopProcess, stopProcessGroup } from './process-lifecycle.mjs'
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const UI_TIMEOUT_MS = 120_000
+const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
 const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification file.'
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
@@ -106,6 +107,47 @@ const LOCAL_MODEL_CASES = [
     modelId: 'desktop-e2e-anthropic-model',
   },
 ]
+const MODEL_PROTOCOLS = ['responses', 'chat', 'anthropic']
+const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
+  source: 'cloud',
+  protocol,
+  optionId: `desktop-e2e-cloud-${protocol}`,
+  label: `desktop-e2e-cloud-${protocol}`,
+  modelId: `desktop-e2e-cloud-${protocol}-upstream`,
+}))
+const MODEL_PROTOCOL_MATRIX_CASES = [
+  ...LOCAL_MODEL_CASES.map(model => ({ ...model, source: 'local' })),
+  ...MODEL_PROTOCOLS.map(protocol => ({
+    source: 'codex',
+    protocol,
+    optionId: DEFAULT_MODEL_ID,
+    label: DEFAULT_MODEL_LABEL,
+    modelId: DEFAULT_MODEL_ID,
+  })),
+  ...CLOUD_MODEL_CASES,
+]
+const LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.map(model => ({
+  ...model,
+  execution: 'local',
+}))
+const CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.map(model => ({
+  ...model,
+  execution: 'cloud',
+}))
+const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.source === 'local'
+)
+const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
+  LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
+const HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.source === 'local'
+)
+const REMOTE_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.source !== 'local'
+)
+const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2
+const MODEL_PROTOCOL_MATRIX_TEXT_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TEXT'
+const MODEL_PROTOCOL_MATRIX_TOOL_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TOOL'
 const LOCAL_MODEL_SWITCH_INITIAL_PROMPT =
   'WEWORK_LOCAL_MODEL_SWITCH_INITIAL: establish context with the first custom model.'
 const LOCAL_MODEL_SWITCH_INITIAL_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_INITIAL_COMPLETE'
@@ -326,6 +368,43 @@ async function sendPrompt(control, selector, prompt) {
   )
   await control.command('fill', selector, { value: prompt })
   await control.command('press', selector, { key: 'Enter' })
+}
+
+async function sendPromptWithButton(
+  control,
+  selector,
+  prompt,
+  timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS
+) {
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('pause-response-button'),
+    'The active task did not become idle before sending the next prompt'
+  )
+  await control.command('fill', selector, { value: prompt })
+  await control.command('waitFor', selector, {
+    text: prompt,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs,
+  })
+  await control.command('press', selector, { key: 'Enter', timeoutMs })
+  await waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs)
+}
+
+async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (control.fatalError) throw control.fatalError
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (snapshot.testIds.includes('chat-input-error')) {
+      const error = await control.command('getText', '[data-testid="chat-input-error"]')
+      throw new Error(`The UI rejected ${prompt}: ${error}`)
+    }
+    const composerValue = await control.command('getValue', selector)
+    if (composerValue === '' && snapshot.text.includes(prompt)) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`The composer did not submit ${prompt} within ${timeoutMs}ms`)
 }
 
 async function verifyShortConversationLayout({ composerSelector, control }) {
@@ -837,9 +916,15 @@ async function waitForFolderPickerInitialized(control) {
   throw new Error('The device folder picker did not finish loading its initial path')
 }
 
-async function waitForControlValue(control, selector, expected, message) {
+async function waitForControlValue(
+  control,
+  selector,
+  expected,
+  message,
+  timeoutMs = UI_TIMEOUT_MS
+) {
   const startedAt = Date.now()
-  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+  while (Date.now() - startedAt < timeoutMs) {
     if ((await control.command('getValue', selector)) === expected) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -873,6 +958,31 @@ async function waitForWorkbenchTask(control, taskId, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+async function assertConfiguredLocalModelsHidden(control, startIndex) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < MODEL_PROTOCOL_MATRIX_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const modelNames = snapshot.workbench?.composer?.availableModelNames
+    if (Array.isArray(modelNames) && modelNames.length > 0) {
+      for (const [caseIndex, model] of HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.entries()) {
+        const matrixIndex = startIndex + caseIndex
+        console.log(
+          `Model protocol matrix ${matrixIndex + 1}/${MODEL_PROTOCOL_MATRIX_TOTAL} started: ${matrixCaseId(model)}`
+        )
+        assert.equal(
+          modelNames.includes(model.optionId),
+          false,
+          `${model.optionId} was visible for cloud execution`
+        )
+        console.log(`Model protocol matrix passed: ${matrixCaseId(model)} hidden`)
+      }
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error('The cloud execution model catalog did not become ready')
 }
 
 async function captureVerificationScreenshot(control, name, selector = 'body') {
@@ -2058,6 +2168,43 @@ function localProtocolPatch(model) {
   ].join('\n')
 }
 
+function matrixCaseId(model) {
+  return `${model.execution}-${model.source}-${model.protocol}`
+}
+
+function matrixTextPrompt(model) {
+  return `${MODEL_PROTOCOL_MATRIX_TEXT_PREFIX}_${matrixCaseId(model).toUpperCase()}`
+}
+
+function matrixTextCompletion(model) {
+  return `${matrixTextPrompt(model)}_COMPLETE`
+}
+
+function matrixToolPrompt(model) {
+  return `${MODEL_PROTOCOL_MATRIX_TOOL_PREFIX}_${matrixCaseId(model).toUpperCase()}`
+}
+
+function matrixToolCompletion(model) {
+  return `${matrixToolPrompt(model)}_COMPLETE`
+}
+
+function matrixArtifact(model) {
+  return `wework-matrix-${matrixCaseId(model)}.txt`
+}
+
+function matrixArtifactContent(model) {
+  return `WEWORK_MATRIX_${matrixCaseId(model).toUpperCase()}_APPLY_PATCH`
+}
+
+function matrixPatch(model) {
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${matrixArtifact(model)}`,
+    `+${matrixArtifactContent(model)}`,
+    '*** End Patch',
+  ].join('\n')
+}
+
 function readRequestBody(request) {
   return new Promise((resolvePromise, reject) => {
     let body = ''
@@ -2146,9 +2293,12 @@ function selectApplyPatchTool(request) {
 
 function selectCloudApplyPatchTool(request) {
   const tools = Array.isArray(request.tools) ? request.tools : []
-  assert.ok(
-    tools.some(tool => tool?.name === 'apply_patch'),
-    'Real cloud Codex did not advertise apply_patch'
+  const applyPatch = tools.find(tool => tool?.name === 'apply_patch')
+  assert.ok(applyPatch, 'Real cloud Codex did not advertise apply_patch')
+  assert.equal(
+    applyPatch.type,
+    'custom',
+    'Native Responses cloud models must preserve Codex custom tools'
   )
   return [
     '*** Begin Patch',
@@ -2230,16 +2380,17 @@ class RealCloudEnvironment {
     })
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
+    await this.seedCloudProtocolModels()
 
     const remoteHome = join(resultDir, 'cloud-executor-home')
-    const remoteCodexHome = join(remoteHome, 'codex')
-    await writeCodexConfig(remoteCodexHome, this.modelServerUrl)
+    this.remoteCodexHome = join(remoteHome, 'codex')
+    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl)
     const remoteEnv = {
       ...process.env,
       CODEX_BIN: this.codexBinary,
-      CODEX_HOME: remoteCodexHome,
+      CODEX_HOME: this.remoteCodexHome,
       HOME: remoteHome,
-      WEGENT_CODEX_HOME: remoteCodexHome,
+      WEGENT_CODEX_HOME: this.remoteCodexHome,
       WEGENT_EXECUTOR_HOME: remoteHome,
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
@@ -2267,6 +2418,48 @@ class RealCloudEnvironment {
       appendProcessOutput(this.remoteExecutor.stderr, this.remoteExecutorLogPath),
     ])
     await this.waitForDevice()
+  }
+
+  async seedCloudProtocolModels() {
+    const items = CLOUD_MODEL_CASES.map(model => ({
+      name: model.optionId,
+      env: {
+        model: model.protocol === 'anthropic' ? 'claude' : 'openai',
+        model_id: model.modelId,
+        base_url: `${this.modelServerUrl}/v1`,
+        api_key: MODEL_API_KEY,
+      },
+      is_active: true,
+      wework_available: true,
+      protocol:
+        model.protocol === 'responses'
+          ? 'openai-responses'
+          : model.protocol === 'chat'
+            ? 'openai'
+            : 'anthropic-messages',
+      ...(model.protocol === 'responses'
+        ? { api_format: 'responses' }
+        : model.protocol === 'chat'
+          ? { api_format: 'chat/completions' }
+          : {}),
+    }))
+    await fetchJson(`${this.backendUrl}/api/models/batch`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(items),
+    })
+  }
+
+  async setCodexUpstreamProtocol(protocol) {
+    await writeCodexConfig(
+      this.remoteCodexHome,
+      this.modelServerUrl,
+      '',
+      codexUpstreamApiFormat(protocol)
+    )
   }
 
   async waitForDevice() {
@@ -2392,6 +2585,8 @@ class DesktopE2EServer {
     this.concurrentMemoryResponses = []
     this.concurrentMemoryTaskNumbers = new Set()
     this.cloudModelStage = 'initial'
+    this.matrixCase = null
+    this.matrixState = null
     this.toolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
@@ -2579,10 +2774,20 @@ class DesktopE2EServer {
         'side_chat_attachment',
         'cloud_initial',
         'cloud_follow_up',
+        'model_protocol_matrix',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
+  }
+
+  setMatrixCase(model) {
+    this.matrixCase = model
+    this.matrixState = {
+      stage: 'text',
+      requests: [],
+    }
+    this.setScenario('model_protocol_matrix')
   }
 
   recordScenarioRequest(scenario, request) {
@@ -2893,8 +3098,15 @@ class DesktopE2EServer {
     const authorization = request.headers.authorization ?? null
     const modelRequest = { authorization, body, scenario: this.scenario }
     this.modelRequests.push(modelRequest)
-    if (authorization !== `Bearer ${MODEL_API_KEY}`) {
+    const authenticated =
+      authorization === `Bearer ${MODEL_API_KEY}` || request.headers['x-api-key'] === MODEL_API_KEY
+    if (!authenticated) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
+      return
+    }
+
+    if (this.scenario === 'model_protocol_matrix') {
+      this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
       return
     }
 
@@ -3358,6 +3570,155 @@ class DesktopE2EServer {
     }
 
     throw new Error(`Unexpected desktop E2E scenario: ${this.scenario}`)
+  }
+
+  handleModelProtocolMatrixResponse(response, protocol, body, headers) {
+    const model = this.matrixCase
+    const state = this.matrixState
+    assert.ok(model && state, 'Model protocol matrix state was not initialized')
+    assert.equal(protocol, model.protocol, `${matrixCaseId(model)} reached the wrong endpoint`)
+    assert.equal(body.model, model.modelId, `${matrixCaseId(model)} forwarded the wrong model ID`)
+    state.requests.push({ body, headers })
+
+    const requestKind = codexRequestKind(body)
+    if (requestKind === 'prewarm' || requestKind === 'compaction') {
+      this.writeMatrixAssistantMessage(response, model, '')
+      return
+    }
+
+    const serialized = JSON.stringify(body)
+    this.assertMatrixRequestEnvelope(model, body, headers)
+    this.assertMatrixTools(model, body)
+    if (state.stage === 'text') {
+      if (!serialized.includes(matrixTextPrompt(model))) {
+        this.writeMatrixAssistantMessage(response, model, '')
+        return
+      }
+      state.stage = 'tool'
+      this.writeMatrixAssistantMessage(response, model, matrixTextCompletion(model))
+      return
+    }
+    if (state.stage === 'tool') {
+      assert.ok(
+        serialized.includes(matrixToolPrompt(model)),
+        `${matrixCaseId(model)} tool turn lost the user prompt`
+      )
+      state.stage = 'awaiting_tool_output'
+      this.writeMatrixToolCall(response, model)
+      return
+    }
+    if (state.stage === 'awaiting_tool_output') {
+      this.assertMatrixToolOutput(model, body)
+      state.stage = 'complete'
+      this.writeMatrixAssistantMessage(response, model, matrixToolCompletion(model))
+      return
+    }
+    throw new Error(`Unexpected ${matrixCaseId(model)} matrix request at ${state.stage}`)
+  }
+
+  assertMatrixRequestEnvelope(model, body, headers) {
+    assert.equal(body.stream, true, `${matrixCaseId(model)} request was not streaming`)
+    if (model.protocol === 'responses') {
+      assert.ok(Array.isArray(body.input), `${matrixCaseId(model)} input was not an array`)
+      return
+    }
+    assert.ok(Array.isArray(body.messages), `${matrixCaseId(model)} messages were not an array`)
+    if (model.protocol === 'chat') {
+      assert.equal(
+        body.stream_options?.include_usage,
+        true,
+        `${matrixCaseId(model)} did not request streaming usage`
+      )
+      return
+    }
+    assert.equal(headers['x-api-key'], MODEL_API_KEY, `${matrixCaseId(model)} lost x-api-key`)
+    assert.equal(
+      headers['anthropic-version'],
+      '2023-06-01',
+      `${matrixCaseId(model)} lost the Anthropic protocol version`
+    )
+  }
+
+  assertMatrixTools(model, body) {
+    const tools = Array.isArray(body.tools) ? body.tools : []
+    const applyPatch = tools.find(
+      candidate => (candidate?.name ?? candidate?.function?.name) === 'apply_patch'
+    )
+    assert.ok(applyPatch, `${matrixCaseId(model)} did not advertise apply_patch`)
+    if (model.protocol === 'responses') {
+      assert.equal(
+        applyPatch.type,
+        model.source === 'local' ? 'function' : 'custom',
+        `${matrixCaseId(model)} used the wrong Responses tool profile`
+      )
+      return
+    }
+    if (model.protocol === 'chat') {
+      assert.equal(applyPatch.type, 'function', `${matrixCaseId(model)} tool was not a function`)
+      assert.ok(applyPatch.function?.parameters, `${matrixCaseId(model)} lost the tool schema`)
+      return
+    }
+    assert.ok(applyPatch.input_schema, `${matrixCaseId(model)} lost input_schema`)
+  }
+
+  assertMatrixToolOutput(model, body) {
+    if (model.protocol === 'responses') {
+      const expectedType =
+        model.source === 'local' ? 'function_call_output' : 'custom_tool_call_output'
+      assert.ok(
+        body.input?.some(item => item?.type === expectedType),
+        `${matrixCaseId(model)} lost ${expectedType}`
+      )
+      return
+    }
+    if (model.protocol === 'chat') {
+      assert.ok(
+        body.messages?.some(message => message?.role === 'tool'),
+        `${matrixCaseId(model)} lost the function tool result`
+      )
+      return
+    }
+    const blocks = body.messages?.flatMap(message => message?.content ?? []) ?? []
+    assert.ok(
+      blocks.some(block => block?.type === 'tool_result'),
+      `${matrixCaseId(model)} lost the Anthropic tool_result`
+    )
+  }
+
+  writeMatrixToolCall(response, model) {
+    const patch = matrixPatch(model)
+    if (model.protocol === 'responses') {
+      const id = `matrix-${matrixCaseId(model)}-tool`
+      this.writeSse(response, [
+        responseCreated(id),
+        ...(model.source === 'local'
+          ? functionCall(id, 'apply_patch', { input: patch })
+          : [customToolCall(id, 'apply_patch', patch)]),
+        responseCompleted(id),
+      ])
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatToolCall(response, patch)
+      return
+    }
+    this.writeAnthropicToolCall(response, patch)
+  }
+
+  writeMatrixAssistantMessage(response, model, text) {
+    if (model.protocol === 'responses') {
+      const id = `matrix-${matrixCaseId(model)}-message`
+      const events = [responseCreated(id)]
+      if (text) events.push(assistantMessage(text))
+      events.push(responseCompleted(id))
+      this.writeSse(response, events)
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatMessage(response, text)
+      return
+    }
+    this.writeAnthropicMessage(response, text)
   }
 
   handleLocalProtocolResponse(response, model, body, headers) {
@@ -3931,13 +4292,26 @@ class DesktopE2EServer {
   }
 }
 
-async function writeCodexConfig(codexHome, modelServerUrl, scenarioConfigToml = '') {
+async function writeCodexConfig(
+  codexHome,
+  modelServerUrl,
+  scenarioConfigToml = '',
+  upstreamApiFormat = 'openai-responses'
+) {
   await mkdir(codexHome, { recursive: true })
   await writeFile(
     join(codexHome, 'config.toml'),
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\n`,
+    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
     'utf8'
   )
+}
+
+function codexUpstreamApiFormat(protocol) {
+  return protocol === 'responses'
+    ? 'openai-responses'
+    : protocol === 'chat'
+      ? 'openai-chat-completions'
+      : 'anthropic-messages'
 }
 
 async function buildExecutor() {
@@ -4008,7 +4382,13 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
   return { binaryPath: bundledBinaryPath, appBundlePath }
 }
 
-async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdentifier) {
+async function buildDesktopApp(
+  controlUrl,
+  cloudBackendUrl,
+  cloudToken,
+  appIdentifier,
+  modelServerUrl
+) {
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) {
     const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
@@ -4054,9 +4434,10 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdent
         VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
         VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
         VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
+        VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
+        VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_SEED_LOCAL_MODELS:
-          PLUGINS_ONLY || MEMORY_ONLY || CLOUD_ONLY ? 'false' : 'true',
+        VITE_WEWORK_E2E_SEED_LOCAL_MODELS: PLUGINS_ONLY || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -4085,6 +4466,73 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdent
   }
   throw new Error(
     `Tauri build did not produce an executable app. Checked: ${candidates.join(', ')}`
+  )
+}
+
+async function verifyConnectedModelsOnLocalExecution({
+  control,
+  cloudEnvironment,
+  setCodexUpstreamProtocol,
+  workspacePath,
+}) {
+  const composerSelector = ACTIVE_COMPOSER_SELECTOR
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-existing-option"]')
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await waitForFolderPickerInitialized(control)
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  const projectSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+    'The local matrix project was not shown in the sidebar'
+  )
+  const projectMenuTestId = projectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(projectMenuTestId, 'The local matrix project did not expose its project menu')
+  const projectId = projectMenuTestId.slice('project-menu-'.length)
+  const newConversationSelector = `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+
+  await verifyModelProtocolMatrix({
+    cases: LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES,
+    composerSelector,
+    control,
+    newConversationSelector,
+    screenshotPrefix: 'local-connected-matrix',
+    setCodexUpstreamProtocol,
+    startIndex: LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.length,
+    workspacePath,
+  })
+
+  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
+  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+  )
+  await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(projectMenuTestId),
+    'The local matrix project remained visible after removal'
   )
 }
 
@@ -4168,6 +4616,10 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await assertConfiguredLocalModelsHidden(
+    control,
+    LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length
+  )
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
@@ -4278,6 +4730,19 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
+  await verifyModelProtocolMatrix({
+    cases: REMOTE_MODEL_PROTOCOL_MATRIX_CASES,
+    composerSelector,
+    control,
+    newConversationSelector: `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`,
+    screenshotPrefix: 'cloud-matrix',
+    setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
+    startIndex:
+      LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length +
+      HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.length,
+    workspacePath,
+  })
+
   const projectMenuTestId = `project-menu-${projectId}`
   await waitForSnapshot(
     control,
@@ -4379,6 +4844,84 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
   )
 }
 
+async function verifyModelProtocolMatrix({
+  cases,
+  composerSelector,
+  control,
+  newConversationSelector,
+  screenshotPrefix,
+  setCodexUpstreamProtocol,
+  startIndex = 0,
+  workspacePath,
+}) {
+  for (const [caseIndex, model] of cases.entries()) {
+    const matrixIndex = startIndex + caseIndex
+    console.log(
+      `Model protocol matrix ${matrixIndex + 1}/${MODEL_PROTOCOL_MATRIX_TOTAL} started: ${matrixCaseId(model)}`
+    )
+    if (model.source === 'codex') {
+      assert.ok(
+        setCodexUpstreamProtocol,
+        `${matrixCaseId(model)} requires a Codex upstream protocol setter`
+      )
+      await setCodexUpstreamProtocol(model.protocol)
+    }
+    control.setMatrixCase(model)
+    await control.command('clickWhenEnabled', newConversationSelector)
+    await control.command('waitFor', composerSelector, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await selectE2EModel(control, model.optionId, model.label)
+
+    await sendPromptWithButton(control, composerSelector, matrixTextPrompt(model))
+    await waitForMatrixStage(control, model, 'tool')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: matrixTextCompletion(model),
+      timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+    })
+
+    await sendPromptWithButton(control, composerSelector, matrixToolPrompt(model))
+    await waitForMatrixStage(control, model, 'awaiting_tool_output', 'complete')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: matrixToolCompletion(model),
+      timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+    })
+    assert.equal(
+      (await readFile(join(workspacePath, matrixArtifact(model)), 'utf8')).trim(),
+      matrixArtifactContent(model),
+      `${matrixCaseId(model)} apply_patch did not create the expected artifact`
+    )
+    assert.equal(
+      control.matrixState?.stage,
+      'complete',
+      `${matrixCaseId(model)} did not complete text and tool turns`
+    )
+    assert.ok(
+      control.matrixState.requests.length >= 3,
+      `${matrixCaseId(model)} did not send the text/tool/tool-output request sequence`
+    )
+    await prepareCompletedTurnScreenshot(control)
+    await captureVerificationScreenshot(
+      control,
+      `${screenshotPrefix}-${String(matrixIndex + 1).padStart(2, '0')}-${matrixCaseId(model)}.png`
+    )
+    console.log(`Model protocol matrix passed: ${matrixCaseId(model)}`)
+  }
+}
+
+async function waitForMatrixStage(control, model, ...expectedStages) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < MODEL_PROTOCOL_MATRIX_TIMEOUT_MS) {
+    if (control.fatalError) throw control.fatalError
+    if (expectedStages.includes(control.matrixState?.stage)) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(
+    `${matrixCaseId(model)} did not reach ${expectedStages.join(' or ')} within ${MODEL_PROTOCOL_MATRIX_TIMEOUT_MS}ms; current stage=${control.matrixState?.stage ?? 'missing'}`
+  )
+}
+
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
@@ -4450,7 +4993,8 @@ async function main() {
       control.controlUrl,
       cloudEnvironment?.backendUrl ?? control.url,
       cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
-      appIdentifier
+      appIdentifier,
+      control.url
     )
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
@@ -4500,6 +5044,19 @@ async function main() {
     await control.command('focusMainWindow', 'body')
 
     if (CLOUD_ONLY) {
+      phase = 'local-connected-model-protocol-matrix'
+      await verifyConnectedModelsOnLocalExecution({
+        control,
+        cloudEnvironment,
+        setCodexUpstreamProtocol: protocol =>
+          writeCodexConfig(
+            join(executorHome, 'codex'),
+            control.url,
+            '',
+            codexUpstreamApiFormat(protocol)
+          ),
+        workspacePath,
+      })
       phase = 'cloud-project-flow'
       await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
       await writeFile(
@@ -5161,46 +5718,15 @@ async function main() {
       control.localProtocolStates.set(sourceModel.protocol, { stage: 'initial', requests: [] })
       control.localProtocolStates.set(targetModel.protocol, { stage: 'initial', requests: [] })
 
-      for (const [index, localModel] of LOCAL_MODEL_CASES.entries()) {
-        phase = `local-model-${localModel.protocol}-initial`
-        await control.command('click', '[data-testid="new-chat-button"]')
-        await control.command('waitFor', composerSelector, {
-          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-        })
-        await selectE2EModel(control, localModel.optionId, localModel.label)
-        await sendPrompt(control, composerSelector, localProtocolPrompt(localModel, 'INITIAL'))
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: `WEWORK_LOCAL_${localModel.protocol.toUpperCase()}_COMPLETE`,
-          timeoutMs: UI_TIMEOUT_MS,
-        })
-        assert.equal(
-          await readFile(join(workspacePath, localProtocolArtifact(localModel)), 'utf8'),
-          `${localProtocolArtifactContent(localModel)}\n`,
-          `${localModel.protocol} apply_patch did not create the expected artifact`
-        )
-
-        phase = `local-model-${localModel.protocol}-follow-up`
-        await sendPrompt(control, composerSelector, localProtocolPrompt(localModel, 'FOLLOW_UP'))
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: `WEWORK_LOCAL_${localModel.protocol.toUpperCase()}_FOLLOW_UP_COMPLETE`,
-          timeoutMs: UI_TIMEOUT_MS,
-        })
-        const localState = control.localProtocolStates.get(localModel.protocol)
-        assert.equal(
-          localState?.stage,
-          'follow_up_complete',
-          `${localModel.protocol} did not complete the send/tool/follow-up lifecycle`
-        )
-        assert.ok(
-          localState.requests.length >= 3,
-          `${localModel.protocol} did not send the full model request sequence`
-        )
-        await prepareCompletedTurnScreenshot(control)
-        await captureVerificationScreenshot(
-          control,
-          `${String(index + 3).padStart(2, '0')}-local-model-${localModel.protocol}-follow-up.png`
-        )
-      }
+      phase = 'local-model-protocol-matrix'
+      await verifyModelProtocolMatrix({
+        cases: LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
+        composerSelector,
+        control,
+        newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+        screenshotPrefix: 'local-matrix',
+        workspacePath,
+      })
 
       await control.command('click', `[data-testid="${taskRowTestId}"]`)
       await control.command('waitFor', '[data-testid="model-selector-button"]', {
@@ -5632,6 +6158,9 @@ async function main() {
           ),
           desktopScenario: desktopScenario?.diagnostics?.() ?? null,
           cloudModelStage: control.cloudModelStage,
+          matrixCase: control.matrixCase ? matrixCaseId(control.matrixCase) : null,
+          matrixStage: control.matrixState?.stage ?? null,
+          matrixRequestCount: control.matrixState?.requests.length ?? 0,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,

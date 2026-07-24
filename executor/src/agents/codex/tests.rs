@@ -280,6 +280,35 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
+fn native_responses_upstream_preserves_custom_tools_by_default() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "gpt-5.6-sol",
+            "upstream_api_format": "openai-responses"
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert!(!upstream.convert_custom_tools);
+}
+
+#[test]
+fn function_tool_profile_enables_responses_tool_conversion() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "gateway-model",
+            "upstream_api_format": "openai-responses",
+            "tool_profile": "function"
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert!(upstream.convert_custom_tools);
+}
+
+#[test]
 fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
     let request = ExecutionRequest {
         model_config: json!({
@@ -435,6 +464,58 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
         assert_eq!(params["modelProvider"], codex_model_catalog::PROVIDER_ID);
     }
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn user_configured_provider_preserves_native_responses_tools() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("configured-provider-native-responses");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(
+        root.join("config.toml"),
+        "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1:3456/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nupstream_api_format = \"openai-responses\"\n",
+    )
+    .expect("config should be written");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
+
+    let upstream = configured_codex_provider("wework-e2e").expect("configured provider");
+
+    assert_eq!(upstream.api_format, "openai-responses");
+    assert_eq!(
+        upstream.request_url.as_deref(),
+        Some("http://127.0.0.1:3456/v1/responses")
+    );
+    assert!(!upstream.convert_custom_tools);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn user_configured_provider_converts_tools_for_non_responses_upstreams() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("configured-provider-anthropic");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(
+        root.join("config.toml"),
+        "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1:3456/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nupstream_api_format = \"anthropic-messages\"\n",
+    )
+    .expect("config should be written");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
+
+    let upstream = configured_codex_provider("wework-e2e").expect("configured provider");
+
+    assert_eq!(upstream.api_format, "anthropic-messages");
+    assert_eq!(
+        upstream.request_url.as_deref(),
+        Some("http://127.0.0.1:3456/v1/messages")
+    );
+    assert!(upstream.convert_custom_tools);
     let _ = fs::remove_dir_all(root);
 }
 

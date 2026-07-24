@@ -51,6 +51,7 @@ pub(crate) struct LocalModelProxyUpstream {
     pub base_url: String,
     pub request_url: Option<String>,
     pub api_format: String,
+    pub convert_custom_tools: bool,
     pub api_key: String,
     pub default_headers: Vec<(String, String)>,
     pub proxy_url: Option<String>,
@@ -132,6 +133,7 @@ fn registration_token(upstream: &LocalModelProxyUpstream) -> String {
     upstream.base_url.hash(&mut hasher);
     upstream.request_url.hash(&mut hasher);
     upstream.api_format.hash(&mut hasher);
+    upstream.convert_custom_tools.hash(&mut hasher);
     upstream.api_key.hash(&mut hasher);
     upstream.default_headers.hash(&mut hasher);
     upstream.proxy_url.hash(&mut hasher);
@@ -213,8 +215,13 @@ async fn handle_for_token(
         Some(model_id) => rewrite_request_model(&body, model_id)?,
         None => body.to_vec(),
     };
-    let (request_body, conversion, expanded_browser_tools) =
-        prepare_request_with_history(&upstream.api_format, &request_body, history.as_ref()).await?;
+    let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
+        &upstream.api_format,
+        upstream.convert_custom_tools,
+        &request_body,
+        history.as_ref(),
+    )
+    .await?;
     log_executor_event(
         "local model proxy request started",
         &[
@@ -503,6 +510,7 @@ where
 
 async fn prepare_request_with_history(
     api_format: &str,
+    convert_custom_tools: bool,
     body: &[u8],
     history: &history::CodexToolHistory,
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
@@ -528,7 +536,7 @@ async fn prepare_request_with_history(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize enriched Codex request: {error}"),
         })?;
-        return prepare_request(api_format, &body);
+        return prepare_request(api_format, convert_custom_tools, &body);
     }
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -548,24 +556,32 @@ async fn prepare_request_with_history(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to serialize enriched Codex request: {error}"),
     })?;
-    prepare_request(api_format, &enriched)
+    prepare_request(api_format, convert_custom_tools, &enriched)
 }
 
 #[allow(clippy::type_complexity)]
 fn prepare_request(
     api_format: &str,
+    convert_custom_tools: bool,
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     if api_format == "openai-responses" {
-        let request_value = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
-            status: StatusCode::BAD_REQUEST,
-            detail: format!("Invalid Codex Responses request: {error}"),
-        })?;
-        let (mut request_value, context) =
-            chat::responses_to_responses(&request_value).map_err(|error| HttpError {
+        let mut request_value =
+            serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
                 status: StatusCode::BAD_REQUEST,
-                detail: format!("Failed to convert local model request: {error}"),
+                detail: format!("Invalid Codex Responses request: {error}"),
             })?;
+        let conversion = if convert_custom_tools {
+            let (converted, context) =
+                chat::responses_to_responses(&request_value).map_err(|error| HttpError {
+                    status: StatusCode::BAD_REQUEST,
+                    detail: format!("Failed to convert local model request: {error}"),
+                })?;
+            request_value = converted;
+            Some(Conversion::Responses(context))
+        } else {
+            None
+        };
         let expanded_browser_tools =
             codex_responses_proxy_transform::expand_wework_browser_namespace_tools(
                 &mut request_value,
@@ -574,11 +590,7 @@ fn prepare_request(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize local model request: {error}"),
         })?;
-        return Ok((
-            body,
-            Some(Conversion::Responses(context)),
-            expanded_browser_tools,
-        ));
+        return Ok((body, conversion, expanded_browser_tools));
     }
     let responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -906,9 +918,51 @@ mod tests {
 
     #[test]
     fn rejects_invalid_chat_request() {
-        let error = prepare_request("openai-chat-completions", b"not-json")
+        let error = prepare_request("openai-chat-completions", false, b"not-json")
             .expect_err("invalid JSON should fail");
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn preserves_custom_tools_for_native_responses_models() {
+        let body = serde_json::to_vec(&json!({
+            "model": "gpt-5.6-sol",
+            "input": "edit it",
+            "tools": [{
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "Patch files"
+            }]
+        }))
+        .expect("request body");
+
+        let (prepared, conversion, _) =
+            prepare_request("openai-responses", false, &body).expect("native request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["tools"][0]["type"], "custom");
+        assert!(conversion.is_none());
+    }
+
+    #[test]
+    fn converts_custom_tools_only_for_function_profile_responses_models() {
+        let body = serde_json::to_vec(&json!({
+            "model": "gateway-model",
+            "input": "edit it",
+            "tools": [{
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "Patch files"
+            }]
+        }))
+        .expect("request body");
+
+        let (prepared, conversion, _) =
+            prepare_request("openai-responses", true, &body).expect("converted request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["tools"][0]["type"], "function");
+        assert!(matches!(conversion, Some(Conversion::Responses(_))));
     }
 
     #[test]
@@ -991,6 +1045,7 @@ mod tests {
             base_url: "https://example.com".to_owned(),
             request_url: None,
             api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1034,6 +1089,7 @@ mod tests {
             base_url: "https://one.example.com".to_owned(),
             request_url: None,
             api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1092,6 +1148,7 @@ mod tests {
                 base_url: "https://shared.example.com".to_owned(),
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
                 api_key: api_key.to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -1146,6 +1203,7 @@ mod tests {
             base_url: format!("http://{address}"),
             request_url: Some(format!("http://{address}/chat/completions")),
             api_format: "openai-chat-completions".to_owned(),
+            convert_custom_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1196,6 +1254,7 @@ mod tests {
             base_url: format!("http://{address}"),
             request_url: Some(format!("http://{address}/chat/completions")),
             api_format: "openai-chat-completions".to_owned(),
+            convert_custom_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1269,6 +1328,7 @@ mod tests {
             base_url: format!("http://{address}"),
             request_url: Some(format!("http://{address}/responses")),
             api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1325,6 +1385,7 @@ mod tests {
             base_url,
             request_url: Some(request_url),
             api_format,
+            convert_custom_tools: false,
             api_key,
             default_headers: Vec::new(),
             proxy_url: None,
