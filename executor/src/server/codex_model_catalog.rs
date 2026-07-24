@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     env, fs,
-    io::{ErrorKind, Write},
+    io::ErrorKind,
     path::{Path, PathBuf},
     sync::OnceLock,
     time::{Duration, Instant},
@@ -26,27 +26,6 @@ use tokio::sync::Mutex;
 use toml_edit::DocumentMut;
 
 use crate::logging::log_executor_event;
-
-const DEBUG_LOG_PATH: &str = "wework-apply-patch-debug";
-
-fn debug_log(label: &str, data: Value) {
-    let Some(home) = dirs::home_dir() else {
-        return;
-    };
-    let path = home.join("Desktop").join(DEBUG_LOG_PATH);
-    let line = json!({
-        "ts": chrono::Utc::now().to_rfc3339(),
-        "layer": "executor-catalog",
-        "label": label,
-        "data": data,
-    })
-    .to_string();
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .and_then(|mut file| writeln!(file, "{line}"));
-}
 
 pub(crate) const ROUTE: &str = "/v1/codex-router/models";
 pub(crate) const PROVIDER_ID: &str = "wework-router";
@@ -103,26 +82,6 @@ pub(crate) async fn handle(Query(query): Query<ModelsQuery>) -> Response {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or_default();
-    let model_summaries: Vec<Value> = catalog
-        .get("models")
-        .and_then(Value::as_array)
-        .map(|models| {
-            models
-                .iter()
-                .map(|m| {
-                    json!({
-                        "id": m.get("id").and_then(Value::as_str),
-                        "slug": m.get("slug").and_then(Value::as_str),
-                        "apply_patch_tool_type": m.get("apply_patch_tool_type").and_then(Value::as_str),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    debug_log(
-        "catalog_served",
-        json!({"model_count": model_count, "models": model_summaries}),
-    );
     log_executor_event(
         "codex router model catalog served",
         &[("model_count", model_count.to_string())],

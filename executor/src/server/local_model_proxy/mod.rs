@@ -16,7 +16,6 @@ mod history;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
-    io::Write,
     pin::Pin,
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
@@ -33,27 +32,6 @@ use futures_util::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
 
 use crate::logging::log_executor_event;
-
-const DEBUG_LOG_PATH: &str = "wework-apply-patch-debug";
-
-fn debug_log(label: &str, data: Value) {
-    let Some(home) = dirs::home_dir() else {
-        return;
-    };
-    let path = home.join("Desktop").join(DEBUG_LOG_PATH);
-    let line = json!({
-        "ts": chrono::Utc::now().to_rfc3339(),
-        "layer": "executor-proxy",
-        "label": label,
-        "data": data,
-    })
-    .to_string();
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .and_then(|mut file| writeln!(file, "{line}"));
-}
 
 use super::{codex_responses_proxy_transform, HttpError};
 
@@ -238,50 +216,6 @@ async fn handle_for_token(
                 expanded_browser_tools.len().to_string(),
             ),
         ],
-    );
-
-    let request_body_json: Value = serde_json::from_slice(&request_body).unwrap_or_default();
-    let apply_patch_tool = request_body_json
-        .get("tools")
-        .and_then(Value::as_array)
-        .and_then(|tools| {
-            tools
-                .iter()
-                .find(|tool| tool.get("name").and_then(Value::as_str) == Some("apply_patch"))
-        });
-    debug_log(
-        "proxy_request_body",
-        json!({
-            "upstream_model_id": upstream.model_id,
-            "api_format": upstream.api_format,
-            "request_url": request_url,
-            "model": request_body_json.get("model"),
-            "tools_count": request_body_json.get("tools").and_then(Value::as_array).map(Vec::len),
-            "tool_names": request_body_json.get("tools").and_then(Value::as_array).map(|tools| {
-                tools
-                    .iter()
-                    .filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_owned))
-                    .collect::<Vec<_>>()
-            }),
-            "tool_types": request_body_json.get("tools").and_then(Value::as_array).map(|tools| {
-                tools
-                    .iter()
-                    .map(|t| {
-                        let name = t.get("name").and_then(Value::as_str).unwrap_or("?");
-                        let ty = t.get("type").and_then(Value::as_str).unwrap_or("?");
-                        format!("{name}={ty}")
-                    })
-                    .collect::<Vec<_>>()
-            }),
-            "apply_patch_type": apply_patch_tool.and_then(|tool| tool.get("type").cloned()),
-            "conversion": match conversion {
-                Some(Conversion::Responses(_)) => "responses",
-                Some(Conversion::Chat(_)) => "chat",
-                Some(Conversion::Anthropic(_)) => "anthropic",
-                None => "none",
-            },
-            "body_preview": request_body_json,
-        }),
     );
 
     let client = proxy_client(upstream.proxy_url.as_deref())?;
@@ -593,21 +527,6 @@ fn prepare_request(
             status: StatusCode::BAD_REQUEST,
             detail: format!("Invalid Codex Responses request: {error}"),
         })?;
-        let incoming_tool_types: Vec<Value> = request_value
-            .get("tools")
-            .and_then(Value::as_array)
-            .map(|tools| {
-                tools
-                    .iter()
-                    .map(|tool| {
-                        json!({
-                            "name": tool.get("name").and_then(Value::as_str),
-                            "type": tool.get("type").and_then(Value::as_str),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         let (mut request_value, context) =
             chat::responses_to_responses(&request_value).map_err(|error| HttpError {
                 status: StatusCode::BAD_REQUEST,
@@ -617,29 +536,6 @@ fn prepare_request(
             codex_responses_proxy_transform::expand_wework_browser_namespace_tools(
                 &mut request_value,
             );
-        let outgoing_tool_types: Vec<Value> = request_value
-            .get("tools")
-            .and_then(Value::as_array)
-            .map(|tools| {
-                tools
-                    .iter()
-                    .map(|tool| {
-                        json!({
-                            "name": tool.get("name").and_then(Value::as_str),
-                            "type": tool.get("type").and_then(Value::as_str),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        debug_log(
-            "responses_conversion",
-            json!({
-                "incoming_tool_types": incoming_tool_types,
-                "outgoing_tool_types": outgoing_tool_types,
-                "expanded_browser_tools": expanded_browser_tools.iter().collect::<Vec<_>>(),
-            }),
-        );
         let body = serde_json::to_vec(&request_value).map_err(|error| HttpError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize local model request: {error}"),

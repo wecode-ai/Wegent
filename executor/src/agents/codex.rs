@@ -6,7 +6,6 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     future::Future,
-    io::Write,
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
@@ -80,24 +79,6 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
 
-fn debug_log(label: &str, data: Value) {
-    let Some(home) = dirs::home_dir() else {
-        return;
-    };
-    let path = home.join("Desktop").join("wework-apply-patch-debug");
-    let line = json!({
-        "ts": chrono::Utc::now().to_rfc3339(),
-        "layer": "executor",
-        "label": label,
-        "data": data,
-    })
-    .to_string();
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .and_then(|mut file| writeln!(file, "{line}"));
-}
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -735,10 +716,6 @@ fn persistent_codex_app_server_launch_config(
     launch_config
         .config_overrides
         .extend(codex_streaming_patch_config_overrides());
-    debug_log(
-        "persistent_codex_app_server_launch_config",
-        json!({"config_overrides": launch_config.config_overrides}),
-    );
     launch_config
 }
 
@@ -1986,16 +1963,6 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
 
-    debug_log(
-        "build_codex_launch_config",
-        json!({
-            "model": model,
-            "model_provider": launch_config.model_provider,
-            "config_overrides": launch_config.config_overrides,
-            "local_proxy_registration": launch_config.local_proxy_registration.is_some(),
-        }),
-    );
-
     launch_config
 }
 
@@ -2081,22 +2048,11 @@ fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
     .unwrap_or(false);
     let catalog_model_id = non_empty_config(&request.model_config, "codex_catalog_model_id")
         .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
-    let resolved = if compat_proxy {
+    if compat_proxy {
         catalog_model_id.clone().or_else(|| model_id(request))
     } else {
         model_id(request)
-    };
-    debug_log(
-        "codex_request_model",
-        json!({
-            "compat_proxy": compat_proxy,
-            "catalog_model_id": catalog_model_id,
-            "model_id": model_id(request),
-            "resolved": resolved,
-            "model_config": request.model_config,
-        }),
-    );
-    resolved
+    }
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {

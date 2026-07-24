@@ -141,7 +141,6 @@ export function ModelSelector({
   }, [setActiveDesktopSubmenu, setMobileQuery, setOpen, setPowerSliderInteracting])
   const handleSelectModelOption = useCallback(
     (optionId: string, value: string) => {
-      console.log('[wework] handleSelectModelOption', { optionId, value })
       onSelectModelOption(optionId, value)
       if (isMobile) {
         closeMenu()

@@ -144,11 +144,6 @@ export function selectedModelExecutionFields(
       modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
     }
 
-    console.log('[wework] selectedModelExecutionFields', {
-      modelId: executionModel.modelName,
-      modelType: executionModel.modelType,
-      modelOptions,
-    })
     const contextWindow =
       selectedModel.config?.model_context_window ??
       selectedModel.config?.context_window ??
