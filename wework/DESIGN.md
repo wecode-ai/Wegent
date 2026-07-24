@@ -702,6 +702,9 @@ Change composition rather than proportionally shrinking desktop UI.
 - Mobile interactive targets are at least `44px × 44px`.
 - Desktop exceptional dense targets never fall below WCAG's `24px` floor.
 - Collapse lower-priority labels before controls overlap.
+- Development-only status and diagnostic overlays default to a compact control;
+  reveal full text and details only after deliberate activation, and never cover
+  primary controls.
 - Switch panes to overlays or sequential views before the main content becomes
   unusable.
 - Test long Chinese and English text, constrained height, system scaling, and
