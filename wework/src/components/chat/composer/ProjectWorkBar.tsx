@@ -1,8 +1,8 @@
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   Cloud,
+  Folder,
   FolderPlus,
   FolderX,
   GitBranch,
@@ -51,6 +51,11 @@ const PROJECT_MENU_WIDTH = 320
 const PROJECT_MENU_ANCHOR_GAP = 8
 const PROJECT_MENU_VIEWPORT_MARGIN = 16
 const EXECUTION_MODE_MENU_HEIGHT = 126
+
+function workspaceFolderName(path: string): string {
+  const normalized = path.trim().replace(/[\\/]+$/, '')
+  return normalized.split(/[\\/]/).filter(Boolean).at(-1) || normalized || path
+}
 
 interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
@@ -130,9 +135,9 @@ export function ProjectWorkBar({
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
-  const [localProjectSubmenuOpen, setLocalProjectSubmenuOpen] = useState(false)
   const [executionModeOpenProjectId, setExecutionModeOpenProjectId] = useState<number | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
+  const [expandedMultiProjectId, setExpandedMultiProjectId] = useState<number | null>(null)
   const [externalMenuAnchorElement, setExternalMenuAnchorElement] = useState<HTMLElement | null>(
     null
   )
@@ -146,7 +151,6 @@ export function ProjectWorkBar({
   const closeMenu = useCallback(() => {
     setOpen(false)
     setProjectQuery('')
-    setLocalProjectSubmenuOpen(false)
     setExternalMenuAnchorElement(null)
   }, [])
   const closeExecutionModeMenu = useCallback(() => {
@@ -342,6 +346,7 @@ export function ProjectWorkBar({
     (projectId: number, workspace: RuntimeDeviceWorkspace) => {
       if (!isSelectableProjectWorkspace(workspace, devices)) return
       onSelectProjectWorkspace?.(projectId, workspace.id ?? null)
+      setExpandedMultiProjectId(null)
       closeMenu()
     },
     [closeMenu, devices, onSelectProjectWorkspace]
@@ -421,7 +426,25 @@ export function ProjectWorkBar({
   const handleSelectProject = (projectId: number) => {
     const option = projectWorkspaceOptionByProjectId.get(projectId)
     if (hasRuntimeWork && option?.kind === 'multi') {
-      onSelectProjectWorkspace?.(projectId, null)
+      const localMultiRoot = option.workspaces.every(workspace => {
+        const workspaceDevice = devices.find(item => item.device_id === workspace.deviceId)
+        return Boolean(workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice))
+      })
+      if (localMultiRoot) {
+        const workspace =
+          (projectId === currentProjectId
+            ? option.workspaces.find(item => item.id === selectedDeviceWorkspaceId)
+            : null) ?? option.workspaces.find(item => isSelectableProjectWorkspace(item, devices))
+        if (workspace) {
+          onSelectProjectWorkspace?.(projectId, workspace.id ?? null)
+        }
+        closeMenu()
+        return
+      }
+      setExpandedMultiProjectId(projectId)
+      if (projectId !== currentProjectId) {
+        onSelectProjectWorkspace?.(projectId, null)
+      }
       return
     }
     if (hasRuntimeWork && option?.kind === 'single' && option.workspace?.id && option.selectable) {
@@ -631,9 +654,31 @@ export function ProjectWorkBar({
                       ? isWeWorkExecutorVersionCompatible(device.executor_version)
                       : true
                     const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
+                    const localMultiRootWorkspace =
+                      option?.kind === 'multi' &&
+                      option.workspaces.every(workspace => {
+                        const workspaceDevice = devices.find(
+                          item => item.device_id === workspace.deviceId
+                        )
+                        return Boolean(
+                          workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice)
+                        )
+                      })
+                        ? ((project.id === currentProjectId
+                            ? option.workspaces.find(
+                                workspace => workspace.id === selectedDeviceWorkspaceId
+                              )
+                            : null) ?? option.workspaces[0])
+                        : null
+                    const localMultiRootSummary = localMultiRootWorkspace
+                      ? workspaceFolderName(localMultiRootWorkspace.workspacePath)
+                      : null
                     const selected = project.id === currentProjectId
                     const expanded =
-                      option?.kind === 'multi' && pendingProjectWorkspaceProjectId === project.id
+                      option?.kind === 'multi' &&
+                      !localMultiRootWorkspace &&
+                      (expandedMultiProjectId === project.id ||
+                        pendingProjectWorkspaceProjectId === project.id)
                     const bindRequired =
                       hasRuntimeWork && option?.kind === 'empty' && Boolean(onBindProjectWorkspace)
                     return (
@@ -654,13 +699,19 @@ export function ProjectWorkBar({
                               <span
                                 className={cn(
                                   'min-w-0 truncate text-sm font-normal leading-[18px]',
-                                  deviceLabel ? 'max-w-[9rem] shrink' : 'flex-1',
+                                  deviceLabel || localMultiRootSummary
+                                    ? 'max-w-[9rem] shrink'
+                                    : 'flex-1',
                                   'text-text-primary'
                                 )}
                               >
                                 {project.name}
                               </span>
-                              {deviceLabel && (
+                              {localMultiRootSummary ? (
+                                <span className="min-w-0 flex-1 truncate text-sm font-normal text-text-muted">
+                                  {localMultiRootSummary}
+                                </span>
+                              ) : deviceLabel ? (
                                 <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
                                   <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
                                   <span
@@ -676,7 +727,7 @@ export function ProjectWorkBar({
                                     )}
                                   </span>
                                 </span>
-                              )}
+                              ) : null}
                             </div>
                             {selected && (
                               <Check
@@ -701,19 +752,24 @@ export function ProjectWorkBar({
                           </button>
                         )}
                         {expanded &&
-                          option?.workspaces.map(workspace => {
-                            const workspaceSelected = workspace.id === selectedDeviceWorkspaceId
+                          option?.workspaces.map((workspace, workspaceIndex) => {
+                            const workspaceSelected =
+                              selectedDeviceWorkspaceId != null &&
+                              workspace.id === selectedDeviceWorkspaceId
                             const selectable = isSelectableProjectWorkspace(workspace, devices)
                             const workspaceDevice = devices.find(
                               item => item.device_id === workspace.deviceId
                             )
                             const WorkspaceDeviceIcon =
                               workspaceDevice && isCloudDevice(workspaceDevice) ? Cloud : HardDrive
+                            const localWorkspace = Boolean(
+                              workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice)
+                            )
                             return (
                               <button
                                 key={`${workspace.deviceId}:${workspace.workspacePath}`}
                                 type="button"
-                                data-testid={`project-workspace-option-${workspace.id ?? workspace.deviceId}`}
+                                data-testid={`project-workspace-option-${workspace.id ?? `${workspace.deviceId}-${workspaceIndex}`}`}
                                 disabled={!selectable}
                                 onClick={() => handleSelectDeviceWorkspace(project.id, workspace)}
                                 className={cn(
@@ -724,22 +780,35 @@ export function ProjectWorkBar({
                                   workspaceSelected && 'bg-muted text-text-primary'
                                 )}
                               >
-                                <WorkspaceDeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                {localWorkspace ? (
+                                  <Folder className="h-4 w-4 shrink-0" />
+                                ) : (
+                                  <WorkspaceDeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                )}
+                                {!localWorkspace && (
+                                  <span
+                                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                      workspace.deviceStatus === 'online'
+                                        ? 'bg-primary'
+                                        : workspace.deviceStatus === 'busy'
+                                          ? 'bg-amber-500'
+                                          : 'bg-text-muted'
+                                    }`}
+                                  />
+                                )}
                                 <span
-                                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                                    workspace.deviceStatus === 'online'
-                                      ? 'bg-primary'
-                                      : workspace.deviceStatus === 'busy'
-                                        ? 'bg-amber-500'
-                                        : 'bg-text-muted'
-                                  }`}
-                                />
-                                <span className="min-w-0 flex-1 truncate">
-                                  {workspace.deviceName || workspace.deviceId}
+                                  className="min-w-0 flex-1 truncate"
+                                  title={workspace.workspacePath}
+                                >
+                                  {localWorkspace
+                                    ? workspaceFolderName(workspace.workspacePath)
+                                    : workspace.deviceName || workspace.deviceId}
                                 </span>
-                                <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
-                                  {workspace.workspacePath}
-                                </span>
+                                {!localWorkspace && (
+                                  <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
+                                    {workspace.workspacePath}
+                                  </span>
+                                )}
                                 {workspaceSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
                               </button>
                             )
@@ -752,58 +821,18 @@ export function ProjectWorkBar({
               <div className="my-1.5 shrink-0 border-t border-border" />
               <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
                 {onCreateProjectMode && (
-                  <div className="relative">
+                  <div>
                     <button
                       type="button"
                       data-testid="add-local-project-option"
-                      onMouseEnter={() => setLocalProjectSubmenuOpen(true)}
-                      onFocus={() => setLocalProjectSubmenuOpen(true)}
-                      onClick={() => setLocalProjectSubmenuOpen(value => !value)}
+                      onClick={() => handleCreateProject('existing')}
                       className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                     >
                       <FolderPlus className="h-4 w-4 shrink-0" />
                       <span className="min-w-0 flex-1">
                         {t('workbench.add_local_project', '添加本地项目')}
                       </span>
-                      <ChevronRight className="h-4 w-4 shrink-0" />
                     </button>
-                    {localProjectSubmenuOpen && (
-                      <div
-                        data-testid="add-local-project-submenu"
-                        onMouseEnter={() => setLocalProjectSubmenuOpen(true)}
-                        className={cn(
-                          isMobile
-                            ? 'mt-1 space-y-0.5 rounded-xl bg-surface/70 p-1'
-                            : 'absolute left-[calc(100%+0.5rem)] top-0 z-popover w-56 rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]'
-                        )}
-                      >
-                        <button
-                          type="button"
-                          data-testid="add-local-blank-project-option"
-                          onClick={() => handleCreateProject('scratch')}
-                          className="flex h-9 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                        >
-                          <FolderPlus className="h-4 w-4 shrink-0" />
-                          <span className="min-w-0 flex-1">
-                            {t('workbench.new_blank_project', '新建空白项目')}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="add-local-existing-project-option"
-                          onClick={() => handleCreateProject('existing')}
-                          className="flex h-9 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                        >
-                          <ProjectFolderIcon
-                            project={{ id: 0, name: 'folder', tasks: [] }}
-                            className="h-4 w-4 shrink-0 text-text-secondary"
-                          />
-                          <span className="min-w-0 flex-1">
-                            {t('workbench.use_existing_folder', '使用现有文件夹')}
-                          </span>
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
                 {onCreateProjectMode && (
@@ -811,8 +840,6 @@ export function ProjectWorkBar({
                     <button
                       type="button"
                       data-testid="add-remote-project-option"
-                      onMouseEnter={() => setLocalProjectSubmenuOpen(false)}
-                      onFocus={() => setLocalProjectSubmenuOpen(false)}
                       onClick={() => handleCreateProject('git')}
                       className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                     >
@@ -827,8 +854,6 @@ export function ProjectWorkBar({
                   <button
                     type="button"
                     data-testid="no-project-option"
-                    onMouseEnter={() => setLocalProjectSubmenuOpen(false)}
-                    onFocus={() => setLocalProjectSubmenuOpen(false)}
                     onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
                     className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                   >
