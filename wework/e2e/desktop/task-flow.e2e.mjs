@@ -5186,7 +5186,24 @@ async function main() {
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
     await control.command('click', bottomPanelToggleSelector)
-    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
+      control,
+      value => {
+        const terminalOpened =
+          value.testIds.includes('workspace-terminal-window') &&
+          !value.testIds.includes('workspace-tool-launcher')
+        const localTerminalUnavailable =
+          value.testIds.includes('workspace-tool-launcher') &&
+          value.testIds.includes('workspace-local-device-limited-tools')
+        return terminalOpened || localTerminalUnavailable
+      },
+      'The first task bottom workspace panel did not open a terminal or limited-tools launcher',
+      UI_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
+    const firstTaskOpenedTerminal = firstTaskBottomWorkspaceSnapshot.testIds.includes(
+      'workspace-terminal-window'
+    )
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     const secondTaskWorkspaceSnapshot = JSON.parse(
       await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
@@ -5201,19 +5218,35 @@ async function main() {
       false,
       'The first task browser leaked into the second task'
     )
+    assert.equal(
+      secondTaskWorkspaceSnapshot.testIds.includes('workspace-tool-launcher'),
+      false,
+      'The first task bottom workspace launcher leaked into the second task'
+    )
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
-    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    if (firstTaskOpenedTerminal) {
+      await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    } else {
+      await waitForSnapshot(
+        control,
+        value =>
+          value.testIds.includes('bottom-workspace-panel') &&
+          value.testIds.includes('workspace-tool-launcher') &&
+          value.testIds.includes('workspace-local-device-limited-tools'),
+        'The first task bottom workspace limited-tools state was not restored',
+        UI_TIMEOUT_MS,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
+    }
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     assert.equal(
       await control.command('getValue', activeBrowserInputSelector),
       retainedBrowserUrl,
       'The Wework built-in browser URL was reset after switching conversations'
     )
-    const restoredWorkspaceSnapshot = JSON.parse(
-      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-    )
-    assert.ok(
-      restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
+    await waitForSnapshot(
+      control,
+      value => value.testIds.includes('right-workspace-browser-tab'),
       'The browser tab was not restored after switching conversations'
     )
     await captureVerificationScreenshot(control, 'workspace-resources-restored-after-switch.png')
