@@ -681,19 +681,16 @@ impl ResponsesCustomToolState {
     }
 }
 
-fn extract_custom_tool_input(name: &str, arguments: &str) -> Option<String> {
-    if name == "apply_patch" {
-        // The function schema we publish has a single `input` parameter.
-        serde_json::from_str::<Value>(arguments)
-            .ok()
-            .and_then(|value| value.get(CUSTOM_TOOL_INPUT_FIELD).cloned())
-            .and_then(|value| match value {
+fn extract_custom_tool_input(_name: &str, arguments: &str) -> Option<String> {
+    if let Ok(value) = serde_json::from_str::<Value>(arguments) {
+        if let Some(input) = value.get(CUSTOM_TOOL_INPUT_FIELD).cloned() {
+            return match input {
                 Value::String(text) => Some(text),
                 other => serde_json::to_string(&other).ok(),
-            })
-    } else {
-        Some(arguments.to_owned())
+            };
+        }
     }
+    Some(arguments.to_owned())
 }
 
 fn function_call_item_to_custom(item: &mut Value, input: Option<&str>) {
@@ -2145,6 +2142,41 @@ mod tests {
             output.contains("response.custom_tool_call_input.delta"),
             "output: {output}"
         );
+        assert!(
+            output.contains("response.custom_tool_call_input.done"),
+            "output: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_sse_to_responses_extracts_input_for_generic_custom_tool() {
+        let mut context = ToolContext::default();
+        context.insert("my_custom_tool".to_owned(), ToolKind::Custom);
+
+        let output = convert_responses_stream(
+            concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_1\",\"name\":\"my_custom_tool\",\"arguments\":\"\"}}\n\n",
+                "event: response.function_call_arguments.delta\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"input\\\":\\\"raw custom input\\\"}\"}\n\n",
+                "event: response.function_call_arguments.done\n",
+                "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"output_index\":0,\"arguments\":\"{\\\"input\\\":\\\"raw custom input\\\"}\"}\n\n",
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"my_custom_tool\",\"arguments\":\"{\\\"input\\\":\\\"raw custom input\\\"}\"}}\n\n"
+            ),
+            context,
+        )
+        .await;
+
+        assert!(
+            output.contains("\"type\":\"custom_tool_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("\"input\":\"raw custom input\""),
+            "output: {output}"
+        );
+        assert!(!output.contains("\"arguments\""), "output: {output}");
         assert!(
             output.contains("response.custom_tool_call_input.done"),
             "output: {output}"
