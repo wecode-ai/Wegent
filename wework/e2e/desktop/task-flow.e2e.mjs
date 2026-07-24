@@ -639,6 +639,22 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText) {
   throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
 }
 
+async function waitForTaskRowByText(control, expectedText) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const candidates = snapshot.testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+    for (const testId of candidates) {
+      const rowText = await control.command('getText', `[data-testid="${testId}"]`)
+      if (rowText.includes(expectedText)) return testId
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The sidebar did not expose a task row containing ${expectedText}`)
+}
+
 async function verifyCompletedTurnFork({
   composerSelector,
   control,
@@ -4599,7 +4615,7 @@ async function verifyConnectedModelsOnLocalExecution({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="projects-create-button"]')
-  await control.command('click', '[data-testid="project-create-existing-option"]')
+  await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -4613,6 +4629,7 @@ async function verifyConnectedModelsOnLocalExecution({
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  await confirmLocalProjectName(control, 'workspace')
   await control.command('waitFor', composerSelector, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4771,15 +4788,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     CLOUD_ARTIFACT_CONTENT,
     'The real cloud executor did not create the verification artifact'
   )
-  const taskSnapshot = await waitForSnapshot(
-    control,
-    value => value.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
-    'The completed cloud task was not persisted in the sidebar'
-  )
-  const taskRowTestId = taskSnapshot.testIds.find(testId =>
-    testId.startsWith('runtime-local-task-row-')
-  )
-  assert.ok(taskRowTestId, 'The completed cloud task row was not available')
+  const taskRowTestId = await waitForTaskRowByText(control, 'WEWORK_DESKTOP_E2E_CLOUD_TASK')
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_COMPLETION_TEXT,
