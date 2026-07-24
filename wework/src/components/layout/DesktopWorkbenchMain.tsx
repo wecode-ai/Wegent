@@ -2001,7 +2001,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
-      {tauriMainHeaderContent ? (
+      {/* Portals escape the hidden cached pane, so only the visible active pane may own the header. */}
+      {tauriMainHeaderContent && paneActive && workbenchVisible ? (
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
       <>
