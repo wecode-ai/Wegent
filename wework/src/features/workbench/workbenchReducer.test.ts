@@ -29,6 +29,59 @@ describe('workbenchReducer', () => {
     expect(state.projects.map(project => project.id)).toEqual([8])
     expect(state.currentProject).toBeNull()
   })
+  
+  test('removes a runtime project even while its optimistic task is fresh', () => {
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 7, name: 'Repo' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              available: true,
+              workspacePath: '/workspace/repo',
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/repo',
+                  title: 'Creating task',
+                  runtime: 'codex',
+                  status: 'creating',
+                  optimistic: true,
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        runtimeWork,
+        currentProject: { id: 7, name: 'Repo', tasks: [] },
+        selectedDeviceWorkspaceId: 22,
+        pendingProjectWorkspaceProjectId: 7,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/repo',
+          taskId: 'runtime-a',
+        },
+      },
+      { type: 'runtime_project_removed', projectId: 7 }
+    )
+
+    expect(state.runtimeWork?.projects).toEqual([])
+    expect(state.runtimeWork?.totalTasks).toBe(0)
+    expect(state.currentProject).toBeNull()
+    expect(state.selectedDeviceWorkspaceId).toBeNull()
+    expect(state.pendingProjectWorkspaceProjectId).toBeNull()
+    expect(state.currentRuntimeTask).toBeNull()
+  })
 
   test('preserves the current blank chat draft when clearing the runtime task', () => {
     const state = workbenchReducer(

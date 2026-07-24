@@ -83,6 +83,7 @@ export type WorkbenchAction =
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | { type: 'runtime_project_removed'; projectId: number }
   | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
       type: 'runtime_workspace_opened'
@@ -1046,6 +1047,29 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
       }
+    case 'runtime_project_removed': {
+      const removedCurrentProject = state.currentProject?.id === action.projectId
+      const runtimeWork = state.runtimeWork
+        ? {
+            ...state.runtimeWork,
+            projects: state.runtimeWork.projects.filter(
+              project => runtimeProjectUiId(project.project) !== action.projectId
+            ),
+          }
+        : state.runtimeWork
+      return {
+        ...state,
+        runtimeWork: runtimeWork
+          ? { ...runtimeWork, totalTasks: countRuntimeWorkTasks(runtimeWork) }
+          : runtimeWork,
+        currentProject: removedCurrentProject ? null : state.currentProject,
+        selectedDeviceWorkspaceId: removedCurrentProject ? null : state.selectedDeviceWorkspaceId,
+        pendingProjectWorkspaceProjectId: removedCurrentProject
+          ? null
+          : state.pendingProjectWorkspaceProjectId,
+        currentRuntimeTask: removedCurrentProject ? null : state.currentRuntimeTask,
+      }
+    }
     case 'device_workspace_prepared':
       return {
         ...state,

@@ -217,6 +217,7 @@ export function useWorkbenchProjectActions({
         standaloneDeviceId === runtimeWorkspace.deviceId.trim() &&
         standaloneWorkspacePath === normalizeRuntimeWorkspacePath(runtimeWorkspace.workspacePath)
       await refreshWorkLists()
+      dispatch({ type: 'runtime_project_removed', projectId })
       if (clearsStandaloneWorkspace) {
         dispatch({
           type: 'project_cleared',
