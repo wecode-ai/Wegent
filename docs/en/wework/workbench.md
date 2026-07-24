@@ -16,7 +16,9 @@ When a conversation is taller than the current viewport, turn markers appear alo
 
 ## Switch conversations and restore position
 
-The desktop workbench renders only the active conversation. Runtime state and recent messages live in a shared cache while switching, so background tasks continue receiving live events and show their latest state immediately when reopened without retaining hidden conversation pages.
+When switching conversations, the desktop workbench saves runtime state, recent messages, right-workspace tabs, and panel state, so returning restores the workspace as it was left. Ordinary conversations do not retain a hidden full-page DOM, which bounds WebView memory growth from long conversations.
+
+Conversation panes with a running Terminal or Wework built-in browser remain mounted. Terminal processes, tabs, and output buffers stay live, while built-in browser pages, addresses, and tab state are preserved. After those resources close, the pane can be released while its restorable panel state remains. Hidden conversations do not handle shortcuts or browser-open events intended for the active conversation.
 
 A conversation opens at its latest message the first time. Conversations that were at the bottom remain at the bottom, while conversations viewed in the middle restore their distance from the bottom. Long conversations mount only messages near the viewport and reuse measured message heights to limit WebView memory growth while scrolling.
 

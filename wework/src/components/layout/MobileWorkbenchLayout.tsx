@@ -1,5 +1,5 @@
 import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
-import { memo, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
@@ -41,6 +41,7 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import type { WorkbenchMessage } from '@/types/workbench'
 import {
   defaultAppearance,
   getWorkbenchBackground,
@@ -116,6 +117,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
+  const pendingModelRetryRef = useRef<WorkbenchMessage | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
@@ -126,6 +128,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   } | null>(null)
   const currentRuntimeTask = pane.currentRuntimeTask
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const retryFailedMessage = paneSession.retryFailedMessage
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const activePaneProject = pane.currentProject
   const paneMessages = paneSession.messages
@@ -147,9 +150,30 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     setSelectedModel: () => {},
     setSelectedModelOption: () => {},
   }
+  const retryFailedMessageAfterModelSelect = useCallback(() => {
+    const message = pendingModelRetryRef.current
+    if (!message) return
+    pendingModelRetryRef.current = null
+    queueMicrotask(() => {
+      void retryFailedMessage(message)
+    })
+  }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...effectiveProjectChat,
     modelSelectorOpenSignal,
+    setSelectedModel: model => {
+      effectiveProjectChat.setSelectedModel(model)
+      if (model) retryFailedMessageAfterModelSelect()
+    },
+    setSelectedModelAndOptions: effectiveProjectChat.setSelectedModelAndOptions
+      ? (model, options) => {
+          effectiveProjectChat.setSelectedModelAndOptions?.(model, options)
+          retryFailedMessageAfterModelSelect()
+        }
+      : undefined,
+    onModelSelectorOpenChange: open => {
+      if (!open) pendingModelRetryRef.current = null
+    },
   }
   const emptyTitle = activeConversationProject
     ? t('workbench.project_empty_title', {
@@ -276,8 +300,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
                     openSignal={modelSelectorOpenSignal}
                     disabled={false}
-                    onSelectModel={effectiveProjectChat.setSelectedModel}
+                    onSelectModel={projectChatWithModelSelectorSignal.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+                    onOpenChange={projectChatWithModelSelectorSignal.onModelSelectorOpenChange}
                     onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
                     menuPlacement="below"
                     buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
@@ -340,7 +365,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               onRetryFailedMessage={message => {
                 void paneSession.retryFailedMessage(message)
               }}
-              onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
+              onSwitchModelForFailedMessage={message => {
+                pendingModelRetryRef.current = message
+                setModelSelectorOpenSignal(signal => signal + 1)
+              }}
               onLoadFileChangesDiff={(subtaskId, fileChanges) =>
                 loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
               }
@@ -461,8 +489,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
                     openSignal={modelSelectorOpenSignal}
                     disabled={false}
-                    onSelectModel={effectiveProjectChat.setSelectedModel}
+                    onSelectModel={projectChatWithModelSelectorSignal.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+                    onOpenChange={projectChatWithModelSelectorSignal.onModelSelectorOpenChange}
                     onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
                     menuPlacement="below"
                     buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"

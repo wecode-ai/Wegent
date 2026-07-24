@@ -1121,6 +1121,9 @@ async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
     let mut codex_state = read_json_file(&codex_home.join(".codex-global-state.json"));
     codex_state["active-workspace-roots"] = json!(["/tmp/project"]);
     codex_state["pinned-project-ids"] = json!(["/tmp/project", "remote-project"]);
+    codex_state["thread-workspace-root-hints"] = json!({
+        "thread-in-project": "/tmp/project"
+    });
     write_codex_global_state(&codex_home, codex_state);
     let removed = handler
         .handle_runtime_rpc(json!({
@@ -1153,6 +1156,7 @@ async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
     assert_eq!(codex_state["project-order"], json!([]));
     assert_eq!(codex_state["active-workspace-roots"], json!([]));
     assert_eq!(codex_state["pinned-project-ids"], json!(["remote-project"]));
+    assert_eq!(codex_state["thread-workspace-root-hints"], json!({}));
     assert_eq!(codex_state["electron-workspace-root-labels"], json!({}));
 }
 

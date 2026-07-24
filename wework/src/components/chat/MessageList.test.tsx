@@ -4873,6 +4873,33 @@ describe('MessageList', () => {
       screen.queryByText(/plugin:\/\/documents@openai-primary-runtime/)
     ).not.toBeInTheDocument()
   })
+
+  test('renders cloud references in user messages without exposing the internal URI', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content:
+              '[$WEG0001-1](cloud://projects/3/todos/WEG0001-1) 结合代码分析，这个问题可能是因为什么',
+            status: 'done',
+            createdAt: '2026-07-23T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const cloudLink = screen.getByTestId('sent-cloud-token-WEG0001-1')
+
+    expect(cloudLink).toHaveAttribute('href', 'cloud://projects/3/todos/WEG0001-1')
+    expect(cloudLink).toHaveAttribute('data-cloud-resource-kind', 'todo')
+    expect(screen.getByTestId('sent-cloud-icon-WEG0001-1')).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent(
+      'WEG0001-1 结合代码分析，这个问题可能是因为什么'
+    )
+    expect(screen.queryByText(/cloud:\/\/projects\/3\/todos/)).not.toBeInTheDocument()
+  })
 })
 
 function selectText(container: HTMLElement, text: string) {

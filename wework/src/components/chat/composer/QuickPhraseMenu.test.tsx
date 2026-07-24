@@ -44,6 +44,20 @@ describe('QuickPhraseMenu', () => {
     expect(screen.queryByTestId('quick-phrase-menu')).not.toBeInTheDocument()
   })
 
+  test('uses subdued regular text for the trigger and menu options', () => {
+    render(<QuickPhraseMenu onSelect={vi.fn()} />)
+
+    expect(screen.getByTestId('quick-phrase-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
+
+    fireEvent.click(screen.getByTestId('quick-phrase-button'))
+
+    expect(screen.getByTestId('quick-phrase-menu')).toHaveClass('text-text-primary')
+    expect(screen.getByText('总结进展')).toHaveClass('font-normal')
+  })
+
   test('filters and selects a phrase with the keyboard', () => {
     const onSelect = vi.fn()
     render(<QuickPhraseMenu onSelect={onSelect} />)

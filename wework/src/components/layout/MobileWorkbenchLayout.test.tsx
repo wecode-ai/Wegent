@@ -151,6 +151,7 @@ type LegacyMobileWorkbenchLayoutProps = {
   onCreateEnvironmentBranch?: (...args: unknown[]) => Promise<void>
   onUpgradeDevice?: (...args: unknown[]) => Promise<void>
   onRequestUserInputSubmit?: (...args: unknown[]) => Promise<boolean> | void
+  onRetryFailedMessage?: (message: WorkbenchMessage) => Promise<boolean>
 }
 
 function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
@@ -323,7 +324,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
     cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
     sendCurrentInput: props.onSend ?? vi.fn().mockResolvedValue(true),
-    retryFailedMessage: vi.fn().mockResolvedValue(true),
+    retryFailedMessage: props.onRetryFailedMessage ?? vi.fn().mockResolvedValue(true),
     pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
     loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
     revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
@@ -364,7 +365,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
     loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
     send: props.onSend ?? vi.fn().mockResolvedValue(undefined),
-    retryFailedMessage: vi.fn().mockResolvedValue(true),
+    retryFailedMessage: props.onRetryFailedMessage ?? vi.fn().mockResolvedValue(true),
     sendRequestUserInputResponse: props.onRequestUserInputSubmit ?? vi.fn().mockResolvedValue(true),
     ignoreRequestUserInput: vi.fn(),
     answeredRequestUserInputIds: new Set(),
@@ -843,6 +844,55 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('中')
+  })
+
+  test('retries a failed message immediately after selecting a replacement model', async () => {
+    const currentModel: UnifiedModel = {
+      name: 'gpt-current',
+      type: 'runtime',
+      displayName: 'GPT Current',
+      config: { ui: { family: 'gpt', modelLabel: 'GPT Current', sortOrder: 10 } },
+    }
+    const replacementModel: UnifiedModel = {
+      name: 'gpt-replacement',
+      type: 'runtime',
+      displayName: 'GPT Replacement',
+      config: { ui: { family: 'gpt', modelLabel: 'GPT Replacement', sortOrder: 20 } },
+    }
+    const failedMessage: WorkbenchMessage = {
+      id: 'failed-assistant',
+      role: 'assistant',
+      content: '',
+      status: 'failed',
+      error: 'model request failed',
+      createdAt: '2026-07-24T14:21:25.000+08:00',
+    }
+    const setSelectedModel = vi.fn()
+    const retryFailedMessage = vi.fn().mockResolvedValue(true)
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={baseState}
+        messages={[failedMessage]}
+        projectChat={{
+          ...baseProjectChat,
+          models: [currentModel, replacementModel],
+          selectedModel: currentModel,
+          setSelectedModel,
+        }}
+        onRetryFailedMessage={retryFailedMessage}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-error-switch-model-retry'))
+    await waitFor(() => expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument())
+    await userEvent.click(screen.getByTestId('model-option-gpt-replacement'))
+
+    await waitFor(() => expect(retryFailedMessage).toHaveBeenCalledWith(failedMessage))
+    expect(setSelectedModel).toHaveBeenCalledWith(replacementModel)
+    expect(setSelectedModel.mock.invocationCallOrder[0]).toBeLessThan(
+      retryFailedMessage.mock.invocationCallOrder[0]
+    )
   })
 
   test('shows the selected project in the mobile empty project selector', () => {

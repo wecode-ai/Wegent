@@ -19,8 +19,11 @@ import {
   File as FileIcon,
   FileText,
   Folder,
+  LibraryBig,
+  ListTodo,
   MessageSquare,
   Package,
+  PackageOpen,
   Pencil,
   Target,
 } from 'lucide-react'
@@ -125,6 +128,7 @@ const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
 const SELECTION_ACTION_GAP = 8
 const MESSAGE_WINDOW_ROOT_MARGIN = '400px 0px'
 const ALWAYS_MOUNT_RECENT_MESSAGE_COUNT = 4
+const VIRTUAL_MESSAGE_MIN_COUNT = 20
 const VIRTUAL_MESSAGE_OVERSCAN = 2
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
@@ -228,7 +232,11 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = isTauri && Boolean(scrollElementRef) && !disableContentVisibility
+  const virtualMessages =
+    isTauri &&
+    Boolean(scrollElementRef) &&
+    visibleMessages.length >= VIRTUAL_MESSAGE_MIN_COUNT &&
+    !disableContentVisibility
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>
@@ -1676,7 +1684,7 @@ function MessageHoverActions({
 }
 
 const CODEX_MENTION_LINK_PATTERN =
-  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+))\)/g
+  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+))\)/g
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1690,12 +1698,20 @@ function displayCodexMentionName(name: string): string {
     .join(' ')
 }
 
-function codexMentionKind(href: string): 'skill' | 'app' | 'plugin' | 'file' | 'folder' {
+function codexMentionKind(href: string): 'skill' | 'app' | 'plugin' | 'file' | 'folder' | 'cloud' {
   if (href.startsWith('app://')) return 'app'
   if (href.startsWith('plugin://')) return 'plugin'
   if (href.startsWith('file://')) return 'file'
   if (href.startsWith('folder://')) return 'folder'
+  if (href.startsWith('cloud://')) return 'cloud'
   return 'skill'
+}
+
+function cloudReferenceKind(href: string): 'project' | 'todo' | 'file' | 'delivery' {
+  if (/\/todos\/[^/]+$/.test(href)) return 'todo'
+  if (/\/files\/[^/]+$/.test(href)) return 'file'
+  if (/\/deliveries\/[^/]+$/.test(href)) return 'delivery'
+  return 'project'
 }
 
 function renderUserContent(
@@ -1718,6 +1734,7 @@ function renderUserContent(
     const skillFilePath = composerSkillFilePath(match[0])
     const pathReference = composerPathReference(match[0])
     const mentionKind = codexMentionKind(href)
+    const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
     const tokenTestId = codexMentionTokenTestId(mentionName)
     const testId =
       mentionKind === 'skill'
@@ -1732,6 +1749,7 @@ function renderUserContent(
         key={`${mentionKind}-${start}`}
         href={href}
         data-testid={testId}
+        data-cloud-resource-kind={cloudKind}
         className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-sm font-medium leading-none text-blue-600 no-underline"
         onClick={event => {
           event.preventDefault()
@@ -1743,11 +1761,21 @@ function renderUserContent(
           <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         ) : mentionKind === 'file' ? (
           <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : mentionKind === 'cloud' ? (
+          cloudKind === 'todo' ? (
+            <ListTodo data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+          ) : cloudKind === 'file' ? (
+            <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+          ) : cloudKind === 'delivery' ? (
+            <PackageOpen data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+          ) : (
+            <LibraryBig data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+          )
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}
         <span className="min-w-0 truncate">
-          {mentionKind === 'file' || mentionKind === 'folder'
+          {mentionKind === 'file' || mentionKind === 'folder' || mentionKind === 'cloud'
             ? mentionName
             : displayCodexMentionName(mentionName)}
         </span>

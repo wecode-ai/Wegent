@@ -472,8 +472,15 @@ export function useWorkbenchRuntimeMessaging({
       activeDeviceId?: string,
       options?: Pick<
         SendCurrentInputOptions,
-        'clientMessageId' | 'initialGoal' | 'onError' | 'onRuntimeTaskOptimisticOpen'
+        | 'clientMessageId'
+        | 'initialGoal'
+        | 'onError'
+        | 'onRuntimeTaskOptimisticOpen'
+        | 'additionalContext'
       > & {
+        collaborationMode?: 'default' | 'plan'
+        deliveryId?: string
+        cloudProjectId?: string
         ephemeral?: boolean
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
@@ -570,7 +577,12 @@ export function useWorkbenchRuntimeMessaging({
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
         modelId: payload.force_override_bot_model,
         modelType: payload.force_override_bot_model_type ?? null,
-        modelOptions: payload.model_options ?? {},
+        modelOptions: {
+          ...(payload.model_options ?? {}),
+          ...(options && 'collaborationMode' in options && options.collaborationMode
+            ? { collaborationMode: options.collaborationMode }
+            : {}),
+        },
         modelSelection: selectedModel
           ? {
               modelName: selectedModel.name,
@@ -585,6 +597,9 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.ephemeral ? { ephemeral: true } : {}),
         ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
+        ...(options?.deliveryId ? { deliveryId: options.deliveryId } : {}),
+        ...(options?.cloudProjectId ? { cloudProjectId: options.cloudProjectId } : {}),
+        ...(options?.additionalContext ? { additionalContext: options.additionalContext } : {}),
       }
       debugRuntimeCreateFlow('create-request-built', {
         taskId,
@@ -834,6 +849,7 @@ export function useWorkbenchRuntimeMessaging({
             ...runtimeModelFields,
             ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
+            ...(options?.additionalContext ? { additionalContext: options.additionalContext } : {}),
           },
           options
         )
@@ -910,6 +926,7 @@ export function useWorkbenchRuntimeMessaging({
           onError: options?.onError,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
           clientMessageId: options?.clientMessageId,
+          additionalContext: options?.additionalContext,
         }
       )
       if (sent) {
@@ -1097,6 +1114,9 @@ export function useWorkbenchRuntimeMessaging({
 
       return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
         initialGoal: options.initialGoal,
+        collaborationMode: options.collaborationMode,
+        deliveryId: options.deliveryId,
+        cloudProjectId: options.cloudProjectId,
         onError: options.onError,
         openInMainPane: false,
       })

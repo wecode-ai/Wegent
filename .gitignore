@@ -80,6 +80,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 frontend/.wecoderules
+/dummy-non-existing-folder/
+/public/
+/ui-demo/
 
 
 # OS specific

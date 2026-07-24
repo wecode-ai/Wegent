@@ -1,6 +1,7 @@
 import type { RefObject } from 'react'
 import type { LocalDeviceApp, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 
 export interface ComposerSubmitOptions {
   guideWhenBusy?: boolean
@@ -23,6 +24,7 @@ export interface ComposerTextareaProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   models?: UnifiedModel[]

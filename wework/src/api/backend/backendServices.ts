@@ -1,5 +1,6 @@
 import { getToken } from '@/api/auth'
 import { createDeviceApi } from '@/api/devices'
+import { createDeliveryApi } from '@/api/deliveries'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
 import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
@@ -63,6 +64,7 @@ export function createBackendWorkbenchServices(
     gitApi: createGitApi(client),
     taskApi,
     deviceApi,
+    deliveryApi: createDeliveryApi(client),
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
     executorClient: createExecutorClientFromApis({
