@@ -10,6 +10,9 @@ const publicIntegrationFiles = [
   'src/components/layout/workspace-panels/WorkspacePanelCards.test.tsx',
   'src/components/layout/DesktopWorkbenchLayout.test.tsx',
   'src/components/settings/ConnectionsSettingsPage.test.tsx',
+  'src/extensions/cloud-desktop-contract.ts',
+  'src/lib/external-links.ts',
+  'src-tauri/src/lib.rs',
 ]
 const vncImplementationToken = /vnc|\bRFB\b|prepare_vnc_session|get_vnc_session_config/i
 
@@ -18,6 +21,42 @@ describe('VNC code ownership', () => {
     const source = readFileSync(resolve(weworkDirectory, fileName), 'utf8')
 
     expect(source).not.toMatch(vncImplementationToken)
+  })
+
+  test('keeps connection and launch implementation out of the public cloud desktop contract', () => {
+    const publicContract = readFileSync(
+      resolve(weworkDirectory, 'src/extensions/cloud-desktop-contract.ts'),
+      'utf8'
+    )
+
+    expect(publicContract).not.toContain('CloudDesktopConnection')
+    expect(publicContract).not.toContain('CloudDesktopOpenTarget')
+    expect(publicContract).not.toContain('OpenCloudDesktopOptions')
+    expect(publicContract).not.toMatch(/\bopen:/)
+  })
+
+  test('keeps VNC translations in the Wecode namespace', () => {
+    const publicChinese = readFileSync(
+      resolve(weworkDirectory, 'src/i18n/locales/zh-CN/common.json'),
+      'utf8'
+    )
+    const publicEnglish = readFileSync(
+      resolve(weworkDirectory, 'src/i18n/locales/en/common.json'),
+      'utf8'
+    )
+    const wecodeChinese = readFileSync(
+      resolve(weworkDirectory, 'wecode/i18n/locales/zh-CN/vnc.json'),
+      'utf8'
+    )
+    const wecodeEnglish = readFileSync(
+      resolve(weworkDirectory, 'wecode/i18n/locales/en/vnc.json'),
+      'utf8'
+    )
+
+    expect(publicChinese).not.toContain('connection_device_desktop')
+    expect(publicEnglish).not.toContain('connection_device_desktop')
+    expect(wecodeChinese).toContain('open_system_desktop_failed')
+    expect(wecodeEnglish).toContain('open_system_desktop_failed')
   })
 
   test('delegates Wecode browser commands through the desktop control extension', () => {

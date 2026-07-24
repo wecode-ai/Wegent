@@ -21,6 +21,8 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -192,36 +194,41 @@ function seedDesktopE2ECloudConnection() {
     },
     connectedAt: new Date().toISOString(),
   })
-  for (const model of [
-    {
-      id: 'desktop-e2e-responses',
-      displayName: 'Desktop E2E Responses',
-      modelId: 'desktop-e2e-responses-model',
-      apiFormat: 'openai-responses' as const,
-      toolProfile: 'custom' as const,
-      requestPath: '/v1/responses',
-    },
-    {
-      id: 'desktop-e2e-chat',
-      displayName: 'Desktop E2E Chat',
-      modelId: 'desktop-e2e-chat-model',
-      apiFormat: 'openai-chat-completions' as const,
-      toolProfile: 'function' as const,
-      requestPath: '/v1/chat/completions',
-    },
-    {
-      id: 'desktop-e2e-anthropic',
-      displayName: 'Desktop E2E Anthropic',
-      modelId: 'desktop-e2e-anthropic-model',
-      apiFormat: 'anthropic-messages' as const,
-      toolProfile: 'function' as const,
-      requestPath: '/v1/messages',
-    },
-  ]) {
+  const localModels =
+    import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
+      ? [
+          {
+            id: 'desktop-e2e-responses',
+            displayName: 'Desktop E2E Responses',
+            modelId: 'desktop-e2e-responses-model',
+            apiFormat: 'openai-responses' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/responses',
+          },
+          {
+            id: 'desktop-e2e-chat',
+            displayName: 'Desktop E2E Chat',
+            modelId: 'desktop-e2e-chat-model',
+            apiFormat: 'openai-chat-completions' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/chat/completions',
+          },
+          {
+            id: 'desktop-e2e-anthropic',
+            displayName: 'Desktop E2E Anthropic',
+            modelId: 'desktop-e2e-anthropic-model',
+            apiFormat: 'anthropic-messages' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/messages',
+          },
+        ]
+      : []
+  for (const model of localModels) {
     saveLocalModelConfig({
       ...model,
       baseUrl: backendUrl,
       apiKey: 'wework-e2e-test-key',
+      catalogReady: false,
       enabled: true,
     })
   }
@@ -255,6 +262,31 @@ function desktopControlElementText(selector: string): string {
     .join('\n')
 }
 
+function desktopControlElementMetrics(selector: string): string {
+  const elements = findDesktopControlElements(selector)
+  if (elements.length === 0) throw new Error(`Unable to find selector "${selector}"`)
+
+  return JSON.stringify(
+    elements.map(element => {
+      const rect = element.getBoundingClientRect()
+      return {
+        bottom: rect.bottom,
+        clientHeight: element.clientHeight,
+        clientWidth: element.clientWidth,
+        height: rect.height,
+        left: rect.left,
+        right: rect.right,
+        scrollHeight: element.scrollHeight,
+        scrollLeft: element.scrollLeft,
+        scrollTop: element.scrollTop,
+        scrollWidth: element.scrollWidth,
+        top: rect.top,
+        width: rect.width,
+      }
+    })
+  )
+}
+
 function desktopControlSnapshot(selector = 'body'): string {
   const root = findDesktopControlElements(selector)[0]
   if (!root) throw new Error(`Unable to find selector "${selector}"`)
@@ -276,9 +308,34 @@ function desktopControlSnapshot(selector = 'body'): string {
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
-  const snapshot = await invoke<string>('capture_main_webview')
-  if (element === document.body) return snapshot
-  return cropDesktopControlScreenshot(snapshot, element.getBoundingClientRect())
+  if (element === document.body) return invoke<string>('capture_main_webview')
+  const rect = element.getBoundingClientRect()
+  if (selector !== '[data-testid="model-selector-menu"]') {
+    const snapshot = await invoke<string>('capture_main_webview')
+    return cropDesktopControlScreenshot(snapshot, rect)
+  }
+  // NSView snapshots can omit WebKit's separately composited fixed-position popovers.
+  // Mirror the target into the document layer so element evidence captures what is visible.
+  const captureClone = element.cloneNode(true) as HTMLElement
+  Object.assign(captureClone.style, {
+    animation: 'none',
+    height: `${rect.height}px`,
+    left: `${rect.left + window.scrollX}px`,
+    maxHeight: 'none',
+    position: 'absolute',
+    top: `${rect.top + window.scrollY}px`,
+    transform: 'none',
+    width: `${rect.width}px`,
+    zIndex: '2147483647',
+  })
+  document.body.appendChild(captureClone)
+  try {
+    await new Promise<void>(resolve => window.setTimeout(resolve, 50))
+    const snapshot = await invoke<string>('capture_main_webview')
+    return cropDesktopControlScreenshot(snapshot, rect)
+  } finally {
+    captureClone.remove()
+  }
 }
 
 async function cropDesktopControlScreenshot(snapshot: string, rect: DOMRect): Promise<string> {
@@ -537,10 +594,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
     case 'performanceSnapshot': {
-      const processMemory = await invoke('get_wework_process_snapshot')
+      const processMemory = navigator.platform.toLowerCase().includes('mac')
+        ? await invoke('get_wework_process_snapshot')
+        : null
       return JSON.stringify({
         timestamp: Date.now(),
         domNodeCount: document.getElementsByTagName('*').length,
+        runtimeConversationCache: getRuntimeConversationCacheStats(),
         processMemory,
       })
     }
@@ -557,6 +617,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector)
+    case 'getElementMetrics':
+      return desktopControlElementMetrics(command.selector)
+    case 'getStyle': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const property = command.value?.trim()
+      if (!property) throw new Error('getStyle requires a CSS property name')
+      return window.getComputedStyle(element).getPropertyValue(property)
+    }
+    case 'getInlineStyle': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const property = command.value?.trim()
+      if (!property) throw new Error('getInlineStyle requires a CSS property name')
+      return element.style.getPropertyValue(property)
+    }
     case 'getValue': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -569,11 +645,35 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return element.textContent?.trim() ?? ''
     }
+    case 'getSelectionOffset': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const selection = window.getSelection()
+      if (!selection?.anchorNode || !element.contains(selection.anchorNode)) return '-1'
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.setEnd(selection.anchorNode, selection.anchorOffset)
+      return String(range.toString().length)
+    }
     case 'snapshot':
       return desktopControlSnapshot(command.selector)
     case 'scrollIntoView': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.scrollIntoView({ block: 'center', inline: 'nearest' })
+      return element.textContent?.trim() ?? ''
+    }
+    case 'scrollIntoViewAsUser': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.dispatchEvent(
+        new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          deltaY: -120,
+        })
+      )
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       return element.textContent?.trim() ?? ''
     }
@@ -585,6 +685,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       element.click()
       return element.textContent?.trim() ?? ''
+    }
+    case 'clickIfPresent': {
+      const element = findDesktopControlElements(command.selector).find(
+        desktopControlElementEnabled
+      )
+      if (!element) return 'missing'
+      element.click()
+      return 'clicked'
     }
     case 'deferredClick': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -612,6 +720,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
+    case 'getWorkbenchDebugSnapshot':
+      return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerDown':

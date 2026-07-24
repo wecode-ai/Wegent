@@ -1,0 +1,6 @@
+{
+  "desktop": "Desktop",
+  "open_project_desktop": "Open project desktop",
+  "open_project_desktop_failed": "Failed to start",
+  "open_system_desktop_failed": "Unable to open the cloud desktop in your default browser. Try again."
+}

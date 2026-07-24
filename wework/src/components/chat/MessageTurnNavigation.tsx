@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { RuntimeTurnNavigationItem } from '@/types/api'
@@ -17,6 +18,7 @@ const MARKER_ROW_HEIGHT_PX = 8
 const MARKER_ROW_GAP_PX = 20 / 9
 const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
 const NAVIGATION_VIEWPORT_PADDING_PX = 48
+const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [80, 160, 320, 640, 1000, 1600]
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
@@ -27,6 +29,8 @@ interface MessageTurnNavigationProps {
   contentRef: RefObject<HTMLDivElement | null>
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onNavigationLoadStateChange?: (loading: boolean) => void
+  onNavigationScrollTargetChange?: (messageId: string | null) => void
+  portalTarget?: Element | null
 }
 
 interface UserTurn {
@@ -43,6 +47,11 @@ interface MessageTurnMarker extends UserTurn {
   targetTop: number | null
 }
 
+interface PendingScrollTarget {
+  navigationId: string
+  messageIndex: number
+}
+
 export function MessageTurnNavigation({
   messages,
   turnNavigation,
@@ -50,17 +59,85 @@ export function MessageTurnNavigation({
   contentRef,
   onLoadTurnNavigationItem,
   onNavigationLoadStateChange,
+  onNavigationScrollTargetChange,
+  portalTarget,
 }: MessageTurnNavigationProps) {
   const { t } = useTranslation('chat')
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
   const [activeMarkerId, setActiveMarkerId] = useState<string | null>(null)
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
   const [loadingMarkerId, setLoadingMarkerId] = useState<string | null>(null)
-  const [pendingScrollTargetId, setPendingScrollTargetId] = useState<string | null>(null)
+  const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const markersRef = useRef<MessageTurnMarker[]>([])
   const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
+  const navigationScrollTimersRef = useRef<number[]>([])
+
+  const clearNavigationScrollTimers = useCallback(() => {
+    navigationScrollTimersRef.current.forEach(timer => window.clearTimeout(timer))
+    navigationScrollTimersRef.current = []
+  }, [])
+
+  const scrollToMessageId = useCallback(
+    (scroller: HTMLDivElement, messageId: string, behavior: ScrollBehavior = 'auto') => {
+      clearNavigationScrollTimers()
+      const initialAnchor = findMessageAnchor(contentRef, messageId)
+      if (!initialAnchor) {
+        logTurnNavigation('anchor-missing', { messageId, behavior, ...getScrollMetrics(scroller) })
+        return
+      }
+      onNavigationScrollTargetChange?.(messageId)
+      logTurnNavigation('scroll-start', {
+        messageId,
+        behavior,
+        ...getScrollMetrics(scroller, initialAnchor),
+      })
+      scrollToMessageAnchor(scroller, initialAnchor, behavior)
+      logTurnNavigation('scroll-initial-complete', {
+        messageId,
+        behavior,
+        ...getScrollMetrics(scroller, initialAnchor),
+      })
+
+      NAVIGATION_SCROLL_SETTLE_DELAYS_MS.forEach((delay, index) => {
+        const timer = window.setTimeout(() => {
+          const currentAnchor = findMessageAnchor(contentRef, messageId)
+          if (currentAnchor) {
+            const targetTop = getMessageAnchorTargetTop(scroller, currentAnchor)
+            logTurnNavigation('scroll-settle-before', {
+              messageId,
+              delay,
+              targetTop,
+              ...getScrollMetrics(scroller, currentAnchor),
+            })
+            scrollToMarkerTarget(scroller, targetTop, 'auto')
+            logTurnNavigation('scroll-settle-after', {
+              messageId,
+              delay,
+              targetTop,
+              ...getScrollMetrics(scroller, currentAnchor),
+            })
+          } else {
+            logTurnNavigation('anchor-missing-during-settle', {
+              messageId,
+              delay,
+              ...getScrollMetrics(scroller),
+            })
+          }
+          if (index === NAVIGATION_SCROLL_SETTLE_DELAYS_MS.length - 1) {
+            onNavigationScrollTargetChange?.(null)
+            logTurnNavigation('scroll-finished', {
+              messageId,
+              ...getScrollMetrics(scroller, currentAnchor),
+            })
+          }
+        }, delay)
+        navigationScrollTimersRef.current.push(timer)
+      })
+    },
+    [clearNavigationScrollTimers, contentRef, onNavigationScrollTargetChange]
+  )
 
   const userTurns = useMemo(() => {
     return turnNavigation && turnNavigation.length > 0
@@ -173,18 +250,26 @@ export function MessageTurnNavigation({
   }, [scheduleCalculateMarkers])
 
   useLayoutEffect(() => {
-    if (!pendingScrollTargetId) return
+    if (!pendingScrollTarget) return
 
     const scroller = scrollRef.current
-    const anchor = findMessageAnchor(contentRef, pendingScrollTargetId)
-    if (!scroller || !anchor) return
+    const targetMessageId = findLoadedNavigationMessageId(messages, pendingScrollTarget)
+    const anchor = targetMessageId ? findMessageAnchor(contentRef, targetMessageId) : null
+    if (!scroller || !targetMessageId || !anchor) return
 
-    scrollToMessageAnchor(scroller, anchor)
-    setActiveMarkerId(pendingScrollTargetId)
-    setLoadingMarkerId(current => (current === pendingScrollTargetId ? null : current))
-    setPendingScrollTargetId(null)
+    scrollToMessageId(scroller, targetMessageId)
+    setActiveMarkerId(targetMessageId)
+    setLoadingMarkerId(current => (current === pendingScrollTarget.navigationId ? null : current))
+    setPendingScrollTarget(null)
     finishNavigationLoad(onNavigationLoadStateChange)
-  }, [contentRef, onNavigationLoadStateChange, pendingScrollTargetId, scrollRef])
+  }, [
+    contentRef,
+    messages,
+    onNavigationLoadStateChange,
+    pendingScrollTarget,
+    scrollRef,
+    scrollToMessageId,
+  ])
 
   useEffect(() => {
     const scroller = scrollRef.current
@@ -227,6 +312,16 @@ export function MessageTurnNavigation({
       if (!scroller) return
 
       const currentAnchor = findMessageAnchor(contentRef, marker.id)
+      logTurnNavigation('marker-click', {
+        markerId: marker.id,
+        turnIndex: marker.turnIndex,
+        messageIndex: marker.messageIndex,
+        markerLoaded: marker.loaded,
+        anchorFound: Boolean(currentAnchor),
+        markerTargetTop: marker.targetTop,
+        activeMarkerId,
+        ...getScrollMetrics(scroller, currentAnchor),
+      })
       if (currentAnchor) {
         const gapMarker = findUnloadedMarkerBetween(markersRef.current, activeMarkerId, marker.id)
         if (gapMarker && onLoadTurnNavigationItem) {
@@ -245,7 +340,7 @@ export function MessageTurnNavigation({
             finishNavigationLoad(onNavigationLoadStateChange)
           }
         }
-        scrollToMessageAnchor(scroller, currentAnchor, 'smooth')
+        scrollToMessageId(scroller, marker.id, 'smooth')
         setActiveMarkerId(marker.id)
         return
       }
@@ -253,13 +348,16 @@ export function MessageTurnNavigation({
       if (!marker.cursor || !onLoadTurnNavigationItem) {
         return
       }
-      setPendingScrollTargetId(marker.id)
+      setPendingScrollTarget({
+        navigationId: marker.id,
+        messageIndex: marker.messageIndex,
+      })
       setLoadingMarkerId(marker.id)
       onNavigationLoadStateChange?.(true)
       try {
         await onLoadTurnNavigationItem(marker)
       } catch (error) {
-        setPendingScrollTargetId(current => (current === marker.id ? null : current))
+        setPendingScrollTarget(current => (current?.navigationId === marker.id ? null : current))
         setLoadingMarkerId(current => (current === marker.id ? null : current))
         onNavigationLoadStateChange?.(false)
         console.error('[Wework] Message turn navigation marker load failed', {
@@ -268,7 +366,22 @@ export function MessageTurnNavigation({
         })
       }
     },
-    [activeMarkerId, contentRef, onLoadTurnNavigationItem, onNavigationLoadStateChange, scrollRef]
+    [
+      activeMarkerId,
+      contentRef,
+      onLoadTurnNavigationItem,
+      onNavigationLoadStateChange,
+      scrollRef,
+      scrollToMessageId,
+    ]
+  )
+
+  useEffect(
+    () => () => {
+      clearNavigationScrollTimers()
+      onNavigationScrollTargetChange?.(null)
+    },
+    [clearNavigationScrollTimers, onNavigationScrollTargetChange]
   )
 
   if (markers.length === 0) return null
@@ -277,7 +390,7 @@ export function MessageTurnNavigation({
   const hoveredMarkerIndex =
     hoveredMarkerId === null ? -1 : markers.findIndex(marker => marker.id === hoveredMarkerId)
 
-  return (
+  const navigation = (
     <nav
       aria-label={t('message_navigation.label', '历史发言导航')}
       className="pointer-events-none absolute top-1/2 z-popover hidden -translate-y-1/2 lg:block"
@@ -370,6 +483,8 @@ export function MessageTurnNavigation({
       ))}
     </nav>
   )
+
+  return portalTarget ? createPortal(navigation, portalTarget) : navigation
 }
 
 function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
@@ -406,16 +521,29 @@ function buildUserTurnsFromNavigation(
   navigation: RuntimeTurnNavigationItem[],
   messages: WorkbenchMessage[]
 ): UserTurn[] {
-  const loadedMessageIds = new Set(messages.map(message => message.id))
-  return navigation.map((item, index) => ({
-    id: item.id,
-    turnIndex: typeof item.turnIndex === 'number' ? item.turnIndex : index,
-    messageIndex: item.messageIndex,
-    promptPreview: item.promptPreview,
-    responsePreview: item.responsePreview ?? '',
-    cursor: item.cursor ?? `offset:${item.messageIndex}`,
-    loaded: loadedMessageIds.has(item.id),
-  }))
+  const loadedMessagesByIndex = new Map(
+    messages
+      .filter(
+        (message): message is WorkbenchMessage & { runtimeMessageIndex: number } =>
+          message.role === 'user' && typeof message.runtimeMessageIndex === 'number'
+      )
+      .map(message => [message.runtimeMessageIndex, message])
+  )
+  const loadedMessagesById = new Map(messages.map(message => [message.id, message]))
+
+  return navigation.map((item, index) => {
+    const loadedMessage =
+      loadedMessagesByIndex.get(item.messageIndex) ?? loadedMessagesById.get(item.id)
+    return {
+      id: loadedMessage?.id ?? item.id,
+      turnIndex: typeof item.turnIndex === 'number' ? item.turnIndex : index,
+      messageIndex: item.messageIndex,
+      promptPreview: item.promptPreview,
+      responsePreview: item.responsePreview ?? '',
+      cursor: item.cursor ?? `offset:${item.messageIndex}`,
+      loaded: Boolean(loadedMessage),
+    }
+  })
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {
@@ -560,10 +688,41 @@ function findMessageAnchor(
   return content ? (getMessageAnchorById(content).get(messageId) ?? null) : null
 }
 
+function findLoadedNavigationMessageId(
+  messages: WorkbenchMessage[],
+  target: PendingScrollTarget
+): string | null {
+  const indexedMessage = messages.find(
+    message => message.role === 'user' && message.runtimeMessageIndex === target.messageIndex
+  )
+  if (indexedMessage) return indexedMessage.id
+
+  return messages.some(message => message.id === target.navigationId) ? target.navigationId : null
+}
+
 function getMessageAnchorTargetTop(scroller: HTMLDivElement, anchor: HTMLElement) {
   const scrollerRect = scroller.getBoundingClientRect()
   const anchorRect = anchor.getBoundingClientRect()
   return Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
+}
+
+function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | null) {
+  const scrollerRect = scroller.getBoundingClientRect()
+  const anchorRect = anchor?.getBoundingClientRect()
+  return {
+    scrollTop: scroller.scrollTop,
+    scrollHeight: scroller.scrollHeight,
+    clientHeight: scroller.clientHeight,
+    distanceFromBottom: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+    scrollerTop: scrollerRect.top,
+    anchorTop: anchorRect?.top ?? null,
+    anchorHeight: anchorRect?.height ?? null,
+    anchorOffsetFromScroller: anchorRect ? anchorRect.top - scrollerRect.top : null,
+  }
+}
+
+function logTurnNavigation(event: string, details: Record<string, unknown>) {
+  console.warn(`[Wework] Message turn navigation ${event}`, details)
 }
 
 function getMessageAnchorById(content: HTMLElement) {

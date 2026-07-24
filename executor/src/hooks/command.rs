@@ -90,10 +90,17 @@ pub async fn execute_command_hook<T: Serialize>(
 }
 
 fn platform_command(config: &CommandHookConfig) -> &str {
+    if let Some(command) = config.commands.get(&platform_target()) {
+        return command;
+    }
     #[cfg(windows)]
     return config.command_windows.as_deref().unwrap_or(&config.command);
     #[cfg(not(windows))]
     return &config.command;
+}
+
+fn platform_target() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 fn resolve_command(command: &str, plugin_dir: &Path) -> io::Result<String> {
@@ -230,6 +237,7 @@ mod tests {
             handler_type: "command".to_owned(),
             command,
             command_windows: None,
+            commands: BTreeMap::new(),
             timeout: 2,
             asynchronous: false,
             status_message: None,
@@ -267,5 +275,14 @@ mod tests {
         let outcome =
             execute_command_hook(&hook, directory.path(), directory.path(), &json!({})).await;
         assert!(outcome.timed_out);
+    }
+
+    #[test]
+    fn selects_the_current_os_and_arch_command() {
+        let mut hook = config("fallback".to_owned());
+        hook.commands
+            .insert(platform_target(), "target-command".to_owned());
+
+        assert_eq!(platform_command(&hook), "target-command");
     }
 }

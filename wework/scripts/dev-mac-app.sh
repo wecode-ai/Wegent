@@ -360,6 +360,36 @@ if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
   exit 0
 fi
 
+HOOK_BUILD_TARGET="$MACOS_BUILD_TARGET"
+if [ -z "$HOOK_BUILD_TARGET" ]; then
+  HOOK_BUILD_TARGET="$(rustc -vV | awk '/^host:/ { print $2 }')"
+fi
+case "$HOOK_BUILD_TARGET" in
+  aarch64-apple-darwin|x86_64-apple-darwin) ;;
+  *)
+    echo "Error: unsupported macOS Hook build target: $HOOK_BUILD_TARGET" >&2
+    exit 1
+    ;;
+esac
+echo "Building bundled Hooks for $HOOK_BUILD_TARGET"
+"$WEWORK_DIR/src-tauri/hook-plugins/codex-code-statistics/build-target.sh" "$HOOK_BUILD_TARGET"
+
+if [ -n "$MACOS_BUILD_TARGET" ]; then
+  DEV_RESOURCE_DIR="$CARGO_TARGET_DIR/$MACOS_BUILD_TARGET/debug/bundled-hooks"
+else
+  DEV_RESOURCE_DIR="$CARGO_TARGET_DIR/debug/bundled-hooks"
+fi
+case "$DEV_RESOURCE_DIR" in
+  */debug/bundled-hooks) ;;
+  *)
+    echo "Error: unsafe bundled Hook resource path: $DEV_RESOURCE_DIR" >&2
+    exit 1
+    ;;
+esac
+echo "Syncing bundled Hooks to $DEV_RESOURCE_DIR"
+mkdir -p "$DEV_RESOURCE_DIR"
+rsync -a --delete "$WEWORK_DIR/src-tauri/bundled-hooks/" "$DEV_RESOURCE_DIR/"
+
 cd "$WEWORK_DIR"
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then

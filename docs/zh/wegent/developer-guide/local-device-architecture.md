@@ -65,9 +65,17 @@ Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、�
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
 
+executor 当前进程维护的活跃任务集合是 `running` 的唯一权威来源。Codex 的 thread 列表、transcript、已持久化的任务摘要和 Wework 本地提醒都只能提供内容或历史元数据，不能自行推断任务仍在运行。任务列表、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 重启后不在新进程活跃集合中的旧 thread 应视为空闲，即使 Codex 元数据仍短暂显示 `active` 或 `inProgress`。
+
+任务摘要同时透传 Codex 的 `threadStatus`（`notLoaded`、`idle`、`systemError`、`active`）和 `turnStatus`（`inProgress`、`completed`、`interrupted`、`failed`）。`continuable` 单独表示会话未归档、仍可继续发送消息；它不能用于推断当前回合正在运行。Wework 只使用明确的 `running` 和真实回合状态显示运行反馈，不把线程或消息的 `active` 状态转换为 streaming。
+
+线程元数据刷新也不能覆盖已经持久化的任务终态。当 Codex 线程进入 `idle` 时，executor 保留本地 `done`、`cancelled` 或 `failed`；只有真实活跃回合才能把任务重新设置为 `running`。因此，一个正常完成且可继续的会话会同时表现为 `status=done`、`running=false`、`continuable=true`、`threadStatus=idle` 和 `turnStatus=completed`。
+
 目标（goal）有独立的生命周期。目标为 `active` 表示其目标仍可在后续回合继续推进，不表示当前存在模型回合。因此，任务空闲时保留 active goal 不会将任务重新标记为运行中；用户发送下一条消息会直接创建新回合，而不是把消息作为对运行中回合的引导。
 
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
+
+同一对话可在回合之间切换模型。Wework 为每次续聊传递所选模型及其 provider 配置，executor 在恢复空闲 Codex thread 前等待当前 app-server 订阅真正释放，使 `thread/resume` 能应用新的 provider 覆盖，随后由恢复操作重新订阅。若不等待释放完成，Codex 会保留已加载 thread 的旧 provider，即使 `turn/start` 中的模型名已经变化，实际请求仍可能发往旧的自定义模型上游。对于仍缓存旧本地路由 URL 的已加载 thread，本地模型代理还会依据本次请求的模型，在相同网关地址和凭据作用域内选择当前活跃的模型注册；这样模型切换继续使用 `resume` 保持原会话上下文，无需 fork thread，也不会跨用户或跨 provider 复用凭据。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。
 
 Wework 在发送用户消息前生成稳定的客户端消息 ID，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求传入 executor，再映射到 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留对应的 `clientMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 

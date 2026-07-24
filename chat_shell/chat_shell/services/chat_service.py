@@ -18,6 +18,7 @@ Architecture:
 Uses unified ResponsesAPIEmitter from shared module for event emission.
 """
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
@@ -190,9 +191,21 @@ class ChatService(ChatInterface):
             await self._process_chat(request, core, state, emitter)
             add_span_event("processing_chat_completed")
 
+        except asyncio.CancelledError:
+            # Surface cancellation (client disconnect, upstream timeout, shutdown)
+            # explicitly — the ``except Exception`` below cannot see it.
+            logger.warning(
+                "[CHAT_SERVICE] chat() cancelled: task_id=%s subtask_id=%s",
+                request.task_id,
+                request.subtask_id,
+            )
+            raise
         except Exception as e:
             add_span_event("chat_error", {"error": str(e)})
-            logger.exception("[CHAT_SERVICE] Exception in chat(): %s", e)
+            logger.exception(
+                "[CHAT_SERVICE] Exception in chat(): type=%s",
+                type(e).__name__,
+            )
             await core.handle_error(e)
         finally:
             add_span_event("releasing_resources")

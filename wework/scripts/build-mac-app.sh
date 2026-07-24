@@ -21,12 +21,14 @@ source "$SCRIPT_DIR/lib/wework-branding.sh"
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 # shellcheck source=lib/wework-macos-sidecar.sh
 source "$SCRIPT_DIR/lib/wework-macos-sidecar.sh"
+# shellcheck source=lib/codex-code-statistics.sh
+source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
 
 BUILD_PROFILE="${WEWORK_BUILD_PROFILE:-release}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
 TAURI_BUNDLES="${WEWORK_TAURI_BUNDLES:-}"
 NO_SIGN="${WEWORK_NO_SIGN:-}"
-RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
+RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-1}"
 BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-}"
 
 usage() {
@@ -37,7 +39,7 @@ Options:
   --profile <dev|release>  Build profile. Default: release.
   --target <target>        macOS Rust/Tauri target, e.g. aarch64-apple-darwin.
   --bundles <bundles>      Tauri bundles to package, e.g. app or app,dmg.
-  --devtools               Enable Web Inspector support in release builds.
+  --devtools               Enable Web Inspector support (enabled by default).
   --brand-config <path>    Brand identity JSON used for this app bundle.
   --sign                   Allow signing in dev profile.
   --no-sign                Skip code signing.
@@ -47,7 +49,7 @@ Environment:
   WEWORK_BUILD_PROFILE     Default profile when --profile is not provided.
   MACOS_BUILD_TARGET       Default macOS Rust/Tauri target.
   WEWORK_TAURI_BUNDLES     Default bundle list when --bundles is not provided.
-  WEWORK_RELEASE_DEVTOOLS  Set to 1 to compile Tauri devtools into release builds.
+  WEWORK_RELEASE_DEVTOOLS  Set to 0 to omit Web Inspector support.
   WEWORK_BRAND_CONFIG      Default brand identity JSON.
   WEWORK_NO_SIGN           Set to 1 to pass --no-sign.
   VITE_WEGENT_BACKEND_URL  Default Backend URL shown in Connect cloud.
@@ -56,7 +58,7 @@ Environment:
 Examples:
   bash wework/scripts/build-mac-app.sh --profile dev --target aarch64-apple-darwin
   bash wework/scripts/build-mac-app.sh --target aarch64-apple-darwin
-  WEWORK_RELEASE_DEVTOOLS=1 bash wework/scripts/build-mac-app.sh --target aarch64-apple-darwin
+  WEWORK_RELEASE_DEVTOOLS=0 bash wework/scripts/build-mac-app.sh --target aarch64-apple-darwin
 EOF
 }
 
@@ -282,17 +284,17 @@ TAURI_ARGS=(build)
 if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
 fi
-if [ -n "$BRAND_CONFIG" ] || [ "$RELEASE_DEVTOOLS" = "1" ]; then
-  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.XXXXXX.json")"
-  wework_prepare_brand_config "$WEWORK_DIR" "$BRAND_CONFIG" "${RELEASE_DEVTOOLS:-0}" "$CONFIG_OVERRIDE"
+if [ -n "$BRAND_CONFIG" ]; then
+  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.json.XXXXXX")"
+  wework_prepare_brand_config "$WEWORK_DIR" "$BRAND_CONFIG" "0" "$CONFIG_OVERRIDE"
   if [ -f "$CONFIG_OVERRIDE.namespace" ]; then
     export WEWORK_EXECUTOR_NAMESPACE="$(<"$CONFIG_OVERRIDE.namespace")"
     rm -f "$CONFIG_OVERRIDE.namespace"
   fi
-  if [ "$RELEASE_DEVTOOLS" = "1" ]; then
-    TAURI_ARGS+=(--features release-devtools)
-  fi
   TAURI_ARGS+=(--config "$CONFIG_OVERRIDE")
+fi
+if [ "$RELEASE_DEVTOOLS" = "1" ]; then
+  TAURI_ARGS+=(--features release-devtools)
 fi
 if [ -n "$MACOS_BUILD_TARGET" ]; then
   TAURI_ARGS+=(--target "$MACOS_BUILD_TARGET")
@@ -312,6 +314,13 @@ wework_build_macos_executor_sidecar \
   "$WEWORK_DIR" \
   "$MACOS_BUILD_TARGET" \
   "$BUILD_PROFILE"
+wework_build_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET"
+if [ "$NO_SIGN" != "1" ]; then
+  wework_sign_code_statistics_hook \
+    "$WEWORK_DIR" \
+    "$MACOS_BUILD_TARGET" \
+    "${APPLE_SIGNING_IDENTITY:-}"
+fi
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \
@@ -329,4 +338,7 @@ if [ -n "$MACOS_BUILD_TARGET" ]; then
   tauri_target_root="$tauri_target_root/$MACOS_BUILD_TARGET"
 fi
 wework_verify_macos_app_executor_sidecar "$tauri_target_root/$profile_dir/bundle"
+wework_verify_code_statistics_hook \
+  "$tauri_target_root/$profile_dir/bundle" \
+  "$MACOS_BUILD_TARGET"
 notarize_built_macos_dmgs "$BUILD_STARTED_AT"

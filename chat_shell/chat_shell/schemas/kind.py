@@ -119,6 +119,10 @@ class ModelSpec(BaseModel):
     maxOutputTokens: Optional[int] = None
     modelType: Optional[ModelCategoryType] = ModelCategoryType.LLM
     modelCapabilities: Optional[ModelCapabilities] = None
+    isWeworkAvailable: Optional[bool] = Field(
+        None,
+        description="Whether this model is available in the wework desktop client.",
+    )
 
 
 class ModelStatus(Status):

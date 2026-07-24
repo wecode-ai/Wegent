@@ -64,6 +64,7 @@ Wegent 支持多种集成方式：
 | 文档 | 说明 |
 |------|------|
 | [IM 渠道集成](./im-channel-integration.md) | 配置与即时通讯工具的集成 |
+| [应用连接](./connector-apps.md) | 让智能体通过管理员托管的 Connector Apps 调用内部系统 |
 
 ---
 

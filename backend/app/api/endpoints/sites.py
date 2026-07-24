@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Authenticated Backend proxy endpoints for the Sites service."""
+"""Authenticated Backend proxy endpoints for the Sites project API."""
 
 from typing import NoReturn
 
@@ -10,7 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.core import security
 from app.models.user import User
-from app.schemas.site import SiteListResponse, SiteResponse
+from app.schemas.site import (
+    SiteListResponse,
+    SiteNetworkUpdateRequest,
+    SiteResponse,
+    SiteUpdateRequest,
+)
 from app.services.sites import (
     SitesNotAvailableError,
     SitesUpstreamResponseError,
@@ -46,14 +51,6 @@ def _raise_sites_error(error: Exception) -> NoReturn:
     raise error
 
 
-def _ensure_site_owner(site: SiteResponse, current_user: User) -> None:
-    if site.username != current_user.user_name:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "site_not_found", "message": "Site not found"},
-        )
-
-
 @router.get("", response_model=SiteListResponse)
 async def list_sites(
     q: str | None = Query(default=None),
@@ -82,13 +79,66 @@ async def publish_site(
     siteid: str,
     current_user: User = Depends(security.get_current_user),
 ) -> SiteResponse:
-    """Publish an owned site to the public internet."""
+    """Publish an owned site by switching its project network to outer."""
     try:
-        site = await sites_service.get_site(siteid)
-        _ensure_site_owner(site, current_user)
-        return await sites_service.publish_site(siteid)
+        return await sites_service.update_site_network(
+            siteid,
+            username=current_user.user_name,
+            network="outer",
+        )
     except HTTPException:
         raise
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+
+
+@router.put("/{siteid}/network", response_model=SiteResponse)
+async def update_site_network(
+    siteid: str,
+    request: SiteNetworkUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+) -> SiteResponse:
+    """Update an owned site network scope."""
+    try:
+        return await sites_service.update_site_network(
+            siteid,
+            username=current_user.user_name,
+            network=request.network,
+        )
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+
+
+@router.put("/{siteid}", response_model=SiteResponse)
+async def update_site(
+    siteid: str,
+    request: SiteUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+) -> SiteResponse:
+    """Update an owned site name."""
+    sitename = (request.sitename or request.name or "").strip()
+    if not sitename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "validation_error",
+                "message": "Site name is required",
+            },
+        )
+    try:
+        return await sites_service.update_site_name(
+            siteid,
+            username=current_user.user_name,
+            sitename=sitename,
+        )
     except (
         SitesNotAvailableError,
         SitesUpstreamUnavailableError,
@@ -102,11 +152,9 @@ async def delete_site(
     siteid: str,
     current_user: User = Depends(security.get_current_user),
 ) -> Response:
-    """Delete an owned site registration and its public entry."""
+    """Delete an owned site project."""
     try:
-        site = await sites_service.get_site(siteid)
-        _ensure_site_owner(site, current_user)
-        await sites_service.delete_site(siteid)
+        await sites_service.delete_site(siteid, username=current_user.user_name)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except HTTPException:
         raise

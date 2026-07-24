@@ -44,10 +44,16 @@ Run only the plugin marketplace, install, chat-use, and uninstall flow:
 pnpm --filter wework e2e:desktop:plugins
 ```
 
-Run the desktop streaming-memory regression on macOS:
+Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash
 pnpm --filter wework e2e:desktop:memory
+```
+
+Run only the regression that keeps “Thinking” below already-visible streaming assistant text and removes it after completion:
+
+```bash
+pnpm --filter wework e2e:desktop:streaming-text
 ```
 
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
@@ -56,10 +62,12 @@ The command starts a test-only Vite server through `wework/playwright.config.ts`
 pnpm exec vite --host 127.0.0.1 --port 4174 --mode e2e
 ```
 
-It also starts a Responses API mock:
+It also starts Responses API, Sites upstream, and Connector upstream mocks:
 
 ```bash
 node e2e/utils/mock-response-api-server.mjs
+node e2e/utils/mock-sites-upstream-server.mjs
+node e2e/utils/mock-connector-upstream-server.mjs
 ```
 
 Default configuration:
@@ -68,6 +76,10 @@ Default configuration:
 - `VITE_WEWORK_RUNTIME_MODE=backend`
 - `VITE_LOGIN_MODE=password`
 - `WEWORK_RESPONSE_API_MOCK_URL`: `http://127.0.0.1:9998`
+- `WEWORK_SITES_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9997`
+- `WEWORK_CONNECTOR_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9996`
+
+All three mock ports can be overridden with matching `*_PORT` environment variables: `WEWORK_RESPONSE_API_MOCK_PORT`, `WEWORK_SITES_UPSTREAM_MOCK_PORT`, and `WEWORK_CONNECTOR_UPSTREAM_MOCK_PORT`. If a port is overridden, tests can also receive the full matching URL environment variable directly.
 
 Tests do not mock backend APIs. When Backend is not running, the login-page smoke test only verifies that the frontend renders the login entrypoint. Business flows after login must start a real Backend and required services in CI.
 
@@ -82,9 +94,14 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 5. Sends a follow-up in the same conversation and verifies its request and rendered response.
 6. Starts a streaming response, cancels it through the desktop UI, verifies the stopped task state and rendered stop notice, then verifies the composer accepts a subsequent message.
 7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
-8. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
+8. Creates a short two-turn conversation, switches to a new conversation, reopens the original conversation, and verifies that its first message remains near the top of the message viewport instead of leaving a large virtual-list gap.
+9. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a send → `apply_patch` → tool result → follow-up lifecycle, while real Codex executes the tool in the isolated workspace.
+
+`e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The test verifies that “Thinking” appears below the visible reply and disappears after the response is released. It retains screenshots for the ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
+
+The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
@@ -96,11 +113,13 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
 
-The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. Only the model Responses API used by Codex is simulated; Backend HTTP and WebSocket APIs must not be mocked. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
+The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. Only the model Responses API used by Codex is simulated; Backend HTTP and WebSocket APIs must not be mocked. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
 The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, insertion of the plugin reference into the chat composer, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for all four critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
 
-The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. Every 500 milliseconds it samples the aggregate physical footprint of all associated WebKit Web Content processes, writing the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 512 MiB, settled growth after completion to 256 MiB, and continued growth during the settled window to 32 MiB. The first two limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` and `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`.
+The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. The test first waits for the Web Content memory baseline to stabilize, then samples the aggregate physical footprint of all associated WebKit Web Content processes every 500 milliseconds. It writes the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 384 MiB, settled growth after completion to 224 MiB, and the full physical-footprint range within the settled window to 16 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 900 retained nodes by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES`.
+
+The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, WebKit Web Content/GPU/Networking processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. The gate requires the whole process group to stay below an 800 MiB peak and can be adjusted with `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB`. The scenario also switches between the first and last tasks and waits for each task's prompt content to reappear.
 
 ## Responses API Mock
 
@@ -118,6 +137,105 @@ The mock enables CORS, so the Wework page can call it with a real browser `fetch
 
 ```text
 http://127.0.0.1:9998/v1
+```
+
+## External Upstream Mocks
+
+Wework E2E also starts two local loopback upstream mocks. They replace only services outside Wegent; they do not replace Wegent Backend, Executor, Codex, `/api/sites`, `/api/apps/installed`, or connector runtime APIs.
+
+`wework/e2e/utils/mock-sites-upstream-server.mjs` simulates the Sites project API:
+
+- `GET /api/v1/projects/search`: returns deterministic projects and supports `username`, `limit`, `sitename`, and `cursor`.
+- `POST /api/v1/projects/deploy/network`: updates project network visibility.
+- `POST /api/v1/projects/update`: updates project name.
+- `POST /api/v1/projects/del`: deletes a project.
+- `GET /captured-requests`, `POST /clear-requests`, `POST /reset`, `GET /health`: assertion and reset helpers.
+
+To cover the Sites path through a real Backend, start Backend with the following environment variables. These variables must be passed to the Backend process; passing them to Vite or the Playwright page does not configure Backend.
+
+```text
+SITES_API_BASE_URL=http://127.0.0.1:9997
+SITES_API_TOKEN=e2e-sites-token
+```
+
+Example:
+
+```bash
+cd backend
+SITES_API_BASE_URL=http://127.0.0.1:9997 \
+SITES_API_TOKEN=e2e-sites-token \
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+`wework/e2e/utils/mock-connector-upstream-server.mjs` simulates external services that connector apps can target:
+
+- `GET /api/tickets/{id}`: acts as an HTTP connector upstream.
+- `POST /mcp`: provides minimal Streamable HTTP MCP JSON-RPC behavior for `initialize`, `tools/list`, and `tools/call`.
+- `GET /captured-requests`, `POST /clear-requests`, `GET /health`: assertion and reset helpers.
+
+Connector app test data can use:
+
+```text
+HTTP connector base URL: http://127.0.0.1:9996/api
+MCP URL: http://127.0.0.1:9996/mcp
+```
+
+An HTTP connector fixture can use:
+
+```json
+{
+  "slug": "ticket-http",
+  "name": "Ticket HTTP API",
+  "description": "E2E HTTP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "http",
+  "mcp_url": "http://127.0.0.1:9996/api",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["get_ticket"],
+  "http_tools": [
+    {
+      "name": "get_ticket",
+      "description": "Get one mock ticket",
+      "method": "GET",
+      "path": "/tickets/{id}",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "expand": { "type": "boolean" }
+        },
+        "required": ["id"]
+      },
+      "argument_locations": {
+        "id": "path",
+        "expand": "query"
+      }
+    }
+  ]
+}
+```
+
+An MCP connector fixture can use:
+
+```json
+{
+  "slug": "docs-mcp",
+  "name": "Docs MCP",
+  "description": "E2E Streamable HTTP MCP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "streamable-http",
+  "mcp_url": "http://127.0.0.1:9996/mcp",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["search_docs"]
+}
 ```
 
 ## Automation Bridge

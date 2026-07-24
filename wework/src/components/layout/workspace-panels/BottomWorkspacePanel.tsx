@@ -1,4 +1,4 @@
-import { Code2, Monitor, SquareTerminal, X } from 'lucide-react'
+import { Monitor, SquareTerminal, X } from 'lucide-react'
 import { memo, useCallback, useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
@@ -14,7 +14,6 @@ import type { WorkspacePanelMenuActions } from './workspace-panel-tools'
 interface BottomWorkspacePanelTab {
   id: string
   title: string
-  defaultOpenTool?: 'terminal'
 }
 
 interface BottomWorkspacePanelProps {
@@ -33,11 +32,8 @@ interface BottomWorkspacePanelProps {
   onTerminalTabsEmpty?: () => void
 }
 
-function createTerminalTab(
-  index: number,
-  defaultOpenTool?: BottomWorkspacePanelTab['defaultOpenTool']
-): BottomWorkspacePanelTab {
-  return { id: `terminal-${index}`, title: `Terminal ${index}`, defaultOpenTool }
+function createTerminalTab(index: number): BottomWorkspacePanelTab {
+  return { id: `terminal-${index}`, title: `Terminal ${index}` }
 }
 
 export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
@@ -71,7 +67,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   const testId = (value: string) => (testIdsEnabled ? value : undefined)
 
   const openTerminalTab = useCallback(() => {
-    const tab = createTerminalTab(terminalSequence, 'terminal')
+    const tab = createTerminalTab(terminalSequence)
     setTerminalSequence(current => current + 1)
     setTabs(current => [...current, tab])
     setActiveTabId(tab.id)
@@ -149,16 +145,6 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
         label: t('workbench.terminal', '终端'),
         disabled: activeMenuActions.terminal.disabled,
         onSelect: openTerminalTab,
-      })
-    }
-    if (activeMenuActions.ide.visible) {
-      items.push({
-        id: 'ide',
-        testId: 'workspace-add-ide-option',
-        icon: Code2,
-        label: t('workbench.ide', 'IDE'),
-        disabled: activeMenuActions.ide.disabled,
-        onSelect: activeMenuActions.ide.run,
       })
     }
     if (activeMenuActions.desktop.visible) {
@@ -309,7 +295,7 @@ function BottomWorkspaceTabContent({
         currentProject={currentProject}
         devices={devices}
         workspaceTarget={workspaceTarget}
-        defaultOpenTool={tab.defaultOpenTool}
+        defaultOpenTool="terminal"
         onRequestClose={handleRequestClose}
         hideTerminalChrome
         preferLocalTerminal={preferLocalTerminal}

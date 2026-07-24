@@ -5,22 +5,28 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
+  GroupedModelSelect,
   ModelCascadeContent,
   type ModelCascadeLabels,
 } from '@/components/model-select/ModelCascadeSelect'
 import type { GroupableModel } from '@/components/model-select/model-grouping'
-
-jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
-  }),
-}))
 
 global.ResizeObserver = class ResizeObserver {
   observe() {}
   unobserve() {}
   disconnect() {}
 }
+
+Object.defineProperty(Element.prototype, 'scrollIntoView', {
+  configurable: true,
+  value: jest.fn(),
+})
+
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (_key: string, fallback?: string) => fallback ?? _key,
+  }),
+}))
 
 const labels: ModelCascadeLabels = {
   ungrouped: 'Ungrouped',
@@ -156,25 +162,13 @@ describe('ModelCascadeContent', () => {
     expect(footer).toHaveClass('shrink-0')
   })
 
-  it('shows model capability icons for image and video understanding', () => {
+  it('exposes model selection state to assistive technology', () => {
     render(
       <ModelCascadeContent
-        models={[
-          {
-            name: 'vision-model',
-            displayName: 'Vision Model',
-            provider: 'provider-one',
-            modelId: 'vision-model-id',
-            modelGroup: 'Primary One',
-            modelSubGroup: 'Secondary One',
-            config: {
-              modelCapabilities: {
-                supportsImage: true,
-                supportsVideo: true,
-              },
-            },
-          },
-        ]}
+        models={models}
+        selectedModel={models[0]}
+        selectedSpecialKey="default"
+        specialOptions={[{ key: 'default', label: 'Default model' }]}
         labels={labels}
         searchValue=""
         onSearchValueChange={jest.fn()}
@@ -182,8 +176,116 @@ describe('ModelCascadeContent', () => {
       />
     )
 
-    expect(screen.getByLabelText('图片理解')).toBeInTheDocument()
-    expect(screen.getByLabelText('视频理解')).toBeInTheDocument()
+    expect(screen.getByTestId('model-special-option-default')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('model-option-model-a')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('reserves a 44px mobile column for model actions', () => {
+    render(
+      <ModelCascadeContent
+        models={[models[0]]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+        renderModelActions={() => <button type="button">Model action</button>}
+        variant="mobile"
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-mobile-primary-group-Primary-One'))
+    fireEvent.click(screen.getByTestId('model-mobile-secondary-group-Secondary-One'))
+
+    expect(screen.getByTestId('model-mobile-option-model-a').parentElement).toHaveClass(
+      'grid-cols-[minmax(0,1fr)_44px]'
+    )
+  })
+
+  it('keeps desktop model actions in the third column when model attributes are empty', () => {
+    render(
+      <ModelCascadeContent
+        models={[models[0]]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+        renderModelActions={() => <button type="button">Model action</button>}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Model action' }).parentElement).toHaveClass(
+      'col-start-3'
+    )
+  })
+
+  it('shows keyboard-accessible image and video capability tooltips in model rows', async () => {
+    const capableModel: GroupableModel = {
+      ...models[0],
+      modelCapabilities: { supportsImage: true, supportsVideo: true },
+    }
+
+    render(
+      <ModelCascadeContent
+        models={[capableModel]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+      />
+    )
+
+    const imageCapability = screen.getByRole('button', { name: '图片理解' })
+    const videoCapability = screen.getByRole('button', { name: '视频理解' })
+
+    fireEvent.focus(imageCapability)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('图片理解')
+    expect(videoCapability).toBeInTheDocument()
+  })
+
+  it('falls back to model capabilities from config', () => {
+    const legacyModel = {
+      ...models[0],
+      config: {
+        modelCapabilities: { supportsImage: true, supportsVideo: true },
+      },
+    } as unknown as GroupableModel
+
+    render(
+      <ModelCascadeContent
+        models={[legacyModel]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: '图片理解' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '视频理解' })).toBeInTheDocument()
+  })
+
+  it('shows declared capabilities in the selected-model trigger', () => {
+    const capableModel: GroupableModel = {
+      ...models[0],
+      modelCapabilities: { supportsImage: true, supportsVideo: true },
+    }
+
+    render(
+      <GroupedModelSelect
+        models={[capableModel]}
+        selectedModel={capableModel}
+        labels={labels}
+        onSelectModel={jest.fn()}
+        placeholder="Select model"
+      />
+    )
+
+    expect(screen.getByTestId('grouped-model-select')).toHaveTextContent('Model A')
+    expect(screen.getByTitle('图片理解')).toBeInTheDocument()
+    expect(screen.getByTitle('视频理解')).toBeInTheDocument()
   })
 
   it('scrolls the selected model into view when the active subgroup contains many models', async () => {
@@ -243,5 +345,37 @@ describe('ModelCascadeContent', () => {
 
     fireEvent.click(screen.getByTestId('model-mobile-option-model-a'))
     expect(onSelectModel).toHaveBeenCalledWith(models[0])
+  })
+
+  it('shows declared capabilities in mobile model rows', () => {
+    const capableModel: GroupableModel = {
+      ...models[0],
+      modelCapabilities: { supportsImage: true, supportsVideo: true },
+    }
+
+    render(
+      <ModelCascadeContent
+        models={[capableModel]}
+        selectedModel={capableModel}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+        variant="mobile"
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-mobile-primary-group-Primary-One'))
+    fireEvent.click(screen.getByTestId('model-mobile-secondary-group-Secondary-One'))
+
+    expect(screen.getByTitle('图片理解')).toBeInTheDocument()
+    expect(screen.getByTitle('视频理解')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('model-mobile-option-model-a').querySelector('.lucide-check')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('model-mobile-option-model-a')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 })

@@ -62,6 +62,12 @@ Goal 条的运行态必须受当前 runtime task 的执行快照约束：当 App
 - 此派生只影响 Wework 的展示与计时，不会自动调用 goal 暂停接口。用户点击“暂停目标”才会持久化 `paused` 状态。
 - 任务重新处于 `running: true` 时，goal 继续使用 runtime goal API 返回的原始状态。
 
+Active Goal 的自动续跑状态由 root turn 生命周期事件单独驱动。收到
+`runtime.goal.continuation: started` 后，Goal 条必须持续显示“目标继续执行中”，包括
+assistant 已开始输出、思考或调用工具的阶段；assistant 输出开始不是 turn 结束信号，
+不得清除续跑状态。只有对应的 `settled` 事件、Goal 变为非 active 状态、Goal 被清除或
+pane 切换到其他任务时才清除该状态。
+
 用户停止一个带有 active goal 的当前回复时，Wework 必须先通过 runtime goal API
 持久化 `paused`，确认成功后再取消当前 turn。这个顺序先关闭自动续跑源，避免当前
 turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal 暂停失败，不得继续把
@@ -74,6 +80,10 @@ turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal �
 
 模式胶囊的取消按钮仅在悬停时显示，并绝对定位覆盖左侧图标；原图标在同一状态下淡出。不要通过展开取消按钮或额外边距改变胶囊宽度，否则标签会发生横向跳动。
 
+## Composer 草稿缓冲
+
+`BufferedChatInput` 在输入和提交期间保留 pane 级草稿，但外部 `value` 仍是已确认草稿的信源。提交非空草稿后，本地空状态必须绑定到预期的空外部值，不能继续绑定到刚提交的文本；否则队列或引导条把同一文本送回编辑器时，会被误判为旧草稿并显示为空。维护该逻辑时必须覆盖“提交文本 → 外部清空 → 编辑队列条目恢复相同文本”的回归场景。
+
 ## 长输出内存边界
 
 Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React state 中。`WorkbenchMessage.content`、thinking/text/plan block 的 `content`、tool block 的 `toolOutput` 都必须通过统一的预览窗口进入 `messages`：
@@ -83,6 +93,12 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 - 用户点击“加载完整输出”时，前端通过同一个 runtime transcript 方法请求 `includeFullContent: true`。executor 返回完整 transcript 和 `fullContent: true`，当前 pane 用完整 messages 替换预览 messages，并清空分页/gap 状态；后续展开其他控件直接复用该完整态，不再逐个走长路径。
 - `MessageList` 和 `ToolBlocksDisplay` 只能渲染当前预览内容和截断提示；仅用 CSS 折叠隐藏完整内容不算释放内存。
 - 右侧临时聊天必须复用同一套 reducer 与 stream action 批处理，不能为临时线程单独累积完整输出。
+
+## Transcript 合并顺序
+
+分页加载或刷新 runtime transcript 时，服务端返回的 `messageIndex` 是已持久化消息的主顺序。当前 pane 中还可能存在尚未带 `messageIndex` 的本地 user 或 streaming assistant 消息；合并逻辑必须用这些消息在现有列表中的前后已持久化消息作为锚点，保留其相对位置。不能把所有无序号消息统一排到 transcript 末尾，否则先前发送的用户消息会在刷新或加载历史页后沉到对话底部。
+
+加载较早页面或补中间 gap 时，带 `messageIndex` 的消息仍按服务端序号排序；同一锚点之间的本地消息保持 pane 中已有的稳定顺序。消息去重只使用稳定 message id，不根据内容、角色或 subtask 猜测身份。
 
 ## 引导消息顺序
 
@@ -107,8 +123,11 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 - 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该任务不写入左侧任务列表，也不触发主 pane 导航。
 - 后续消息必须继续使用已加载的临时线程。Codex app-server 路径使用 `direct_thread_id` 直接 `turn/start`，不能走普通 `resume_thread_id` 的 `thread/resume` 路径，否则会因为临时线程没有 rollout 映射而出现 `no rollout found`。
 - 临时聊天只复用当前工作区和当前线程上下文；如果没有可用的主线程 source，应阻止发送并提示用户先打开已有对话。
+- runtime work 列表刷新后，reducer 必须用同一设备、同一任务的权威 `threadId/runtimeHandle` 水合当前任务地址；不能因为设备仍在线就保留缺少 thread 的 optimistic address，否则右侧临时聊天无法建立 `sideSource`。
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
+
+修改该链路后运行 `pnpm --dir wework e2e:desktop`。主桌面场景会断言右栏约为 `420px`，在右栏上传并发送附件，并确认主 composer 始终没有继承右栏附件；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
 
 ## 顶层页面切换
 
@@ -119,6 +138,8 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 ## 工作台 pane 缓存
 
 桌面工作台最多缓存 20 个普通 pane，使用户在并行任务之间切换时保留消息、输入草稿和局部 UI 状态。超出上限后按最近使用顺序淘汰非活跃 pane；正在运行的任务和已固定终端的 pane 不计入普通缓存上限，并保持挂载直到任务结束或终端解除固定。维护此边界时应继续复用 `CachedWorkbenchPaneStack` 的 LRU 与固定机制，不能在布局层增加第二套 pane 缓存。
+
+消息区按 `conversationKey` 保存每个任务的阅读位置。任务切换时，恢复流程会在布局稳定窗口内重复对齐已保存的消息锚点；这段时间由程序触发的 `scroll` 事件不能覆盖快照。用户主动滚轮或触摸滚动时则应立即退出恢复状态。修改这条链路时，必须覆盖“滚到长回复中部 → 切到另一任务 → 切回原任务”的真实桌面 E2E，并保留切换前、切换后和恢复后的截图。
 
 ## 审核结果
 

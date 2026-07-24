@@ -68,6 +68,12 @@ To reduce frontend and executor memory pressure, runtime task lists, runtime han
 
 Conversation rendering still uses `WorkbenchMessage` values produced from transcript loads and message actions. Task lists and status polling are for status, titles, running state, and workspace metadata. When investigating slow list refreshes or memory growth while switching tasks, first check whether raw messages or command output have been reintroduced into the runtime list, handle, or transcript metadata path.
 
+### Pane Cache and Resource Lifetimes
+
+The desktop workbench caches at most 10 ordinary panes and evicts them in least-recently-used order. An inactive pane that is no longer running releases transcript messages, historical DOM, pagination ranges, navigation indexes, and processing expansion state; returning to it reloads from the original runtime transcript. Historical messages far from the viewport in the current pane also retain only a height placeholder and restore their contents when scrolled near the viewport.
+
+Terminal and built-in browser sessions are stateful active resources and do not follow ordinary pane eviction. A pane remains mounted while it owns a Terminal or browser tab so its terminal process and page session survive task switches. After the corresponding resources close, the pane is subject to the ordinary cache limit again. Changes to this boundary must continue to cover ordinary-pane LRU eviction, resource-pane retention, historical-message windowing, and the desktop memory E2E.
+
 ## Local Codex Streaming Logs
 
 The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.
@@ -114,19 +120,7 @@ The latest 300 events are kept in memory and exposed through `window.__WEWORK_PE
 
 ## Capturing Evidence
 
-Normal release builds do not compile Tauri Web Inspector support. To investigate a release build, first create a diagnostics build:
-
-```bash
-pnpm --filter wework build:mac:devtools
-```
-
-To create an updater-compatible diagnostics build through the macOS release script, use:
-
-```bash
-bash wework/scripts/release-mac-app.sh --target local --devtools
-```
-
-You can also set `WEWORK_RELEASE_DEVTOOLS=1`. After launching the diagnostics build, press the hidden shortcut to open **Developer Commands**, then select **Open Web Inspector**. To open it automatically at startup, use:
+Release builds compile Tauri Web Inspector support by default, while the main WebView remains non-inspectable so its native WebKit context menu does not contain Inspect Element. When the user selects **Open Web Inspector** from the hidden **Developer Commands** menu, the native command dynamically enables `WKWebView.isInspectable` and opens the Inspector. This command is independent of the Performance Diagnostics switch and requires macOS 13.3 or newer. The built-in browser is a separate WebView and retains right-click Inspect Element. Set `WEWORK_RELEASE_DEVTOOLS=0` when a distribution must omit Inspector support. To open it automatically for a local diagnostic launch, use:
 
 ```bash
 WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork

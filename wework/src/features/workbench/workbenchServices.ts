@@ -1,4 +1,5 @@
 import { createDeviceApi } from '@/api/devices'
+import { createDeliveryApi } from '@/api/deliveries'
 import {
   createExecutorClientFromApis,
   type ExecutorClient,
@@ -24,6 +25,7 @@ import type {
   DeviceInfo,
   ProjectDeviceSessionResponse,
   RuntimeWorkListResponse,
+  User,
 } from '@/types/api'
 import type { DeviceSessionResponse } from '@/types/devices'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
@@ -68,6 +70,7 @@ export interface WorkbenchServices {
       typeof createDeviceApi
     >['createDockerRemoteDeviceCommand']
   }
+  deliveryApi?: ReturnType<typeof createDeliveryApi>
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   attachmentApi?: {
@@ -94,6 +97,7 @@ interface CloudConnectionServicesSnapshot {
   socketBaseUrl?: string
   socketPath?: string
   token: string | null
+  user?: User
 }
 
 export function createExecutorClientForWorkbenchServices(
@@ -133,9 +137,10 @@ export function createDefaultWorkbenchServices(
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
+        user: cloudConnection.user,
       })
     }
-    return createLocalAppServices()
+    return createLocalAppServices({ user: cloudConnection?.user })
   }
 
   return createBackendWorkbenchServices()

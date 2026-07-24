@@ -1,11 +1,21 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeftRight, MessageCircle, MessageSquareWarning } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
+import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { TodoBindingPicker } from '@/features/todo/TodoBindingPicker'
+import {
+  hydrateLocalWorkItems,
+  loadLocalWorkItems,
+  saveLocalWorkItems,
+  type LocalWorkItem,
+} from '@/features/todo/todoModel'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -77,13 +87,11 @@ import {
 } from '@/components/chat/requestUserInputMessages'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
-  CachedWorkbenchPaneStack,
   getRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
-  useWorkbenchPaneActive,
-  WorkbenchPaneActiveOnly,
   type WorkbenchPaneIdentity,
-} from './workbenchPaneStack'
+} from './workbenchPaneIdentity'
+import { CachedWorkbenchPaneStack, useWorkbenchPaneActive } from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import {
   formatEnvironmentReviewErrorMessage,
@@ -101,7 +109,7 @@ import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeAdditionalContext, RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
@@ -125,16 +133,80 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
-const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 20
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
+function cloudItemAsLocalWorkItem(
+  item: CloudLoopItem,
+  runtimeTask: RuntimeTaskAddress
+): Omit<LocalWorkItem, 'projectId'> {
+  return {
+    id: item.id,
+    title: item.title,
+    objective: '',
+    description: item.description,
+    state:
+      item.status === 'completed'
+        ? 'completed'
+        : item.status === 'in_review'
+          ? 'review'
+          : item.status === 'in_progress'
+            ? 'started'
+            : 'backlog',
+    assignee: item.assignee_user_id
+      ? { type: 'human', id: String(item.assignee_user_id) }
+      : { type: 'unassigned' },
+    collaborators: [],
+    blocker: '',
+    nextAction: '',
+    priority: item.priority === 'medium' ? 'normal' : item.priority,
+    attachments: [],
+    runtimeRefs: [runtimeTask],
+    events: [],
+    sortOrder: item.sort_order,
+    createdAt: item.created_at,
+    updatedAt: item.updated_at,
+  }
+}
 
+interface PendingTodoBinding {
+  project: CloudProject
+  item: CloudLoopItem | null
+  target: RuntimeTaskAddress | null
+}
+
+let pendingTodoBinding: PendingTodoBinding | null = null
+
+function pendingTodoForTask(address: RuntimeTaskAddress | null) {
+  if (!pendingTodoBinding) return null
+  if (!address) return pendingTodoBinding.target ? null : pendingTodoBinding.item
+  const target = pendingTodoBinding.target
+  return target?.deviceId === address.deviceId && target.taskId === address.taskId
+    ? pendingTodoBinding.item
+    : null
+}
+
+function pendingProjectForTask(address: RuntimeTaskAddress | null) {
+  if (!pendingTodoBinding) return null
+  if (!address) return pendingTodoBinding.target ? null : pendingTodoBinding.project
+  const target = pendingTodoBinding.target
+  return target?.deviceId === address.deviceId && target.taskId === address.taskId
+    ? pendingTodoBinding.project
+    : null
+}
+
+const MAX_CACHED_DESKTOP_WORKBENCH_PANES = 1
 interface SelectedAssistantPlan {
   blockId: string
   subtaskId: string
   fallbackContent: string
+}
+
+interface WorkbenchPaneWorkspaceState {
+  rightPanelOpen: boolean
+  rightPanelView: RightWorkspacePanelView
+  rightPanelTabs: RightWorkspacePanelTab[]
 }
 
 interface PendingBlankBrowserMigration {
@@ -263,32 +335,64 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const isTauri = isTauriRuntime()
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
   const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
-  const [terminalPinnedPaneKeys, setTerminalPinnedPaneKeys] = useState<string[]>([])
+  const [terminalPinOwnersByPane, setTerminalPinOwnersByPane] = useState<Record<string, string[]>>(
+    {}
+  )
+  const paneWorkspaceStateRef = useRef(new Map<string, WorkbenchPaneWorkspaceState>())
+  const terminalPinnedPaneKeys = useMemo(
+    () =>
+      Object.keys(terminalPinOwnersByPane).filter(key => terminalPinOwnersByPane[key].length > 0),
+    [terminalPinOwnersByPane]
+  )
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
   )
-  const validRuntimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
+  const runtimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
   const prunedPaneKeys = useMemo(
-    () => terminalPinnedPaneKeys.filter(key => !validRuntimePaneKeySet.has(key)),
-    [terminalPinnedPaneKeys, validRuntimePaneKeySet]
+    () =>
+      terminalPinnedPaneKeys.filter(
+        key => key.startsWith('runtime:') && !runtimePaneKeySet.has(key)
+      ),
+    [runtimePaneKeySet, terminalPinnedPaneKeys]
   )
-  const pinnedPaneKeys = runtimePaneKeys
-  const pinTerminalPane = useCallback((paneKey: string) => {
-    setTerminalPinnedPaneKeys(current =>
-      current.includes(paneKey) ? current : [...current, paneKey]
-    )
+  const setTerminalPanePinned = useCallback((paneKey: string, owner: string, pinned: boolean) => {
+    setTerminalPinOwnersByPane(current => {
+      const owners = current[paneKey] ?? []
+      const nextOwners = pinned
+        ? owners.includes(owner)
+          ? owners
+          : [...owners, owner]
+        : owners.filter(candidate => candidate !== owner)
+      if (nextOwners === owners) return current
+      if (nextOwners.length === 0) {
+        const next = { ...current }
+        delete next[paneKey]
+        return next
+      }
+      return { ...current, [paneKey]: nextOwners }
+    })
   }, [])
-  const unpinTerminalPane = useCallback((paneKey: string) => {
-    setTerminalPinnedPaneKeys(current => current.filter(key => key !== paneKey))
-  }, [])
-
+  const rememberPaneWorkspaceState = useCallback(
+    (paneKey: string, workspaceState: WorkbenchPaneWorkspaceState) => {
+      paneWorkspaceStateRef.current.set(paneKey, workspaceState)
+    },
+    []
+  )
+  useEffect(() => {
+    paneWorkspaceStateRef.current.forEach((_, key) => {
+      if (key.startsWith('runtime:') && !runtimePaneKeySet.has(key)) {
+        paneWorkspaceStateRef.current.delete(key)
+      }
+    })
+  }, [runtimePaneKeySet])
   const paneStack = (
     <CachedWorkbenchPaneStack
       activePane={props.activePane}
-      maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_TABS}
-      pinnedKeys={pinnedPaneKeys}
+      maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_PANES}
+      pinnedKeys={terminalPinnedPaneKeys}
       prunedKeys={prunedPaneKeys}
+      validRuntimeKeys={runtimePaneKeys}
       activeTestId="desktop-workbench-main"
       renderPane={pane => (
         <DesktopWorkbenchPane
@@ -302,8 +406,9 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
           onEnvironmentInfoPinnedChange={setEnvironmentInfoPinned}
           onEnvironmentInfoOverlayOpenChange={setEnvironmentInfoOverlayOpen}
-          onTerminalPanePinned={pinTerminalPane}
-          onTerminalPaneUnpinned={unpinTerminalPane}
+          onTerminalPanePinChange={setTerminalPanePinned}
+          initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
+          onWorkspaceStateChange={rememberPaneWorkspaceState}
         />
       )}
     />
@@ -337,8 +442,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onSidebarCollapsedChange,
   onEnvironmentInfoPinnedChange,
   onEnvironmentInfoOverlayOpenChange,
-  onTerminalPanePinned,
-  onTerminalPaneUnpinned,
+  onTerminalPanePinChange,
+  initialWorkspaceState,
+  onWorkspaceStateChange,
 }: {
   pane: WorkbenchPaneIdentity
   workbenchVisible: boolean
@@ -350,9 +456,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onEnvironmentInfoPinnedChange: (open: boolean) => void
   onEnvironmentInfoOverlayOpenChange: (open: boolean) => void
-  onTerminalPanePinned: (paneKey: string) => void
-  onTerminalPaneUnpinned: (paneKey: string) => void
+  onTerminalPanePinChange: (paneKey: string, owner: string, pinned: boolean) => void
+  initialWorkspaceState?: WorkbenchPaneWorkspaceState
+  onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
 }) {
+  const paneActive = useWorkbenchPaneActive()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
@@ -374,21 +482,314 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
+  const { services } = useWorkbench()
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
   const paneKey = getWorkbenchPaneKey(pane)
+  const [turnNavigationPortalTarget, setTurnNavigationPortalTarget] =
+    useState<HTMLDivElement | null>(null)
   const [initialBlankBrowserMigration] = useState<PendingBlankBrowserMigration | null>(() =>
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
-  const paneActive = useWorkbenchPaneActive()
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
   useEffect(() => {
-    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(paneActive))
+    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(true))
     return () => cancelAnimationFrame(frame)
-  }, [paneActive])
+  }, [])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const sendPaneInput = paneSession.send
+  const [deliveryItem, setDeliveryItem] = useState<Omit<LocalWorkItem, 'projectId'> | null>(null)
+  const [boundCloudProject, setBoundCloudProject] = useState<CloudProject | null>(null)
+  const [boundCloudItem, setBoundCloudItem] = useState<CloudLoopItem | null>(null)
+  const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false)
+  const [todoBindingPickerOpen, setTodoBindingPickerOpen] = useState(false)
+  const [deliverAfterBinding, setDeliverAfterBinding] = useState(false)
+  const [pendingTodoItem, setPendingTodoItemState] = useState<CloudLoopItem | null>(() =>
+    pendingTodoForTask(currentRuntimeTask)
+  )
+  const [pendingCloudProject, setPendingCloudProject] = useState<CloudProject | null>(() =>
+    pendingProjectForTask(currentRuntimeTask)
+  )
+  const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
+  const [cloudMentionState, setCloudMentionState] = useState<{
+    todoId: string
+    candidates: ComposerCloudMentionCandidate[]
+  } | null>(null)
+  const runtimeWork = state.runtimeWork
+  const runtimeTaskTitle = truncateRuntimeTaskTitle(
+    findRuntimeTask(runtimeWork, currentRuntimeTask)?.title
+  )
+  const composerCloudProject = currentRuntimeTask ? boundCloudProject : pendingCloudProject
+  const composerTodoItem = currentRuntimeTask ? boundCloudItem : pendingTodoItem
+  const cloudAdditionalContext = useMemo<RuntimeAdditionalContext | undefined>(() => {
+    if (!composerCloudProject) return undefined
+    const projectReference = `cloud://projects/${composerCloudProject.id}`
+    const todoReference = composerTodoItem
+      ? `${projectReference}/todos/${composerTodoItem.id}`
+      : null
+    const scope = composerTodoItem
+      ? [
+          `Current cloud project: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
+          `Current task: ${composerTodoItem.id} — ${composerTodoItem.title}.`,
+          composerTodoItem.description ? `Task description: ${composerTodoItem.description}` : null,
+          `Current task reference: ${todoReference}.`,
+        ]
+      : [
+          `Current cloud project: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
+          'No specific task is selected.',
+          `Current project reference: ${projectReference}.`,
+        ]
+    return {
+      cloudCollaboration: {
+        kind: 'application',
+        value: [
+          ...scope.filter((line): line is string => Boolean(line)),
+          'When the user refers to “this project” or “this task”, use this current cloud context.',
+          'Use the wegent-delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
+        ].join('\n'),
+      },
+    }
+  }, [composerCloudProject, composerTodoItem])
+  const setPendingCloudContext = useCallback(
+    (project: CloudProject | null, item: CloudLoopItem | null) => {
+      pendingTodoBinding = project ? { project, item, target: null } : null
+      setPendingCloudProject(project)
+      setPendingTodoItemState(item)
+    },
+    []
+  )
+
+  const submitPaneInput = useCallback(
+    (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) =>
+      sendPaneInput(value, {
+        ...options,
+        additionalContext: cloudAdditionalContext,
+        onRuntimeTaskCreated: address => {
+          if (!pendingTodoBinding) return
+          pendingTodoBinding = { ...pendingTodoBinding, target: address }
+        },
+      }),
+    [cloudAdditionalContext, sendPaneInput]
+  )
+
+  useEffect(() => {
+    let active = true
+    if (!currentRuntimeTask) {
+      queueMicrotask(() => {
+        if (!active) return
+        setBoundCloudItem(null)
+        setBoundCloudProject(null)
+        setDeliveryItem(null)
+      })
+      return () => {
+        active = false
+      }
+    }
+    if (services?.deliveryApi) {
+      void services.deliveryApi
+        .findCloudContextForTask(currentRuntimeTask)
+        .then(context => {
+          if (!active) return
+          setBoundCloudProject(context.project)
+          setBoundCloudItem(context.loop_item)
+          setDeliveryItem(
+            context.loop_item
+              ? cloudItemAsLocalWorkItem(context.loop_item, currentRuntimeTask)
+              : null
+          )
+        })
+        .catch(() => {
+          if (active) {
+            setBoundCloudItem(null)
+            setBoundCloudProject(null)
+            setDeliveryItem(null)
+          }
+        })
+      return () => {
+        active = false
+      }
+    }
+    void hydrateLocalWorkItems(state.user?.id).then(items => {
+      if (!active) return
+      setBoundCloudItem(null)
+      setDeliveryItem(
+        items.find(item =>
+          item.runtimeRefs.some(
+            reference =>
+              reference.taskId === currentRuntimeTask.taskId &&
+              reference.deviceId === currentRuntimeTask.deviceId
+          )
+        ) ?? null
+      )
+    })
+    return () => {
+      active = false
+    }
+  }, [currentRuntimeTask, services?.deliveryApi, state.user?.id])
+
+  useEffect(() => {
+    if (!currentRuntimeTask || !pendingCloudProject || !services?.deliveryApi) return
+    let active = true
+    const bindingRequest = pendingTodoItem
+      ? services.deliveryApi.bindTask(pendingTodoItem.id, currentRuntimeTask, runtimeTaskTitle)
+      : services.deliveryApi.bindProjectTask(
+          pendingCloudProject.id,
+          currentRuntimeTask,
+          runtimeTaskTitle
+        )
+    void bindingRequest
+      .then(() => {
+        if (!active) return
+        setBoundCloudProject(pendingCloudProject)
+        setBoundCloudItem(pendingTodoItem)
+        setDeliveryItem(
+          pendingTodoItem ? cloudItemAsLocalWorkItem(pendingTodoItem, currentRuntimeTask) : null
+        )
+        pendingTodoBinding = null
+        setPendingCloudContext(null, null)
+      })
+      .catch(cause => {
+        if (!active) return
+        setTodoBindingError(cause instanceof Error ? cause.message : '关联项目空间失败')
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    currentRuntimeTask,
+    pendingCloudProject,
+    pendingTodoItem,
+    runtimeTaskTitle,
+    services?.deliveryApi,
+    setPendingCloudContext,
+  ])
+
+  useEffect(() => {
+    let active = true
+    const api = services?.deliveryApi
+    if (!api || !composerCloudProject) {
+      return () => {
+        active = false
+      }
+    }
+    const projectId = composerCloudProject.id
+    void Promise.all([
+      api.listCloudFiles(projectId),
+      api.listLoopItems(projectId),
+      composerTodoItem ? api.listDeliveries(composerTodoItem.id) : Promise.resolve({ items: [] }),
+    ])
+      .then(([files, items, deliveries]) => {
+        if (!active) return
+        const candidate = (
+          key: string,
+          title: string,
+          description: string,
+          reference: string,
+          aliases: string[]
+        ): ComposerCloudMentionCandidate => ({
+          kind: 'cloud',
+          key,
+          title,
+          description,
+          metaLabel: '云空间',
+          testId: key.replace(/[^a-zA-Z0-9_-]/g, '-'),
+          enabled: true,
+          reference: `[$${title}](${reference})`,
+          searchAliases: aliases,
+        })
+        setCloudMentionState({
+          todoId: composerTodoItem?.id ?? `project:${projectId}`,
+          candidates: [
+            candidate(
+              `cloud-project:${projectId}`,
+              '云空间',
+              '当前云项目的共享内容',
+              `cloud://projects/${projectId}`,
+              ['云项目', 'cloud', 'workspace']
+            ),
+            ...files.items.map(file =>
+              candidate(
+                `cloud-file:${file.id}`,
+                file.name,
+                file.path,
+                `cloud://projects/${projectId}/files/${file.id}`,
+                [file.path, file.kind, '文件', '目录']
+              )
+            ),
+            ...items.items.map(item =>
+              candidate(
+                `cloud-todo:${item.id}`,
+                item.id,
+                item.title,
+                `cloud://projects/${projectId}/todos/${item.id}`,
+                [item.title, item.status, 'TODO', '任务']
+              )
+            ),
+            ...deliveries.items.map(delivery =>
+              candidate(
+                `cloud-delivery:${delivery.id}`,
+                `交付 ${delivery.id.slice(0, 8)}`,
+                delivery.delivered_at ?? delivery.created_at,
+                `cloud://projects/${projectId}/deliveries/${delivery.id}`,
+                ['交付', 'delivery', delivery.id]
+              )
+            ),
+          ],
+        })
+      })
+      .catch(() => {
+        if (active) setCloudMentionState(null)
+      })
+    return () => {
+      active = false
+    }
+  }, [composerCloudProject, composerTodoItem, services?.deliveryApi])
+  const visibleCloudMentionCandidates =
+    composerCloudProject &&
+    cloudMentionState?.todoId === (composerTodoItem?.id ?? `project:${composerCloudProject.id}`)
+      ? cloudMentionState.candidates
+      : []
+
+  const activeDeliveryItem =
+    currentRuntimeTask &&
+    deliveryItem?.runtimeRefs.some(
+      reference =>
+        reference.taskId === currentRuntimeTask.taskId &&
+        reference.deviceId === currentRuntimeTask.deviceId
+    )
+      ? deliveryItem
+      : null
+
+  const finishLocalDelivery = useCallback(async () => {
+    if (!activeDeliveryItem) return
+    const items = await loadLocalWorkItems(state.user?.id)
+    const now = new Date().toISOString()
+    await saveLocalWorkItems(
+      state.user?.id,
+      items.map(item =>
+        item.id === activeDeliveryItem.id
+          ? {
+              ...item,
+              state: 'completed',
+              updatedAt: now,
+              events: [
+                ...item.events,
+                {
+                  id: `delivery-${now}`,
+                  type: 'confirmed' as const,
+                  summary: t('delivery.completed_activity', '任务已交付并完成'),
+                  createdAt: now,
+                },
+              ],
+            }
+          : item
+      )
+    )
+    setDeliveryDialogOpen(false)
+    navigateTo('/todo')
+  }, [activeDeliveryItem, setDeliveryDialogOpen, state.user?.id, t])
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
     enableShellProjectActions: true,
@@ -414,11 +815,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createEnvironmentBranch,
   } = paneEnvironment
   const isBootstrapping = state.isBootstrapping
-  const runtimeWork = state.runtimeWork
   const devices = state.devices
-  const runtimeTaskTitle = truncateRuntimeTaskTitle(
-    findRuntimeTask(runtimeWork, currentRuntimeTask)?.title
-  )
   const runtimeTaskWorkspacePath = useMemo(() => {
     if (!runtimeWork || !currentRuntimeTask) return null
     const workspaces = [
@@ -434,14 +831,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
   }, [currentRuntimeTask, runtimeWork])
   const [rightPanelOpen, setRightPanelOpen] = useState(
-    () => initialBlankBrowserMigration?.rightPanelOpen ?? false
+    () =>
+      initialBlankBrowserMigration?.rightPanelOpen ?? initialWorkspaceState?.rightPanelOpen ?? false
   )
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(
-    () => initialBlankBrowserMigration?.rightPanelView ?? 'launcher'
+    () =>
+      initialBlankBrowserMigration?.rightPanelView ??
+      initialWorkspaceState?.rightPanelView ??
+      'launcher'
   )
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(
-    () => initialBlankBrowserMigration?.rightPanelTabs ?? []
+    () =>
+      initialBlankBrowserMigration?.rightPanelTabs ?? initialWorkspaceState?.rightPanelTabs ?? []
   )
+  useEffect(() => {
+    onWorkspaceStateChange(paneKey, { rightPanelOpen, rightPanelTabs, rightPanelView })
+  }, [onWorkspaceStateChange, paneKey, rightPanelOpen, rightPanelTabs, rightPanelView])
   const [migratedEmbeddedBrowserLabel, setMigratedEmbeddedBrowserLabel] = useState<string | null>(
     () => initialBlankBrowserMigration?.browserLabel ?? null
   )
@@ -478,7 +883,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [])
   useLayoutEffect(() => {
     if (!paneActive) return
-
     const workbenchScroll = workbenchScrollRef.current
     if (workbenchScroll && workbenchScroll.scrollLeft !== 0) {
       workbenchScroll.scrollLeft = 0
@@ -540,9 +944,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     : onEnvironmentInfoOverlayOpenChange
 
   useEffect(() => {
-    if (!paneActive || (currentRuntimeTask && !environmentInfoDocked)) return
+    if (currentRuntimeTask && !environmentInfoDocked) return
     onEnvironmentInfoOverlayOpenChange(false)
-  }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange, paneActive])
+  }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange])
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const rightPanelTitlebarWidth = rightPanelOpen
@@ -561,6 +965,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : [...permittedTabs, rightPanelView]
   }, [openFileRequest?.target, rightPanelTabs, rightPanelView, workspaceProject])
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
+  const hasPersistentRightPanelResource = rightPanelTabs.some(
+    tab => tab === 'terminal' || tab === 'browser'
+  )
+  useEffect(() => {
+    onTerminalPanePinChange(paneKey, 'right-panel', hasPersistentRightPanelResource)
+    return () => onTerminalPanePinChange(paneKey, 'right-panel', false)
+  }, [hasPersistentRightPanelResource, onTerminalPanePinChange, paneKey])
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -690,19 +1101,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     migratedEmbeddedBrowserLabel,
   ])
 
-  useEffect(() => {
-    if (paneActive || migratedEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
-
-    void relabelEmbeddedBrowser(DEFAULT_EMBEDDED_BROWSER_LABEL, defaultEmbeddedBrowserLabel)
-      .then(() => {
-        markEmbeddedBrowserLabelTransferred(DEFAULT_EMBEDDED_BROWSER_LABEL)
-        setMigratedEmbeddedBrowserLabel(null)
-      })
-      .catch(error => {
-        console.error('Failed to preserve embedded browser for inactive task:', error)
-      })
-  }, [defaultEmbeddedBrowserLabel, migratedEmbeddedBrowserLabel, paneActive])
-
   const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
     currentRuntimeTask,
     workspaceProjectId: workspaceProject?.id,
@@ -746,20 +1144,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const setCurrentBottomPanelOpen = useCallback(
     (next: boolean | ((open: boolean) => boolean)) => {
       rememberActiveBottomPanelContext()
+      onTerminalPanePinChange(paneKey, 'bottom-panel', true)
       setBottomPanelOpenByKey(current => {
         const currentOpen = current[bottomPanelWorkspaceKey] ?? false
         const nextOpen = typeof next === 'function' ? next(currentOpen) : next
-        if (nextOpen && currentRuntimeTask) {
-          onTerminalPanePinned(paneKey)
-        }
         if (currentOpen === nextOpen) return current
         return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
       })
     },
     [
       bottomPanelWorkspaceKey,
-      currentRuntimeTask,
-      onTerminalPanePinned,
+      onTerminalPanePinChange,
       paneKey,
       rememberActiveBottomPanelContext,
       setBottomPanelOpenByKey,
@@ -808,6 +1203,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const rightPanelSessionKey = paneKey
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
+  const pendingModelRetryRef = useRef<WorkbenchMessage | null>(null)
+  const retryFailedMessage = paneSession.retryFailedMessage
   const [projectMenuOpenSignal, setProjectMenuOpenSignal] = useState(0)
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
@@ -854,12 +1251,33 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const inlineComposerDisabledReason = showConversationDeviceBanner
     ? undefined
     : composerDisabledReason
+  const retryFailedMessageAfterModelSelect = useCallback(() => {
+    const message = pendingModelRetryRef.current
+    if (!message) return
+    pendingModelRetryRef.current = null
+    queueMicrotask(() => {
+      void retryFailedMessage(message)
+    })
+  }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal = useMemo<ProjectChatControls>(
     () => ({
       ...projectChat,
       modelSelectorOpenSignal,
+      setSelectedModel: model => {
+        projectChat.setSelectedModel(model)
+        if (model) retryFailedMessageAfterModelSelect()
+      },
+      setSelectedModelAndOptions: projectChat.setSelectedModelAndOptions
+        ? (model, options) => {
+            projectChat.setSelectedModelAndOptions?.(model, options)
+            retryFailedMessageAfterModelSelect()
+          }
+        : undefined,
+      onModelSelectorOpenChange: open => {
+        if (!open) pendingModelRetryRef.current = null
+      },
     }),
-    [modelSelectorOpenSignal, projectChat]
+    [modelSelectorOpenSignal, projectChat, retryFailedMessageAfterModelSelect]
   )
   const emptyProjectWork = useMemo(
     () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
@@ -922,19 +1340,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const embeddedBrowserListenerStateRef = useRef({
     embeddedBrowserLabel,
     openRightPanelTab,
-    paneActive,
   })
   useEffect(() => {
     embeddedBrowserListenerStateRef.current = {
       embeddedBrowserLabel,
       openRightPanelTab,
-      paneActive,
     }
-  }, [embeddedBrowserLabel, openRightPanelTab, paneActive])
+  }, [embeddedBrowserLabel, openRightPanelTab])
   useEffect(() => {
+    if (!paneActive) return
     const listener = listenEmbeddedBrowserOpenRequests(request => {
       const current = embeddedBrowserListenerStateRef.current
-      if (request.label === DEFAULT_EMBEDDED_BROWSER_LABEL && !current.paneActive) return
       if (request.label && request.label !== current.embeddedBrowserLabel) {
         if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
         setMigratedEmbeddedBrowserLabel(request.label)
@@ -949,7 +1365,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [])
+  }, [paneActive])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
@@ -1292,19 +1708,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [setBottomPanelOpenByKey]
   )
   const handleTerminalTabsEmpty = useCallback(() => {
-    if (currentRuntimeTask) {
-      onTerminalPaneUnpinned(paneKey)
-    }
-  }, [currentRuntimeTask, onTerminalPaneUnpinned, paneKey])
+    onTerminalPanePinChange(paneKey, 'bottom-panel', false)
+  }, [onTerminalPanePinChange, paneKey])
 
   useEffect(() => {
+    if (!paneActive) return
     const handleOpenTerminal = () => {
       toggleBottomPanel()
     }
 
     window.addEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
     return () => window.removeEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
-  }, [toggleBottomPanel])
+  }, [paneActive, toggleBottomPanel])
 
   const renderWorkspacePanelActions = (
     mode:
@@ -1342,6 +1757,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
+      onDeliver={
+        currentRuntimeTask && services?.deliveryApi
+          ? () => {
+              if (activeDeliveryItem) {
+                setDeliveryDialogOpen(true)
+              } else {
+                setDeliverAfterBinding(true)
+                setTodoBindingPickerOpen(true)
+              }
+            }
+          : undefined
+      }
+      todoLabel={
+        boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
+      }
+      onManageTodo={
+        currentRuntimeTask && services?.deliveryApi
+          ? () => {
+              setDeliverAfterBinding(false)
+              setTodoBindingPickerOpen(true)
+            }
+          : undefined
+      }
       rightPanelOpen={rightPanelOpen}
       bottomPanelOpen={bottomPanelOpen}
       onToggleRightPanel={toggleRightPanel}
@@ -1563,10 +2001,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
-      {paneActive && tauriMainHeaderContent ? (
+      {tauriMainHeaderContent ? (
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
-      <WorkbenchPaneActiveOnly>
+      <>
         {!isTauri && (
           <div
             data-testid="workspace-panel-floating-actions"
@@ -1592,13 +2030,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           />
         )}
         {paneTaskTitle}
-      </WorkbenchPaneActiveOnly>
+      </>
       <div className="relative flex min-h-0 flex-1 overflow-visible">
+        <div
+          ref={setTurnNavigationPortalTarget}
+          data-testid="message-turn-navigation-overlay"
+          className={cn(
+            'pointer-events-none absolute bottom-0 left-0 z-popover',
+            showPageTopBar ? 'top-11' : 'top-0'
+          )}
+          style={{ width: chatColumnWidth }}
+        />
         <div
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
           className={cn(
-            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
+            'relative grid h-full min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
             hasConversation ? 'overflow-x-hidden overflow-y-auto' : 'overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
@@ -1629,6 +2076,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 className="h-full"
                 scrollTestId="desktop-chat-scroll"
                 externalScrollRef={workbenchScrollRef}
+                turnNavigationPortalTarget={turnNavigationPortalTarget}
                 scrollerClassName="overflow-visible scrollbar-none"
                 messageListClassName={cn(
                   DESKTOP_MESSAGE_LIST_CLASS,
@@ -1708,7 +2156,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             insertion={conversationSelectionInsertion}
                             value={paneSession.input}
                             onChange={paneSession.setInput}
-                            onSubmit={paneSession.send}
+                            onSubmit={submitPaneInput}
                             disabled={composerDisabled}
                             submitDisabled={paneSession.status.isSubmitting}
                             error={paneSession.error}
@@ -1721,6 +2169,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             queuedMessages={paneQueuedMessages}
                             guidanceMessages={paneGuidanceMessages}
                             codeComments={paneSession.codeCommentContexts}
+                            cloudMentionCandidates={visibleCloudMentionCandidates}
                             isStreaming={paneIsResponseStreaming}
                             onPause={pauseCurrentResponse}
                             onCompactContext={compactCurrentContext}
@@ -1759,9 +2208,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onRetryFailedMessage={message => {
                   void paneSession.retryFailedMessage(message)
                 }}
-                onSwitchModelForFailedMessage={() =>
+                onSwitchModelForFailedMessage={message => {
+                  pendingModelRetryRef.current = message
                   setModelSelectorOpenSignal(signal => signal + 1)
-                }
+                }}
                 onLoadFileChangesDiff={(subtaskId, fileChanges) =>
                   loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
                 }
@@ -1826,7 +2276,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   <BufferedChatInput
                     value={paneSession.input}
                     onChange={paneSession.setInput}
-                    onSubmit={paneSession.send}
+                    onSubmit={submitPaneInput}
                     disabled={composerDisabled}
                     submitDisabled={paneSession.status.isSubmitting}
                     error={paneSession.error}
@@ -1838,6 +2288,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     queuedMessages={paneQueuedMessages}
                     guidanceMessages={paneGuidanceMessages}
                     codeComments={paneSession.codeCommentContexts}
+                    cloudMentionCandidates={visibleCloudMentionCandidates}
                     isStreaming={paneIsResponseStreaming}
                     onPause={pauseCurrentResponse}
                     onCompactContext={compactCurrentContext}
@@ -1874,7 +2325,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             data-testid="environment-info-panel-container"
             className={cn(
               'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
-              paneActive && environmentInfoTransitionEnabled
+              environmentInfoTransitionEnabled
                 ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
                 : 'transition-none'
             )}
@@ -1919,7 +2370,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
               showWorkbenchBackground={hasMainBackground}
-              visible={workbenchVisible && paneActive && rightPanelOpen}
+              visible={paneActive && workbenchVisible && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
@@ -1972,7 +2423,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           />
         )
       })}
-      <WorkbenchPaneActiveOnly>
+      <>
         <TaskForkDialog
           key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
           open={forkDialogOpen}
@@ -2032,7 +2483,52 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           tone={continueInIm.notice?.tone}
           onClear={continueInIm.clearNotice}
         />
-      </WorkbenchPaneActiveOnly>
+        <TransientNotice
+          message={todoBindingError}
+          tone="error"
+          onClear={() => setTodoBindingError(null)}
+        />
+        {deliveryDialogOpen &&
+          activeDeliveryItem &&
+          currentRuntimeTask &&
+          services?.deliveryApi && (
+            <DeliveryDialog
+              item={activeDeliveryItem}
+              runtimeTask={currentRuntimeTask}
+              runtimeTaskTitle={runtimeTaskTitle}
+              messages={paneSession.messages}
+              deliveryApi={services.deliveryApi}
+              onCancel={() => setDeliveryDialogOpen(false)}
+              onDelivered={() => void finishLocalDelivery()}
+            />
+          )}
+        {todoBindingPickerOpen && services?.deliveryApi && (
+          <TodoBindingPicker
+            api={services.deliveryApi}
+            runtimeTask={currentRuntimeTask ?? undefined}
+            runtimeTaskTitle={runtimeTaskTitle}
+            currentProject={currentRuntimeTask ? boundCloudProject : pendingCloudProject}
+            currentItem={currentRuntimeTask ? boundCloudItem : pendingTodoItem}
+            onClose={() => {
+              setTodoBindingPickerOpen(false)
+              setDeliverAfterBinding(false)
+            }}
+            onBound={(project, item) => {
+              if (!currentRuntimeTask) {
+                setPendingCloudContext(project, item)
+                setTodoBindingPickerOpen(false)
+                return
+              }
+              setBoundCloudProject(project)
+              setBoundCloudItem(item)
+              setDeliveryItem(item ? cloudItemAsLocalWorkItem(item, currentRuntimeTask) : null)
+              setTodoBindingPickerOpen(false)
+              if (item && deliverAfterBinding) setDeliveryDialogOpen(true)
+              setDeliverAfterBinding(false)
+            }}
+          />
+        )}
+      </>
     </main>
   )
 })

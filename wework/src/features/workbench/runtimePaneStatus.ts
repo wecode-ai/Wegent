@@ -7,6 +7,7 @@ export type RuntimePaneSendPhase = 'idle' | 'submitting' | 'awaiting_assistant'
 export interface RuntimePaneTaskExecution {
   known: boolean
   running: boolean
+  continuable: boolean
   status: string | null
 }
 
@@ -29,13 +30,14 @@ export function getRuntimePaneTaskExecution(
 ): RuntimePaneTaskExecution {
   const task = findRuntimeTask(runtimeWork, address)
   if (!task) {
-    return { known: false, running: false, status: null }
+    return { known: false, running: false, continuable: false, status: null }
   }
 
   const running = typeof task.running === 'boolean' ? task.running : null
   return {
     known: running !== null,
     running: running === true,
+    continuable: task.continuable !== false,
     status: normalizeTaskStatus(task),
   }
 }
@@ -88,7 +90,7 @@ export function deriveRuntimePaneStatus({
     isWaitingForAssistantIndicator:
       (isSubmitting || isAwaitingAssistant || taskExecution.running) &&
       isWaitingForAssistantMessage,
-    canSendQueuedMessage: Boolean(currentRuntimeTask) && !isBusy,
+    canSendQueuedMessage: Boolean(currentRuntimeTask) && taskExecution.continuable && !isBusy,
   }
 }
 

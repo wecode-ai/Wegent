@@ -188,9 +188,9 @@ const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
 
 export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
   { id: 'claude', label: 'Claude', order: 10, controls: [] },
-  { id: 'codex-official', label: 'CodeX', order: 20, controls: OPENAI_RESPONSES_CONTROLS },
+  { id: 'codex-official', label: '我的CodeX', order: 20, controls: OPENAI_RESPONSES_CONTROLS },
   { id: 'codex-provider', label: 'Provider 模型', order: 30, controls: OPENAI_RESPONSES_CONTROLS },
-  { id: 'model-interface', label: '接口模型', order: 40, controls: OPENAI_RESPONSES_CONTROLS },
+  { id: 'model-interface', label: '自定义模型', order: 40, controls: OPENAI_RESPONSES_CONTROLS },
   {
     id: 'gpt',
     label: 'GPT',
@@ -376,7 +376,7 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
   if (!model) return []
   const metadata = getModelUiMetadata(model)
   const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel)
-  return familyConfig.controls
+  const controls = familyConfig.controls
     .filter(control => {
       if ((control.scope ?? 'family') === 'family') return true
       return metadata.supportedControls.has(control.id)
@@ -400,6 +400,8 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
         options,
       }
     })
+
+  return controls
 }
 
 export function getModelDisplayLabel(

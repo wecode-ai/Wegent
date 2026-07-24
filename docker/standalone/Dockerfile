@@ -144,6 +144,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
 COPY executor/src /app/executor/src
+COPY shared/assets /app/shared/assets
 RUN cd /app/executor && APP_VERSION="${APP_VERSION}" cargo build --release --locked
 
 # ========== Stage 5: Runtime ==========

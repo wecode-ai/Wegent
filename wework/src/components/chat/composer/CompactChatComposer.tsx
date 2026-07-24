@@ -33,6 +33,7 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { readDroppedFiles } from '@/tauri/droppedFiles'
+import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 
 interface CompactChatComposerProps {
   value: string
@@ -50,6 +51,7 @@ interface CompactChatComposerProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -62,6 +64,7 @@ interface CompactChatComposerProps {
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
   onSelectModel?: (model: UnifiedModel | null) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
@@ -86,6 +89,7 @@ export function CompactChatComposer({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -98,6 +102,7 @@ export function CompactChatComposer({
   onListLocalApps,
   models = [],
   selectedModel,
+  activeModel,
   selectedModelOptions = {},
   onSelectModel,
   onBlockedModelSelect,
@@ -113,6 +118,15 @@ export function CompactChatComposer({
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
+  const modelChangePending = Boolean(
+    activeModel &&
+    (!selectedModel ||
+      activeModel.name !== selectedModel.name ||
+      activeModel.type !== selectedModel.type)
+  )
+  const activeModelLabel = activeModel?.displayName || activeModel?.name
+  const selectedModelLabel =
+    selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
     !disabled &&
@@ -264,7 +278,8 @@ export function CompactChatComposer({
             onOpenSkillFile={onOpenSkillFile}
             workspaceTarget={workspaceTarget}
             workspaceFileApi={workspaceFileApi}
-            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-secondary outline-none placeholder:text-text-muted"
+            cloudMentionCandidates={cloudMentionCandidates}
+            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-primary outline-none placeholder:text-text-muted"
             skillMenuClassName={[
               'left-[-1rem]',
               isStreaming && canSend ? 'right-[-5.75rem]' : 'right-[-3.5rem]',
@@ -325,13 +340,27 @@ export function CompactChatComposer({
                     onSelect: () => onSubmit(value),
                   },
                   {
-                    label: t('workbench.guide_current_turn', '引导当前回复'),
+                    label:
+                      modelChangePending && activeModelLabel
+                        ? t(
+                            'workbench.guide_current_turn_with_model',
+                            'Guide current response · {{model}}',
+                            { model: activeModelLabel }
+                          )
+                        : t('workbench.guide_current_turn', '引导当前回复'),
                     icon: CornerDownRight,
                     testId: 'guide-current-turn-option',
                     onSelect: () => onSubmit(value, { guideWhenBusy: true }),
                   },
                   {
-                    label: t('workbench.interrupt_and_send', '打断并立即发送'),
+                    label:
+                      modelChangePending && selectedModelLabel
+                        ? t(
+                            'workbench.interrupt_and_send_with_model',
+                            'Interrupt and use {{model}}',
+                            { model: selectedModelLabel }
+                          )
+                        : t('workbench.interrupt_and_send', '打断并立即发送'),
                     icon: Zap,
                     testId: 'interrupt-and-send-option',
                     onSelect: () => onSubmit(value, { interruptWhenBusy: true }),
@@ -435,7 +464,8 @@ export function CompactChatComposer({
               onOpenSkillFile={onOpenSkillFile}
               workspaceTarget={workspaceTarget}
               workspaceFileApi={workspaceFileApi}
-              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-chat text-text-secondary outline-none"
+              cloudMentionCandidates={cloudMentionCandidates}
+              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-chat text-text-primary outline-none"
               skillMenuClassName="left-4 right-4 bottom-[calc(100%+0.5rem)]"
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}

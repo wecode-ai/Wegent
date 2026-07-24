@@ -10,19 +10,13 @@ const SHOULD_SKIP_CODEX_HOME_INITIALIZATION =
   import.meta.env.VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION !== 'true'
 
 function CodexHomeInitializationDialog({
-  status,
   isInitializing,
-  remoteAppsEnabled,
   error,
-  onRemoteAppsEnabledChange,
   onCreate,
   onMigrate,
 }: {
-  status: LocalCodexHomeMigrationStatus
   isInitializing: boolean
-  remoteAppsEnabled: boolean
   error: string | null
-  onRemoteAppsEnabledChange: (enabled: boolean) => void
   onCreate: () => void
   onMigrate: () => void
 }) {
@@ -44,32 +38,6 @@ function CodexHomeInitializationDialog({
             {t('workbench.codex_home_init_description')}
           </p>
         </div>
-        <div className="mt-4 rounded-lg bg-surface px-3 py-2 text-xs leading-5 text-text-muted">
-          <div className="truncate">
-            {t('workbench.codex_home_init_source')}：{status.nativeCodexHome}
-          </div>
-          <div className="truncate">
-            {t('workbench.codex_home_init_target')}：{status.weworkCodexHome}
-          </div>
-        </div>
-        <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-3 py-3 text-sm">
-          <input
-            type="checkbox"
-            data-testid="codex-home-initializer-remote-apps-checkbox"
-            className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
-            checked={remoteAppsEnabled}
-            onChange={event => onRemoteAppsEnabledChange(event.currentTarget.checked)}
-            disabled={isInitializing}
-          />
-          <span className="min-w-0">
-            <span className="block font-medium text-text-primary">
-              {t('workbench.codex_plugin_remote_apps_title')}
-            </span>
-            <span className="mt-1 block text-xs leading-5 text-text-muted">
-              {t('workbench.codex_home_init_remote_apps_description')}
-            </span>
-          </span>
-        </label>
         {error && (
           <div
             data-testid="codex-home-initializer-error"
@@ -110,7 +78,6 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
   const [status, setStatus] = useState<LocalCodexHomeMigrationStatus | null>(null)
   const [checked, setChecked] = useState(SHOULD_SKIP_CODEX_HOME_INITIALIZATION)
   const [isInitializing, setIsInitializing] = useState(false)
-  const [remoteAppsEnabled, setRemoteAppsEnabled] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -147,14 +114,13 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
   const initialize = (migrateNativeHome: boolean) => {
     console.warn('[Wework Codex init] initialization requested', {
       migrateNativeHome,
-      remoteAppsEnabled,
     })
     setIsInitializing(true)
     setError(null)
     localPluginApi
       .initializeCodexHome({
         migrateNativeHome,
-        remoteAppsEnabled,
+        remoteAppsEnabled: false,
       })
       .then(() => {
         console.warn('[Wework Codex init] initialization finished')
@@ -177,11 +143,8 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
 
   return (
     <CodexHomeInitializationDialog
-      status={status}
       isInitializing={isInitializing}
-      remoteAppsEnabled={remoteAppsEnabled}
       error={error}
-      onRemoteAppsEnabledChange={setRemoteAppsEnabled}
       onCreate={() => initialize(false)}
       onMigrate={() => initialize(true)}
     />

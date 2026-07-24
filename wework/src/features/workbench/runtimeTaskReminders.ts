@@ -198,8 +198,7 @@ function isRuntimeTaskTerminal(task: RuntimeTaskSummary): boolean {
 }
 
 function isRuntimeTaskActive(task: RuntimeTaskSummary): boolean {
-  if (task.running) return true
-  return !isRuntimeTaskTerminal(task)
+  return task.running === true
 }
 
 function collectRuntimeTaskReminderItems(

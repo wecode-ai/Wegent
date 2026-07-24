@@ -24,6 +24,7 @@ RUN pnpm --filter wework... install --frozen-lockfile
 
 COPY wework ./wework
 COPY packages/chat-core ./packages/chat-core
+COPY shared/assets ./shared/assets
 
 ENV VITE_LOGIN_MODE=oidc
 ENV VITE_OIDC_LOGIN_TEXT="使用 CAS 登录"

@@ -6,6 +6,7 @@ import {
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
@@ -41,6 +42,7 @@ describe('createLocalAppServices', () => {
       group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
     })
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.models.list') {
@@ -141,6 +143,72 @@ describe('createLocalAppServices', () => {
       totalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('does not expose a custom model until its catalog restart is applied', async () => {
+    saveLocalModelConfig({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      modelId: 'pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: false,
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+      }),
+      request: vi.fn().mockResolvedValue({
+        providers: [],
+        data: OFFICIAL_CODEX_MODELS,
+      }),
+      subscribe: vi.fn(),
+    })
+
+    const models = await services.modelApi.listModels()
+
+    expect(models.data).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'local-model:pending-model' })])
+    )
+  })
+
+  test('isolates catalog reconciliation failures and throttles retries', async () => {
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      toolProfile: 'native',
+    })
+    saveLocalModelConfig({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      modelId: 'pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry,
+      codexCatalogModelId: String(catalogEntry.slug),
+      catalogReady: false,
+    })
+    const request = vi.fn().mockRejectedValue(new Error('catalog unavailable'))
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+        runtimeInstanceId: 'runtime-1',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
+    await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
+
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith('runtime.codex.catalog.custom.write', {
+      models: [expect.objectContaining({ slug: catalogEntry.slug })],
+    })
   })
 
   test('returns Codex provider models in local model list', async () => {
@@ -364,6 +432,7 @@ describe('createLocalAppServices', () => {
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
     })
 
     await services.runtimeWorkApi?.createRuntimeTask({
@@ -435,6 +504,14 @@ describe('createLocalAppServices', () => {
         subtask_id: expect.any(String),
         team_id: 0,
         team_name: 'local-wework',
+        user_id: 9,
+        user_name: 'hongyu9',
+        user: {
+          id: 9,
+          name: 'hongyu9',
+          user_name: 'hongyu9',
+          email: 'hongyu9@example.com',
+        },
         task_title: 'Hello',
         subtask_title: 'Hello - Assistant',
         prompt: 'hello',
@@ -834,7 +911,6 @@ describe('createLocalAppServices', () => {
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
-        weworkCloudModelCatalogModelId: 'gpt-5.6-luna',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
       },
@@ -859,7 +935,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model_id: 'shared-model',
-            codex_catalog_model_id: 'gpt-5.6-luna',
+            codex_catalog_model_id: 'wework-gpt-5.6-sol',
             base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
             api_key: 'cloud-login-token',
             default_headers: {
@@ -939,6 +1015,7 @@ describe('createLocalAppServices', () => {
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
       contextWindow: 128000,
+      catalogReady: true,
     })
     saveLocalModelConfig({
       id: 'lmstudio',
@@ -948,6 +1025,7 @@ describe('createLocalAppServices', () => {
       apiKey: 'real-key',
       webSearchMode: 'cached',
       imageGenerationEnabled: true,
+      catalogReady: true,
     })
     saveLocalModelConfig({
       id: 'custom',
@@ -955,6 +1033,7 @@ describe('createLocalAppServices', () => {
       modelId: 'custom-model',
       baseUrl: 'http://localhost:9876/api',
       requestPath: '/respond',
+      catalogReady: true,
     })
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -1013,6 +1092,11 @@ describe('createLocalAppServices', () => {
     const customModelConfig = sendPayloads[2].executionRequest.model_config
 
     expect(continueModelConfig).toEqual(createModelConfig)
+    expect(sendPayloads.map(payload => payload.modelSelection)).toEqual([
+      { modelName: 'local-model:ollama', modelType: null, options: {} },
+      { modelName: 'local-model:lmstudio', modelType: null, options: {} },
+      { modelName: 'local-model:custom', modelType: null, options: {} },
+    ])
     expect(createModelConfig).toEqual(
       expect.objectContaining({
         model: 'openai',
@@ -1050,6 +1134,45 @@ describe('createLocalAppServices', () => {
         base_url: 'http://localhost:9876/api',
         responses_url: 'http://localhost:9876/api/respond',
         codex_responses_compat_proxy: true,
+      })
+    )
+  })
+
+  test('uses the built-in K3 catalog profile with 256K context and low reasoning', async () => {
+    saveLocalModelConfig({
+      id: 'kimi-k3',
+      providerProfileId: 'kimi-coding',
+      displayName: 'Kimi K3',
+      modelId: 'k3',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      contextWindow: 262_144,
+      codexCatalogModelId: 'wework-kimi-k3',
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-k3',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'K3',
+      modelId: 'local-model:kimi-k3',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model_id: 'k3',
+        codex_catalog_model_id: 'wework-kimi-k3',
+        model_context_window: 262_144,
+        reasoning: { effort: 'low' },
       })
     )
   })
@@ -1125,6 +1248,7 @@ describe('createLocalAppServices', () => {
       cloudModelGateway: {
         baseUrl: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         apiKey: 'cloud-login-token',
+        mcpUrl: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
       },
     })
 
@@ -1170,7 +1294,114 @@ describe('createLocalAppServices', () => {
         },
       })
     )
+    expect(payload.executionRequest.mcp_servers).toEqual([
+      {
+        name: 'wegent-delivery',
+        type: 'streamable-http',
+        url: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
+        headers: { Authorization: 'Bearer cloud-login-token' },
+      },
+    ])
     expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
+  })
+
+  test('builds cloud model gateway config with upstream_api_format for chat-completions protocol', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'shared-model',
+        api_format: 'responses',
+        upstream_api_format: 'openai-chat-completions',
+        protocol: 'openai-responses',
+        base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        api_key: 'cloud-login-token',
+        default_headers: {
+          'X-Wegent-Model-Type': 'user',
+          'X-Wegent-Model-Namespace': 'default',
+          'X-Wegent-Model-User-Id': '42',
+        },
+        runtime_config: {
+          codex: {
+            use_user_config: false,
+            configured: true,
+          },
+        },
+      })
+    )
+  })
+
+  test('injects trusted cloud collaboration context without changing the visible message', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const additionalContext = {
+      cloudCollaboration: {
+        kind: 'application' as const,
+        value: 'Current TODO: WEG-1. Use the wegent-delivery MCP tools when needed.',
+      },
+    }
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-cloud-context',
+      runtime: 'codex',
+      message: '这个 TODO 里有啥？',
+      additionalContext,
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-cloud-context',
+      },
+      message: '这个云项目是解决什么问题？',
+      additionalContext,
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(createPayload.message).toBe('这个 TODO 里有啥？')
+    expect(createPayload.executionRequest.prompt).toContain('<application_context>')
+    expect(createPayload.executionRequest.prompt).toContain('Current TODO: WEG-1')
+    expect(createPayload.executionRequest.prompt).toContain('这个 TODO 里有啥？')
+    expect(sendPayload.message).toBe('这个云项目是解决什么问题？')
+    expect(sendPayload.executionRequest.prompt).toContain('Current TODO: WEG-1')
   })
 
   test('adds configured local proxy to local runtime execution requests', async () => {
@@ -1342,6 +1573,9 @@ describe('createLocalAppServices', () => {
               title: 'Build',
               runtime: 'codex',
               goal_status: 'active',
+              continuable: true,
+              thread_status: 'idle',
+              turn_status: 'completed',
               workspace_kind: 'worktree',
               worktree_id: '42',
             },
@@ -1397,6 +1631,9 @@ describe('createLocalAppServices', () => {
                   workspaceKind: 'worktree',
                   worktreeId: '42',
                   goalStatus: 'active',
+                  continuable: true,
+                  threadStatus: 'idle',
+                  turnStatus: 'completed',
                 }),
               ],
             }),

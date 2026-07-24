@@ -11,9 +11,8 @@ import { useDevices } from '@/contexts/DeviceContext'
 /**
  * Auto-select device when loading a task that was previously executed on a device.
  *
- * When a task has a device_id (saved from previous execution), this component
- * automatically selects that device so the user continues the conversation
- * on the same device.
+ * Device-mode tasks automatically select their saved device. Cloud tasks clear
+ * global device state even if old data contains an incompatible device_id.
  */
 export default function DeviceTaskSync() {
   const { selectedTaskDetail } = useTaskSession()
@@ -33,8 +32,11 @@ export default function DeviceTaskSync() {
       return
     }
 
-    // Task has no device_id — clear device selection to match cloud mode
-    if (!selectedTaskDetail.device_id) {
+    const taskDeviceId =
+      selectedTaskDetail.task_type === 'task' ? selectedTaskDetail.device_id : null
+
+    // Cloud task or device task without a device — clear the global selection
+    if (!taskDeviceId) {
       if (selectedDeviceId) {
         setSelectedDeviceId(null)
       }
@@ -43,20 +45,20 @@ export default function DeviceTaskSync() {
     }
 
     // Skip if this device is already selected
-    if (selectedDeviceId === selectedTaskDetail.device_id) {
+    if (selectedDeviceId === taskDeviceId) {
       lastProcessedTaskIdRef.current = selectedTaskDetail.id
       return
     }
 
     // Check if the device exists in the devices list
-    const deviceExists = devices.some(d => d.device_id === selectedTaskDetail.device_id)
+    const deviceExists = devices.some(d => d.device_id === taskDeviceId)
     if (!deviceExists) {
       lastProcessedTaskIdRef.current = selectedTaskDetail.id
       return
     }
 
     // Auto-select the device
-    setSelectedDeviceId(selectedTaskDetail.device_id)
+    setSelectedDeviceId(taskDeviceId)
     lastProcessedTaskIdRef.current = selectedTaskDetail.id
   }, [selectedTaskDetail, devices, selectedDeviceId, setSelectedDeviceId])
 

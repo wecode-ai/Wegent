@@ -99,6 +99,8 @@ import {
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
   localModelName,
+  markLocalModelCatalogReady,
+  reconcileLocalModelCatalogRuntime,
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
@@ -107,10 +109,10 @@ import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
-  CLOUD_MODEL_CATALOG_MODEL_ID_OPTION,
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+  CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
 } from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -127,6 +129,10 @@ const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
+const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
+const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
+const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max']
+const KIMI_K3_DEFAULT_REASONING_EFFORT = 'low'
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -215,6 +221,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
   const family = group
     ? `model-interface:${encodeURIComponent(group.toLowerCase())}`
     : 'model-interface'
+  const reasoningEfforts = localModelReasoningEfforts(config)
+  const defaultReasoningEffort = localModelDefaultReasoningEffort(config)
   return {
     name: localModelName(config),
     type: 'runtime',
@@ -230,6 +238,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
         family,
         ...(group ? { familyLabel: group } : {}),
         modelLabel: config.displayName,
+        ...(reasoningEfforts.length > 0 ? { reasoningEfforts } : {}),
+        ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
         controls: ['speed'],
         sortOrder: 20,
       },
@@ -241,6 +251,28 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     },
     isActive: config.enabled,
   }
+}
+
+function localModelReasoningEfforts(config: LocalModelConfig): string[] {
+  if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
+    return KIMI_K3_REASONING_EFFORTS
+  }
+  const values = config.catalogEntry?.supported_reasoning_levels
+  if (!Array.isArray(values)) return []
+  return values.flatMap(value => {
+    if (typeof value === 'string') return [value]
+    if (!value || typeof value !== 'object') return []
+    const effort = (value as Record<string, unknown>).effort
+    return typeof effort === 'string' ? [effort] : []
+  })
+}
+
+function localModelDefaultReasoningEffort(config: LocalModelConfig): string | null {
+  if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
+    return KIMI_K3_DEFAULT_REASONING_EFFORT
+  }
+  const value = config.catalogEntry?.default_reasoning_level
+  return typeof value === 'string' ? value : null
 }
 
 function localRuntimeModels(
@@ -260,7 +292,7 @@ function localRuntimeModels(
   return [
     ...officialModels,
     ...listLocalModelConfigs()
-      .filter(config => config.enabled)
+      .filter(config => config.enabled && config.catalogReady)
       .map(localModelConfigToUnifiedModel),
   ]
 }
@@ -270,11 +302,13 @@ interface LocalAppServicesDeps {
   request?: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   cloudModelGateway?: CloudModelGateway
+  user?: User
 }
 
 interface CloudModelGateway {
   baseUrl: string
   apiKey: string
+  mcpUrl?: string
 }
 
 interface RuntimeWorkIpcOptions {
@@ -282,6 +316,7 @@ interface RuntimeWorkIpcOptions {
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
+  user?: User
   transportLabel?: 'Local' | 'Cloud'
 }
 
@@ -515,6 +550,10 @@ function normalizeRuntimeTaskSummary(
     modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
     modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
   const goalStatus = runtimeGoalStatusValue(taskRecord.goalStatus ?? taskRecord.goal_status)
+  const threadStatus = stringValue(taskRecord.threadStatus ?? taskRecord.thread_status)
+  const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
+  const continuableValue = taskRecord.continuable
+  const continuable = typeof continuableValue === 'boolean' ? continuableValue : undefined
 
   const normalized = {
     ...taskRecord,
@@ -532,6 +571,9 @@ function normalizeRuntimeTaskSummary(
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(goalStatus ? { goalStatus } : {}),
+    ...(threadStatus ? { threadStatus } : {}),
+    ...(turnStatus ? { turnStatus } : {}),
+    ...(continuable !== undefined ? { continuable } : {}),
   }
 
   return normalized as RuntimeTaskSummary
@@ -656,6 +698,9 @@ function localRuntimeModelConfig(
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
+    if (!localModel.catalogReady) {
+      throw new Error('Local model requires a Codex restart')
+    }
     const requestUrl = buildLocalModelRequestUrl(
       localModel.baseUrl,
       localModel.requestPath,
@@ -664,6 +709,7 @@ function localRuntimeModelConfig(
     return {
       model: 'openai',
       model_id: localModel.modelId,
+      codex_catalog_model_id: localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
       tool_profile: localModel.toolProfile,
@@ -677,6 +723,9 @@ function localRuntimeModelConfig(
       ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
+      ...(localModelDefaultReasoningEffort(localModel)
+        ? { reasoning: { effort: localModelDefaultReasoningEffort(localModel) } }
+        : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
         codex: {
@@ -705,12 +754,14 @@ function localRuntimeModelConfig(
       throw new Error('Cloud model identity is incomplete')
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
-    const catalogModelId = modelOptions?.[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION]?.trim()
+    const upstreamApiFormat =
+      modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
     return {
       model: 'openai',
       model_id: modelName,
-      ...(catalogModelId ? { codex_catalog_model_id: catalogModelId } : {}),
+      codex_catalog_model_id: DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
+      upstream_api_format: upstreamApiFormat,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,
@@ -1068,6 +1119,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
   cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
+  additionalContext?: RuntimeTaskCreateRequest['additionalContext']
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
   workspacePath?: string | null
@@ -1076,6 +1128,17 @@ interface BuildLocalRuntimeExecutionRequestInput {
   newSession: boolean
   clientMessageId?: string
   ephemeral?: boolean
+  user: User
+}
+
+function messageWithApplicationContext(
+  message: string,
+  context?: RuntimeTaskCreateRequest['additionalContext']
+): string {
+  const entries = Object.entries(context ?? {}).filter(([, entry]) => entry.kind === 'application')
+  if (entries.length === 0) return message
+  const contextText = entries.map(([name, entry]) => `[${name}]\n${entry.value}`).join('\n\n')
+  return `<application_context>\n${contextText}\n</application_context>\n\n${message}`
 }
 
 function buildLocalRuntimeExecutionRequest(
@@ -1115,16 +1178,28 @@ function buildLocalRuntimeExecutionRequest(
     task_title: input.title,
     subtask_title: `${input.title} - Assistant`,
     user: {
-      id: LOCAL_USER.id,
-      name: LOCAL_USER.user_name,
-      user_name: LOCAL_USER.user_name,
-      email: LOCAL_USER.email,
+      id: input.user.id,
+      name: input.user.user_name,
+      user_name: input.user.user_name,
+      email: input.user.email,
     },
-    user_id: LOCAL_USER.id,
-    user_name: LOCAL_USER.user_name,
+    user_id: input.user.id,
+    user_name: input.user.user_name,
     bot: [],
+    mcp_servers: input.cloudModelGateway?.mcpUrl
+      ? [
+          {
+            name: 'wegent-delivery',
+            type: 'streamable-http',
+            url: input.cloudModelGateway.mcpUrl,
+            headers: {
+              Authorization: `Bearer ${input.cloudModelGateway.apiKey}`,
+            },
+          },
+        ]
+      : [],
     model_config: modelConfig,
-    prompt: input.message,
+    prompt: messageWithApplicationContext(input.message, input.additionalContext),
     enable_tools: true,
     enable_deep_thinking: true,
     skill_names: skillNames,
@@ -1244,7 +1319,8 @@ async function createLocalRuntimeTaskPayload(
   data: RuntimeTaskCreateRequest,
   localDeviceId: string,
   requestWithLocalDevice: RequestWithLocalDevice,
-  cloudModelGateway?: CloudModelGateway
+  cloudModelGateway: CloudModelGateway | undefined,
+  user: User
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
   const execution = executionWithWorkspace(data, runtimeWorkspace)
@@ -1275,6 +1351,7 @@ async function createLocalRuntimeTaskPayload(
       modelOptions: normalizedData.modelOptions,
       cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
+      additionalContext: normalizedData.additionalContext,
       attachments: normalizedData.attachments,
       localDeviceId,
       workspacePath: runtimeWorkspace.workspacePath,
@@ -1283,6 +1360,7 @@ async function createLocalRuntimeTaskPayload(
       newSession: true,
       clientMessageId: normalizedData.clientMessageId,
       ephemeral: normalizedData.ephemeral,
+      user,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -1290,7 +1368,8 @@ async function createLocalRuntimeTaskPayload(
 function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
-  cloudModelGateway?: CloudModelGateway
+  cloudModelGateway: CloudModelGateway | undefined,
+  user: User
 ): Record<string, unknown> {
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
@@ -1337,12 +1416,14 @@ function createLocalRuntimeSendPayload(
         modelOptions: normalizedData.modelOptions,
         cloudModelGateway,
         attachments: normalizedData.attachments,
+        additionalContext: normalizedData.additionalContext,
         localDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
         clientMessageId: normalizedData.clientMessageId,
         ephemeral: data.ephemeral,
+        user,
       }),
     } as unknown as Record<string, unknown>
   }
@@ -1354,6 +1435,15 @@ function createLocalRuntimeSendPayload(
     ...payload,
     taskId,
     address: normalizedAddress,
+    ...(normalizedData.modelId
+      ? {
+          modelSelection: {
+            modelName: normalizedData.modelId,
+            modelType: normalizedData.modelType ?? null,
+            options: normalizedData.modelOptions ?? {},
+          },
+        }
+      : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId,
@@ -1367,12 +1457,14 @@ function createLocalRuntimeSendPayload(
       modelOptions: normalizedData.modelOptions,
       cloudModelGateway,
       attachments: normalizedData.attachments,
+      additionalContext: normalizedData.additionalContext,
       localDeviceId,
       workspacePath,
       workspaceSource: 'local_path',
       newSession: false,
       clientMessageId: normalizedData.clientMessageId,
       ephemeral: data.ephemeral,
+      user,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -1625,6 +1717,7 @@ export function createRuntimeWorkApiFromIpc(
   options: RuntimeWorkIpcOptions = {}
 ) {
   const transportLabel = options.transportLabel ?? 'Local'
+  const user = options.user ?? LOCAL_USER
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
@@ -1727,7 +1820,12 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1745,7 +1843,12 @@ export function createRuntimeWorkApiFromIpc(
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1798,7 +1901,12 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeInterruptAndSendRequest
     ): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1958,16 +2066,22 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         requestWithLocalDevice,
-        options.cloudModelGateway
+        options.cloudModelGateway,
+        user
       )
       debugLocalRuntimeCreatePayload(data, payload)
+      const executionRequest = recordValue(payload.executionRequest)
+      console.info('[Wework] Local runtime execution identity', {
+        taskId: stringValue(executionRequest.task_id),
+        userId: executionRequest.user_id ?? null,
+        userName: stringValue(executionRequest.user_name),
+      })
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
         payload,
         localDeviceId
       )
       const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
-      const executionRequest = recordValue(payload.executionRequest)
       const responseRecord = recordValue(response)
       const taskId =
         stringValue(responseRecord.taskId) ??
@@ -2030,12 +2144,45 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
   let lastStatus: LocalExecutorStatus | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
+  let catalogReconciliationKey = ''
+  let catalogReconciliationAttemptedAt = 0
 
   const ensureStatus = async () => {
     if (!ensurePromise) {
       ensurePromise = ensure()
-        .then(status => {
+        .then(async status => {
           lastStatus = status
+          reconcileLocalModelCatalogRuntime(status.runtimeInstanceId)
+          const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+          const pendingCatalogModels = catalogModels.filter(
+            model => !model.catalogReady && model.catalogEntry
+          )
+          const reconciliationKey = pendingCatalogModels
+            .map(model => `${status.runtimeInstanceId ?? ''}:${model.id}:${model.updatedAt}`)
+            .sort()
+            .join('|')
+          const now = Date.now()
+          const shouldReconcile =
+            reconciliationKey &&
+            (reconciliationKey !== catalogReconciliationKey ||
+              now - catalogReconciliationAttemptedAt >= 30_000)
+          if (shouldReconcile) {
+            catalogReconciliationKey = reconciliationKey
+            catalogReconciliationAttemptedAt = now
+            try {
+              await request('runtime.codex.catalog.custom.write', {
+                models: catalogModels.flatMap(model =>
+                  model.catalogEntry ? [model.catalogEntry] : []
+                ),
+              })
+              const restart = await request<{
+                restarted?: boolean
+              }>('runtime.codex.app_server.restart', { ifIdle: true })
+              if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
+            } catch (error) {
+              console.error('Local model catalog reconciliation failed', error)
+            }
+          }
           return status
         })
         .finally(() => {
@@ -2187,6 +2334,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
+      user: deps.user,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
 

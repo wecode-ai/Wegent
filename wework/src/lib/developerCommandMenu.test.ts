@@ -292,6 +292,7 @@ function createDebugSnapshot() {
         taskExecution: {
           known: true,
           running: true,
+          continuable: true,
           status: 'running',
         },
         isSubmitting: false,

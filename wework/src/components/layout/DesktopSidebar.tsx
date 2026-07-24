@@ -35,13 +35,13 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   StandaloneBlankProjectDialog,
   StandaloneFolderProjectDialog,
@@ -2576,7 +2576,6 @@ export function DesktopSidebar({
   onOpenTodo,
   onOpenApps,
 }: DesktopSidebarProps) {
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -2593,6 +2592,7 @@ export function DesktopSidebar({
   const requiresCloudLogin = usesCloudAccount && !cloud.isConnected
   const usesOverlayTitlebar = isTauriRuntime()
   const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const sidebarAccount = requiresCloudLogin
     ? {
         label: t('workbench.account_cloud_title', 'Wegent 账户'),
@@ -3152,7 +3152,7 @@ export function DesktopSidebar({
                   onClick={onOpenPlugins}
                 />
               )}
-              {(experimentalFeaturesEnabled || activeItem === 'sites') && (
+              {experimentalFeaturesEnabled && (
                 <SidebarButton
                   icon={Grid3X3}
                   label={t('workbench.sites', '站点')}

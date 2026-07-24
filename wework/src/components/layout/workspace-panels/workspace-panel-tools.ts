@@ -2,7 +2,7 @@ import { configuredWorkspacePath } from '@/lib/project-workspace'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import type { ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 
-export type WorkspaceTool = 'terminal' | 'ide'
+export type WorkspaceTool = 'terminal'
 
 export type WorkspacePanelMenuTool = WorkspaceTool | 'desktop'
 

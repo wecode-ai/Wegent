@@ -29,6 +29,7 @@ FROM builder-deps AS builder
 ARG APP_VERSION=dev
 
 COPY executor/src /app/executor/src
+COPY shared/assets /app/shared/assets
 RUN cd /app/executor \
     && find src -type f -exec touch {} + \
     && APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor

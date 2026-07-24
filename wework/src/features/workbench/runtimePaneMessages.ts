@@ -650,7 +650,6 @@ function isRuntimeStreamingStatus(status: string): boolean {
     status === 'running' ||
     status === 'inprogress' ||
     status === 'in_progress' ||
-    status === 'active' ||
     status === 'busy' ||
     status === 'pending'
   )

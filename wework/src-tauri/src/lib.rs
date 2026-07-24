@@ -7,6 +7,8 @@ mod local_executor;
 mod local_terminal;
 mod process_environment;
 mod system_drag;
+mod system_sleep;
+mod todo_store;
 mod wecode;
 mod workbench_background;
 
@@ -384,6 +386,8 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     #[serde(default = "default_true")]
     system_drag_enabled: bool,
+    #[serde(default = "default_true")]
+    prevent_sleep_while_tasks_running: bool,
     #[serde(default)]
     close_to_tray_hint_seen: bool,
     #[serde(default = "default_language_preference")]
@@ -483,6 +487,7 @@ impl Default for AppPreferences {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
             system_drag_enabled: true,
+            prevent_sleep_while_tasks_running: true,
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
@@ -508,6 +513,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     system_drag_enabled: Option<bool>,
+    prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
@@ -936,6 +942,9 @@ fn update_app_preferences(
     if let Some(value) = patch.system_drag_enabled {
         preferences.system_drag_enabled = value;
     }
+    if let Some(value) = patch.prevent_sleep_while_tasks_running {
+        preferences.prevent_sleep_while_tasks_running = value;
+    }
     if let Some(value) = patch.close_to_tray_hint_seen {
         preferences.close_to_tray_hint_seen = value;
     }
@@ -980,6 +989,8 @@ fn update_app_preferences(
         preferences.quick_phrases = value;
     }
     write_app_preferences_impl(&app, &preferences)?;
+    app.state::<system_sleep::SystemSleepState>()
+        .set_enabled(preferences.prevent_sleep_while_tasks_running);
     Ok(preferences)
 }
 
@@ -990,6 +1001,7 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
     system_drag_enabled: bool,
+    prevent_sleep_while_tasks_running: bool,
     close_to_tray_hint_seen: bool,
     language: String,
     terminal_context_injection_enabled: bool,
@@ -1013,6 +1025,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     system_drag_enabled: Option<bool>,
+    prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
@@ -1036,6 +1049,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
         system_drag_enabled: true,
+        prevent_sleep_while_tasks_running: true,
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
@@ -1063,6 +1077,7 @@ fn update_app_preferences(
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
         system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
+        prevent_sleep_while_tasks_running: patch.prevent_sleep_while_tasks_running.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
         language: patch.language.unwrap_or_else(|| "zh-CN".to_string()),
         terminal_context_injection_enabled: patch
@@ -1097,8 +1112,39 @@ fn open_main_webview_devtools_impl(app: &tauri::AppHandle) -> Result<(), String>
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| format!("WebView window '{MAIN_WINDOW_LABEL}' was not found"))?;
+    #[cfg(target_os = "macos")]
+    make_webview_inspectable(&window)?;
     window.open_devtools();
     Ok(())
+}
+
+#[cfg(all(
+    target_os = "macos",
+    any(debug_assertions, feature = "release-devtools")
+))]
+fn make_webview_inspectable(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use objc2::{msg_send, runtime::AnyObject, sel};
+
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    window
+        .with_webview(move |platform_webview| {
+            let supported = unsafe {
+                let webview: &AnyObject = &*platform_webview.inner().cast();
+                let supported: bool = msg_send![webview, respondsToSelector: sel!(setInspectable:)];
+                if supported {
+                    let _: () = msg_send![webview, setInspectable: true];
+                }
+                supported
+            };
+            let _ = sender.send(supported);
+        })
+        .map_err(|error| format!("Failed to access main WebView: {error}"))?;
+
+    match receiver.recv() {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("Web Inspector requires macOS 13.3 or newer".to_string()),
+        Err(error) => Err(format!("Failed to enable Web Inspector: {error}")),
+    }
 }
 
 #[cfg(all(desktop, not(any(debug_assertions, feature = "release-devtools"))))]
@@ -1889,9 +1935,54 @@ fn get_local_file_opener_icon(icon_path: String) -> Result<String, String> {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DroppedFilePayload {
     name: String,
+    relative_path: String,
     bytes: Vec<u8>,
+}
+
+fn collect_selected_files(
+    path: &std::path::Path,
+    relative_path: &std::path::Path,
+    files: &mut Vec<DroppedFilePayload>,
+) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("Failed to inspect selected path: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        let entries = std::fs::read_dir(path)
+            .map_err(|error| format!("Failed to read selected directory: {error}"))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
+            collect_selected_files(&entry.path(), &relative_path.join(entry.file_name()), files)?;
+        }
+        return Ok(());
+    }
+    if !metadata.is_file() {
+        return Ok(());
+    }
+
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(String::from)
+        .ok_or_else(|| "Selected file name is invalid".to_string())?;
+    let relative_path = relative_path
+        .to_str()
+        .map(|value| value.replace('\\', "/"))
+        .ok_or_else(|| "Selected file path is invalid".to_string())?;
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("Failed to read selected file {name}: {error}"))?;
+    files.push(DroppedFilePayload {
+        name,
+        relative_path,
+        bytes,
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -1903,18 +1994,14 @@ fn read_dropped_files(paths: Vec<String>) -> Result<Vec<DroppedFilePayload>, Str
             continue;
         };
         let path = std::path::PathBuf::from(path);
-        if !path.is_file() {
+        if !path.exists() {
             continue;
         }
-
-        let name = path
+        let root_name = path
             .file_name()
             .and_then(|value| value.to_str())
-            .map(String::from)
-            .ok_or_else(|| "Dropped file name is invalid".to_string())?;
-        let bytes = std::fs::read(&path)
-            .map_err(|error| format!("Failed to read dropped file {name}: {error}"))?;
-        files.push(DroppedFilePayload { name, bytes });
+            .ok_or_else(|| "Selected path name is invalid".to_string())?;
+        collect_selected_files(&path, std::path::Path::new(root_name), &mut files)?;
     }
 
     Ok(files)
@@ -2435,6 +2522,8 @@ struct TrayMenuStatePayload {
     unread_more: Vec<TrayMenuTaskItem>,
     running_count: usize,
     #[serde(default)]
+    active_task_ids: Option<Vec<String>>,
+    #[serde(default)]
     show_running_status: bool,
     #[serde(default)]
     unread_count: usize,
@@ -2480,6 +2569,7 @@ impl TrayMenuStatePayload {
             unread: Vec::new(),
             unread_more: Vec::new(),
             running_count: 0,
+            active_task_ids: None,
             show_running_status: false,
             unread_count: 0,
             pinned: Vec::new(),
@@ -3311,6 +3401,10 @@ fn update_tray_visual<R: tauri::Runtime>(
 #[cfg(desktop)]
 #[tauri::command]
 fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Result<(), String> {
+    if let Some(active_task_ids) = &state.active_task_ids {
+        app.state::<system_sleep::SystemSleepState>()
+            .set_running_tasks(active_task_ids.clone());
+    }
     let menu = build_system_tray_menu(&app, &state)
         .map_err(|error| format!("Failed to build tray menu: {error}"))?;
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
@@ -3760,13 +3854,13 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
-        .manage(wecode::vnc_session::VncSessionState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .manage(system_drag::SystemDragState::default())
+        .manage(system_sleep::SystemSleepState::default())
         .on_window_event(|window, event| {
             #[cfg(desktop)]
             if hide_main_window_on_close(window, event) {
@@ -3806,6 +3900,10 @@ pub fn run() {
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
+            app.state::<system_sleep::SystemSleepState>().set_enabled(
+                read_app_preferences_impl(app.handle()).prevent_sleep_while_tasks_running,
+            );
+            #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
             #[cfg(desktop)]
             appshots::setup(app.handle());
@@ -3835,6 +3933,7 @@ pub fn run() {
             {
                 log::warn!("Failed to start embedded browser bridge: {error}");
             }
+            wecode::setup(app);
             #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
@@ -3843,13 +3942,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            wecode::local_executor::detect_wecode_cli,
-            wecode::local_executor::get_executor_process_diagnostics,
-            wecode::local_executor::get_executor_status,
-            wecode::local_executor::get_local_executor_auth_token,
-            wecode::local_executor::get_startup_env,
-            wecode::local_executor::kill_executor_processes,
+        .invoke_handler(wecode::invoke_handler![
             appshots::acknowledge_appshot,
             appshots::get_appshots_status,
             appshots::open_appshots_permission_settings,
@@ -3872,8 +3965,6 @@ pub fn run() {
             embedded_browser::embedded_browser_relabel,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
-            wecode::vnc_session::get_vnc_session_config,
-            wecode::vnc_session::prepare_vnc_session,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
@@ -3905,7 +3996,6 @@ pub fn run() {
             download_local_file_to_downloads,
             save_text_file_to_downloads,
             local_path_exists,
-            wecode::local_executor::open_executor_logs_directory,
             open_local_file,
             reveal_local_file,
             list_local_file_openers,
@@ -3914,14 +4004,20 @@ pub fn run() {
             open_local_workspace,
             read_dropped_files,
             save_local_attachment_file,
+            todo_store::ensure_todo_work_directory,
+            todo_store::ensure_todo_workspace,
+            todo_store::get_todo_workspace_path,
+            todo_store::list_todo_workspace,
+            todo_store::load_todo_store,
+            todo_store::save_todo_store,
+            todo_store::delete_todo_workspace_entry,
+            todo_store::rename_todo_workspace_entry,
+            todo_store::write_todo_workspace_file,
             system_drag::complete_system_drag_drop,
             system_drag::dismiss_system_drag_panel,
             system_drag::log_system_drag_debug,
             system_drag::take_pending_system_drag_drops,
             local_terminal::resize_local_terminal,
-            wecode::local_executor::run_executor_command,
-            wecode::local_executor::save_local_executor_auth_token,
-            wecode::local_executor::save_startup_env,
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal
         ])

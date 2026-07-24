@@ -8,6 +8,8 @@ PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 
 # shellcheck source=lib/wework-updater-signing.sh
 source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
+# shellcheck source=lib/codex-code-statistics.sh
+source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -395,6 +397,13 @@ if [ -n "$BRAND_CONFIG" ]; then
 fi
 
 WEWORK_SKIP_ENV_FILE=1 bash "$SCRIPT_DIR/build-windows-app.sh" "${BUILD_ARGS[@]}"
+
+installer_script="$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/release/nsis/x64/installer.nsi"
+if [ ! -f "$installer_script" ]; then
+  echo "Windows NSIS installer script was not found: $installer_script" >&2
+  exit 1
+fi
+wework_verify_windows_code_statistics_hook "$installer_script" "$WINDOWS_BUILD_TARGET"
 
 installer_path="$(find_installer)"
 if [ -z "$installer_path" ] || [ ! -f "$installer_path" ]; then

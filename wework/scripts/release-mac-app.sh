@@ -15,6 +15,8 @@ source "$SCRIPT_DIR/lib/wework-branding.sh"
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 # shellcheck source=lib/wework-macos-sidecar.sh
 source "$SCRIPT_DIR/lib/wework-macos-sidecar.sh"
+# shellcheck source=lib/codex-code-statistics.sh
+source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
 
 TARGET="local"
 VERSION_OVERRIDE=""
@@ -31,7 +33,7 @@ APPLE_BUILD_TEAM_ID="${APPLE_BUILD_TEAM_ID:-}"
 APPLE_BUILD_PASSWORD="${APPLE_BUILD_PASSWORD:-}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-universal-apple-darwin}"
 PRINT_NEXT_VERSION_ONLY="false"
-RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
+RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-1}"
 BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-}"
 
 usage() {
@@ -50,7 +52,7 @@ Options:
   --notary-profile <name>    Keychain profile name used by xcrun notarytool.
   --macos-build-target <target>
                               macOS Rust/Tauri target. Default: universal-apple-darwin.
-  --devtools                  Enable Web Inspector support in the release build.
+  --devtools                  Enable Web Inspector support (enabled by default).
   --brand-config <path>       Brand identity JSON used for this app bundle.
   --print-next-version        Only print the next version and exit.
   -h, --help                 Show this help message.
@@ -772,6 +774,8 @@ wework_build_macos_executor_sidecar \
   "$WEWORK_DIR" \
   "$MACOS_BUILD_TARGET" \
   release
+wework_build_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET"
+wework_sign_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET" "$app_sign_identity"
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \
@@ -779,6 +783,7 @@ wework_sign_prepared_codex_macos_binaries \
   "$app_sign_identity"
 run_tauri_build "${TAURI_BUILD_ARGS[@]}"
 wework_verify_macos_app_executor_sidecar "$(bundle_root)"
+wework_verify_code_statistics_hook "$(bundle_root)" "$MACOS_BUILD_TARGET"
 
 archive_path="$(find_update_archive)"
 if [ -z "$archive_path" ] || [ ! -f "$archive_path" ]; then

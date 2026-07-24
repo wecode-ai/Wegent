@@ -31,9 +31,21 @@ export type ComposerMentionCandidate =
       searchAliases: string[]
       app: LocalDeviceApp
     }
+  | {
+      kind: 'cloud'
+      key: string
+      title: string
+      description?: string
+      metaLabel: string
+      testId: string
+      enabled: boolean
+      reference: string
+      searchAliases: string[]
+    }
 
 export type ComposerSkillMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'skill' }>
 export type ComposerAppMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'app' }>
+export type ComposerCloudMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'cloud' }>
 
 export function displaySkillName(skill: LocalDeviceSkill): string {
   return displaySkillNameFromName(skill.name)
@@ -168,5 +180,6 @@ export function skillReference(skill: LocalDeviceSkill): string {
 }
 
 export function appReference(app: LocalDeviceApp): string {
+  if (app.skillPath) return `[$${app.name || app.id}](${app.skillPath})`
   return `[$${app.name || app.id}](app://${app.id})`
 }
