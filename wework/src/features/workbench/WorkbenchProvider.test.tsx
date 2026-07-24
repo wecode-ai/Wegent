@@ -4164,6 +4164,73 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.deviceApi.getHomeDirectory).not.toHaveBeenCalled()
   })
 
+  test('sends remote project tasks directly to the device in local-first mode', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'remote-device',
+                  deviceName: 'Remote Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  workspaceSource: 'remote',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+              totalTasks: 0,
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {},
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice(),
+          createDevice({
+            id: 2,
+            device_id: 'remote-device',
+            name: 'Remote Device',
+            device_type: 'remote',
+            is_default: false,
+          }),
+        ]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+    })
+
+    renderWorkbench(<RuntimePaneSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
+    flushSync(() => screen.getByText('start new project task').click())
+    flushSync(() => screen.getByText('set pane input').click())
+    screen.getByText('send pane input').click()
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'remote-device',
+        workspacePath: '/workspace/project-alpha',
+        message: '修复 CI',
+      })
+    )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
+      'deviceWorkspaceId'
+    )
+  })
+
   test('keeps streamed assistant content when the resolved address adds a workspace path', async () => {
     const streamHandlers: ChatStreamHandlers[] = []
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {

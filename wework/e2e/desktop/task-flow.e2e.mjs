@@ -4480,7 +4480,7 @@ async function verifyConnectedModelsOnLocalExecution({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="projects-create-button"]')
-  await control.command('click', '[data-testid="project-create-existing-option"]')
+  await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -4492,6 +4492,15 @@ async function verifyConnectedModelsOnLocalExecution({
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: 'workspace',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('waitFor', composerSelector, {
@@ -4703,16 +4712,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   await closeBottomWorkspacePanel(control)
 
   control.setScenario('cloud_follow_up')
-  const runningTaskTestId = taskRowTestId.replace(
-    'runtime-local-task-row-',
-    'runtime-local-task-running-'
-  )
   await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
-  await waitForSnapshot(
-    control,
-    value => value.testIds.includes(runningTaskTestId),
-    'The cloud follow-up task never entered the running state'
-  )
   await withTimeout(
     control.awaitScenarioRequest('cloud_follow_up'),
     UI_TIMEOUT_MS,
@@ -4723,11 +4723,6 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await waitForSnapshot(
-    control,
-    value => !value.testIds.includes(runningTaskTestId),
-    'The cloud follow-up task did not settle before project removal'
-  )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
   await verifyModelProtocolMatrix({

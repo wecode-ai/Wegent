@@ -543,7 +543,8 @@ export function useWorkbenchRuntimeMessaging({
         optimisticDeviceId = selectedProjectWorkspace.deviceId
         runtimeTaskTarget =
           selectedProjectWorkspace.id != null &&
-          selectedProjectWorkspace.workspaceSource !== 'local'
+          selectedProjectWorkspace.workspaceSource !== 'local' &&
+          !services.cloudBackgroundApi
             ? {
                 projectId,
                 deviceWorkspaceId: selectedProjectWorkspace.id,
@@ -814,6 +815,7 @@ export function useWorkbenchRuntimeMessaging({
       reportError,
       reportSendBlocked,
       runtimeTasks,
+      services.cloudBackgroundApi,
       state.currentProject,
       state.devices,
       state.projects,
