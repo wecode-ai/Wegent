@@ -26,10 +26,10 @@ from app.services.user_runtime_config import user_runtime_config_service
 class TestModelAggregationService:
     """Tests for model_aggregation_service methods."""
 
-    def test_wework_lists_runtime_codex_model_when_user_auth_enabled(
+    def test_wework_does_not_synthesize_runtime_codex_model_when_user_auth_enabled(
         self, test_db: Session, test_user: User, monkeypatch
     ):
-        """Wework should see a runtime-only Codex GPT model after auth is enabled."""
+        """Wework model lists come from stored models and local Executor catalogs only."""
         monkeypatch.setattr(
             "app.services.model_aggregation_service.kind_service.list_resources",
             lambda user_id, kind, namespace: [],
@@ -56,26 +56,7 @@ class TestModelAggregationService:
             client_origin="wework",
         )
 
-        runtime_model = next(
-            model for model in models if model["name"] == "codex-gpt-5.5"
-        )
-        assert runtime_model["type"] == "runtime"
-        assert runtime_model["provider"] == "openai"
-        assert runtime_model["modelId"] == "gpt-5.5"
-        assert runtime_model["runtime"] == {
-            "family": "openai.openai-responses",
-            "provider": "openai",
-        }
-        assert runtime_model["config"] == {
-            "protocol": "openai-responses",
-            "apiFormat": "responses",
-            "ui": {
-                "family": "gpt",
-                "modelLabel": "GPT-5.5",
-                "controls": ["speed"],
-                "sortOrder": 10,
-            },
-        }
+        assert all(model["name"] != "codex-gpt-5.5" for model in models)
 
     def test_runtime_codex_model_is_hidden_outside_wework(
         self, test_db: Session, test_user: User, monkeypatch

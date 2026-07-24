@@ -2,7 +2,6 @@ import { Check, ChevronRight, Cloud, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getModelExecutionOverride } from '@/features/cloud-connection/modelExecution'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
@@ -70,7 +69,7 @@ function getDesktopViewportRightBoundary(): number {
 }
 
 function isCloudModel(model: UnifiedModel): boolean {
-  return getModelExecutionOverride(model)?.source === 'cloud'
+  return model.provider !== 'local'
 }
 
 export function ModelSelector({

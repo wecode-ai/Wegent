@@ -83,17 +83,11 @@ wework /path/to/project
 
 `wework` 和 `wework .` 会把当前目录解析为绝对路径，并请求 Wework 打开该目录作为本机 workspace。release 构建通过 macOS app single-instance 机制把请求转发给已有窗口；debug 构建仍允许多实例，CLI 会启动当前 debug executable 并携带 `--open-workspace <path>` 参数。
 
-## 模型命名
+## 模型身份与执行传输
 
-前端合并层必须避免本机 Codex、用户配置本地模型和云端同步 Codex 的模型名冲突。UI 使用唯一名称：
+模型在 UI、任务状态和执行请求中始终使用同一份规范身份：`name`、`type`、`namespace` 和 `resourceUserId`。前端不得为了区分本机与远程执行而添加 `local:`、`cloud:` 前缀，也不得在模型配置中保存额外的 transport source。模型目录合并时，如果 Backend 合成的 runtime Codex 模型与 Executor 实时目录具有相同 `modelId`，保留 Executor 实时模型。
 
-```text
-local:runtime:codex-gpt-5.5
-local:runtime:local-model:<config-id>
-cloud:runtime:codex-gpt-5.5
-```
-
-执行前通过模型上的 `weworkExecution` 元数据映射回原始 `modelName` 和 `modelType`。本地 IPC 执行边界再把本机 Codex UI 模型名规范化为 Codex app-server 接受的真实模型 id，例如 `codex-gpt-5.5` 会在发送前转换为 `gpt-5.5`。用户配置的本地模型使用 `local-model:<config-id>`，只允许投递到本机 device；如果目标是云端任务，前端会阻止发送并提示用户切换设备或模型。云端 relay 仍按模型来源传递原始执行模型名。
+目标设备只决定传输方式：本机设备通过 IPC 调用 Executor，远程设备通过 WebSocket relay 调用 Executor。两条路径都使用相同的 `runtime.tasks.*` 协议和模型选择。公共、个人和组模型的资源身份会随请求传给 Executor，由同一个模型网关解析。用户配置的本地模型使用 `local-model:<config-id>`，由于配置只存在本机，投递到远程设备时前端会阻止发送并提示用户切换设备或模型。
 
 本机 Codex 模型目录只跟随当前 Codex 配置中的 active provider。executor 通过 Codex app-server 读取一次 `config/read` 获取当前 `model_provider` 和展示名，再调用一次 `model/list` 获取该 provider 对应的模型列表。即使 `config.toml` 中配置了多个 `[model_providers.*]`，Wework 也不把它们枚举成多个并列模型组，因为 Codex 的 `model/list` 不提供按 provider 查询的稳定协议。需要在 Wework 中展示多个模型接口时，应使用下方的本地模型配置。
 
