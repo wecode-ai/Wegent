@@ -19,6 +19,8 @@ const MARKER_ROW_GAP_PX = 20 / 9
 const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
 const NAVIGATION_VIEWPORT_PADDING_PX = 48
 const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [80, 160, 320, 640, 1000, 1600]
+const MARKER_LAYOUT_SETTLE_DELAYS_MS = [100, 300, 1000]
+const MIN_TURNS_WITHOUT_MEASURED_OVERFLOW = 4
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
@@ -70,8 +72,9 @@ export function MessageTurnNavigation({
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const markersRef = useRef<MessageTurnMarker[]>([])
-  const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
+  const layoutSettleTimersRef = useRef<number[]>([])
+  const layoutRetryPendingRef = useRef(false)
   const navigationScrollTimersRef = useRef<number[]>([])
 
   const clearNavigationScrollTimers = useCallback(() => {
@@ -141,7 +144,7 @@ export function MessageTurnNavigation({
 
   const userTurns = useMemo(() => {
     return turnNavigation && turnNavigation.length > 0
-      ? buildUserTurnsFromNavigation(turnNavigation, messages)
+      ? mergeUserTurnsWithNavigation(turnNavigation, messages)
       : buildUserTurns(messages)
   }, [messages, turnNavigation])
 
@@ -185,14 +188,17 @@ export function MessageTurnNavigation({
         markersRef.current = []
         setMarkers([])
         setActiveMarkerId(null)
-        return
+        return false
       }
 
-      if (scroller.scrollHeight <= scroller.clientHeight + 8) {
+      if (
+        scroller.scrollHeight <= scroller.clientHeight + 8 &&
+        userTurns.length < MIN_TURNS_WITHOUT_MEASURED_OVERFLOW
+      ) {
         markersRef.current = []
         setMarkers([])
         setActiveMarkerId(null)
-        return
+        return true
       }
 
       const scrollerRect = scroller.getBoundingClientRect()
@@ -219,28 +225,30 @@ export function MessageTurnNavigation({
       markersRef.current = nextMarkers
       setMarkers(nextMarkers)
       updateActiveMarker(nextMarkers, reason)
+      return false
     },
     [contentRef, scrollRef, updateActiveMarker, userTurns]
   )
 
   const scheduleCalculateMarkers = useCallback(
     (reason: string) => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current)
         timerRef.current = null
       }
+      layoutSettleTimersRef.current.forEach(timer => window.clearTimeout(timer))
+      layoutSettleTimersRef.current = []
 
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null
-        timerRef.current = window.setTimeout(() => {
-          timerRef.current = null
-          calculateMarkers(reason)
-        }, 0)
-      })
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null
+        layoutRetryPendingRef.current = calculateMarkers(reason)
+        layoutSettleTimersRef.current = MARKER_LAYOUT_SETTLE_DELAYS_MS.map(delay =>
+          window.setTimeout(() => {
+            if (!layoutRetryPendingRef.current) return
+            layoutRetryPendingRef.current = calculateMarkers(`${reason}-settled-${delay}`)
+          }, delay)
+        )
+      }, 0)
     },
     [calculateMarkers]
   )
@@ -295,14 +303,12 @@ export function MessageTurnNavigation({
       window.removeEventListener('resize', handleResize)
       mutationObserver.disconnect()
       resizeObserver?.disconnect()
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current)
         timerRef.current = null
       }
+      layoutSettleTimersRef.current.forEach(timer => window.clearTimeout(timer))
+      layoutSettleTimersRef.current = []
     }
   }, [contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarker])
 
@@ -544,6 +550,28 @@ function buildUserTurnsFromNavigation(
       loaded: Boolean(loadedMessage),
     }
   })
+}
+
+function mergeUserTurnsWithNavigation(
+  navigation: RuntimeTurnNavigationItem[],
+  messages: WorkbenchMessage[]
+): UserTurn[] {
+  const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
+  const navigationMessageIndexes = new Set(navigationTurns.map(turn => turn.messageIndex))
+  const navigationIds = new Set(navigationTurns.map(turn => turn.id))
+  const liveTurns = buildUserTurns(messages).filter(
+    turn => !navigationIds.has(turn.id) && !navigationMessageIndexes.has(turn.messageIndex)
+  )
+  const nextTurnIndex =
+    navigationTurns.reduce((maximum, turn) => Math.max(maximum, turn.turnIndex), -1) + 1
+
+  return [
+    ...navigationTurns,
+    ...liveTurns.map((turn, index) => ({
+      ...turn,
+      turnIndex: nextTurnIndex + index,
+    })),
+  ]
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {

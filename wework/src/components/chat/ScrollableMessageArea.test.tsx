@@ -665,6 +665,96 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('message-turn-navigation')).toBeInTheDocument()
   })
 
+  test('recalculates message navigation after virtualized layout settles', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'settling-navigation-user-1',
+            role: 'user',
+            content: '第一条延迟布局消息',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: 'settling-navigation-user-2',
+            role: 'user',
+            content: '第二条延迟布局消息',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    let scrollHeight = 300
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('第一条延迟布局消息').closest('[data-message-id]')!, 120, 180)
+    mockRect(screen.getByText('第二条延迟布局消息').closest('[data-message-id]')!, 620, 680)
+
+    fireEvent.resize(window)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(screen.queryByTestId('message-turn-navigation')).not.toBeInTheDocument()
+
+    scrollHeight = 1000
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+
+    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+  })
+
+  test('merges live turns into a stale transcript navigation snapshot', () => {
+    const messages = Array.from({ length: 5 }, (_, index) => ({
+      id: `live-navigation-user-${index}`,
+      role: 'user' as const,
+      content: `实时消息 ${index + 1}`,
+      status: 'done' as const,
+      createdAt: `2026-05-29T00:00:0${index}.000Z`,
+      runtimeMessageIndex: index,
+    }))
+    render(
+      <ScrollableMessageArea
+        messages={messages}
+        turnNavigation={[
+          {
+            id: messages[0].id,
+            turnIndex: 0,
+            messageIndex: 0,
+            cursor: 'offset:0',
+            promptPreview: messages[0].content,
+            responsePreview: '',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 300, configurable: true })
+    mockRect(scroller, 0, 300)
+    messages.forEach((message, index) => {
+      mockRect(
+        screen.getByText(message.content).closest('[data-message-id]')!,
+        80 + index * 100,
+        128 + index * 100
+      )
+    })
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(5)
+  })
+
   test('keeps message navigation marker spacing fixed when the rail overflows', () => {
     const userMessages = Array.from({ length: 12 }, (_, index) => ({
       id: `overflow-user-${index + 1}`,
