@@ -441,6 +441,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoPanelRef = useRef<HTMLElement | null>(null)
   const [environmentInfoPanelElement, setEnvironmentInfoPanelElement] =
     useState<HTMLElement | null>(null)
+  const [environmentInfoChatTopRightContainer, setEnvironmentInfoChatTopRightContainer] =
+    useState<HTMLElement | null>(null)
+  const [panelTogglesWidth, setPanelTogglesWidth] = useState(72)
+  const panelTogglesRef = useRef<HTMLDivElement | null>(null)
   const setEnvironmentInfoPanelRef = useCallback((element: HTMLElement | null) => {
     environmentInfoPanelRef.current = element
   }, [])
@@ -452,6 +456,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (workbenchScroll && workbenchScroll.scrollLeft !== 0) {
       workbenchScroll.scrollLeft = 0
     }
+  }, [])
+  useLayoutEffect(() => {
+    const el = panelTogglesRef.current
+    if (!el) return
+
+    const updateWidth = () => {
+      setPanelTogglesWidth(el.getBoundingClientRect().width)
+    }
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
@@ -1294,6 +1312,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
+  const windowsEnvironmentInfoAction = renderWorkspacePanelActions(
+    'environment',
+    environmentInfoChatTopRightContainer,
+    true
+  )
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
   const paneTaskTitle =
     runtimeTaskTitle && !isTauri ? (
@@ -1374,6 +1397,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {feedbackButton}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
+    </>
+  )
+  const windowsTitlebarMainActions = (
+    <>
+      {forkTaskButton}
+      {continueInImButton}
+      {mainHeaderProjectAction}
+      {windowsEnvironmentInfoAction}
     </>
   )
   const platform = getPlatform()
@@ -1495,6 +1526,70 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )}
     </div>
   ) : undefined
+  const windowsTitlebarMiddleContent =
+    isTauri && platform === 'win' ? (
+      <div className="relative flex h-full w-full min-w-0 items-center">
+        <div data-tauri-drag-region className="absolute inset-0 z-0" />
+        {runtimeTaskTitle ? (
+          <div
+            data-testid="workbench-pane-task-title"
+            className={cn(
+              'pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center truncate text-sm font-medium leading-none text-text-primary',
+              sidebarCollapsed ? 'pl-[8.5rem]' : 'pl-4',
+              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+            )}
+          >
+            <span className="block min-w-0 truncate">{runtimeTaskTitle}</span>
+          </div>
+        ) : (
+          <div className="relative z-10 min-w-0 flex-1" />
+        )}
+        <div
+          data-testid="titlebar-main-actions"
+          className="relative z-10 flex h-full shrink-0 items-center justify-end gap-1"
+        >
+          {windowsTitlebarMainActions}
+        </div>
+        <div
+          data-testid="workbench-chat-top-right-spacer"
+          className={cn(
+            'pointer-events-none shrink-0',
+            rightSplitResizing
+              ? 'transition-none'
+              : 'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
+          )}
+          style={{
+            width: rightPanelOpen
+              ? `${Math.max(
+                  0,
+                  workbenchContentWidth - rightSplitChatWidth - 138 - panelTogglesWidth
+                )}px`
+              : 0,
+          }}
+        />
+        <div
+          ref={setEnvironmentInfoChatTopRightContainer}
+          className={cn(
+            'pointer-events-none absolute top-[100%] z-popover h-0 w-[308px]',
+            rightSplitResizing
+              ? 'transition-none'
+              : 'transition-[right] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[right]'
+          )}
+          style={{
+            right: rightPanelOpen
+              ? `${Math.max(0, workbenchContentWidth - rightSplitChatWidth - 138)}px`
+              : `${panelTogglesWidth}px`,
+          }}
+        />
+        <div
+          ref={panelTogglesRef}
+          data-testid="workbench-panel-toggles"
+          className="relative z-10 flex h-full shrink-0 items-center gap-1 pr-1"
+        >
+          {panelChromeActions}
+        </div>
+      </div>
+    ) : undefined
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
       return
@@ -1537,14 +1632,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {tauriMainHeaderContent ? (
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
-      {isTauri && platform === 'win' ? (
+      {isTauri && windowsTitlebarMiddleContent ? (
         <WorkbenchWindowsTitlebarMiddlePortal>
-          <div
-            data-testid="workbench-panel-toggles"
-            className="relative z-10 flex h-full shrink-0 items-center gap-1 pr-1"
-          >
-            {panelChromeActions}
-          </div>
+          {windowsTitlebarMiddleContent}
         </WorkbenchWindowsTitlebarMiddlePortal>
       ) : null}
       <>
