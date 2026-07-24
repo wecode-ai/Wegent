@@ -459,8 +459,11 @@ class LoopItemService:
     ) -> None:
         if backend_task_id is None:
             return
-        backend_task = task_store.get_active_task(
-            db, task_id=backend_task_id, owner_user_id=user_id
+        backend_task = task_store.get_task_by_states(
+            db,
+            task_id=backend_task_id,
+            states=TaskResource.is_active_query(),
+            user_id=user_id,
         )
         if backend_task is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")

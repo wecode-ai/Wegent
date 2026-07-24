@@ -85,9 +85,9 @@ describe('createLocalAppServices', () => {
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
-          name: 'gpt-5.5',
+          name: 'gpt-5.6-sol',
           type: 'runtime',
-          modelId: 'gpt-5.5',
+          modelId: 'gpt-5.6-sol',
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
         expect.objectContaining({
@@ -106,6 +106,7 @@ describe('createLocalAppServices', () => {
       ]),
     })
     const modelIds = models.data.map(model => model.modelId)
+    expect(modelIds).not.toContain('gpt-5.5')
     expect(modelIds).not.toContain('Sol')
     expect(modelIds).not.toContain('Terra')
     expect(modelIds).not.toContain('Luna')
@@ -121,7 +122,7 @@ describe('createLocalAppServices', () => {
     ])
     const preferences = {
       wework_new_chat_model_selection: {
-        modelName: 'gpt-5.5',
+        modelName: 'gpt-5.4',
         modelType: 'runtime' as const,
         options: { collaborationMode: 'plan' },
       },
@@ -777,7 +778,7 @@ describe('createLocalAppServices', () => {
       },
       message: 'continue',
       clientMessageId: 'runtime-local-pane-1',
-      modelId: 'gpt-5.5',
+      modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
         reasoning: 'extra_high',
@@ -839,7 +840,7 @@ describe('createLocalAppServices', () => {
           client_user_message_id: 'runtime-local-pane-1',
           model_config: expect.objectContaining({
             model: 'openai',
-            model_id: 'gpt-5.5',
+            model_id: 'gpt-5.4',
             api_format: 'responses',
             protocol: 'openai-responses',
             runtime_config: {
@@ -966,7 +967,7 @@ describe('createLocalAppServices', () => {
       },
       message: 'edited question',
       messageId: 'user-last',
-      modelId: 'gpt-5.5',
+      modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
         reasoning: 'high',
@@ -996,7 +997,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model: 'openai',
-            model_id: 'gpt-5.5',
+            model_id: 'gpt-5.4',
             api_format: 'responses',
             protocol: 'openai-responses',
           }),
@@ -1419,7 +1420,7 @@ describe('createLocalAppServices', () => {
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
-      modelId: 'gpt-5.5',
+      modelId: 'gpt-5.4',
     })
 
     const createPayload = request.mock.calls.find(
@@ -1501,7 +1502,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model: 'openai',
-            model_id: 'gpt-5.5',
+            model_id: 'gpt-5.6-sol',
             api_format: 'responses',
             protocol: 'openai-responses',
           }),
