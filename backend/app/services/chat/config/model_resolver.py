@@ -940,11 +940,35 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     api_format = model_spec.get("apiFormat")
     protocol = model_spec.get("protocol")
 
+    env_model = (
+        str(env.get("model") or "").strip().lower() if isinstance(env, dict) else ""
+    )
+
+    # Fallback: infer protocol from env.model when the spec does not set it.
+    # This fixes models created by older frontend versions that only stored
+    # env.model (e.g. "openai" or "claude") without spec.protocol/apiFormat.
+    if not protocol and env_model:
+        if env_model == "openai":
+            protocol = "openai"
+        elif env_model == "claude":
+            protocol = "claude"
+        if protocol:
+            logger.info(
+                f"[model_resolver] _extract_model_config: inferred protocol={protocol} from env.model={env_model}"
+            )
+
     # If protocol is "openai-responses", use responses API format
     if not api_format and protocol == "openai-responses":
         api_format = "responses"
         logger.info(
             f"[model_resolver] _extract_model_config: using responses API from protocol={protocol}"
+        )
+
+    # Fallback: infer chat/completions API format for plain OpenAI protocol
+    if not api_format and protocol == "openai":
+        api_format = "chat/completions"
+        logger.info(
+            f"[model_resolver] _extract_model_config: using chat/completions API from protocol={protocol}"
         )
     # Context window and output token limits from modelConfig
     context_window = model_config.get("context_window")
