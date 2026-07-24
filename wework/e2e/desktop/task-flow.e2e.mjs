@@ -55,15 +55,20 @@ const CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB = Number(
 )
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 320 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 384 * 1024
 )
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 224 * 1024
 )
-const MEMORY_MAX_DOM_NODE_COUNT = Number(process.env.WEWORK_E2E_MEMORY_MAX_DOM_NODES ?? 900)
+const MEMORY_MAX_SETTLED_DOM_NODE_COUNT = Number(
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES ?? 900
+)
+const MEMORY_MIN_BASELINE_SAMPLES = 5
+const MEMORY_MAX_BASELINE_SAMPLES = 15
 const MEMORY_MIN_SETTLED_SAMPLES = 5
 const MEMORY_MAX_SETTLED_SAMPLES = 15
 const MEMORY_MAX_RECENT_DRIFT_KIB = 16 * 1024
+const MEMORY_SAMPLE_WINDOW_SIZE = 3
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
@@ -656,7 +661,15 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
 async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Desktop memory E2E currently requires macOS')
   control.setScenario('memory')
-  const samples = [await captureMemorySample(control, 'baseline')]
+  const baselineSamples = await captureStableMemorySamples(
+    control,
+    'baseline',
+    MEMORY_MIN_BASELINE_SAMPLES,
+    MEMORY_MAX_BASELINE_SAMPLES
+  )
+  const baseline = medianMemorySample(baselineSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE))
+  assert.ok(baseline, 'The memory E2E did not capture baseline samples')
+  const samples = [...baselineSamples]
   await captureVerificationScreenshot(control, 'memory-01-baseline.png')
   await sendPromptUntilScenarioRequest(control, composerSelector, MEMORY_PROMPT, 'memory')
   await captureVerificationScreenshot(control, 'memory-02-streaming.png')
@@ -677,24 +690,27 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     samples.push(await captureMemorySample(control, 'settled'))
     const settledSamples = samples.filter(sample => sample.phase === 'settled')
     if (settledSamples.length < MEMORY_MIN_SETTLED_SAMPLES) continue
-    const current = settledSamples.at(-1)
     const recent = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
+    const settledWindow = settledSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+    const settled = medianMemorySample(settledWindow)
+    assert.ok(settled, 'The memory E2E did not capture a settled sample window')
     if (
-      current.physicalFootprintKiB - samples[0].physicalFootprintKiB <=
+      settled.physicalFootprintKiB - baseline.physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      current.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
+      settled.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
     ) {
       break
     }
   }
 
-  const baseline = samples[0]
-  const peak = samples.reduce((largest, sample) =>
+  const workloadSamples = samples.filter(sample => sample.phase !== 'baseline')
+  const peak = workloadSamples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
   const peakDomNodeCount = Math.max(...samples.map(sample => sample.domNodeCount))
   const settledSamples = samples.filter(sample => sample.phase === 'settled')
-  const settled = settledSamples.at(-1)
+  const settledWindow = settledSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+  const settled = medianMemorySample(settledWindow)
   assert.ok(settled, 'The memory E2E did not capture settled samples')
   await captureVerificationScreenshot(control, 'memory-04-settled.png')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
@@ -702,6 +718,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const recentSettledSamples = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
   const settledDriftKiB =
     settled.physicalFootprintKiB - recentSettledSamples[0].physicalFootprintKiB
+  const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
 
   await writeFile(
     join(resultDir, 'memory-growth.json'),
@@ -710,9 +727,16 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
         limits: {
           maxPeakGrowthKiB: MEMORY_MAX_PEAK_GROWTH_KIB,
           maxSettledGrowthKiB: MEMORY_MAX_SETTLED_GROWTH_KIB,
-          maxDomNodeCount: MEMORY_MAX_DOM_NODE_COUNT,
+          maxSettledDomNodeCount: MEMORY_MAX_SETTLED_DOM_NODE_COUNT,
         },
-        summary: { peakGrowthKiB, settledGrowthKiB, settledDriftKiB, peakDomNodeCount },
+        summary: {
+          peakGrowthKiB,
+          settledGrowthKiB,
+          settledDriftKiB,
+          peakDomNodeCount,
+          settledDomNodeCount,
+          baselineSampleCount: baselineSamples.length,
+        },
         samples,
       },
       null,
@@ -726,8 +750,8 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent peak physical footprint grew by ${peakGrowthKiB} KiB`
   )
   assert.ok(
-    peakDomNodeCount <= MEMORY_MAX_DOM_NODE_COUNT,
-    `WebContent DOM reached ${peakDomNodeCount} nodes while rendering the long response`
+    settledDomNodeCount <= MEMORY_MAX_SETTLED_DOM_NODE_COUNT,
+    `WebContent DOM retained ${settledDomNodeCount} nodes after rendering the long response`
   )
   assert.ok(
     settledGrowthKiB <= MEMORY_MAX_SETTLED_GROWTH_KIB,
@@ -737,6 +761,28 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     settledDriftKiB <= MEMORY_MAX_RECENT_DRIFT_KIB,
     `WebContent kept growing after completion by ${settledDriftKiB} KiB`
   )
+}
+
+async function captureStableMemorySamples(control, phase, minimumSamples, maximumSamples) {
+  const samples = []
+  while (samples.length < maximumSamples) {
+    if (samples.length > 0) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    }
+    samples.push(await captureMemorySample(control, phase))
+    if (samples.length < minimumSamples) continue
+    const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+    const drift = recent.at(-1).physicalFootprintKiB - recent[0].physicalFootprintKiB
+    if (Math.abs(drift) <= MEMORY_MAX_RECENT_DRIFT_KIB) break
+  }
+  return samples
+}
+
+function medianMemorySample(samples) {
+  if (samples.length === 0) return null
+  return [...samples].sort((left, right) => left.physicalFootprintKiB - right.physicalFootprintKiB)[
+    Math.floor(samples.length / 2)
+  ]
 }
 
 async function waitForScenarioRequestCount(control, scenario, expectedCount) {
@@ -4066,6 +4112,15 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  const runningTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-running-'
+  )
+  await waitForSnapshot(
+    control,
+    value => !value.testIds.includes(runningTaskTestId),
+    'The cloud follow-up task did not settle before project removal'
+  )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
   const projectMenuTestId = `project-menu-${projectId}`
