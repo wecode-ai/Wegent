@@ -429,18 +429,6 @@ pub fn prepare_vnc_session(
 }
 
 #[tauri::command]
-pub fn get_vnc_session_config(
-    state: tauri::State<'_, VncSessionState>,
-    session_id: String,
-) -> Result<VncSessionConfig, String> {
-    state
-        .registry
-        .lock()
-        .map_err(|_| UNAVAILABLE_STATE.to_string())?
-        .get(&session_id, Instant::now())
-}
-
-#[tauri::command]
 pub fn get_vnc_external_bridge_url() -> Result<String, String> {
     let value =
         env::var(EXTERNAL_BRIDGE_ADDR_ENV).map_err(|_| EXTERNAL_BRIDGE_UNAVAILABLE.to_string())?;
@@ -610,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn serializes_the_ipc_response_with_camel_case_fields() {
+    fn serializes_the_session_response_with_camel_case_fields() {
         let config = VncSessionConfig {
             ws_url: WS_URL.to_string(),
             token: TOKEN.to_string(),
@@ -759,11 +747,12 @@ mod tests {
     }
 
     #[test]
-    fn vnc_page_fetches_credentials_over_ipc_instead_of_the_page_url() {
+    fn vnc_page_fetches_credentials_from_the_loopback_session_endpoint() {
         let html = VNC_HTML;
 
         assert!(html.contains("params.get('sessionId')"));
-        assert!(html.contains("get_vnc_session_config"));
+        assert!(html.contains("fetch('/session/' + encodeURIComponent(sessionId)"));
+        assert!(!html.contains("get_vnc_session_config"));
         assert!(html.contains("url.searchParams.set('token', config.token)"));
         assert!(html.contains("key.toLowerCase().includes('token')"));
         assert!(html.contains("value === config.token"));
