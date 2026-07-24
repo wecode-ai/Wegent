@@ -669,6 +669,9 @@ function ProjectSendProbe() {
           )
           .join('|') ?? ''}
       </span>
+      <span data-testid="current-created-runtime-task-running">
+        {workbench.currentRuntimeTaskRunning ? 'running' : 'idle'}
+      </span>
       <span data-testid="runtime-task-errors">
         {workbench.state.runtimeWork?.projects
           .flatMap(projectWork =>
@@ -3153,6 +3156,94 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: 'runtime-b',
     })
+  })
+
+  test('keeps a newly created task running across a stale accepted-task refresh', async () => {
+    let createdTaskId = ''
+    const initialRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const listRuntimeWork = vi.fn().mockImplementation(() => {
+      if (!createdTaskId) return Promise.resolve(initialRuntimeWork)
+      return Promise.resolve(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: createdTaskId,
+                      workspacePath: '/workspace/project-alpha',
+                      title: '修复 CI',
+                      runtime: 'codex',
+                      status: 'active',
+                      running: false,
+                    },
+                  ],
+                },
+              ],
+              totalTasks: 1,
+            },
+          ],
+          totalTasks: 1,
+        })
+      )
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork,
+      createRuntimeTask: vi.fn(async request => {
+        createdTaskId = request.taskId
+        return {
+          accepted: true,
+          deviceId: 'device-1',
+          taskId: request.taskId,
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'codex',
+        }
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(listRuntimeWork.mock.calls.length).toBeGreaterThan(1))
+    expect(screen.getByTestId('current-created-runtime-task-running')).toHaveTextContent('running')
   })
 
   test('keeps a failed runtime task record when project task creation is rejected', async () => {

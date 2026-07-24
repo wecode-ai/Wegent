@@ -681,6 +681,7 @@ export function useWorkbenchRuntimeMessaging({
         hasSelectedProjectWorkspace: Boolean(selectedProjectWorkspace),
         optimisticWorkspacePath: optimisticWorkspacePath ?? null,
       })
+      dispatch({ type: 'runtime_task_started', address: optimisticAddress })
       options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
       if (options?.openInMainPane !== false) {
         runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
@@ -781,6 +782,7 @@ export function useWorkbenchRuntimeMessaging({
         return address
       } catch (error) {
         const message = error instanceof Error ? error.message : '发送失败'
+        dispatch({ type: 'runtime_task_settled', address: optimisticAddress })
         if (optimisticWorkspace && optimisticWorkspacePath && !options?.ephemeral) {
           dispatch({
             type: 'runtime_task_optimistic_upserted',
