@@ -119,3 +119,45 @@ async def test_exit_durability_yields_post_compaction_state_after_recursion():
     assert not any(getattr(m, "tool_call_id", None) == "t1" for m in msgs)
     # exit durability => a single committed checkpoint, not one per super-step.
     assert len(list(saver.list(config))) == 1
+
+
+def test_build_agent_attaches_request_local_checkpointer():
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    agent = builder._build_agent()
+
+    assert builder._checkpointer is not None  # always present now
+    assert agent.checkpointer is builder._checkpointer
+
+
+@pytest.mark.asyncio
+async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypatch):
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    captured: list[dict] = []
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            captured.append({"config": config, "durability": durability})
+            for _ in []:  # empty async generator
+                yield
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+
+    for _ in range(2):
+        async for _token in builder.stream_tokens(
+            messages=[{"role": "user", "content": "hi"}]
+        ):
+            pass
+
+    assert len(captured) == 2
+    assert all(c["durability"] == "exit" for c in captured)
+    t0 = captured[0]["config"]["configurable"]["thread_id"]
+    t1 = captured[1]["config"]["configurable"]["thread_id"]
+    assert t0 and t1 and t0 != t1  # present and unique per turn

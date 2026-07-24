@@ -18,6 +18,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any, Callable, Optional
+from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -30,7 +31,7 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.utils import convert_to_messages
 from langchain_core.tools.base import BaseTool
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
@@ -48,6 +49,7 @@ from ..tools.argument_stream import ToolCallStreamTracker
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
 from ..tools.deferred_input import DeferredUserInputExit
+from .turn_context import TurnExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -779,7 +781,6 @@ class LangGraphAgentBuilder:
         llm: BaseChatModel,
         tool_registry: ToolRegistry | None = None,
         max_iterations: int = 10,
-        enable_checkpointing: bool = False,
         max_truncation_retries: int | None = None,
         pre_model_hook: Callable | None = None,
         on_model_usage: Callable[..., Any] | None = None,
@@ -790,7 +791,6 @@ class LangGraphAgentBuilder:
             llm: LangChain chat model instance
             tool_registry: Registry of available tools (optional)
             max_iterations: Maximum tool loop iterations
-            enable_checkpointing: Enable state checkpointing for resumability
             max_truncation_retries: Maximum retry attempts when tool calls are truncated.
                 If None, uses settings.MAX_TRUNCATION_RETRIES
             pre_model_hook: Optional LangGraph hook called before each model call
@@ -800,7 +800,6 @@ class LangGraphAgentBuilder:
         self.llm = llm
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
-        self.enable_checkpointing = enable_checkpointing
         self.pre_model_hook = pre_model_hook
         self.on_model_usage = on_model_usage
         self.max_truncation_retries = (
@@ -809,6 +808,9 @@ class LangGraphAgentBuilder:
             else settings.MAX_TRUNCATION_RETRIES
         )
         self._agent = None
+        # Request-local checkpointer, created unconditionally in _build_agent so
+        # authoritative post-compaction state is readable on every exit path.
+        self._checkpointer: InMemorySaver | None = None
 
         # Provider metadata set by LangChainModelFactory for think-block handling
         self._provider: str = getattr(llm, "_wegent_provider", "unknown")
@@ -850,7 +852,12 @@ class LangGraphAgentBuilder:
             target_model_id=self._model_id,
             target_api_format=self._api_format,
         )
-        exec_config = {"configurable": config} if config else None
+        # Request-local checkpointer needs a thread id (T11 adds the authoritative
+        # finalizer + teardown for this path).
+        nonstream_thread_id = str(uuid4())
+        exec_config = {
+            "configurable": {**(config or {}), "thread_id": nonstream_thread_id}
+        }
 
         all_events: list[dict[str, Any]] = []
         final_state: dict[str, Any] = {}
@@ -859,10 +866,11 @@ class LangGraphAgentBuilder:
             async for event in agent.astream_events(
                 {"messages": lc_messages},
                 config={
-                    **(exec_config or {}),
+                    **exec_config,
                     "recursion_limit": self.max_iterations * 2 + 1,
                 },
                 version="v2",
+                durability="exit",
             ):
                 if cancel_event and cancel_event.is_set():
                     logger.info("Streaming cancelled by user")
@@ -1255,7 +1263,6 @@ class LangGraphAgentBuilder:
         extract_attributes=lambda self, *args, **kwargs: {
             "agent.tools_count": len(self.tools),
             "agent.max_iterations": self.max_iterations,
-            "agent.enable_checkpointing": self.enable_checkpointing,
         },
     )
     def _build_agent(self):
@@ -1266,11 +1273,12 @@ class LangGraphAgentBuilder:
 
         add_span_event("building_new_agent")
 
-        # Use LangGraph's prebuilt create_react_agent
-        checkpointer = MemorySaver() if self.enable_checkpointing else None
-        add_span_event(
-            "checkpointer_created", {"has_checkpointer": checkpointer is not None}
-        )
+        # Authoritative-state persistence requires a request-local checkpointer on
+        # every turn — not optional, or exception paths lose the compaction
+        # checkpoint. Memory stays ~1x via durability="exit" at invocation time.
+        checkpointer = InMemorySaver()
+        self._checkpointer = checkpointer
+        add_span_event("checkpointer_created", {"has_checkpointer": True})
 
         # Create prompt modifier for dynamic skill prompt injection
         prompt_modifier = self._create_prompt_modifier()
@@ -1444,7 +1452,14 @@ class LangGraphAgentBuilder:
             msg.id for msg in lc_messages if msg.id
         )
 
-        exec_config = {"configurable": config} if config else None
+        # Request-local checkpointer needs a thread id; each turn owns a fresh
+        # one and reads authoritative state from it on exit (see TurnExecutionContext).
+        turn_thread_id = str(uuid4())
+        turn_ctx = TurnExecutionContext(
+            original_input_ids=_input_message_ids,
+            current_thread_id=turn_thread_id,
+        )
+        exec_config = {"configurable": {**(config or {}), "thread_id": turn_thread_id}}
 
         event_count = 0
         streamed_content = False  # Track if we've streamed any content
@@ -1485,10 +1500,11 @@ class LangGraphAgentBuilder:
             async for event in agent.astream_events(
                 {"messages": lc_messages},
                 config={
-                    **(exec_config or {}),
+                    **exec_config,
                     "recursion_limit": recursion_limit,
                 },
                 version="v2",
+                durability="exit",
             ):
                 event_count += 1
                 # Check cancellation
