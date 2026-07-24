@@ -1197,10 +1197,13 @@ async function ensureModelOptionVisible(control, targetOptionId) {
           timeoutMs: UI_TIMEOUT_MS,
         })
         .catch(() => undefined)
-      await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
-        stableMs: 100,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
+      menu = JSON.parse(await control.command('snapshot', 'body'))
+      if (!menu.testIds.includes('model-selector-menu')) {
+        await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+          stableMs: 100,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+      }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
@@ -1211,6 +1214,18 @@ async function ensureModelOptionVisible(control, targetOptionId) {
   }
 
   throw new Error(`Model option ${targetOptionId} did not become visible`)
+}
+
+async function confirmLocalProjectName(control, name) {
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: name,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
 }
 
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
@@ -4769,19 +4784,7 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-      value: 'workspace',
-    })
-    await control.command(
-      'clickWhenEnabled',
-      '[data-testid="confirm-local-project-create-button"]',
-      {
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
+    await confirmLocalProjectName(control, 'workspace')
 
     const composerSelector = ACTIVE_COMPOSER_SELECTOR
     await control.command('waitFor', composerSelector, {
@@ -4860,19 +4863,7 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-      value: 'workspace',
-    })
-    await control.command(
-      'clickWhenEnabled',
-      '[data-testid="confirm-local-project-create-button"]',
-      {
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
+    await confirmLocalProjectName(control, 'workspace')
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
@@ -5667,17 +5658,7 @@ async function main() {
       '[data-testid="confirm-device-folder-picker-button"]',
       { timeoutMs: UI_TIMEOUT_MS }
     )
-    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-      value: COMPOSER_PROJECT_NAME,
-    })
-    await control.command(
-      'clickWhenEnabled',
-      '[data-testid="confirm-local-project-create-button"]',
-      { timeoutMs: UI_TIMEOUT_MS }
-    )
+    await confirmLocalProjectName(control, COMPOSER_PROJECT_NAME)
     const createdComposerProjectSnapshot = await waitForSnapshot(
       control,
       snapshot =>

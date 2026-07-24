@@ -73,6 +73,8 @@ export function MessageTurnNavigation({
   const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
   const navigationScrollTimersRef = useRef<number[]>([])
+  const messagesRef = useRef(messages)
+  const turnNavigationRef = useRef(turnNavigation)
 
   const clearNavigationScrollTimers = useCallback(() => {
     navigationScrollTimersRef.current.forEach(timer => window.clearTimeout(timer))
@@ -139,7 +141,13 @@ export function MessageTurnNavigation({
     [clearNavigationScrollTimers, contentRef, onNavigationScrollTargetChange]
   )
 
-  const userTurns = buildUserTurnsForNavigation(messages, turnNavigation)
+  const nextUserTurns = buildUserTurnsForNavigation(messages, turnNavigation)
+  const userTurnsSignature = getUserTurnsSignature(nextUserTurns)
+
+  useLayoutEffect(() => {
+    messagesRef.current = messages
+    turnNavigationRef.current = turnNavigation
+  }, [messages, turnNavigation, userTurnsSignature])
 
   const updateActiveMarker = useCallback(
     (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
@@ -177,6 +185,7 @@ export function MessageTurnNavigation({
     (reason: string) => {
       const scroller = scrollRef.current
       const content = contentRef.current
+      const userTurns = buildUserTurnsForNavigation(messagesRef.current, turnNavigationRef.current)
       if (!scroller || !content || userTurns.length < 2) {
         markersRef.current = []
         setMarkers([])
@@ -209,7 +218,7 @@ export function MessageTurnNavigation({
       setMarkers(nextMarkers)
       updateActiveMarker(nextMarkers, reason)
     },
-    [contentRef, scrollRef, updateActiveMarker, userTurns]
+    [contentRef, scrollRef, updateActiveMarker]
   )
 
   const scheduleCalculateMarkers = useCallback(
@@ -236,7 +245,7 @@ export function MessageTurnNavigation({
 
   useEffect(() => {
     scheduleCalculateMarkers('messages-effect')
-  }, [scheduleCalculateMarkers])
+  }, [scheduleCalculateMarkers, userTurnsSignature])
 
   useLayoutEffect(() => {
     if (!pendingScrollTarget) return
@@ -491,6 +500,10 @@ function buildUserTurnsForNavigation(
 
   const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
   return navigationTurns.length >= messageTurns.length ? navigationTurns : messageTurns
+}
+
+function getUserTurnsSignature(turns: UserTurn[]) {
+  return JSON.stringify(turns)
 }
 
 function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {

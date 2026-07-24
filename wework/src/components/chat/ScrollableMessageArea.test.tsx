@@ -730,6 +730,40 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
+  test('does not reschedule marker calculation for unchanged turns', () => {
+    const messages = [
+      {
+        id: 'stable-user-1',
+        role: 'user' as const,
+        content: '第一条稳定需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: 'stable-assistant-1',
+        role: 'assistant' as const,
+        content: '第一条稳定回复',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+      {
+        id: 'stable-user-2',
+        role: 'user' as const,
+        content: '第二条稳定需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:02.000Z',
+      },
+    ]
+    const { rerender } = render(<ScrollableMessageArea messages={messages} />)
+    flushScheduledTimers()
+    const scheduledCount = requestAnimationFrameSpy.mock.calls.length
+
+    rerender(<ScrollableMessageArea messages={[...messages]} />)
+    flushScheduledTimers()
+
+    expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(scheduledCount)
+  })
+
   test('uses newer transcript turns while runtime navigation metadata is catching up', () => {
     render(
       <ScrollableMessageArea

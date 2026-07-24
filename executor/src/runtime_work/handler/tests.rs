@@ -241,6 +241,59 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
     let _ = fs::remove_file(index_path);
 }
 
+#[test]
+fn completed_responses_include_the_persisted_runtime_turn_id() {
+    for (case, outcome) in [
+        (
+            "completed",
+            ExecutionOutcome::Completed {
+                content: "Done".to_owned(),
+            },
+        ),
+        (
+            "waiting",
+            ExecutionOutcome::WaitingForUserInput {
+                stop_reason: "Need input".to_owned(),
+            },
+        ),
+    ] {
+        let (event_tx, mut event_rx) = broadcast::channel(1);
+        let index_path = temp_runtime_work_index_path(&format!("completed-turn-id-{case}"));
+        let mut handler =
+            RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = format!("task-{case}");
+        let request = ExecutionRequest {
+            task_id: local_task_id.clone(),
+            subtask_id: format!("subtask-{case}"),
+            ..ExecutionRequest::default()
+        };
+        handler.upsert_local_task(RuntimeTaskLink::new_pending(
+            local_task_id.clone(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        ));
+        handler.record_runtime_turn_id(&local_task_id, &request.subtask_id, "turn-1");
+
+        handler.handle_turn_result(
+            &local_task_id,
+            &request,
+            Ok(crate::agents::CodexAppServerTurn {
+                thread_id: format!("thread-{case}"),
+                outcome,
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("completed response should be emitted");
+        assert_eq!(event["event"], "response.completed", "{case}");
+        assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+
+        let _ = fs::remove_file(index_path);
+    }
+}
+
 #[tokio::test]
 async fn archived_delete_falls_back_inline_when_enqueue_fails() {
     let index_path = temp_runtime_work_index_path("delete-enqueue-fallback");
