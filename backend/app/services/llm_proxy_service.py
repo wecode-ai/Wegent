@@ -86,17 +86,17 @@ def _resolve_upstream_target(
             auth_headers["x-api-key"] = provider_api_key
         return "/v1/messages", auth_headers
 
-    if is_chat_completions:
-        auth_headers = {}
-        if provider_api_key:
-            auth_headers["Authorization"] = f"Bearer {provider_api_key}"
-        return "/chat/completions", auth_headers
-
     if is_responses:
         auth_headers = {}
         if provider_api_key:
             auth_headers["Authorization"] = f"Bearer {provider_api_key}"
         return "/responses", auth_headers
+
+    if is_chat_completions:
+        auth_headers = {}
+        if provider_api_key:
+            auth_headers["Authorization"] = f"Bearer {provider_api_key}"
+        return "/chat/completions", auth_headers
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,

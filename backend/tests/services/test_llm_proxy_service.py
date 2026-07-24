@@ -26,6 +26,7 @@ def _model_kind(
     api_key: str = "sk-test-key",
     base_url: str = "https://api.example.com/v1",
     protocol: str = "openai-responses",
+    api_format: str | None = None,
     default_headers: dict[str, str] | None = None,
 ) -> Kind:
     model_config: dict[str, object] = {
@@ -38,6 +39,14 @@ def _model_kind(
     if default_headers is not None:
         model_config["DEFAULT_HEADERS"] = default_headers
 
+    spec: dict[str, object] = {
+        "provider": "openai",
+        "modelConfig": model_config,
+        "protocol": protocol,
+    }
+    if api_format is not None:
+        spec["apiFormat"] = api_format
+
     return Kind(
         user_id=user_id,
         kind="Model",
@@ -47,11 +56,7 @@ def _model_kind(
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Model",
             "metadata": {"name": name, "namespace": namespace},
-            "spec": {
-                "provider": "openai",
-                "modelConfig": model_config,
-                "protocol": protocol,
-            },
+            "spec": spec,
         },
         is_active=True,
     )
@@ -367,6 +372,57 @@ async def test_proxy_llm_responses_forwards_chat_completions_to_provider(
     assert str(sent_request.url) == "https://api.example.com/v1/chat/completions"
     assert sent_request.headers["Authorization"] == "Bearer sk-chat-key"
     assert b'"model": "gpt-4-turbo"' in sent_request.content
+
+
+async def test_proxy_llm_responses_prefers_responses_format_over_openai_protocol(
+    test_db, test_user: User
+):
+    model = _model_kind(
+        test_user.id,
+        name="responses-with-openai-protocol",
+        protocol="openai",
+        api_format="responses",
+        api_key="sk-responses-key",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"responses-with-openai-protocol","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    upstream_response_mock = MagicMock()
+    upstream_response_mock.status_code = 200
+    upstream_response_mock.headers = {"content-type": "text/event-stream"}
+
+    async def fake_aiter_raw():
+        yield b"data: ok\n\n"
+
+    upstream_response_mock.aiter_raw = fake_aiter_raw
+    client_mock = AsyncMock()
+    client_mock.send = AsyncMock(return_value=upstream_response_mock)
+    client_mock.aclose = AsyncMock()
+
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient",
+        return_value=client_mock,
+    ):
+        response = await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert response.status_code == 200
+    sent_request = client_mock.send.call_args[0][0]
+    assert str(sent_request.url) == "https://api.example.com/v1/responses"
+    assert sent_request.headers["Authorization"] == "Bearer sk-responses-key"
 
 
 async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
