@@ -3262,6 +3262,33 @@ class DesktopE2EServer {
       this.writeLocalAssistantMessage(response, model, LOCAL_MODEL_SWITCH_INITIAL_COMPLETE)
       return
     }
+    if (state.stage === 'model_switch_source_complete') {
+      assert.equal(model.protocol, 'responses', 'The switch-and-retry source must use Responses')
+      assert.ok(
+        serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT),
+        'The first custom model did not receive the prompt that should fail before switching'
+      )
+      state.stage = 'model_switch_source_failed'
+      const responseId = `local-model-switch-failure-${Date.now()}`
+      this.writeSse(response, [
+        responseCreated(responseId),
+        responseFailed(responseId, 'WEWORK_LOCAL_MODEL_SWITCH_RETRY_FAILURE'),
+      ])
+      return
+    }
+    if (state.stage === 'model_switch_source_failed' && codexRequestKind(body) === 'compaction') {
+      const responseId = `local-model-switch-compaction-${Date.now()}`
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+    if (
+      state.stage === 'model_switch_target' &&
+      (codexRequestKind(body) === 'compaction' ||
+        serialized.includes('CONTEXT CHECKPOINT COMPACTION'))
+    ) {
+      this.writeLocalAssistantMessage(response, model, '')
+      return
+    }
     if (state.stage === 'model_switch_target') {
       assert.ok(
         serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT),
@@ -4795,23 +4822,23 @@ async function main() {
         text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
         timeoutMs: UI_TIMEOUT_MS,
       })
-      await selectE2EModel(control, targetModel.optionId, targetModel.label)
-      await control.command('waitFor', '[data-testid="model-selector-button"]', {
-        text: targetModel.label,
+      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+      await control.command('waitFor', '[data-testid="assistant-error-switch-model-retry"]', {
         timeoutMs: UI_TIMEOUT_MS,
       })
-      const pendingModelLabel = await control.command(
-        'getText',
-        '[data-testid="model-selector-button"]'
-      )
-      assert.doesNotMatch(
-        pendingModelLabel,
-        /下一轮|Next/,
-        'An idle conversation incorrectly marked the selected model as next-turn only'
-      )
       await prepareCompletedTurnScreenshot(control)
-      await captureVerificationScreenshot(control, 'model-switch-01-selected.png')
-      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+      await captureVerificationScreenshot(control, 'model-switch-retry-01-failed.png')
+      await control.command('click', '[data-testid="assistant-error-switch-model-retry"]')
+      await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(
+        control,
+        'model-switch-retry-02-picker-open.png',
+        '[data-testid="model-selector-menu"]'
+      )
+      await selectE2EModel(control, targetModel.optionId, targetModel.label)
+      await captureVerificationScreenshot(control, 'model-switch-retry-03-target-selected.png')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: LOCAL_MODEL_SWITCH_COMPLETE,
         timeoutMs: UI_TIMEOUT_MS,
@@ -4820,13 +4847,13 @@ async function main() {
       const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
       assert.equal(
         sourceSwitchState?.requests.length,
-        1,
-        'The old custom model received the follow-up after switching'
+        2,
+        'The old custom model received the automatic retry after switching'
       )
       assert.equal(
         targetSwitchState?.stage,
         'model_switch_target_complete',
-        'The new custom model did not complete the same-conversation follow-up'
+        'The new custom model did not complete the automatic same-conversation retry'
       )
       await control.command('waitFor', '[data-testid="model-selector-button"]', {
         text: targetModel.label,
@@ -4842,7 +4869,7 @@ async function main() {
         'The applied custom model remained incorrectly marked as next-turn only'
       )
       await prepareCompletedTurnScreenshot(control)
-      await captureVerificationScreenshot(control, 'model-switch-02-completed.png')
+      await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
       control.localProtocolStates.set(sourceModel.protocol, { stage: 'initial', requests: [] })
       control.localProtocolStates.set(targetModel.protocol, { stage: 'initial', requests: [] })
 

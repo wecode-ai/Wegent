@@ -462,19 +462,10 @@ impl CodexAppServerClient {
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
-        let result: Result<(), String> = async {
-            let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
-            let message = json!({
-                "method": "thread/unsubscribe",
-                "id": request_id,
-                "params": {"threadId": thread_id},
-            });
-            let write_result = handle.write_message(message).await;
-            handle.remove_pending(request_id).await;
-            drop(response_rx);
-            write_result
-        }
-        .await;
+        let result = self
+            .request("thread/unsubscribe", json!({"threadId": thread_id}))
+            .await
+            .map(|_| ());
         if let Err(error) = result {
             log_executor_event(
                 "codex shared thread unsubscribe failed",
@@ -1932,7 +1923,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     if use_user_config {
         let inference_provider = inference_model_provider(&request.model_config);
         if let Some(upstream) = configured_codex_provider(&inference_provider) {
-            configure_codex_router(&mut launch_config, upstream);
+            configure_codex_router(&mut launch_config, upstream, model.clone());
         } else {
             launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
@@ -1948,6 +1939,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         configure_codex_router(
             &mut launch_config,
             explicit_codex_upstream(&request.model_config, &base_url, &api_key),
+            model.clone(),
         );
     } else {
         launch_config.model_provider = Some(inference_model_provider(&request.model_config));
@@ -1968,8 +1960,10 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
 
 fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
-    upstream: LocalModelProxyUpstream,
+    mut upstream: LocalModelProxyUpstream,
+    routing_model_id: Option<String>,
 ) {
+    upstream.routing_model_id = routing_model_id;
     let local_token = local_model_proxy::register(upstream);
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
@@ -2006,6 +2000,7 @@ fn explicit_codex_upstream(
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
         model_id: non_empty_config(model_config, "model_id"),
+        routing_model_id: None,
     }
 }
 
@@ -2128,6 +2123,7 @@ fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> 
         default_headers,
         proxy_url: None,
         model_id: None,
+        routing_model_id: None,
     })
 }
 

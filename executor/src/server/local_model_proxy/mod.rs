@@ -55,6 +55,7 @@ pub(crate) struct LocalModelProxyUpstream {
     pub default_headers: Vec<(String, String)>,
     pub proxy_url: Option<String>,
     pub model_id: Option<String>,
+    pub routing_model_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +136,7 @@ fn registration_token(upstream: &LocalModelProxyUpstream) -> String {
     upstream.default_headers.hash(&mut hasher);
     upstream.proxy_url.hash(&mut hasher);
     upstream.model_id.hash(&mut hasher);
+    upstream.routing_model_id.hash(&mut hasher);
     format!("model-{}-{:016x}", std::process::id(), hasher.finish())
 }
 
@@ -188,10 +190,18 @@ async fn handle_for_token(
             .lock()
             .expect("local model proxy registry should not be poisoned");
         prune_registry(&mut registry);
-        let registered = registry.get_mut(&token).ok_or_else(|| HttpError {
+        let original = registry.get(&token).ok_or_else(|| HttpError {
             status: StatusCode::NOT_FOUND,
             detail: "unknown or expired local model proxy token".to_owned(),
         })?;
+        let selected_token = requested_model(&body)
+            .as_deref()
+            .and_then(|model| matching_route_token(&registry, original, model))
+            .unwrap_or(&token)
+            .clone();
+        let registered = registry
+            .get_mut(&selected_token)
+            .expect("selected local model proxy route should remain registered");
         registered.last_used = Instant::now();
         (registered.upstream.clone(), registered.history.clone())
     };
@@ -406,6 +416,30 @@ async fn handle_for_token(
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
     Ok(response)
+}
+
+fn requested_model(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(body)
+        .ok()?
+        .get("model")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn matching_route_token<'a>(
+    registry: &'a HashMap<String, RegisteredUpstream>,
+    original: &RegisteredUpstream,
+    requested_model: &str,
+) -> Option<&'a String> {
+    registry
+        .iter()
+        .filter(|(_, candidate)| {
+            candidate.upstream.base_url == original.upstream.base_url
+                && candidate.upstream.api_key == original.upstream.api_key
+                && candidate.upstream.routing_model_id.as_deref() == Some(requested_model)
+        })
+        .max_by_key(|(_, candidate)| (candidate.active_references > 0, candidate.last_used))
+        .map(|(token, _)| token)
 }
 
 fn rewrite_request_model(body: &[u8], model_id: &str) -> Result<Vec<u8>, HttpError> {
@@ -961,6 +995,7 @@ mod tests {
             default_headers: Vec::new(),
             proxy_url: None,
             model_id: None,
+            routing_model_id: None,
         };
         let token = register(upstream.clone());
         let repeated_token = register(upstream.clone());
@@ -1003,12 +1038,70 @@ mod tests {
             default_headers: Vec::new(),
             proxy_url: None,
             model_id: None,
+            routing_model_id: None,
         };
         let first = registration_token(&upstream);
         let mut changed = upstream;
         changed.base_url = "https://two.example.com".to_owned();
 
         assert_ne!(registration_token(&changed), first);
+    }
+
+    #[test]
+    fn selects_the_requested_model_route_within_the_same_credential_scope() {
+        let original = registered_upstream("source", "shared-secret");
+        let mut target = registered_upstream("target", "shared-secret");
+        target.upstream.routing_model_id = Some("target-model".to_owned());
+        let registry = HashMap::from([
+            ("source-token".to_owned(), original),
+            ("target-token".to_owned(), target),
+        ]);
+
+        let selected = matching_route_token(
+            &registry,
+            registry.get("source-token").expect("source route"),
+            "target-model",
+        );
+
+        assert_eq!(selected.map(String::as_str), Some("target-token"));
+    }
+
+    #[test]
+    fn does_not_route_a_model_request_across_credentials() {
+        let original = registered_upstream("source", "source-secret");
+        let mut target = registered_upstream("target", "other-user-secret");
+        target.upstream.routing_model_id = Some("target-model".to_owned());
+        let registry = HashMap::from([
+            ("source-token".to_owned(), original),
+            ("target-token".to_owned(), target),
+        ]);
+
+        let selected = matching_route_token(
+            &registry,
+            registry.get("source-token").expect("source route"),
+            "target-model",
+        );
+
+        assert!(selected.is_none());
+    }
+
+    fn registered_upstream(registration_id: &str, api_key: &str) -> RegisteredUpstream {
+        RegisteredUpstream {
+            upstream: LocalModelProxyUpstream {
+                registration_id: registration_id.to_owned(),
+                base_url: "https://shared.example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                api_key: api_key.to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+            },
+            history: Default::default(),
+            last_used: Instant::now(),
+            active_references: 1,
+        }
     }
 
     #[test]
@@ -1057,6 +1150,7 @@ mod tests {
             default_headers: Vec::new(),
             proxy_url: None,
             model_id: None,
+            routing_model_id: None,
         });
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1106,6 +1200,7 @@ mod tests {
             default_headers: Vec::new(),
             proxy_url: None,
             model_id: None,
+            routing_model_id: None,
         });
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1178,6 +1273,7 @@ mod tests {
             default_headers: Vec::new(),
             proxy_url: None,
             model_id: None,
+            routing_model_id: None,
         });
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1233,6 +1329,7 @@ mod tests {
             default_headers: Vec::new(),
             proxy_url: None,
             model_id: Some(model_id.clone()),
+            routing_model_id: None,
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
