@@ -2,16 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import {
-  access,
-  appendFile,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { access, appendFile, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -120,6 +111,8 @@ const LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT =
   'WEWORK_LOCAL_MODEL_SWITCH_FOLLOW_UP: continue this conversation with the second custom model.'
 const LOCAL_MODEL_SWITCH_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
+const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
@@ -1071,6 +1064,7 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
 
 async function revealGroupedModelOption(control, targetOptionId) {
   const menu = JSON.parse(await control.command('snapshot', 'body'))
+  if (menu.testIds.includes(targetOptionId)) return true
   const familyTestIds = menu.testIds.filter(testId => testId.startsWith('model-family-'))
 
   for (const familyTestId of familyTestIds) {
@@ -1085,30 +1079,22 @@ async function revealGroupedModelOption(control, targetOptionId) {
   return false
 }
 
-async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
-  const selectedModelText = await control.command(
-    'waitFor',
-    '[data-testid="model-selector-button"]',
-    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
-  )
-  if (selectedModelText.includes(modelLabel)) return
-
-  const targetOptionId = `model-option-${modelId}`
-  let optionVisible = false
-  for (let attempt = 0; attempt < 6 && !optionVisible; attempt += 1) {
+async function ensureModelOptionVisible(control, targetOptionId) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     let menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (menu.testIds.includes(targetOptionId)) {
-      optionVisible = true
-      break
-    }
+    if (menu.testIds.includes(targetOptionId)) return menu
     if (menu.testIds.includes('model-control-menu-model')) {
-      await control.command('hover', '[data-testid="model-control-menu-model"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
+      await control
+        .command('hover', '[data-testid="model-control-menu-model"]', {
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        .catch(() => undefined)
     } else {
-      await control.command('hover', '[data-testid="model-selector-button"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
+      await control
+        .command('hover', '[data-testid="model-selector-button"]', {
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        .catch(() => undefined)
       await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
         stableMs: 100,
         timeoutMs: UI_TIMEOUT_MS,
@@ -1116,13 +1102,22 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
-    optionVisible = menu.testIds.includes(targetOptionId)
-    if (!optionVisible) {
-      optionVisible = await revealGroupedModelOption(control, targetOptionId)
+    if (menu.testIds.includes(targetOptionId)) return menu
+    if (await revealGroupedModelOption(control, targetOptionId)) {
+      return JSON.parse(await control.command('snapshot', 'body'))
     }
   }
 
-  assert.ok(optionVisible, `Model option ${modelId} did not become visible`)
+  throw new Error(`Model option ${targetOptionId} did not become visible`)
+}
+
+async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  const targetOptionId = `model-option-${modelId}`
+  await ensureModelOptionVisible(control, targetOptionId)
   await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -2223,16 +2218,16 @@ class RealCloudEnvironment {
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
 
-    this.remoteHome = join('/tmp', `wework-cloud-e2e-${process.pid}`)
-    const remoteCodexHome = join(this.remoteHome, 'codex')
+    const remoteHome = join(resultDir, 'cloud-executor-home')
+    const remoteCodexHome = join(remoteHome, 'codex')
     await writeCodexConfig(remoteCodexHome, this.modelServerUrl)
     const remoteEnv = {
       ...process.env,
       CODEX_BIN: this.codexBinary,
       CODEX_HOME: remoteCodexHome,
-      HOME: this.remoteHome,
+      HOME: remoteHome,
       WEGENT_CODEX_HOME: remoteCodexHome,
-      WEGENT_EXECUTOR_HOME: this.remoteHome,
+      WEGENT_EXECUTOR_HOME: remoteHome,
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
       EXECUTOR_MODE: 'local',
@@ -2339,7 +2334,6 @@ class RealCloudEnvironment {
     await stopProcessGroup(this.remoteExecutor)
     await stopProcess(this.backend)
     await stopProcess(this.redis)
-    if (this.remoteHome) await rm(this.remoteHome, { recursive: true, force: true })
   }
 }
 
@@ -2376,6 +2370,7 @@ class DesktopE2EServer {
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
     this.failCloudModels = false
+    this.cloudModelsAvailable = false
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
     this.scenario = 'initial'
@@ -2536,6 +2531,11 @@ class DesktopE2EServer {
       this.failedCloudModelWaiter?.()
       this.failedCloudModelWaiter = null
     }
+  }
+
+  restoreCloudModels() {
+    this.failCloudModels = false
+    this.cloudModelsAvailable = true
   }
 
   awaitFailedCloudModelRequest() {
@@ -2699,6 +2699,45 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
+      if (this.cloudModelsAvailable) {
+        json(response, 200, {
+          data: [
+            {
+              name: `codex-${DEFAULT_MODEL_ID}`,
+              type: 'runtime',
+              displayName: `${DEFAULT_MODEL_LABEL} (Codex)`,
+              provider: 'openai',
+              modelId: DEFAULT_MODEL_ID,
+              namespace: 'default',
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                weworkModelKind: 'codex-official',
+                ui: { family: 'codex-official', modelLabel: DEFAULT_MODEL_LABEL },
+              },
+              runtime: { family: 'openai.openai-responses' },
+              isActive: true,
+            },
+            {
+              name: CLOUD_PUBLIC_MODEL_NAME,
+              type: 'public',
+              displayName: CLOUD_PUBLIC_MODEL_LABEL,
+              provider: 'openai',
+              modelId: 'desktop-e2e-public-upstream-model',
+              namespace: 'default',
+              resourceUserId: 0,
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                ui: { family: 'gpt', modelLabel: CLOUD_PUBLIC_MODEL_LABEL },
+              },
+              runtime: { family: 'openai.openai-responses' },
+              isActive: true,
+            },
+          ],
+        })
+        return
+      }
       if (this.failCloudModels) {
         this.failedCloudModelRequests += 1
         this.failedCloudModelWaiter?.()
@@ -4011,12 +4050,20 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdent
   )
   const mainBinaryName = await readTauriMainBinaryName()
   const binaryName = process.platform === 'win32' ? `${mainBinaryName}.exe` : mainBinaryName
-  const cargoTargetDir = process.env.CARGO_TARGET_DIR
-    ? resolve(weworkDir, process.env.CARGO_TARGET_DIR)
-    : join(weworkDir, 'src-tauri', 'target')
   const candidates = [
-    join(cargoTargetDir, 'debug', binaryName),
-    join(cargoTargetDir, 'debug', 'bundle', 'macos', 'WeWork.app', 'Contents', 'MacOS', binaryName),
+    join(weworkDir, 'src-tauri', 'target', 'debug', binaryName),
+    join(
+      weworkDir,
+      'src-tauri',
+      'target',
+      'debug',
+      'bundle',
+      'macos',
+      'WeWork.app',
+      'Contents',
+      'MacOS',
+      binaryName
+    ),
   ]
   for (const candidate of candidates) {
     if (await isExecutable(candidate)) {
@@ -4109,6 +4156,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
   await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
@@ -4124,10 +4172,15 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
-  await withTimeout(
+  const cloudInitialRequest = await withTimeout(
     control.awaitScenarioRequestCount('cloud_initial', 2),
     UI_TIMEOUT_MS,
     'The real cloud executor did not complete its model tool loop'
+  )
+  assert.equal(
+    cloudInitialRequest.body?.model,
+    DEFAULT_MODEL_ID,
+    'The remote executor did not receive the selected canonical model id'
   )
   assert.equal(
     (await readFile(join(workspacePath, CLOUD_ARTIFACT_NAME), 'utf8')).trim(),
@@ -4235,149 +4288,10 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
 }
 
-async function waitForCloudApiValue(cloudEnvironment, load, matches, message) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
-    const value = await load()
-    if (matches(value)) return value
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-  }
-  throw new Error(message)
-}
-
-async function cloudApi(cloudEnvironment, path, options = {}) {
-  const url = `${cloudEnvironment.backendUrl}/api/v1${path}`
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${cloudEnvironment.authToken}`,
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers,
-    },
-  })
-  const body = response.status === 204 ? null : await response.json()
-  assert.equal(
-    response.ok,
-    true,
-    `${options.method ?? 'GET'} ${url} failed: ${JSON.stringify(body)}`
-  )
-  return body
-}
-
-async function verifyCloudTodoFlow(control, cloudEnvironment) {
-  const projectName = `Desktop E2E TODO ${Date.now()}`
-  const rootTitle = 'Desktop E2E root task'
-  const childTitle = 'Desktop E2E child task'
-  const runtimeBinding = {
-    deviceId: CLOUD_DEVICE_ID,
-    taskId: `desktop-e2e-todo-${Date.now()}`,
-    taskTitle: 'Desktop E2E bound runtime task',
-  }
-
-  await control.command('navigate', '/todo')
-  await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="cloud-project-add"]')
-  await control.command('fill', '[data-testid="cloud-project-name"]', {
-    value: projectName,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]')
-  await control.command('waitFor', '[data-testid="cloud-project-header"]', {
-    text: projectName,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
-
-  const project = await waitForCloudApiValue(
-    cloudEnvironment,
-    () => cloudApi(cloudEnvironment, '/cloud-projects'),
-    response => response.items?.some(item => item.name === projectName),
-    'The cloud TODO project was not persisted by the real backend'
-  ).then(response => response.items.find(item => item.name === projectName))
-  assert.ok(project?.id, 'The persisted cloud TODO project has no ID')
-
-  await control.command('click', '[data-testid="cloud-todo-column-add-inbox"]')
-  await control.command('fill', '[data-testid="cloud-todo-title"]', { value: rootTitle })
-  await control.command('clickWhenEnabled', '[data-testid="cloud-todo-create-confirm"]')
-  const rootItem = await waitForCloudApiValue(
-    cloudEnvironment,
-    () => cloudApi(cloudEnvironment, `/cloud-projects/${project.id}/loop-items`),
-    response => response.items?.some(item => item.title === rootTitle),
-    'The root TODO was not persisted by the real backend'
-  ).then(response => response.items.find(item => item.title === rootTitle))
-  assert.equal(rootItem.parent_id, null, 'The root TODO did not expose a null parent')
-  await control.command('waitFor', `[data-testid="cloud-todo-card-${rootItem.id}"]`, {
-    text: rootTitle,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
-
-  await control.command('drag', `[data-testid="cloud-todo-card-${rootItem.id}"]`, {
-    target: '[data-testid="cloud-todo-column-dropzone-pending"]',
-  })
-  const movedItem = await waitForCloudApiValue(
-    cloudEnvironment,
-    () => cloudApi(cloudEnvironment, `/loop-items/${rootItem.id}`),
-    item => item.status === 'pending',
-    'Dragging the TODO did not persist the pending status'
-  )
-  assert.equal(movedItem.completed_at, null)
-  await control.command(
-    'waitFor',
-    `[data-testid="cloud-todo-column-pending"] [data-testid="cloud-todo-card-${rootItem.id}"]`,
-    { text: rootTitle, timeoutMs: UI_TIMEOUT_MS }
-  )
-
-  await control.command('click', `[data-testid="cloud-todo-card-add-child-${rootItem.id}"]`)
-  await control.command('fill', '[data-testid="cloud-todo-title"]', { value: childTitle })
-  await control.command('clickWhenEnabled', '[data-testid="cloud-todo-create-confirm"]')
-  const childItem = await waitForCloudApiValue(
-    cloudEnvironment,
-    () => cloudApi(cloudEnvironment, `/cloud-projects/${project.id}/loop-items`),
-    response => response.items?.some(item => item.title === childTitle),
-    'The child TODO was not persisted by the real backend'
-  ).then(response => response.items.find(item => item.title === childTitle))
-  assert.equal(childItem.parent_id, rootItem.id, 'The child TODO lost its parent relationship')
-
-  const binding = await cloudApi(cloudEnvironment, `/loop-items/${rootItem.id}/tasks`, {
-    method: 'POST',
-    body: JSON.stringify(runtimeBinding),
-  })
-  assert.equal(binding.loop_item_id, rootItem.id)
-  assert.equal(binding.unlinked_at, null)
-  const context = await cloudApi(
-    cloudEnvironment,
-    `/runtime-tasks/cloud-context?device_id=${encodeURIComponent(runtimeBinding.deviceId)}&task_id=${encodeURIComponent(runtimeBinding.taskId)}`
-  )
-  assert.equal(context.loop_item.id, rootItem.id)
-  assert.equal(context.project.id, String(project.id))
-
-  await cloudApi(cloudEnvironment, `/loop-items/${rootItem.id}/tasks`, {
-    method: 'DELETE',
-    body: JSON.stringify(runtimeBinding),
-  })
-  const activeBindings = await cloudApi(cloudEnvironment, `/loop-items/${rootItem.id}/tasks`)
-  assert.deepEqual(activeBindings, [], 'The runtime task remained active after unbinding')
-
-  const folder = await cloudApi(cloudEnvironment, `/cloud-projects/${project.id}/folders`, {
-    method: 'POST',
-    body: JSON.stringify({ path: 'desktop-e2e', description: 'Desktop E2E folder' }),
-  })
-  const movedFolder = await cloudApi(cloudEnvironment, `/cloud-projects/files/${folder.id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ path: 'desktop-e2e-renamed', version: folder.version }),
-  })
-  assert.equal(movedFolder.path, 'desktop-e2e-renamed')
-  await cloudApi(cloudEnvironment, `/cloud-projects/files/${folder.id}`, {
-    method: 'DELETE',
-  })
-
-  await captureVerificationScreenshot(control, 'cloud-todo-01-full-flow-completed.png')
-  await control.command('navigate', '/')
-}
-
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
+  const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
@@ -4385,6 +4299,7 @@ async function main() {
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
+    mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
   await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
@@ -4494,8 +4409,6 @@ async function main() {
     await control.command('focusMainWindow', 'body')
 
     if (CLOUD_ONLY) {
-      phase = 'cloud-todo-flow'
-      await verifyCloudTodoFlow(control, cloudEnvironment)
       phase = 'cloud-project-flow'
       await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
       await writeFile(
@@ -4518,6 +4431,37 @@ async function main() {
     })
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
+    control.restoreCloudModels()
+    await control.command('dispatchLocalModelSettingsChanged', '')
+    const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
+    const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
+    const legacyGpt55ModelOption = 'model-option-gpt-5.5'
+    const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`
+    const recoveredModelMenu = await ensureModelOptionVisible(control, canonicalModelOption)
+    assert.equal(
+      recoveredModelMenu.testIds.filter(testId => testId === canonicalModelOption).length,
+      1,
+      'The canonical Executor model appeared more than once'
+    )
+    assert.equal(
+      recoveredModelMenu.testIds.includes(synthesizedModelOption),
+      false,
+      'The Backend-synthesized runtime Codex duplicate remained visible'
+    )
+    assert.equal(
+      recoveredModelMenu.testIds.includes(legacyGpt55ModelOption),
+      false,
+      'The legacy GPT 5.5 Codex model remained visible'
+    )
+    assert.equal(
+      (await ensureModelOptionVisible(control, publicModelOption)).testIds.includes(
+        publicModelOption
+      ),
+      true,
+      'The independent public model was removed while deduplicating runtime Codex'
+    )
+    await captureVerificationScreenshot(control, '00-canonical-model-catalog.png')
+    await control.command('press', 'body', { key: 'Escape' })
 
     if (SHORT_CONVERSATION_ONLY) {
       phase = 'short-conversation-layout'
@@ -4578,7 +4522,7 @@ async function main() {
 
     phase = 'project-folder-cancel'
     await control.command('click', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('click', '[data-testid="project-create-local-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4595,8 +4539,7 @@ async function main() {
 
     phase = 'composer-project-folder-select'
     await control.command('click', '[data-testid="project-work-button"]')
-    await control.command('hover', '[data-testid="add-local-project-option"]')
-    await control.command('click', '[data-testid="add-local-existing-project-option"]')
+    await control.command('click', '[data-testid="add-local-project-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4616,6 +4559,19 @@ async function main() {
       '[data-testid="confirm-device-folder-picker-button"]',
       {
         stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+      value: 'workspace',
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-local-project-create-button"]',
+      {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
@@ -4674,7 +4630,7 @@ async function main() {
 
     phase = 'project-folder-reopen'
     await control.command('click', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('click', '[data-testid="project-create-local-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4694,6 +4650,19 @@ async function main() {
       '[data-testid="confirm-device-folder-picker-button"]',
       {
         stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+      value: 'workspace',
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-local-project-create-button"]',
+      {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
@@ -5317,6 +5286,7 @@ async function main() {
     const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
     const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
     const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
+    const bottomWorkspaceTabCloseSelector = '[data-testid="close-bottom-workspace-tab-button"]'
     const rightBrowserTabCloseSelector = '[data-testid="right-workspace-browser-tab-close-button"]'
     const retainedBrowserUrl = 'https://example.com/session-state'
     await control.command('waitFor', rightPanelToggleSelector, {
@@ -5330,7 +5300,24 @@ async function main() {
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
     await control.command('click', bottomPanelToggleSelector)
-    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
+      control,
+      value => {
+        const terminalOpened =
+          value.testIds.includes('workspace-terminal-window') &&
+          !value.testIds.includes('workspace-tool-launcher')
+        const localTerminalUnavailable =
+          value.testIds.includes('workspace-tool-launcher') &&
+          value.testIds.includes('workspace-local-device-limited-tools')
+        return terminalOpened || localTerminalUnavailable
+      },
+      'The first task bottom workspace panel did not open a terminal or limited-tools launcher',
+      UI_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
+    const firstTaskOpenedTerminal = firstTaskBottomWorkspaceSnapshot.testIds.includes(
+      'workspace-terminal-window'
+    )
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     const secondTaskWorkspaceSnapshot = JSON.parse(
       await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
@@ -5345,26 +5332,39 @@ async function main() {
       false,
       'The first task browser leaked into the second task'
     )
+    assert.equal(
+      secondTaskWorkspaceSnapshot.testIds.includes('workspace-tool-launcher'),
+      false,
+      'The first task bottom workspace launcher leaked into the second task'
+    )
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
-    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    if (firstTaskOpenedTerminal) {
+      await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    } else {
+      await waitForSnapshot(
+        control,
+        value =>
+          value.testIds.includes('bottom-workspace-panel') &&
+          value.testIds.includes('workspace-tool-launcher') &&
+          value.testIds.includes('workspace-local-device-limited-tools'),
+        'The first task bottom workspace limited-tools state was not restored',
+        UI_TIMEOUT_MS,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
+    }
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     assert.equal(
       await control.command('getValue', activeBrowserInputSelector),
       retainedBrowserUrl,
       'The Wework built-in browser URL was reset after switching conversations'
     )
-    const restoredWorkspaceSnapshot = JSON.parse(
-      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-    )
+    const restoredWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.ok(
       restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
       'The browser tab was not restored after switching conversations'
     )
     await captureVerificationScreenshot(control, 'workspace-resources-restored-after-switch.png')
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="close-bottom-workspace-tab-button"]`
-    )
+    await control.command('click', bottomWorkspaceTabCloseSelector)
     await control.command('click', rightBrowserTabCloseSelector)
 
     await control.command('fill', composerSelector, { value: '' })
@@ -5452,13 +5452,30 @@ async function main() {
     )
     await control.command('click', '[data-testid="project-work-button"]')
     await control.command('click', '[data-testid="add-local-project-option"]')
-    await control.command('click', '[data-testid="add-local-blank-project-option"]')
-    await control.command('fill', '[data-testid="standalone-blank-project-name-input"]', {
+    await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await waitForFolderPickerInitialized(control)
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: composerProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, composerProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      { timeoutMs: UI_TIMEOUT_MS }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
       value: COMPOSER_PROJECT_NAME,
     })
     await control.command(
       'clickWhenEnabled',
-      '[data-testid="save-standalone-blank-project-button"]'
+      '[data-testid="confirm-local-project-create-button"]',
+      { timeoutMs: UI_TIMEOUT_MS }
     )
     const createdComposerProjectSnapshot = await waitForSnapshot(
       control,
