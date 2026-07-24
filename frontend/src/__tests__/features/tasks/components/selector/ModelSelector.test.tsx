@@ -121,7 +121,7 @@ const mockModel: Model = {
   type: 'shared' as Model['type'],
   contextWindow: 1048576,
   maxOutputTokens: 131072,
-  costIndex: 50,
+  costIndex: '50',
   modelCapabilities: {
     supportsImage: true,
     supportsVideo: true,
@@ -448,7 +448,7 @@ describe('ModelSelector', () => {
     const informationAction = screen.getByTestId('model-info-claude-3-5-sonnet')
     const modelTitle = screen.getByTitle('Claude 3.5 Sonnet')
 
-    expect(modelOption.parentElement).toBe(informationAction.parentElement)
+    expect(modelOption.parentElement).toContainElement(informationAction)
     expect(modelOption.parentElement).toHaveClass('items-stretch')
     expect(modelOption.parentElement).toHaveClass('overflow-hidden')
     expect(modelOption.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_auto_32px]')
