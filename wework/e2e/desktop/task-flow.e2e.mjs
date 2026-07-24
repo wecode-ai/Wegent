@@ -783,14 +783,13 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     samples.push(await captureMemorySample(control, 'settled'))
     const settledSamples = samples.filter(sample => sample.phase === 'settled')
     if (settledSamples.length < MEMORY_MIN_SETTLED_SAMPLES) continue
-    const recent = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
     const settledWindow = settledSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
     const settled = medianMemorySample(settledWindow)
     assert.ok(settled, 'The memory E2E did not capture a settled sample window')
     if (
       settled.physicalFootprintKiB - baseline.physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB
+      memorySampleRangeKiB(settledWindow) <= MEMORY_MAX_SAMPLE_RANGE_KIB
     ) {
       break
     }
@@ -808,8 +807,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   await captureVerificationScreenshot(control, 'memory-04-settled.png')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
-  const recentSettledSamples = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
-  const settledRangeKiB = memorySampleRangeKiB(recentSettledSamples)
+  const settledRangeKiB = memorySampleRangeKiB(settledWindow)
   const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
 
   await writeFile(
