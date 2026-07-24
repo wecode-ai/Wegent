@@ -851,6 +851,7 @@ describe('createHybridWorkbenchServices', () => {
         cloudModelGateway: {
           baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
           apiKey: 'cloud-token',
+          mcpUrl: 'https://cloud.example.com/api/mcp/delivery/sse',
         },
         transportLabel: 'Cloud',
       })

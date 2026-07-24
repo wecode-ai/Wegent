@@ -12,7 +12,7 @@ import contextvars
 from dataclasses import dataclass
 from typing import Optional
 
-from app.mcp_server.auth import TaskTokenInfo
+from app.mcp_server.auth import MCPAuthInfo
 
 # MCP request context - thread-safe storage for request-scoped data
 _mcp_context: contextvars.ContextVar[Optional["MCPRequestContext"]] = (
@@ -28,12 +28,12 @@ class MCPRequestContext:
     It provides access to authentication and request metadata.
 
     Attributes:
-        token_info: Validated task token containing user and task identifiers
+        token_info: Validated MCP identity and optional task identifiers
         tool_name: Name of the MCP tool being invoked
         server_name: Name of the MCP server handling the request
     """
 
-    token_info: TaskTokenInfo
+    token_info: MCPAuthInfo
     tool_name: str
     server_name: str
 
@@ -68,11 +68,11 @@ def reset_mcp_context(token: contextvars.Token) -> None:
     _mcp_context.reset(token)
 
 
-def get_token_info_from_context() -> Optional[TaskTokenInfo]:
-    """Convenience function to get TaskTokenInfo from MCP context.
+def get_token_info_from_context() -> Optional[MCPAuthInfo]:
+    """Convenience function to get authenticated identity from MCP context.
 
     Returns:
-        TaskTokenInfo if in MCP context and authenticated, None otherwise.
+        MCPAuthInfo if in MCP context and authenticated, None otherwise.
     """
     ctx = get_mcp_context()
     if ctx:

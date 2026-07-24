@@ -723,6 +723,7 @@ fn apply_codex_global_state_ops(
                 remove_codex_global_project_payload(
                     payload,
                     op.project_key.as_deref().unwrap_or(&op.workspace_path),
+                    &op.workspace_path,
                 );
             }
             OPLOG_KIND_REORDER_PROJECT => {
@@ -1325,8 +1326,11 @@ fn rename_codex_global_project_payload(
     set_workspace_root_label(payload, &workspace_path, Some(label));
 }
 
-fn remove_codex_global_project_payload(payload: &mut Map<String, Value>, workspace_path: &str) {
-    let project_ref = workspace_path;
+fn remove_codex_global_project_payload(
+    payload: &mut Map<String, Value>,
+    project_ref: &str,
+    workspace_path: &str,
+) {
     if let Some(projects) = payload
         .get_mut(LOCAL_PROJECTS_KEY)
         .and_then(Value::as_object_mut)
@@ -1386,6 +1390,14 @@ fn remove_codex_global_project_payload(payload: &mut Map<String, Value>, workspa
                 .and_then(clean_string)
                 .as_deref()
                 != Some(project_ref)
+        });
+    }
+    if let Some(hints) = payload
+        .get_mut(THREAD_WORKSPACE_ROOT_HINTS_KEY)
+        .and_then(Value::as_object_mut)
+    {
+        hints.retain(|_, root| {
+            root.as_str().map(normalize_workspace_path).as_deref() != Some(workspace_path.as_str())
         });
     }
 }
@@ -1857,7 +1869,8 @@ mod tests {
             "pinned-project-ids": ["local-id", "remote-id"],
             "project-appearances": {"local-id": {"color": "red"}},
             "sidebar-project-thread-orders": {"local-id": {"threadIds": ["t1"]}},
-            "thread-project-assignments": {"t1": {"projectId": "local-id"}}
+            "thread-project-assignments": {"t1": {"projectId": "local-id"}},
+            "thread-workspace-root-hints": {"t1": "/repo", "t2": "/other"}
         }));
 
         rename_codex_global_project_payload(&mut payload, "local-id", "Renamed");
@@ -1865,7 +1878,7 @@ mod tests {
         assert_eq!(payload["local-projects"]["local-entry"]["name"], "Renamed");
         assert_eq!(payload["remote-projects"][0]["label"], "Remote renamed");
 
-        remove_codex_global_project_payload(&mut payload, "local-id");
+        remove_codex_global_project_payload(&mut payload, "local-id", "/repo");
         assert!(payload["local-projects"]["local-entry"].is_null());
         assert!(payload["project-writable-roots"]["local-id"].is_null());
         assert_eq!(payload["project-order"], json!(["remote-id"]));
@@ -1873,9 +1886,11 @@ mod tests {
         assert!(payload["project-appearances"]["local-id"].is_null());
         assert!(payload["sidebar-project-thread-orders"]["local-id"].is_null());
         assert!(payload["thread-project-assignments"]["t1"].is_null());
+        assert!(payload["thread-workspace-root-hints"]["t1"].is_null());
+        assert_eq!(payload["thread-workspace-root-hints"]["t2"], "/other");
         assert_eq!(payload["unknown-codex-setting"], 42);
 
-        remove_codex_global_project_payload(&mut payload, "remote-id");
+        remove_codex_global_project_payload(&mut payload, "remote-id", "/srv");
         assert_eq!(payload["remote-projects"], json!([]));
     }
 }

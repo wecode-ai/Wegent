@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Check, Copy, PanelLeft } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import { Check, Copy, Info, Minimize2, PanelLeft } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
@@ -482,25 +489,115 @@ function AppShell() {
 function WeworkDevInstanceBadge() {
   const info = getWeworkDevInstanceInfo()
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [collapsed, setCollapsed] = useState(false)
+  const [position, setPosition] = useState<CSSProperties>()
+  const draggedRef = useRef(false)
   if (!info) return null
 
   const rows = getWeworkDevInstanceRows(info)
+  const popoverAbove = typeof position?.top !== 'number' || position.top > window.innerHeight / 2
+  const popoverAlignRight =
+    typeof position?.left !== 'number' || position.left > window.innerWidth / 2
   const copyValue = async (key: string, value: string) => {
     await navigator.clipboard?.writeText(value)
     setCopiedKey(key)
     window.setTimeout(() => setCopiedKey(current => (current === key ? null : current)), 1200)
   }
 
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return
+    const root = event.currentTarget.parentElement
+    if (!root) return
+    const startX = event.clientX
+    const startY = event.clientY
+    const startRect = root.getBoundingClientRect()
+    draggedRef.current = false
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const deltaY = moveEvent.clientY - startY
+      if (!draggedRef.current && Math.hypot(deltaX, deltaY) < 4) return
+      draggedRef.current = true
+      setPosition({
+        bottom: 'auto',
+        right: 'auto',
+        left: Math.min(
+          Math.max(0, window.innerWidth - startRect.width),
+          Math.max(0, startRect.left + deltaX)
+        ),
+        top: Math.min(
+          Math.max(0, window.innerHeight - startRect.height),
+          Math.max(0, startRect.top + deltaY)
+        ),
+      })
+    }
+    const stopDragging = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopDragging)
+      window.removeEventListener('pointercancel', stopDragging)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopDragging)
+    window.addEventListener('pointercancel', stopDragging)
+  }
+
+  const handleTriggerClick = () => {
+    if (draggedRef.current) {
+      draggedRef.current = false
+      return
+    }
+    if (collapsed) setCollapsed(false)
+  }
+
   return (
     <div
       data-testid="wework-dev-instance-badge"
+      style={position}
       className="group pointer-events-auto fixed bottom-3 right-3 z-critical max-w-[min(460px,calc(100vw-1.5rem))]"
     >
-      <div className="ml-auto max-w-[min(240px,calc(100vw-1.5rem))] truncate rounded-md border border-border/80 bg-background/95 px-2.5 py-1.5 text-xs font-medium text-text-secondary shadow-[0_8px_24px_rgba(0,0,0,0.12)] backdrop-blur">
-        <span className="text-text-primary">{info.title}</span>
-      </div>
-      <div className="pointer-events-none absolute bottom-full right-0 w-[min(460px,calc(100vw-1.5rem))] translate-y-1 pb-2 text-xs opacity-0 transition group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
+      <button
+        type="button"
+        data-testid="wework-dev-instance-trigger"
+        onClick={handleTriggerClick}
+        onPointerDown={handlePointerDown}
+        aria-label={collapsed ? 'Expand development instance info' : 'Development instance info'}
+        className={cn(
+          'ml-auto flex cursor-grab items-center justify-center border border-border/80 bg-background/95 text-xs font-medium text-text-secondary shadow-[0_8px_24px_rgba(0,0,0,0.12)] backdrop-blur active:cursor-grabbing',
+          collapsed
+            ? 'h-8 w-8 rounded-full'
+            : 'max-w-[min(240px,calc(100vw-1.5rem))] rounded-md px-2.5 py-1.5'
+        )}
+      >
+        {collapsed ? (
+          <Info className="h-4 w-4" />
+        ) : (
+          <span className="truncate text-text-primary">{info.title}</span>
+        )}
+      </button>
+      <div
+        className={cn(
+          'pointer-events-none absolute w-[min(460px,calc(100vw-1.5rem))] text-xs opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100',
+          popoverAbove ? 'bottom-full pb-2' : 'top-full pt-2',
+          popoverAlignRight ? 'right-0' : 'left-0'
+        )}
+      >
         <div className="rounded-lg border border-border/80 bg-background/98 p-2 shadow-[0_18px_48px_rgba(0,0,0,0.18)] backdrop-blur">
+          <div className="mb-1 flex items-center justify-between px-2 py-1">
+            <span className="font-medium text-text-primary">Development instance</span>
+            {!collapsed && (
+              <button
+                type="button"
+                data-testid="collapse-wework-dev-instance-button"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                title="Collapse to movable icon"
+                aria-label="Collapse development instance info"
+                onClick={() => setCollapsed(true)}
+              >
+                <Minimize2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <div className="space-y-1">
             {rows.map(row => (
               <div
