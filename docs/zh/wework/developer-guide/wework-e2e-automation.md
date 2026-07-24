@@ -88,11 +88,14 @@ node e2e/utils/mock-connector-upstream-server.mjs
 5. 在同一会话中发送连续追问，并校验对应请求和页面回复。
 6. 启动流式回复后通过桌面端 UI 取消，校验任务已停止、停止提示已渲染，并在发送后续消息时恢复输入。
 7. 让模型首次请求确定性失败，点击错误卡中的重试，并校验重试请求和最终回复。
-8. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
+8. 创建两轮短对话，切换到新对话后重新打开原对话，校验首条消息靠近消息视口顶部，防止虚拟列表在短会话上留下大块顶部空白。
+9. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
 
 测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行“发送 → `apply_patch` → 工具结果回传 → 追问”，工具调用仍由真实 Codex 在隔离工作区内执行。
 
 `e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态，验证“正在思考”位于可见回复下方，并在释放响应后消失。该场景会保存就绪、流式和完成三个阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
+
+主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 

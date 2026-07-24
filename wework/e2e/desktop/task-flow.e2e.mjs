@@ -38,6 +38,9 @@ const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
       : `Persisted transcript verification paragraph ${String(index + 1).padStart(2, '0')}. ${'Scrollable content '.repeat(8)}`
   ),
 ].join('\n\n')
+const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
+const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
+const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 10
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -106,6 +109,7 @@ const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET = 160
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
@@ -128,6 +132,7 @@ const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
+const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -311,6 +316,76 @@ async function sendPrompt(control, selector, prompt) {
   await control.command('press', selector, { key: 'Enter' })
 }
 
+async function verifyShortConversationLayout({ composerSelector, control }) {
+  const taskRowsBeforeConversation = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await prepareCompletedTurnScreenshot(control)
+  await captureVerificationScreenshot(control, 'short-conversation-00-ready.png')
+  await control.command('fill', composerSelector, { value: FRESH_CHAT_PROMPT })
+  await control.command('waitFor', composerSelector, {
+    text: FRESH_CHAT_PROMPT,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'short-conversation-01-prompt-filled.png')
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
+  await waitForScenarioRequestCount(control, 'fresh_chat', 2)
+  await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const shortConversationTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeConversation,
+    'WEWORK_DESKTOP_E2E_FRESH_CHAT'
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const scroller = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`,
+    'The short conversation message scroller'
+  )
+  const userMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  assert.equal(userMessages.length, 2, 'The short conversation did not render both user messages')
+  const firstMessage = userMessages[0]
+  const messageTopOffset = firstMessage.top - scroller.top
+  await writeFile(
+    join(resultDir, 'short-conversation-layout-metrics.json'),
+    `${JSON.stringify({ firstMessage, messageTopOffset, scroller }, null, 2)}\n`
+  )
+  await captureVerificationScreenshot(control, 'short-conversation-02-completed-top-aligned.png')
+
+  assert.ok(
+    messageTopOffset >= 0,
+    'The first short-conversation message rendered above the viewport'
+  )
+  assert.ok(
+    messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
+    `The short conversation left ${messageTopOffset}px of blank space above its first message`
+  )
+}
+
 async function prepareCompletedTurnScreenshot(control) {
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -369,6 +444,19 @@ async function waitForBottomMetrics(control, selector, description, timeoutMs = 
   }
   throw new Error(
     `${description} remained ${distanceFromBottom(metrics)}px from the bottom after ${timeoutMs}ms`
+  )
+}
+
+async function waitForTopMetrics(control, selector, description, timeoutMs = 3_000) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (metrics.scrollTop <= 2) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(
+    `${description} remained ${metrics.scrollTop}px from the top after ${timeoutMs}ms`
   )
 }
 
@@ -1300,6 +1388,47 @@ async function verifyBackgroundTaskWindowLifecycle({
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('08-task-middle-position-after-switch-back.png')
+  )
+
+  setPhase('turn-navigation-virtualized-anchor')
+  control.setScenario('turn_navigation')
+  for (let index = 0; index < TURN_NAVIGATION_REGRESSION_TURN_COUNT; index += 1) {
+    const turnNumber = index + 1
+    const completionText = `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`
+    await sendPrompt(
+      control,
+      composerSelector,
+      `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+    )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+      { text: completionText, timeoutMs: UI_TIMEOUT_MS }
+    )
+  }
+
+  await control.command('waitFor', '[data-testid="message-turn-navigation-marker"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="message-turn-navigation-marker"]')
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
+  const navigationTopMetrics = await waitForTopMetrics(
+    control,
+    '[data-testid="desktop-workbench-content"]',
+    'The conversation after jumping to the first virtualized turn'
+  )
+  assert.ok(
+    navigationTopMetrics.scrollHeight > navigationTopMetrics.clientHeight * 4,
+    'The turn navigation regression conversation was not long enough to exercise virtualization'
+  )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: WINDOW_LIFECYCLE_PROMPT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('09-first-virtualized-turn-navigation-target.png')
   )
 
   setPhase('archived-task-cache-eviction')
@@ -2334,6 +2463,7 @@ class DesktopE2EServer {
         'follow_up',
         'request_user_input',
         'window_lifecycle',
+        'turn_navigation',
         'cancellation',
         'retry',
         'reconnect',
@@ -2881,6 +3011,33 @@ class DesktopE2EServer {
           responseCompleted(responseId),
         ])
       )
+      return
+    }
+
+    if (this.scenario === 'turn_navigation') {
+      this.recordScenarioRequest('turn_navigation', modelRequest)
+      const serializedBody = JSON.stringify(body)
+      const turnMatch = Array.from(
+        serializedBody.matchAll(
+          new RegExp(`${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_(\\d+)`, 'g')
+        )
+      ).at(-1)
+      assert.ok(turnMatch, 'The turn-navigation request did not include its turn number')
+      const turnNumber = Number(turnMatch[1])
+      const completionText = `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`
+      const responseText = [
+        completionText,
+        ...Array.from(
+          { length: 6 },
+          (_, index) =>
+            `Virtualized navigation response ${turnNumber}.${index + 1}. ${'Measured content '.repeat(12)}`
+        ),
+      ].join('\n\n')
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(responseText),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -4062,6 +4219,19 @@ async function main() {
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
 
+    if (SHORT_CONVERSATION_ONLY) {
+      phase = 'short-conversation-layout'
+      control.setScenario('fresh_chat')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyShortConversationLayout({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      console.log(`Wework desktop short-conversation E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (PLUGINS_ONLY) {
       phase = 'plugin-lifecycle'
       await verifyPluginLifecycle(control, pluginMarketplacePath)
@@ -4798,11 +4968,7 @@ async function main() {
       false,
       'The new conversation retained the previous task'
     )
-    await sendPrompt(control, composerSelector, FRESH_CHAT_PROMPT)
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: FRESH_CHAT_COMPLETION_TEXT,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
+    await verifyShortConversationLayout({ composerSelector, control })
 
     phase = 'task-draft-isolation'
     const secondTaskSnapshot = await waitForSnapshot(
