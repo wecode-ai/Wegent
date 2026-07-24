@@ -7402,11 +7402,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(activePane().getByTestId('right-workspace-browser-option'))
     await userEvent.type(
       activePane().getByTestId('workspace-browser-url-input'),
-      'weibo.com{Enter}'
+      'example.com{Enter}'
     )
 
     expect(activePane().getByTestId('workspace-browser-url-input')).toHaveValue(
-      'https://weibo.com/'
+      'https://example.com/'
     )
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
@@ -7423,11 +7423,11 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
     expect(activePane().getByTestId('workspace-browser-url-input')).toHaveValue(
-      'https://weibo.com/'
+      'https://example.com/'
     )
     expect(activePane().getByTestId('workspace-browser-frame')).toHaveAttribute(
       'src',
-      'https://weibo.com/'
+      'https://example.com/'
     )
   })
 
