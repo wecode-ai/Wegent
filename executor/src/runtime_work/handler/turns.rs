@@ -170,6 +170,7 @@ impl RuntimeWorkRpcHandler {
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_subtask_id = request.subtask_id.to_string();
             let callback_hook_turn = Arc::clone(&hook_turn);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
@@ -183,7 +184,12 @@ impl RuntimeWorkRpcHandler {
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         thread_id,
-                        turn_id,
+                        turn_id.clone(),
+                    );
+                    active_turn_handler.record_runtime_turn_id(
+                        &active_turn_local_task_id,
+                        &active_turn_subtask_id,
+                        &turn_id,
                     );
                 });
             let finished_turn_handler = handler.clone();

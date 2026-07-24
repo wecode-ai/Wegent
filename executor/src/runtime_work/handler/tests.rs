@@ -135,6 +135,29 @@ fn imported_runtime_task_ids_are_unique() {
     assert!(second.starts_with("runtime-fork-"));
 }
 
+#[test]
+fn runtime_turn_ids_are_persisted_by_subtask() {
+    let index_path = temp_runtime_work_index_path("runtime-turn-id");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+
+    handler.record_runtime_turn_id("task-1", "subtask-1", "turn-1");
+
+    let link = handler
+        .local_task_link("task-1")
+        .expect("task should exist");
+    assert_eq!(
+        tasks::runtime_turn_id_from_link(&link, "subtask-1").as_deref(),
+        Some("turn-1")
+    );
+    let _ = fs::remove_file(index_path);
+}
+
 #[tokio::test]
 async fn archived_delete_falls_back_inline_when_enqueue_fails() {
     let index_path = temp_runtime_work_index_path("delete-enqueue-fallback");
