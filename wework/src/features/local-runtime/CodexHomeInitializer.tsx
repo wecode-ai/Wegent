@@ -10,13 +10,11 @@ const SHOULD_SKIP_CODEX_HOME_INITIALIZATION =
   import.meta.env.VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION !== 'true'
 
 function CodexHomeInitializationDialog({
-  status,
   isInitializing,
   error,
   onCreate,
   onMigrate,
 }: {
-  status: LocalCodexHomeMigrationStatus
   isInitializing: boolean
   error: string | null
   onCreate: () => void
@@ -39,14 +37,6 @@ function CodexHomeInitializationDialog({
           <p className="text-sm leading-6 text-text-secondary">
             {t('workbench.codex_home_init_description')}
           </p>
-        </div>
-        <div className="mt-4 rounded-lg bg-surface px-3 py-2 text-xs leading-5 text-text-muted">
-          <div className="truncate">
-            {t('workbench.codex_home_init_source')}：{status.nativeCodexHome}
-          </div>
-          <div className="truncate">
-            {t('workbench.codex_home_init_target')}：{status.weworkCodexHome}
-          </div>
         </div>
         {error && (
           <div
@@ -153,7 +143,6 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
 
   return (
     <CodexHomeInitializationDialog
-      status={status}
       isInitializing={isInitializing}
       error={error}
       onCreate={() => initialize(false)}

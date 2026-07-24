@@ -42,6 +42,11 @@ describe('CodexHomeInitializer', () => {
 
     expect(await screen.findByTestId('codex-home-initializer-dialog')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-child')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading')).toHaveTextContent('是否导入 Codex 配置？')
+    expect(screen.getByTestId('codex-home-initializer-create-button')).toHaveTextContent('不导入')
+    expect(screen.getByTestId('codex-home-initializer-migrate-button')).toHaveTextContent('导入')
+    expect(screen.queryByText(migrationStatus.nativeCodexHome)).not.toBeInTheDocument()
+    expect(screen.queryByText(migrationStatus.weworkCodexHome)).not.toBeInTheDocument()
   })
 
   test('creates Wework Codex config with online connectors disabled', async () => {
