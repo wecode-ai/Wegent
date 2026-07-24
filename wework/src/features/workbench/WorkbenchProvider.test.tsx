@@ -3321,6 +3321,8 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         projectId: 7,
         deviceWorkspaceId: 11,
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
         teamId: 2,
         message: '修复 CI',
         initialGoal: {

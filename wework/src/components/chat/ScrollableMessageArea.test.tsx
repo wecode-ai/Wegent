@@ -629,6 +629,188 @@ describe('ScrollableMessageArea', () => {
     portalTarget.remove()
   })
 
+  test('keeps message navigation available while a cached external scroller is hidden', () => {
+    const resizeObservers: Array<{
+      callback: ResizeObserverCallback
+      targets: Set<Element>
+    }> = []
+    const originalResizeObserver = globalThis.ResizeObserver
+    class ResizeObserverMock {
+      private readonly entry: (typeof resizeObservers)[number]
+
+      constructor(callback: ResizeObserverCallback) {
+        this.entry = { callback, targets: new Set() }
+        resizeObservers.push(this.entry)
+      }
+
+      observe(target: Element) {
+        this.entry.targets.add(target)
+      }
+
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    try {
+      const externalScrollRef = createRef<HTMLDivElement>()
+      render(
+        <div ref={externalScrollRef}>
+          <ScrollableMessageArea
+            externalScrollRef={externalScrollRef}
+            messages={[
+              {
+                id: 'cached-user-1',
+                role: 'user',
+                content: '缓存会话第一条需求',
+                status: 'done',
+                createdAt: '2026-05-29T00:00:00.000Z',
+              },
+              {
+                id: 'cached-assistant-1',
+                role: 'assistant',
+                content: '缓存会话第一条回复',
+                status: 'done',
+                createdAt: '2026-05-29T00:00:01.000Z',
+              },
+              {
+                id: 'cached-user-2',
+                role: 'user',
+                content: '缓存会话第二条需求',
+                status: 'done',
+                createdAt: '2026-05-29T00:00:02.000Z',
+              },
+            ]}
+          />
+        </div>
+      )
+
+      const scroller = externalScrollRef.current!
+      const scrollerObserver = resizeObservers.find(observer => observer.targets.has(scroller))
+      expect(scrollerObserver).toBeDefined()
+      flushScheduledTimers()
+
+      expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+    }
+  })
+
+  test('updates message navigation when the runtime appends to the same messages array', () => {
+    const messages = [
+      {
+        id: 'mutable-user-1',
+        role: 'user' as const,
+        content: '原地更新前的需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: 'mutable-assistant-1',
+        role: 'assistant' as const,
+        content: '原地更新前的回复',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+    ]
+    const { rerender } = render(<ScrollableMessageArea messages={messages} />)
+    flushScheduledTimers()
+    expect(screen.queryByTestId('message-turn-navigation-marker')).not.toBeInTheDocument()
+
+    messages.push({
+      id: 'mutable-user-2',
+      role: 'user',
+      content: '原地追加的第二条需求',
+      status: 'done',
+      createdAt: '2026-05-29T00:00:02.000Z',
+    })
+    rerender(<ScrollableMessageArea messages={messages} isWaitingForAssistant />)
+    flushScheduledTimers()
+
+    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+  })
+
+  test('does not reschedule marker calculation for unchanged turns', () => {
+    const messages = [
+      {
+        id: 'stable-user-1',
+        role: 'user' as const,
+        content: '第一条稳定需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: 'stable-assistant-1',
+        role: 'assistant' as const,
+        content: '第一条稳定回复',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+      {
+        id: 'stable-user-2',
+        role: 'user' as const,
+        content: '第二条稳定需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:02.000Z',
+      },
+    ]
+    const { rerender } = render(<ScrollableMessageArea messages={messages} />)
+    flushScheduledTimers()
+    const scheduledCount = requestAnimationFrameSpy.mock.calls.length
+
+    rerender(<ScrollableMessageArea messages={[...messages]} />)
+    flushScheduledTimers()
+
+    expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(scheduledCount)
+  })
+
+  test('uses newer transcript turns while runtime navigation metadata is catching up', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'live-user-1',
+            role: 'user',
+            content: '已进入导航摘要的需求',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'live-assistant-1',
+            role: 'assistant',
+            content: '第一条回复',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+            runtimeMessageIndex: 1,
+          },
+          {
+            id: 'live-user-2',
+            role: 'user',
+            content: '尚未进入导航摘要的新需求',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:02.000Z',
+            runtimeMessageIndex: 2,
+          },
+        ]}
+        turnNavigation={[
+          {
+            id: 'live-user-1',
+            turnIndex: 0,
+            messageIndex: 0,
+            cursor: 'offset:0',
+            promptPreview: '已进入导航摘要的需求',
+            responsePreview: '第一条回复',
+          },
+        ]}
+      />
+    )
+
+    flushScheduledTimers()
+
+    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+  })
+
   test('keeps message navigation available while its portal target is unavailable', () => {
     render(
       <ScrollableMessageArea
@@ -772,6 +954,49 @@ describe('ScrollableMessageArea', () => {
     expect(messageAnchorQueries).toHaveLength(1)
 
     querySelectorAllSpy.mockRestore()
+  })
+
+  test('renders turn navigation before virtualized row styles settle', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'virtualized-user',
+            role: 'user',
+            content: 'Virtualized request',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: 'virtualized-assistant',
+            role: 'assistant',
+            content: 'Virtualized response',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+          {
+            id: 'virtualized-user-2',
+            role: 'user',
+            content: 'Second virtualized request',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:02.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
   test('clicks a message navigation marker to jump to that user message', () => {

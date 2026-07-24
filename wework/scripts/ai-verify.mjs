@@ -59,6 +59,14 @@ function parseArgs(argv) {
   return { command, options }
 }
 
+export function resolveStartupTimeout(timeout) {
+  const configuredTimeout = timeout === undefined ? startupTimeoutMs : Number(timeout)
+  if (!Number.isFinite(configuredTimeout) || configuredTimeout <= 0) {
+    throw new Error('--timeout must be a finite positive number')
+  }
+  return configuredTimeout
+}
+
 function json(response, status, value) {
   response.writeHead(status, {
     ...corsHeaders,
@@ -324,9 +332,16 @@ async function main() {
       { detached: true, stdio: 'ignore' }
     )
     child.unref()
-    const startupDeadline = Date.now() + startupTimeoutMs
+    const startupDeadline = Date.now() + resolveStartupTimeout(options.timeout)
     while (Date.now() < startupDeadline) {
-      const session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      let session
+      try {
+        session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        continue
+      }
       if (session.controlUrl) {
         try {
           const status = await request(session, token, '/status')

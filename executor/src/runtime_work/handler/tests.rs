@@ -4,6 +4,44 @@
 
 use super::*;
 
+#[tokio::test]
+async fn fork_rejects_each_running_signal_independently() {
+    for (case, persisted_running, active_in_memory) in
+        [("persisted", true, false), ("active", false, true)]
+    {
+        let index_path = temp_runtime_work_index_path(&format!("fork-running-{case}"));
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.running = persisted_running;
+        handler.upsert_local_task(link);
+        if active_in_memory {
+            handler.mark_active_local_task("task-1");
+        }
+
+        let response = handler
+            .fork_task_at_turn(json!({
+                "taskId": "task-1",
+                "lastTurnId": "turn-1",
+            }))
+            .await
+            .expect("running task fork should return a structured failure");
+
+        assert_eq!(response["accepted"], false, "{case}");
+        assert_eq!(response["code"], "bad_request", "{case}");
+        assert_eq!(
+            response["error"], "runtime task is already running",
+            "{case}"
+        );
+
+        let _ = fs::remove_file(index_path);
+    }
+}
+
 #[test]
 fn finishing_an_active_goal_keeps_the_task_idle() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
@@ -165,6 +203,95 @@ fn imported_runtime_task_ids_are_unique() {
     assert_ne!(first, second);
     assert!(first.starts_with("runtime-fork-"));
     assert!(second.starts_with("runtime-fork-"));
+}
+
+#[test]
+fn runtime_turn_ids_are_persisted_by_subtask() {
+    let index_path = temp_runtime_work_index_path("runtime-turn-id");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+
+    handler.record_runtime_turn_id("task-1", "subtask-1", "turn-1");
+
+    let link = handler
+        .local_task_link("task-1")
+        .expect("task should exist");
+    assert_eq!(
+        tasks::runtime_turn_id_from_link(&link, "subtask-1").as_deref(),
+        Some("turn-1")
+    );
+    assert_eq!(
+        tasks::resolve_codex_turn_id(&link, "subtask-1").as_deref(),
+        Some("turn-1")
+    );
+    assert_eq!(
+        tasks::resolve_codex_turn_id(&link, "turn-1").as_deref(),
+        Some("turn-1")
+    );
+    assert_eq!(
+        tasks::resolve_codex_turn_id(&link, "019f933f-bf0d-72e3-b366-a6539ab00bcf").as_deref(),
+        Some("019f933f-bf0d-72e3-b366-a6539ab00bcf")
+    );
+    assert_eq!(tasks::resolve_codex_turn_id(&link, "missing-turn"), None);
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn completed_responses_include_the_persisted_runtime_turn_id() {
+    for (case, outcome) in [
+        (
+            "completed",
+            ExecutionOutcome::Completed {
+                content: "Done".to_owned(),
+            },
+        ),
+        (
+            "waiting",
+            ExecutionOutcome::WaitingForUserInput {
+                stop_reason: "Need input".to_owned(),
+            },
+        ),
+    ] {
+        let (event_tx, mut event_rx) = broadcast::channel(1);
+        let index_path = temp_runtime_work_index_path(&format!("completed-turn-id-{case}"));
+        let mut handler =
+            RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = format!("task-{case}");
+        let request = ExecutionRequest {
+            task_id: local_task_id.clone(),
+            subtask_id: format!("subtask-{case}"),
+            ..ExecutionRequest::default()
+        };
+        handler.upsert_local_task(RuntimeTaskLink::new_pending(
+            local_task_id.clone(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        ));
+        handler.record_runtime_turn_id(&local_task_id, &request.subtask_id, "turn-1");
+
+        handler.handle_turn_result(
+            &local_task_id,
+            &request,
+            Ok(crate::agents::CodexAppServerTurn {
+                thread_id: format!("thread-{case}"),
+                outcome,
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("completed response should be emitted");
+        assert_eq!(event["event"], "response.completed", "{case}");
+        assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+
+        let _ = fs::remove_file(index_path);
+    }
 }
 
 #[tokio::test]
