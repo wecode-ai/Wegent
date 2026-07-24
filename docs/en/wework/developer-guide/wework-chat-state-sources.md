@@ -62,6 +62,12 @@ The goal bar's running presentation must be constrained by the current runtime t
 - This derivation affects only Wework presentation and elapsed-time calculation; it does not automatically call the goal pause API. Persisting `paused` remains an explicit user action through **Pause goal**.
 - When the task reports `running: true` again, the goal uses the original status returned by the runtime goal API.
 
+Automatic continuation for an active goal is driven separately by root-turn lifecycle events. After
+`runtime.goal.continuation: started`, the goal bar must keep showing “Goal continuing” while the
+assistant is producing output, thinking, or invoking tools. Assistant output starting is not a turn
+completion signal and must not clear continuation state. Clear that state only for the matching
+`settled` event, a non-active goal update, a cleared goal, or a pane switch to another task.
+
 When the user stops the current response for a task with an active goal, Wework must persist
 `paused` through the runtime goal API before cancelling the current turn. This ordering disables
 the automatic continuation source before the turn ends, so the goal cannot start another turn in
