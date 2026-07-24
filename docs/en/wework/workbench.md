@@ -16,11 +16,13 @@ When a conversation is taller than the current viewport, turn markers appear alo
 
 ## Switch conversations and restore position
 
-The desktop workbench renders only the active conversation. Runtime state and recent messages live in a shared cache while switching, so background tasks continue receiving live events and show their latest state immediately when reopened without retaining hidden conversation pages.
+The desktop workbench caches recently used conversation panes. Runtime state, recent messages, right-workspace tabs, and panel state remain intact while switching, so returning to a conversation restores the workspace as it was left. Up to 10 ordinary conversation panes are cached and older panes are evicted by recent use.
+
+Conversations with a running Terminal or Wework built-in browser are not evicted by the ordinary cache limit. Terminal processes, tabs, and output buffers remain live, while built-in browser pages, addresses, and tab state are preserved. After those resources are closed, the conversation follows the ordinary cache policy again. Hidden conversations do not handle shortcuts or browser-open events intended for the active conversation.
 
 A conversation opens at its latest message the first time. Conversations that were at the bottom remain at the bottom, while conversations viewed in the middle restore their distance from the bottom. Long conversations mount only messages near the viewport and reuse measured message heights to limit WebView memory growth while scrolling.
 
-Message, scroll-position, and virtual-measurement caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
+Message, scroll-position, virtual-measurement, and conversation-pane caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
 
 ## Use selected response text
 

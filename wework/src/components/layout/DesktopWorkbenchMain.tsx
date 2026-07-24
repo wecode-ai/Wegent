@@ -76,7 +76,12 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
-import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
+import {
+  getRuntimeWorkbenchPaneKeys,
+  getWorkbenchPaneKey,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
+import { CachedWorkbenchPaneStack, useWorkbenchPaneActive } from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import {
   formatEnvironmentReviewErrorMessage,
@@ -122,6 +127,7 @@ const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
+const MAX_CACHED_DESKTOP_WORKBENCH_PANES = 10
 interface SelectedAssistantPlan {
   blockId: string
   subtaskId: string
@@ -246,6 +252,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 })
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
+  const { state } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
@@ -253,26 +260,67 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const isTauri = isTauriRuntime()
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
   const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
+  const [terminalPinOwnersByPane, setTerminalPinOwnersByPane] = useState<Record<string, string[]>>(
+    {}
+  )
+  const terminalPinnedPaneKeys = useMemo(
+    () =>
+      Object.keys(terminalPinOwnersByPane).filter(key => terminalPinOwnersByPane[key].length > 0),
+    [terminalPinOwnersByPane]
+  )
+  const runtimePaneKeys = useMemo(
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
+  const runtimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
+  const prunedPaneKeys = useMemo(
+    () =>
+      terminalPinnedPaneKeys.filter(
+        key => key.startsWith('runtime:') && !runtimePaneKeySet.has(key)
+      ),
+    [runtimePaneKeySet, terminalPinnedPaneKeys]
+  )
+  const setTerminalPanePinned = useCallback((paneKey: string, owner: string, pinned: boolean) => {
+    setTerminalPinOwnersByPane(current => {
+      const owners = current[paneKey] ?? []
+      const nextOwners = pinned
+        ? owners.includes(owner)
+          ? owners
+          : [...owners, owner]
+        : owners.filter(candidate => candidate !== owner)
+      if (nextOwners === owners) return current
+      if (nextOwners.length === 0) {
+        const next = { ...current }
+        delete next[paneKey]
+        return next
+      }
+      return { ...current, [paneKey]: nextOwners }
+    })
+  }, [])
   const paneStack = (
-    <div
-      className="relative flex min-w-0 flex-1 overflow-hidden"
-      data-active-workbench-pane="true"
-      data-testid="desktop-workbench-main"
-    >
-      <DesktopWorkbenchPane
-        key={getWorkbenchPaneKey(props.activePane)}
-        pane={props.activePane}
-        workbenchVisible={props.visible ?? true}
-        sidebarCollapsed={props.sidebarCollapsed}
-        sidebarResizing={props.sidebarResizing ?? false}
-        workspaceSessionApi={services?.workspaceSessionApi}
-        environmentInfoPinned={environmentInfoPinned}
-        environmentInfoOverlayOpen={environmentInfoOverlayOpen}
-        onSidebarCollapsedChange={props.onSidebarCollapsedChange}
-        onEnvironmentInfoPinnedChange={setEnvironmentInfoPinned}
-        onEnvironmentInfoOverlayOpenChange={setEnvironmentInfoOverlayOpen}
-      />
-    </div>
+    <CachedWorkbenchPaneStack
+      activePane={props.activePane}
+      maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_PANES}
+      pinnedKeys={terminalPinnedPaneKeys}
+      prunedKeys={prunedPaneKeys}
+      validRuntimeKeys={runtimePaneKeys}
+      activeTestId="desktop-workbench-main"
+      renderPane={pane => (
+        <DesktopWorkbenchPane
+          pane={pane}
+          workbenchVisible={props.visible ?? true}
+          sidebarCollapsed={props.sidebarCollapsed}
+          sidebarResizing={props.sidebarResizing ?? false}
+          workspaceSessionApi={services?.workspaceSessionApi}
+          environmentInfoPinned={environmentInfoPinned}
+          environmentInfoOverlayOpen={environmentInfoOverlayOpen}
+          onSidebarCollapsedChange={props.onSidebarCollapsedChange}
+          onEnvironmentInfoPinnedChange={setEnvironmentInfoPinned}
+          onEnvironmentInfoOverlayOpenChange={setEnvironmentInfoOverlayOpen}
+          onTerminalPanePinChange={setTerminalPanePinned}
+        />
+      )}
+    />
   )
 
   if (!isTauri) return paneStack
@@ -303,6 +351,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onSidebarCollapsedChange,
   onEnvironmentInfoPinnedChange,
   onEnvironmentInfoOverlayOpenChange,
+  onTerminalPanePinChange,
 }: {
   pane: WorkbenchPaneIdentity
   workbenchVisible: boolean
@@ -314,7 +363,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onEnvironmentInfoPinnedChange: (open: boolean) => void
   onEnvironmentInfoOverlayOpenChange: (open: boolean) => void
+  onTerminalPanePinChange: (paneKey: string, owner: string, pinned: boolean) => void
 }) {
+  const paneActive = useWorkbenchPaneActive()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
@@ -440,11 +491,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setEnvironmentInfoPanelElement(environmentInfoPanelRef.current)
   }, [])
   useLayoutEffect(() => {
+    if (!paneActive) return
     const workbenchScroll = workbenchScrollRef.current
     if (workbenchScroll && workbenchScroll.scrollLeft !== 0) {
       workbenchScroll.scrollLeft = 0
     }
-  }, [])
+  }, [paneActive])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
@@ -522,6 +574,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : [...permittedTabs, rightPanelView]
   }, [openFileRequest?.target, rightPanelTabs, rightPanelView, workspaceProject])
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
+  const hasPersistentRightPanelResource = rightPanelTabs.some(
+    tab => tab === 'terminal' || tab === 'browser'
+  )
+  useEffect(() => {
+    onTerminalPanePinChange(paneKey, 'right-panel', hasPersistentRightPanelResource)
+    return () => onTerminalPanePinChange(paneKey, 'right-panel', false)
+  }, [hasPersistentRightPanelResource, onTerminalPanePinChange, paneKey])
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -694,6 +753,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const setCurrentBottomPanelOpen = useCallback(
     (next: boolean | ((open: boolean) => boolean)) => {
       rememberActiveBottomPanelContext()
+      onTerminalPanePinChange(paneKey, 'bottom-panel', true)
       setBottomPanelOpenByKey(current => {
         const currentOpen = current[bottomPanelWorkspaceKey] ?? false
         const nextOpen = typeof next === 'function' ? next(currentOpen) : next
@@ -701,7 +761,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
       })
     },
-    [bottomPanelWorkspaceKey, rememberActiveBottomPanelContext, setBottomPanelOpenByKey]
+    [
+      bottomPanelWorkspaceKey,
+      onTerminalPanePinChange,
+      paneKey,
+      rememberActiveBottomPanelContext,
+      setBottomPanelOpenByKey,
+    ]
   )
   const bottomPanelContextsToRender = useMemo(() => {
     const inactiveContexts = bottomPanelContexts.filter(
@@ -868,6 +934,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [embeddedBrowserLabel, openRightPanelTab])
   useEffect(() => {
+    if (!paneActive) return
     const listener = listenEmbeddedBrowserOpenRequests(request => {
       const current = embeddedBrowserListenerStateRef.current
       if (request.label && request.label !== current.embeddedBrowserLabel) {
@@ -884,7 +951,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [])
+  }, [paneActive])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
@@ -1226,16 +1293,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setBottomPanelOpenByKey]
   )
-  const handleTerminalTabsEmpty = useCallback(() => {}, [])
+  const handleTerminalTabsEmpty = useCallback(() => {
+    onTerminalPanePinChange(paneKey, 'bottom-panel', false)
+  }, [onTerminalPanePinChange, paneKey])
 
   useEffect(() => {
+    if (!paneActive) return
     const handleOpenTerminal = () => {
       toggleBottomPanel()
     }
 
     window.addEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
     return () => window.removeEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
-  }, [toggleBottomPanel])
+  }, [paneActive, toggleBottomPanel])
 
   const renderWorkspacePanelActions = (
     mode:
@@ -1860,7 +1930,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
               showWorkbenchBackground={hasMainBackground}
-              visible={workbenchVisible && rightPanelOpen}
+              visible={paneActive && workbenchVisible && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
