@@ -286,7 +286,7 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the visible message anchored when content reflows after a width change', () => {
+  test('keeps distance from bottom when content reflows after a width change', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
 
@@ -332,6 +332,7 @@ describe('ScrollableMessageArea', () => {
       mockRect(scroller, 100, 300)
       mockScrollRelativeRect(message, scroller, 380, 160)
 
+      fireEvent.wheel(scroller, { deltaY: -80 })
       fireEvent.scroll(scroller)
       ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
@@ -341,7 +342,7 @@ describe('ScrollableMessageArea', () => {
       })
 
       expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-        top: 540,
+        top: 300,
         behavior: 'auto',
       })
     } finally {
@@ -349,7 +350,7 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps the reading progress inside a tall message when its text reflows', () => {
+  test('keeps distance from bottom while a tall message reflows', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
 
@@ -395,6 +396,7 @@ describe('ScrollableMessageArea', () => {
       mockRect(scroller, 100, 300)
       mockScrollRelativeRect(message, scroller, 100, 800)
 
+      fireEvent.wheel(scroller, { deltaY: -80 })
       fireEvent.scroll(scroller)
       ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
@@ -404,7 +406,7 @@ describe('ScrollableMessageArea', () => {
       })
 
       expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-        top: 750,
+        top: 500,
         behavior: 'auto',
       })
     } finally {
@@ -984,6 +986,67 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('keeps following the bottom while an unopened conversation is being measured', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
+    render(
+      <ScrollableMessageArea
+        conversationKey="unopened-measuring"
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '后台完成的长回复',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    let scrollHeight = 600
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    scrollHeight = 900
+    fireEvent.scroll(scroller)
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 900,
+      behavior: 'auto',
+    })
+    vi.unstubAllGlobals()
+  })
+
   test('restores the previous scroll position when reopening a conversation', () => {
     const messageA = {
       id: 'a',
@@ -1214,7 +1277,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('restores reopened conversations relative to the saved message anchor', () => {
+  test('restores reopened conversations by saved distance from bottom', () => {
     const messagesA = [
       {
         id: 'anchor-a-intro',
@@ -1295,12 +1358,12 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 440,
+      top: 500,
       behavior: 'auto',
     })
   })
 
-  test('restores reopened conversations relative to markdown anchors inside long messages', () => {
+  test('restores long conversations by saved distance from bottom', () => {
     const messageA = {
       id: 'markdown-anchor-message',
       role: 'assistant' as const,
@@ -1387,7 +1450,7 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 428,
+      top: 500,
       behavior: 'auto',
     })
   })
@@ -1452,7 +1515,7 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 40,
+      top: 0,
       behavior: 'auto',
     })
 
@@ -1499,6 +1562,7 @@ describe('ScrollableMessageArea', () => {
     })
     scroller.scrollTo = vi.fn()
 
+    fireEvent.wheel(scroller, { deltaY: -80 })
     fireEvent.scroll(scroller)
     rerender(
       <ScrollableMessageArea
