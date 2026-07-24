@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.core.async_utils import schedule_async_task
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.models.kind import Kind
 from app.models.project import Project
@@ -113,6 +114,32 @@ class TaskCreationParams:
         """Treat an explicit model_id as an override selection."""
         if self.model_id:
             self.force_override_bot_model = True
+
+
+def _schedule_memory_save(
+    memory_manager: Any,
+    *,
+    user_id: int,
+    team_id: int,
+    task_id: int,
+    subtask_id: int,
+    messages: List[Dict[str, Any]],
+    workspace_id: Optional[str],
+    project_id: Optional[int],
+    is_group_chat: bool,
+) -> None:
+    """Schedule memory storage outside the caller's event-loop lifetime."""
+    schedule_async_task(
+        memory_manager.save_user_message_async,
+        user_id=str(user_id),
+        team_id=str(team_id),
+        task_id=str(task_id),
+        subtask_id=str(subtask_id),
+        messages=messages,
+        workspace_id=workspace_id,
+        project_id=str(project_id) if project_id else None,
+        is_group_chat=is_group_chat,
+    )
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -807,8 +834,6 @@ async def create_task_and_subtasks(
     # Store user message in long-term memory (fire-and-forget)
     # WebSocket chat (web) respects user preference for memory
     # This runs in background and doesn't block the main flow
-    import asyncio
-
     from app.core.config import settings
     from app.services.memory import (
         build_context_messages,
@@ -843,41 +868,17 @@ async def create_task_and_subtasks(
                 context_limit=settings.MEMORY_CONTEXT_MESSAGES,
             )
 
-            # Create task with proper exception handling
-            def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
-                """Log exceptions from background memory storage task."""
-                try:
-                    exc = task_obj.exception()
-                    if exc is not None:
-                        logger.error(
-                            "[create_task_and_subtasks] Memory storage task failed for user %d, task %d, subtask %d: %s",
-                            user.id,
-                            task.id,
-                            user_subtask.id,
-                            exc,
-                            exc_info=exc,
-                        )
-                except asyncio.CancelledError:
-                    logger.info(
-                        "[create_task_and_subtasks] Memory storage task cancelled for user %d, task %d, subtask %d",
-                        user.id,
-                        task.id,
-                        user_subtask.id,
-                    )
-
-            memory_save_task = asyncio.create_task(
-                memory_manager.save_user_message_async(
-                    user_id=str(user.id),
-                    team_id=str(team.id),
-                    task_id=str(task.id),
-                    subtask_id=str(user_subtask.id),
-                    messages=context_messages,
-                    workspace_id=workspace_id,
-                    project_id=str(task.project_id) if task.project_id else None,
-                    is_group_chat=is_group_chat,
-                )
+            _schedule_memory_save(
+                memory_manager,
+                user_id=user.id,
+                team_id=team.id,
+                task_id=task.id,
+                subtask_id=user_subtask.id,
+                messages=context_messages,
+                workspace_id=workspace_id,
+                project_id=task.project_id,
+                is_group_chat=is_group_chat,
             )
-            memory_save_task.add_done_callback(_log_memory_task_exception)
             logger.info(
                 "[create_task_and_subtasks] Started background task to store memory for user %d, task %d, subtask %d",
                 user.id,
