@@ -118,6 +118,9 @@ You'll see a unified model list showing both public (system) and your personal m
 | **Model ID** | Yes | Select from presets or enter custom |
 | **API Key** | Yes | Your API key from the provider |
 | **Base URL** | No | Custom endpoint (for proxies) |
+| **Wework Available** | No | Whether the model is shown in the wework desktop model list |
+
+The selected provider is persisted as `spec.protocol`, and the corresponding API format (e.g. `chat/completions` for OpenAI Chat Completions, `responses` for OpenAI Responses) is persisted as `spec.apiFormat`. The **Wework Available** toggle controls `spec.isWeworkAvailable`; only models marked as available are distributed to the wework desktop client.
 
 ### Step 3: Configure Model Details
 

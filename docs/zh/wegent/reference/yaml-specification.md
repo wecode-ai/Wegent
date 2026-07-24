@@ -182,6 +182,9 @@ spec:
 | `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
 | `spec.modelConfig`     | object | 是   | 模型配置对象                       |
 | `spec.modelConfig.env` | object | 是   | 环境变量配置                       |
+| `spec.protocol`        | string | 否   | 上游协议（如 `openai`、`openai-responses`、`claude`）。省略时从 `env.model` 推断。 |
+| `spec.apiFormat`       | string | 否   | 上游 API 格式（如 `responses`、`chat/completions`）。省略时由 `spec.protocol` 推导。 |
+| `spec.isWeworkAvailable` | boolean | 否 | 是否将该模型分发到 wework 桌面客户端。 |
 
 ### 模型选择器分组
 
