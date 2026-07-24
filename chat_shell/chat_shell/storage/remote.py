@@ -93,6 +93,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
         limit: Optional[int] = None,
         before_message_id: Optional[str] = None,
         is_group_chat: bool = False,
+        from_latest_compaction: bool = False,
     ) -> list[Message]:
         """Get chat history for a session."""
         total_start = time.perf_counter()
@@ -108,6 +109,8 @@ class RemoteHistoryStore(HistoryStoreInterface):
             params["before_message_id"] = before_message_id
         # Pass is_group_chat to API for proper username prefix handling
         params["is_group_chat"] = str(is_group_chat).lower()
+        if from_latest_compaction:
+            params["from_latest_compaction"] = "true"
 
         url = f"/chat/history/{session_id}"
         full_url = f"{self.base_url}{url}"

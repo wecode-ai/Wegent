@@ -220,3 +220,46 @@ class TestGetChatHistory:
         )
 
         assert history == []
+
+
+@pytest.mark.asyncio
+async def test_get_history_sends_from_latest_compaction(monkeypatch):
+    from chat_shell.storage.remote import RemoteHistoryStore
+
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        http_version = "HTTP/1.1"
+        elapsed = None
+        headers: dict = {}
+
+        def raise_for_status(self):
+            pass
+
+        async def aread(self):
+            return b"{}"
+
+        async def aclose(self):
+            pass
+
+        def json(self):
+            return {"messages": []}
+
+    class _FakeClient:
+        def build_request(self, method, url, params=None, headers=None):
+            captured["params"] = params
+            return object()
+
+        async def send(self, *_a, **_k):
+            return _Resp()
+
+    store = RemoteHistoryStore(base_url="http://x", auth_token="t")
+
+    async def _get_client():
+        return _FakeClient()
+
+    monkeypatch.setattr(store, "_get_client", _get_client)
+
+    await store.get_history(session_id="task-1", from_latest_compaction=True)
+    assert captured["params"].get("from_latest_compaction") == "true"

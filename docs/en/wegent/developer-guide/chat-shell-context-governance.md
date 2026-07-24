@@ -113,8 +113,11 @@ The implementation borrows a few ideas that work well in practice:
 
 But Wegent keeps its own trade-offs:
 
-- **No persisted Codex-style `replacement_history`**
-  Compaction rewrites only the current live state.
+- **Checkpoint persisted in `messages_chain`, not a separate blob** (Phase 1)
+  The compacted turn becomes a self-contained checkpoint (retained recent user
+  messages + summary) inside its own `messages_chain`, and reload starts from the
+  latest checkpoint. This is functionally close to Codex's `replacement_history`,
+  but reuses existing persistence instead of a new field. See the Phase 1 section.
 - **Summary compact is not a long-term memory layer**
   It is a request-time governance tool.
 - **Fallback is not the main feature path**
@@ -173,6 +176,44 @@ Main outcomes:
 This turns attachments from an implicit history burden into an explicit,
 governed context source.
 
+## Phase 1: checkpoint reload and hang hardening
+
+Phase 1 closes two gaps left by Stage 2.
+
+### Checkpoint reload (no more full-history re-inflation)
+
+Previously every new subtask reloaded the full raw transcript and re-ran a full
+compaction — for multi-day sessions this meant compacting ~1.7M tokens on each
+new turn. Phase 1 makes the compacted turn a **self-contained checkpoint**:
+
+- `_select_recent_user_messages` clones the retained recent user messages with a
+  fresh id and a `checkpoint_retained` marker so the turn serializer keeps them
+  in `messages_chain` (alongside the `summary_compacted` summary and the in-turn
+  suffix generated after it).
+- The backend history endpoint accepts `from_latest_compaction=true`: it locates
+  the latest checkpoint by the in-chain `summary_compacted` marker and returns
+  `[checkpoint chain] + [subsequent complete turns]`. `limit` never truncates the
+  checkpoint chain itself.
+- The HTTP endpoint and the package-mode loader share one pipeline
+  (`resolve_history_subtasks`) so fork, `before_message_id`, `limit`, and
+  checkpoint scoping stay identical.
+- Because the HTTP transport drops `additional_kwargs`, a reloaded summary is
+  re-recognized by its content marker so it is not re-retained as a user message.
+
+### Hang hardening
+
+The summary compaction path was hardened against a production hang where an
+O(n²) trim pegged CPU for minutes and the backend read-timeout then cancelled the
+turn:
+
+- the trim is a single O(n) budget pass over the sanitized prompt (no per-removal
+  re-count, no per-message reply-priming inflation)
+- a heartbeat ticker emits `summary_compact` in_progress status during compaction
+  so the SSE stream stays alive instead of racing the backend read-timeout
+- the summary LLM call has a provider timeout plus an `asyncio.timeout` backstop
+- context-length classification recognizes HTTP 413 and non-English markers; a
+  bare 400 is not treated as overflow (avoids a retry storm)
+
 ## Implementation map
 
 These modules are the best entry points for future maintenance:
@@ -181,7 +222,9 @@ These modules are the best entry points for future maintenance:
 |---|---|
 | `chat_shell/guard/context_guard.py` | Unified governance entry point: source pass, summary compact, emergency pass |
 | `chat_shell/guard/tool_output.py` | Compact tool-output rendering and emergency re-truncation |
-| `chat_shell/compression/summary_compactor.py` | Summary compact core logic |
+| `chat_shell/compression/summary_compactor.py` | Summary compact core logic, O(n) trim, checkpoint-retain markers |
+| `chat_shell/history/loader.py` | History reload; forwards `from_latest_compaction` |
+| `backend/app/services/chat/compaction_checkpoint.py` | Locate latest checkpoint + shared resolve→scope→limit pipeline (Phase 1) |
 | `chat_shell/compression/config.py` | Context window, reserved output, trigger / target limit calculation |
 | `chat_shell/compression/context_metrics.py` | Context metrics snapshots |
 | `chat_shell/messages/attachment_preview.py` | Attachment preview budgeting and truncation |
@@ -225,11 +268,14 @@ without observability, governance is hard to tune safely.
 
 ## Notes
 
-### Summary compact only rewrites live state
+### Reload starts from the latest compaction checkpoint (Phase 1)
 
-The compacted replacement history is not persisted as the new canonical session
-history. Later turns rebuild from the full stored history and re-evaluate
-compaction when needed. This is an intentional simplification.
+Earlier, later turns rebuilt from the full stored history and re-evaluated
+compaction every time, which re-inflated long sessions. Phase 1 persists a
+self-contained checkpoint in the compacted turn's `messages_chain` (retained
+recent user messages tagged `checkpoint_retained` plus the summary tagged
+`summary_compacted`) and reloads from the latest checkpoint via the backend
+`from_latest_compaction` path. See the Phase 1 section below.
 
 ### `max_output_tokens` is budget input, not a history-rewrite result
 

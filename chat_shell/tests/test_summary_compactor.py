@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -51,8 +53,8 @@ async def test_compact_retries_after_context_too_long_by_removing_oldest_history
 
     assert result.removed_history_items == 1
     assert len(llm.calls) == 2
-    first_history = llm.calls[0][1:-1]
-    second_history = llm.calls[1][1:-1]
+    first_history = llm.calls[0][:-1]
+    second_history = llm.calls[1][:-1]
     assert [msg.content for msg in first_history] == [
         "system",
         "old user",
@@ -92,7 +94,7 @@ async def test_compact_continues_trimming_until_only_current_user_floor_remains(
 
     assert result.removed_history_items == 2
     assert len(llm.calls) == 3
-    assert [msg.content for msg in llm.calls[-1][1:-1]] == [
+    assert [msg.content for msg in llm.calls[-1][:-1]] == [
         "system",
         "latest user",
     ]
@@ -221,3 +223,204 @@ async def test_compact_raises_when_llm_returns_empty_summary():
             [HumanMessage(content="please continue")],
             preserve_initial_context=False,
         )
+
+
+def test_trim_to_budget_single_pass_counts_each_message_once():
+    counter = TokenCounter(model_name="gpt-4")
+    call_count = {"n": 0}
+    real = counter.count_messages
+
+    def counting(msgs):
+        call_count["n"] += 1
+        return real(msgs)
+
+    counter.count_messages = counting  # type: ignore[assignment]
+
+    # Budget above the instruction-framing floor but below the full total,
+    # so trimming is required and can succeed.
+    compactor = SummaryCompactor(
+        llm=object(),
+        token_counter=counter,
+        max_compact_input_tokens=300,
+    )
+    system = SystemMessage(content="sys")
+    current = HumanMessage(content="current question")
+    old = [HumanMessage(content="old " * 60) for _ in range(20)]
+    messages = [system, *old, current]
+    original_len = len(messages)
+
+    removed = compactor._trim_to_budget(messages, current_user=current)
+
+    # Budget met, system + current preserved.
+    assert system in messages
+    assert current in messages
+    assert removed > 0
+    # O(n): one priming baseline + one count per original message + one framing
+    # count (+1 slack), NOT O(n^2).
+    assert call_count["n"] <= original_len + 3
+
+
+def test_trim_to_budget_uses_exact_prompt_count_no_priming_inflation():
+    from chat_shell.compression.summary_compactor import (
+        COMPACT_TASK_INSTRUCTION,
+        _message_to_counter_dict,
+    )
+
+    counter = TokenCounter(model_name="gpt-4")
+    msgs = [
+        SystemMessage(content="sys"),
+        HumanMessage(content="a " * 30),
+        HumanMessage(content="b " * 30),
+        HumanMessage(content="current"),
+    ]
+    # Exact tokens of the prompt actually sent (messages + instruction), one call.
+    exact = counter.count_messages(
+        [_message_to_counter_dict(m) for m in msgs]
+        + [_message_to_counter_dict(HumanMessage(content=COMPACT_TASK_INSTRUCTION))]
+    )
+    compactor = SummaryCompactor(
+        llm=object(), token_counter=counter, max_compact_input_tokens=exact
+    )
+    before = list(msgs)
+    removed = compactor._trim_to_budget(msgs, current_user=msgs[-1])
+    # Budget == exact prompt size → nothing to trim. The old per-message priming
+    # inflation would have over-estimated and deleted messages.
+    assert removed == 0
+    assert msgs == before
+
+
+@pytest.mark.asyncio
+async def test_compact_sanitizes_orphan_before_budget():
+    from chat_shell.compression.summary_compactor import (
+        COMPACT_TASK_INSTRUCTION,
+        _message_to_counter_dict,
+    )
+
+    llm = _FakeLLM([AIMessage(content="Current objective:\nok")])
+    counter = TokenCounter(model_name="gpt-4")
+    valid = HumanMessage(content="valid old message")
+    orphan = ToolMessage(content="x " * 1000, tool_call_id="missing", name="t")
+    current = HumanMessage(content="current question")
+    # Budget fits only the sanitized prompt (valid + current + instruction); the
+    # orphan's tokens would push a raw-based estimate over and wrongly delete the
+    # valid message before it.
+    exact = counter.count_messages(
+        [
+            _message_to_counter_dict(valid),
+            _message_to_counter_dict(current),
+            _message_to_counter_dict(HumanMessage(content=COMPACT_TASK_INSTRUCTION)),
+        ]
+    )
+    compactor = SummaryCompactor(
+        llm=llm, token_counter=counter, max_compact_input_tokens=exact
+    )
+
+    result = await compactor.compact(
+        [valid, orphan, current], preserve_initial_context=False
+    )
+
+    assert result.removed_history_items == 0
+    sent_contents = [getattr(m, "content", "") for m in llm.calls[0]]
+    assert "valid old message" in sent_contents
+
+
+def test_is_context_too_long_error_matches_status_and_chinese():
+    from chat_shell.compression.summary_compactor import _is_context_too_long_error
+
+    class Boom(Exception):
+        def __init__(self, msg, status=None):
+            super().__init__(msg)
+            self.status_code = status
+
+    assert _is_context_too_long_error(Boom("输入长度超过最大限制"))
+    assert _is_context_too_long_error(Boom("请求体过大", status=413))
+    assert _is_context_too_long_error(Boom("token 数量超过上限"))
+    assert not _is_context_too_long_error(Boom("temporary network blip"))
+    # 413 is unconditional overflow; a bare 400 is not (avoids retry storm).
+    assert _is_context_too_long_error(Boom("anything", status=413))
+    assert not _is_context_too_long_error(Boom("invalid parameter", status=400))
+    # A 400 that also carries a length marker still counts as overflow.
+    assert _is_context_too_long_error(Boom("输入长度超过限制", status=400))
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_times_out():
+    class HangingLLM:
+        async def ainvoke(self, _messages):
+            await asyncio.sleep(5)
+
+    compactor = SummaryCompactor(
+        llm=HangingLLM(),
+        token_counter=TokenCounter(model_name="gpt-4"),
+        request_timeout=0.05,
+    )
+    with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+        await compactor._generate_summary([])
+
+
+@pytest.mark.asyncio
+async def test_summary_instruction_is_final_turn():
+    from chat_shell.compression.summary_compactor import COMPACT_TASK_INSTRUCTION
+
+    captured = {}
+
+    class CaptureLLM:
+        async def ainvoke(self, messages):
+            captured["messages"] = messages
+            return AIMessage(content="SUMMARY BODY")
+
+    compactor = SummaryCompactor(
+        llm=CaptureLLM(), token_counter=TokenCounter(model_name="gpt-4")
+    )
+    history = [HumanMessage(content="q1"), AIMessage(content="a1")]
+    body = await compactor._generate_summary(history)
+
+    assert body == "SUMMARY BODY"
+    msgs = captured["messages"]
+    # Instruction is the LAST message and a HumanMessage (recency wins).
+    assert isinstance(msgs[-1], HumanMessage)
+    assert COMPACT_TASK_INSTRUCTION in msgs[-1].content
+    # No leading SystemMessage instruction.
+    assert getattr(msgs[0], "content", "") != COMPACT_TASK_INSTRUCTION
+
+
+def test_reloaded_summary_not_retained_as_user():
+    # After an HTTP reload the summary's marker is dropped, so it comes back as a
+    # plain HumanMessage. It must still be recognized (by content) and excluded
+    # from retained recent-user messages, or summaries accumulate each compaction.
+    compactor = SummaryCompactor(
+        llm=object(), token_counter=TokenCounter(model_name="gpt-4")
+    )
+    old_summary = HumanMessage(content=f"{SUMMARY_PREFIX}\n\nold objective")
+    real_user = HumanMessage(content="real question")
+
+    selected = compactor._select_recent_user_messages([old_summary, real_user])
+    contents = [m.content for m in selected]
+
+    assert "real question" in contents
+    assert all(not c.startswith("[COMPACT SUMMARY]") for c in contents)
+    # And it is not treated as the current user message either.
+    current = compactor._find_current_user_message([old_summary, real_user])
+    assert current is real_user
+
+
+def test_replacement_history_marks_retained_user():
+    compactor = SummaryCompactor(
+        llm=object(), token_counter=TokenCounter(model_name="gpt-4")
+    )
+    history = [HumanMessage(content="keep me")]
+    replacement = compactor._build_replacement_history(
+        history, summary_body="S", preserve_initial_context=False
+    )
+    retained = [
+        m
+        for m in replacement
+        if isinstance(m, HumanMessage)
+        and m.additional_kwargs.get("checkpoint_retained") is True
+    ]
+    assert retained, "retained user message must carry checkpoint_retained"
+    assert retained[0].id, "retained user message must have a fresh id"
+    # The summary message is separate and keeps its summary marker.
+    assert any(
+        m.additional_kwargs.get(SUMMARY_METADATA_FLAG) is True for m in replacement
+    )

@@ -17,11 +17,13 @@ governance phase:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -36,31 +38,34 @@ from chat_shell.compression.token_counter import TokenCounter
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_PREFIX = "[COMPACT SUMMARY]"
+# Stable content prefix for recognizing a summary message even after an HTTP
+# round-trip drops additional_kwargs. SUMMARY_PREFIX must start with this.
+SUMMARY_CONTENT_MARKER = "[COMPACT SUMMARY]"
+SUMMARY_PREFIX = (
+    "[COMPACT SUMMARY] Another model worked on this task and produced the summary "
+    "below. Use it to continue the work and avoid repeating completed steps."
+)
 SUMMARY_COMPACTED_FLAG = "compacted"
 SUMMARY_METADATA_FLAG = "summary_compacted"
+# Marks a raw user message retained into the compaction checkpoint. The turn
+# serializer persists messages carrying this flag (see graph_builder), so the
+# checkpoint chain is self-contained ([retained user] + [summary] + [suffix]).
+CHECKPOINT_RETAINED_FLAG = "checkpoint_retained"
 SUMMARY_COMPACT_VERSION = 1
 DEFAULT_RECENT_USER_TOKEN_LIMIT = 20_000
 
-COMPACT_TASK_INSTRUCTION = """You are generating a compact handoff summary for a follow-up model.
+COMPACT_TASK_INSTRUCTION = """You are performing a CONTEXT CHECKPOINT COMPACTION. \
+Create a handoff summary for another model that will resume this task.
 
-Output only the compact summary body in the exact structure below.
-Do not add commentary or markdown outside the structure.
+Include:
+- Current objective and active task
+- Progress and key decisions made so far
+- Important context, constraints, user preferences
+- Critical facts, paths, parameters, and tool findings needed to continue
+- The most important next step
 
-Current objective:
-<current user goal and active task>
-
-Key completed work:
-<important actions already completed>
-
-Important findings:
-<facts, paths, parameters, constraints, tool findings that matter>
-
-Next step:
-<the most important next action to continue the task>
-"""
-
-COMPACT_TASK_FINAL_PROMPT = "Produce the compact summary now."
+Output only the summary. Be concise, structured, and focused on helping the next \
+model seamlessly continue the work."""
 
 
 @dataclass
@@ -98,6 +103,23 @@ def _message_to_counter_dict(message: BaseMessage) -> dict[str, Any]:
     return payload
 
 
+def _is_summary_message(message: BaseMessage) -> bool:
+    """True for a compaction summary message.
+
+    Recognized by the ``summary_compacted`` marker when present, and by the
+    content prefix as a fallback — after an HTTP history reload the marker in
+    ``additional_kwargs`` is dropped, so a persisted summary comes back as a
+    plain ``HumanMessage`` that must not be mistaken for a real user message.
+    """
+    kwargs = getattr(message, "additional_kwargs", {}) or {}
+    if kwargs.get(SUMMARY_METADATA_FLAG) is True:
+        return True
+    content = getattr(message, "content", "")
+    return isinstance(content, str) and content.lstrip().startswith(
+        SUMMARY_CONTENT_MARKER
+    )
+
+
 def _extract_text(message: BaseMessage) -> str:
     content = getattr(message, "content", "")
     if isinstance(content, str):
@@ -116,7 +138,18 @@ def _extract_text(message: BaseMessage) -> str:
 
 
 def _is_context_too_long_error(exc: Exception) -> bool:
-    """Best-effort classifier for compact-task overflow failures."""
+    """Best-effort classifier for compact-task overflow failures.
+
+    Matches by HTTP status (400/413), English markers, and common Chinese /
+    heteroglyph phrasings from non-OpenAI providers.
+    """
+    # 413 (payload too large) is unconditionally an overflow. A bare 400 is
+    # ambiguous (invalid params, bad model config, malformed request), so it
+    # only counts as overflow when a length marker is also present — otherwise a
+    # non-overflow 400 would trigger a remove-one-message-and-retry storm.
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status == 413:
+        return True
     text = " ".join(
         part for part in (str(exc), getattr(exc, "message", None)) if part
     ).lower()
@@ -129,6 +162,13 @@ def _is_context_too_long_error(exc: Exception) -> bool:
         "request too large",
         "maximum number of tokens",
         "token limit exceeded",
+        "输入长度超过",
+        "输入过长",
+        "请求体过大",
+        "超过最大",
+        "超过上限",
+        "token 数量超过",
+        "上下文长度",
     )
     return any(marker in text for marker in markers)
 
@@ -143,11 +183,13 @@ class SummaryCompactor:
         token_counter: TokenCounter,
         recent_user_token_limit: int = DEFAULT_RECENT_USER_TOKEN_LIMIT,
         max_compact_input_tokens: int | None = None,
+        request_timeout: float | None = None,
     ) -> None:
         self._llm = llm
         self._token_counter = token_counter
         self._recent_user_token_limit = recent_user_token_limit
         self._max_compact_input_tokens = max_compact_input_tokens
+        self._request_timeout = request_timeout
 
     async def compact(
         self,
@@ -156,7 +198,10 @@ class SummaryCompactor:
         preserve_initial_context: bool,
     ) -> SummaryCompactResult:
         """Run compact task with codex-style ``remove_oldest`` self-retry."""
-        working_messages = list(messages)
+        # Sanitize up front so the budget reflects what will actually be sent
+        # (orphan tool messages and unresolved tool_calls are dropped), rather
+        # than over-counting raw messages that sanitize would remove anyway.
+        working_messages = self._sanitize_tool_message_sequence(list(messages))
         removed = 0
         current_user = self._find_current_user_message(working_messages)
         logger.info(
@@ -170,18 +215,10 @@ class SummaryCompactor:
         while True:
             attempt += 1
             trim_started = time.perf_counter()
-            trim_removed = 0
-            while self._is_compact_prompt_over_limit(working_messages):
-                if not self._remove_oldest_history_item(
-                    working_messages,
-                    current_user=current_user,
-                ):
-                    raise SummaryCompactNotApplicable(
-                        "Summary compact cannot reduce the request because the "
-                        "remaining floor still exceeds the compact-task input budget."
-                    )
-                removed += 1
-                trim_removed += 1
+            trim_removed = self._trim_to_budget(
+                working_messages, current_user=current_user
+            )
+            removed += trim_removed
             if trim_removed:
                 logger.info(
                     "[SummaryCompact] trim pass done: attempt=%d "
@@ -227,10 +264,11 @@ class SummaryCompactor:
         )
 
     async def _generate_summary(self, messages: list[BaseMessage]) -> str:
+        # Instruction is the final user turn (recency), so the model summarizes
+        # rather than continuing/answering the last question in the history.
         prompt_messages: list[BaseMessage] = [
-            SystemMessage(content=COMPACT_TASK_INSTRUCTION),
             *messages,
-            HumanMessage(content=COMPACT_TASK_FINAL_PROMPT),
+            HumanMessage(content=COMPACT_TASK_INSTRUCTION),
         ]
         prompt_tokens = self._token_counter.count_messages(
             [_message_to_counter_dict(message) for message in prompt_messages]
@@ -242,7 +280,14 @@ class SummaryCompactor:
         )
         request_started = time.perf_counter()
         try:
-            result = await self._llm.ainvoke(prompt_messages)
+            if self._request_timeout is not None:
+                # asyncio.wait_for (not asyncio.timeout, which is 3.11+) keeps the
+                # chat_shell >=3.10 support floor.
+                result = await asyncio.wait_for(
+                    self._llm.ainvoke(prompt_messages), self._request_timeout
+                )
+            else:
+                result = await self._llm.ainvoke(prompt_messages)
         except BaseException as exc:
             # BaseException so a CancelledError (task/timeout cancellation) is
             # surfaced here rather than vanishing silently at the hang point.
@@ -264,22 +309,62 @@ class SummaryCompactor:
             )
         return summary_text
 
-    def _is_compact_prompt_over_limit(self, messages: list[BaseMessage]) -> bool:
-        """Return True when the compact task prompt itself exceeds input budget."""
+    def _trim_to_budget(
+        self,
+        messages: list[BaseMessage],
+        *,
+        current_user: HumanMessage | None,
+    ) -> int:
+        """Drop oldest removable messages in one O(n) pass to fit the budget.
+
+        Token counts are computed once per message (not re-summed per removal).
+        System messages and the current user message are never dropped. Callers
+        pass an already-sanitized list so the estimate matches the sent prompt.
+
+        Per-message cost excludes the counter's one-time reply-priming so the sum
+        does not inflate by ~priming*N; the priming is added back exactly once via
+        ``framing``. The result equals a single ``count_messages`` over the full
+        compact prompt.
+        """
         if self._max_compact_input_tokens is None:
-            return False
-        compact_prompt = [
-            SystemMessage(content=COMPACT_TASK_INSTRUCTION),
-            *self._sanitize_tool_message_sequence(messages),
-            HumanMessage(content=COMPACT_TASK_FINAL_PROMPT),
+            return 0
+
+        priming = self._token_counter.count_messages([])
+        counts = [
+            self._token_counter.count_messages([_message_to_counter_dict(m)]) - priming
+            for m in messages
         ]
-        compact_prompt_dicts = [
-            _message_to_counter_dict(message) for message in compact_prompt
-        ]
-        return (
-            self._token_counter.count_messages(compact_prompt_dicts)
-            > self._max_compact_input_tokens
+        framing = self._token_counter.count_messages(
+            [
+                _message_to_counter_dict(
+                    HumanMessage(content=COMPACT_TASK_INSTRUCTION)
+                ),
+            ]
         )
+        total = sum(counts) + framing
+        budget = self._max_compact_input_tokens
+        if total <= budget:
+            return 0
+
+        drop: set[int] = set()
+        for i, message in enumerate(messages):
+            if total <= budget:
+                break
+            if isinstance(message, SystemMessage):
+                continue
+            if current_user is not None and message is current_user:
+                continue
+            drop.add(i)
+            total -= counts[i]
+
+        if total > budget:
+            raise SummaryCompactNotApplicable(
+                "Summary compact cannot reduce the request because the remaining "
+                "floor still exceeds the compact-task input budget."
+            )
+
+        messages[:] = [m for i, m in enumerate(messages) if i not in drop]
+        return len(drop)
 
     def _sanitize_tool_message_sequence(
         self, messages: list[BaseMessage]
@@ -357,6 +442,20 @@ class SummaryCompactor:
         )
         return replacement
 
+    @staticmethod
+    def _clone_retained_user(message: HumanMessage) -> HumanMessage:
+        """Clone a retained user message with a fresh id + checkpoint marker.
+
+        A fresh id keeps the clone out of the turn's input-id set so
+        ``_new_messages_from_state`` treats it as generated-this-turn; the marker
+        makes the turn serializer persist it into ``messages_chain``.
+        """
+        kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
+        kwargs[CHECKPOINT_RETAINED_FLAG] = True
+        return HumanMessage(
+            content=message.content, id=str(uuid4()), additional_kwargs=kwargs
+        )
+
     def _select_recent_user_messages(
         self, messages: list[BaseMessage]
     ) -> list[HumanMessage]:
@@ -366,8 +465,7 @@ class SummaryCompactor:
         for message in reversed(messages):
             if not isinstance(message, HumanMessage):
                 continue
-            kwargs = getattr(message, "additional_kwargs", {}) or {}
-            if kwargs.get(SUMMARY_METADATA_FLAG) is True:
+            if _is_summary_message(message):
                 continue
             message_tokens = self._token_counter.count_messages(
                 [_message_to_counter_dict(message)]
@@ -377,13 +475,13 @@ class SummaryCompactor:
                 break
 
             if message_tokens <= remaining_budget:
-                selected.append(message)
+                selected.append(self._clone_retained_user(message))
                 used_tokens += message_tokens
                 continue
 
             truncated = self._truncate_user_message(message, remaining_budget)
             if truncated is not None:
-                selected.append(truncated)
+                selected.append(self._clone_retained_user(truncated))
                 break
 
         selected.reverse()
@@ -425,8 +523,7 @@ class SummaryCompactor:
         for message in reversed(messages):
             if not isinstance(message, HumanMessage):
                 continue
-            kwargs = getattr(message, "additional_kwargs", {}) or {}
-            if kwargs.get(SUMMARY_METADATA_FLAG) is True:
+            if _is_summary_message(message):
                 continue
             return message
         return None

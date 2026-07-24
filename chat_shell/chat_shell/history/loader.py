@@ -240,6 +240,7 @@ async def get_chat_history(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    from_latest_compaction: bool = True,
 ) -> list[dict[str, Any]]:
     """Get chat history for a task.
 
@@ -253,6 +254,8 @@ async def get_chat_history(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
             Used by subscription tasks to control history context size.
+        from_latest_compaction: If True (default), load from the latest summary-
+            compaction checkpoint instead of the full transcript.
 
     Returns:
         List of message dictionaries with 'role' and 'content' keys
@@ -278,11 +281,19 @@ async def get_chat_history(
 
     if is_http:
         history = await _load_history_from_remote(
-            task_id, is_group_chat, exclude_after_message_id, limit
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
+            limit,
+            from_latest_compaction,
         )
     else:
         history = await _load_history_from_db(
-            task_id, is_group_chat, exclude_after_message_id, limit
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
+            limit,
+            from_latest_compaction,
         )
 
     logger.debug(
@@ -302,6 +313,7 @@ async def _load_history_from_remote(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    from_latest_compaction: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from Backend via RemoteHistoryStore.
 
@@ -312,6 +324,8 @@ async def _load_history_from_remote(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        from_latest_compaction: If True, request history from the latest summary-
+            compaction checkpoint instead of the full transcript.
     """
     logger.debug(
         "[history] _load_history_from_remote: START task_id=%d, is_group_chat=%s, "
@@ -343,6 +357,7 @@ async def _load_history_from_remote(
             before_message_id=before_id,
             is_group_chat=is_group_chat,
             limit=limit,
+            from_latest_compaction=from_latest_compaction,
         )
 
         logger.debug(
@@ -386,6 +401,7 @@ async def _load_history_from_db(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    from_latest_compaction: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from database (Package mode).
 
@@ -396,6 +412,7 @@ async def _load_history_from_db(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        from_latest_compaction: If True, load from the latest compaction checkpoint.
     """
     return await asyncio.to_thread(
         _load_history_from_db_sync,
@@ -403,6 +420,7 @@ async def _load_history_from_db(
         is_group_chat,
         exclude_after_message_id,
         limit,
+        from_latest_compaction,
     )
 
 
@@ -411,6 +429,7 @@ def _load_history_from_db_sync(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    from_latest_compaction: bool = False,
 ) -> list[dict[str, Any]]:
     """Synchronous implementation of chat history retrieval.
 
@@ -421,43 +440,50 @@ def _load_history_from_db_sync(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        from_latest_compaction: If True, load from the latest compaction checkpoint
+            (wired to the shared backend pipeline in Task 10).
     """
     # Import backend's models and database session
     # This works in package mode since we're running within the backend process
     from app.db.session import SessionLocal
-    from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+    from app.models.subtask import SubtaskStatus
     from app.models.user import User
+    from app.services.chat.compaction_checkpoint import resolve_history_subtasks
+    from app.stores.tasks import task_store
 
     history: list[dict[str, Any]] = []
 
     db = SessionLocal()
     try:
-        query = (
-            db.query(Subtask, User.user_name)
-            .outerjoin(User, Subtask.sender_user_id == User.id)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.status.in_([SubtaskStatus.COMPLETED, SubtaskStatus.FAILED]),
-            )
+        # Delegate to the shared backend pipeline so fork lineage, before/limit,
+        # and checkpoint scoping stay identical to the HTTP endpoint. (Package's
+        # original direct query bypassed the fork resolver — a latent divergence.)
+        task = task_store.get_by_id(db, task_id=task_id)
+        task_user_id = task.user_id if task else None
+        subtasks = resolve_history_subtasks(
+            db=db,
+            task_id=task_id,
+            user_id=task_user_id,
+            before_message_id=exclude_after_message_id,
+            limit=limit,
+            from_latest_compaction=from_latest_compaction,
+            statuses=[SubtaskStatus.COMPLETED, SubtaskStatus.FAILED],
         )
 
-        if exclude_after_message_id is not None:
-            query = query.filter(Subtask.message_id < exclude_after_message_id)
+        # Look up sender usernames (for group-chat prefixing) in one batch.
+        sender_ids = {s.sender_user_id for s in subtasks if s.sender_user_id}
+        username_by_id: dict[Any, str] = {}
+        if sender_ids:
+            rows = (
+                db.query(User.id, User.user_name).filter(User.id.in_(sender_ids)).all()
+            )
+            username_by_id = {uid: name for uid, name in rows}
 
-        # If limit is specified, we need to get the most recent N messages
-        # First order by message_id desc to get the latest, then reverse
-        if limit is not None and limit > 0:
-            # Get the most recent N messages by ordering desc and limiting
-            subtasks = query.order_by(Subtask.message_id.desc()).limit(limit).all()
-            # Reverse to get chronological order
-            subtasks = list(reversed(subtasks))
-        else:
-            subtasks = query.order_by(Subtask.message_id.asc()).all()
-
-        for subtask, sender_username in subtasks:
-            msgs = _build_history_messages(db, subtask, sender_username, is_group_chat)
-            history.extend(msgs)
+        for subtask in subtasks:
+            sender_username = username_by_id.get(subtask.sender_user_id)
+            history.extend(
+                _build_history_messages(db, subtask, sender_username, is_group_chat)
+            )
     finally:
         db.close()
 
