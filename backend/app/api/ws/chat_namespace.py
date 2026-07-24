@@ -1952,7 +1952,6 @@ def _fetch_subtasks_for_task_join(
                         subtask_dict["sender"] = {
                             "user_id": user.id,
                             "user_name": user.user_name,
-                            "avatar": user.avatar,
                         }
 
                 subtasks_dict.append(subtask_dict)
