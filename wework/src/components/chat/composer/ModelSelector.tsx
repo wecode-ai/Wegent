@@ -328,11 +328,11 @@ export function ModelSelector({
       return
     }
     if (activeDesktopSubmenu?.type === 'control') {
-      updateSubmenuLayout(
+      const buttonRef =
         activeDesktopSubmenu.id === 'reasoning'
           ? reasoningButtonRef.current
           : speedButtonRef.current
-      )
+      updateSubmenuLayout(buttonRef)
       return
     }
     updateSubmenuLayout(null)

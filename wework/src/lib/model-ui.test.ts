@@ -213,6 +213,29 @@ describe('model-ui', () => {
     ])
   })
 
+  test('adds catalog control to any model that supports the Responses API', () => {
+    const deepseekResponsesModel: UnifiedModel = {
+      name: 'huoshan-deepseek-v4-pro',
+      type: 'public',
+      displayName: 'DeepSeek V4 Pro',
+      modelId: 'huoshan-deepseek-v4-pro',
+      config: {
+        protocol: 'openai-responses',
+      },
+    }
+    const deepseekNonResponsesModel: UnifiedModel = {
+      name: 'huoshan-deepseek-v4',
+      type: 'public',
+      displayName: 'DeepSeek V4',
+      modelId: 'huoshan-deepseek-v4',
+    }
+
+    expect(inferModelFamily(deepseekResponsesModel)).toBe('deepseek')
+    expect(getControlsForModel(deepseekNonResponsesModel).map(control => control.id)).not.toContain(
+      'catalogModelId'
+    )
+  })
+
   test('detects runtime family compatibility without changing display families', () => {
     const claudeCompatibleDeepseek: UnifiedModel = {
       name: 'ali-deepseek-v4-flash',

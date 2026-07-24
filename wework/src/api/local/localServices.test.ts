@@ -911,7 +911,6 @@ describe('createLocalAppServices', () => {
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
-        weworkCloudModelCatalogModelId: 'gpt-5.6-luna',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
       },
@@ -936,7 +935,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model_id: 'shared-model',
-            codex_catalog_model_id: 'gpt-5.6-luna',
+            codex_catalog_model_id: 'wework-gpt-5.6-sol',
             base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
             api_key: 'cloud-login-token',
             default_headers: {
@@ -1302,6 +1301,60 @@ describe('createLocalAppServices', () => {
       },
     ])
     expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
+  })
+
+  test('builds cloud model gateway config with upstream_api_format for chat-completions protocol', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'shared-model',
+        api_format: 'responses',
+        upstream_api_format: 'openai-chat-completions',
+        protocol: 'openai-responses',
+        base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        api_key: 'cloud-login-token',
+        default_headers: {
+          'X-Wegent-Model-Type': 'user',
+          'X-Wegent-Model-Namespace': 'default',
+          'X-Wegent-Model-User-Id': '42',
+        },
+        runtime_config: {
+          codex: {
+            use_user_config: false,
+            configured: true,
+          },
+        },
+      })
+    )
   })
 
   test('injects trusted cloud collaboration context without changing the visible message', async () => {

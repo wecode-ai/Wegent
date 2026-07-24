@@ -17,7 +17,7 @@ import {
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
 import {
-  supportsResponsesApi,
+  supportsCloudExecution,
   withModelExecutionOverride,
   type HybridModelSource,
 } from '@/features/cloud-connection/modelExecution'
@@ -155,7 +155,7 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
 }
 
 function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.filter(supportsResponsesApi).map(model => {
+  return models.filter(supportsCloudExecution).map(model => {
     if (!isRuntimeCodexModel(model)) {
       return withModelExecutionOverride(
         { ...model, name: `cloud:${model.type}:${model.name}` },
