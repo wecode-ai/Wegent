@@ -4694,8 +4694,8 @@ async function main() {
       testId.startsWith('project-menu-')
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
-    const projectId = projectMenuTestId.slice('project-menu-'.length)
-    const projectRowSelector = `[data-testid="project-row-${projectId}"]`
+    let projectId = projectMenuTestId.slice('project-menu-'.length)
+    let projectRowSelector = `[data-testid="project-row-${projectId}"]`
     await control.command('waitFor', projectRowSelector, {
       text: 'workspace',
       timeoutMs: UI_TIMEOUT_MS,
@@ -4772,7 +4772,19 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await control.command('waitFor', '[data-testid^="project-menu-"]', {
+    const reopenedProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      'The reopened folder project was not shown in the sidebar'
+    )
+    const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(testId =>
+      testId.startsWith('project-menu-')
+    )
+    assert.ok(reopenedProjectMenuTestId, 'The reopened folder project was not shown in the sidebar')
+    projectId = reopenedProjectMenuTestId.slice('project-menu-'.length)
+    projectRowSelector = `[data-testid="project-row-${projectId}"]`
+    await control.command('waitFor', projectRowSelector, {
+      text: 'workspace',
       timeoutMs: UI_TIMEOUT_MS,
     })
 
