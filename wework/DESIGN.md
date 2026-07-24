@@ -511,6 +511,9 @@ recipe closely:
 - attachment inset is `8px`, with the nested radius derived from the outer
   composer radius rather than chosen independently;
 - footer controls use compact `4px–8px` gaps and `28px` actions;
+- desktop project, quick-phrase, model, execution-mode, and branch selectors
+  use the same `text-sm` role at regular weight; mobile variants may retain
+  their larger touch-oriented typography;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
