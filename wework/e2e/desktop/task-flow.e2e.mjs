@@ -2,7 +2,16 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, appendFile, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  appendFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -2214,16 +2223,16 @@ class RealCloudEnvironment {
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
 
-    const remoteHome = join(resultDir, 'cloud-executor-home')
-    const remoteCodexHome = join(remoteHome, 'codex')
+    this.remoteHome = join('/tmp', `wework-cloud-e2e-${process.pid}`)
+    const remoteCodexHome = join(this.remoteHome, 'codex')
     await writeCodexConfig(remoteCodexHome, this.modelServerUrl)
     const remoteEnv = {
       ...process.env,
       CODEX_BIN: this.codexBinary,
       CODEX_HOME: remoteCodexHome,
-      HOME: remoteHome,
+      HOME: this.remoteHome,
       WEGENT_CODEX_HOME: remoteCodexHome,
-      WEGENT_EXECUTOR_HOME: remoteHome,
+      WEGENT_EXECUTOR_HOME: this.remoteHome,
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
       EXECUTOR_MODE: 'local',
@@ -2330,6 +2339,7 @@ class RealCloudEnvironment {
     await stopProcessGroup(this.remoteExecutor)
     await stopProcess(this.backend)
     await stopProcess(this.redis)
+    if (this.remoteHome) await rm(this.remoteHome, { recursive: true, force: true })
   }
 }
 
@@ -4001,20 +4011,12 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdent
   )
   const mainBinaryName = await readTauriMainBinaryName()
   const binaryName = process.platform === 'win32' ? `${mainBinaryName}.exe` : mainBinaryName
+  const cargoTargetDir = process.env.CARGO_TARGET_DIR
+    ? resolve(weworkDir, process.env.CARGO_TARGET_DIR)
+    : join(weworkDir, 'src-tauri', 'target')
   const candidates = [
-    join(weworkDir, 'src-tauri', 'target', 'debug', binaryName),
-    join(
-      weworkDir,
-      'src-tauri',
-      'target',
-      'debug',
-      'bundle',
-      'macos',
-      'WeWork.app',
-      'Contents',
-      'MacOS',
-      binaryName
-    ),
+    join(cargoTargetDir, 'debug', binaryName),
+    join(cargoTargetDir, 'debug', 'bundle', 'macos', 'WeWork.app', 'Contents', 'MacOS', binaryName),
   ]
   for (const candidate of candidates) {
     if (await isExecutable(candidate)) {
@@ -4233,6 +4235,146 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
 }
 
+async function waitForCloudApiValue(cloudEnvironment, load, matches, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const value = await load()
+    if (matches(value)) return value
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+  throw new Error(message)
+}
+
+async function cloudApi(cloudEnvironment, path, options = {}) {
+  const url = `${cloudEnvironment.backendUrl}/api/v1${path}`
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${cloudEnvironment.authToken}`,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers,
+    },
+  })
+  const body = response.status === 204 ? null : await response.json()
+  assert.equal(
+    response.ok,
+    true,
+    `${options.method ?? 'GET'} ${url} failed: ${JSON.stringify(body)}`
+  )
+  return body
+}
+
+async function verifyCloudTodoFlow(control, cloudEnvironment) {
+  const projectName = `Desktop E2E TODO ${Date.now()}`
+  const rootTitle = 'Desktop E2E root task'
+  const childTitle = 'Desktop E2E child task'
+  const runtimeBinding = {
+    deviceId: CLOUD_DEVICE_ID,
+    taskId: `desktop-e2e-todo-${Date.now()}`,
+    taskTitle: 'Desktop E2E bound runtime task',
+  }
+
+  await control.command('navigate', '/todo')
+  await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-project-add"]')
+  await control.command('fill', '[data-testid="cloud-project-name"]', {
+    value: projectName,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]')
+  await control.command('waitFor', '[data-testid="cloud-project-header"]', {
+    text: projectName,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const project = await waitForCloudApiValue(
+    cloudEnvironment,
+    () => cloudApi(cloudEnvironment, '/cloud-projects'),
+    response => response.items?.some(item => item.name === projectName),
+    'The cloud TODO project was not persisted by the real backend'
+  ).then(response => response.items.find(item => item.name === projectName))
+  assert.ok(project?.id, 'The persisted cloud TODO project has no ID')
+
+  await control.command('click', '[data-testid="cloud-todo-column-add-inbox"]')
+  await control.command('fill', '[data-testid="cloud-todo-title"]', { value: rootTitle })
+  await control.command('clickWhenEnabled', '[data-testid="cloud-todo-create-confirm"]')
+  const rootItem = await waitForCloudApiValue(
+    cloudEnvironment,
+    () => cloudApi(cloudEnvironment, `/cloud-projects/${project.id}/loop-items`),
+    response => response.items?.some(item => item.title === rootTitle),
+    'The root TODO was not persisted by the real backend'
+  ).then(response => response.items.find(item => item.title === rootTitle))
+  assert.equal(rootItem.parent_id, null, 'The root TODO did not expose a null parent')
+  await control.command('waitFor', `[data-testid="cloud-todo-card-${rootItem.id}"]`, {
+    text: rootTitle,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  await control.command('drag', `[data-testid="cloud-todo-card-${rootItem.id}"]`, {
+    target: '[data-testid="cloud-todo-column-dropzone-pending"]',
+  })
+  const movedItem = await waitForCloudApiValue(
+    cloudEnvironment,
+    () => cloudApi(cloudEnvironment, `/loop-items/${rootItem.id}`),
+    item => item.status === 'pending',
+    'Dragging the TODO did not persist the pending status'
+  )
+  assert.equal(movedItem.completed_at, null)
+  await control.command(
+    'waitFor',
+    `[data-testid="cloud-todo-column-pending"] [data-testid="cloud-todo-card-${rootItem.id}"]`,
+    { text: rootTitle, timeoutMs: UI_TIMEOUT_MS }
+  )
+
+  await control.command('click', `[data-testid="cloud-todo-card-add-child-${rootItem.id}"]`)
+  await control.command('fill', '[data-testid="cloud-todo-title"]', { value: childTitle })
+  await control.command('clickWhenEnabled', '[data-testid="cloud-todo-create-confirm"]')
+  const childItem = await waitForCloudApiValue(
+    cloudEnvironment,
+    () => cloudApi(cloudEnvironment, `/cloud-projects/${project.id}/loop-items`),
+    response => response.items?.some(item => item.title === childTitle),
+    'The child TODO was not persisted by the real backend'
+  ).then(response => response.items.find(item => item.title === childTitle))
+  assert.equal(childItem.parent_id, rootItem.id, 'The child TODO lost its parent relationship')
+
+  const binding = await cloudApi(cloudEnvironment, `/loop-items/${rootItem.id}/tasks`, {
+    method: 'POST',
+    body: JSON.stringify(runtimeBinding),
+  })
+  assert.equal(binding.loop_item_id, rootItem.id)
+  assert.equal(binding.unlinked_at, null)
+  const context = await cloudApi(
+    cloudEnvironment,
+    `/runtime-tasks/cloud-context?device_id=${encodeURIComponent(runtimeBinding.deviceId)}&task_id=${encodeURIComponent(runtimeBinding.taskId)}`
+  )
+  assert.equal(context.loop_item.id, rootItem.id)
+  assert.equal(context.project.id, String(project.id))
+
+  await cloudApi(cloudEnvironment, `/loop-items/${rootItem.id}/tasks`, {
+    method: 'DELETE',
+    body: JSON.stringify(runtimeBinding),
+  })
+  const activeBindings = await cloudApi(cloudEnvironment, `/loop-items/${rootItem.id}/tasks`)
+  assert.deepEqual(activeBindings, [], 'The runtime task remained active after unbinding')
+
+  const folder = await cloudApi(cloudEnvironment, `/cloud-projects/${project.id}/folders`, {
+    method: 'POST',
+    body: JSON.stringify({ path: 'desktop-e2e', description: 'Desktop E2E folder' }),
+  })
+  const movedFolder = await cloudApi(cloudEnvironment, `/cloud-projects/files/${folder.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ path: 'desktop-e2e-renamed', version: folder.version }),
+  })
+  assert.equal(movedFolder.path, 'desktop-e2e-renamed')
+  await cloudApi(cloudEnvironment, `/cloud-projects/files/${folder.id}`, {
+    method: 'DELETE',
+  })
+
+  await captureVerificationScreenshot(control, 'cloud-todo-01-full-flow-completed.png')
+  await control.command('navigate', '/')
+}
+
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
@@ -4352,6 +4494,8 @@ async function main() {
     await control.command('focusMainWindow', 'body')
 
     if (CLOUD_ONLY) {
+      phase = 'cloud-todo-flow'
+      await verifyCloudTodoFlow(control, cloudEnvironment)
       phase = 'cloud-project-flow'
       await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
       await writeFile(

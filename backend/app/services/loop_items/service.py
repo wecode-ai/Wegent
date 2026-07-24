@@ -21,7 +21,13 @@ from app.models.cloud_project import (
     CloudProject,
     LoopItemTaskBinding,
 )
-from app.models.delivery import LoopItem, LoopItemAttachment, LoopItemCollaborator
+from app.models.delivery import (
+    LoopItem,
+    LoopItemAttachment,
+    LoopItemCollaborator,
+    adapt_loop_node_values_for_dialect,
+    loop_datetime_is_unset,
+)
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -281,6 +287,9 @@ class LoopItemService:
             updates["completed_at"] = (
                 self._now() if next_status == "completed" else None
             )
+        updates = adapt_loop_node_values_for_dialect(
+            updates, db.get_bind().dialect.name
+        )
         updated = (
             db.query(LoopItem)
             .filter(LoopItem.id == item.id, LoopItem.version == values.version)
@@ -346,7 +355,7 @@ class LoopItemService:
                 LoopItemTaskBinding.task_user_id == user_id,
                 LoopItemTaskBinding.device_id == values.device_id,
                 LoopItemTaskBinding.task_id == values.task_id,
-                LoopItemTaskBinding.unlinked_at.is_(None),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
             .with_for_update()
             .first()
@@ -395,7 +404,7 @@ class LoopItemService:
         if active is not None:
             if (
                 str(active.cloud_project_id) == str(cloud_project_id)
-                and active.loop_item_id is None
+                and not active.loop_item_id
             ):
                 if values.task_title and active.task_title != values.task_title:
                     active.task_title = values.task_title
@@ -431,7 +440,7 @@ class LoopItemService:
                 LoopItemTaskBinding.task_user_id == user_id,
                 LoopItemTaskBinding.device_id == device_id,
                 LoopItemTaskBinding.task_id == task_id,
-                LoopItemTaskBinding.unlinked_at.is_(None),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
             .first()
         )
@@ -483,7 +492,7 @@ class LoopItemService:
             LoopItemTaskBinding.task_user_id == user_id,
             LoopItemTaskBinding.device_id == values.device_id,
             LoopItemTaskBinding.task_id == values.task_id,
-            LoopItemTaskBinding.unlinked_at.is_(None),
+            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
         )
         if lock:
             query = query.with_for_update()
@@ -493,14 +502,17 @@ class LoopItemService:
     def _advance_task_started_item(db: Session, item_id: str) -> None:
         """Move an unstarted TODO to in progress when execution is attached."""
 
+        updates = adapt_loop_node_values_for_dialect(
+            {"status": "in_progress", "completed_at": None},
+            db.get_bind().dialect.name,
+        )
         db.query(LoopItem).filter(
             LoopItem.id == item_id,
             LoopItem.status.in_(("inbox", "pending")),
         ).update(
             {
-                "status": "in_progress",
+                **updates,
                 "version": LoopItem.version + 1,
-                "completed_at": None,
             },
             synchronize_session=False,
         )
@@ -513,7 +525,7 @@ class LoopItemService:
             db.query(LoopItemTaskBinding)
             .filter(
                 LoopItemTaskBinding.loop_item_id == item_id,
-                LoopItemTaskBinding.unlinked_at.is_(None),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
             .order_by(LoopItemTaskBinding.linked_at.desc())
             .all()
@@ -534,7 +546,7 @@ class LoopItemService:
                 LoopItemTaskBinding.task_user_id == user_id,
                 LoopItemTaskBinding.device_id == values.device_id,
                 LoopItemTaskBinding.task_id == values.task_id,
-                LoopItemTaskBinding.unlinked_at.is_(None),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
             .with_for_update()
             .first()
@@ -557,7 +569,7 @@ class LoopItemService:
                 LoopItemTaskBinding.task_user_id == user_id,
                 LoopItemTaskBinding.device_id == device_id,
                 LoopItemTaskBinding.task_id == task_id,
-                LoopItemTaskBinding.unlinked_at.is_(None),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
             .first()
         )
@@ -589,10 +601,10 @@ class LoopItemService:
             for (item_id,) in db.query(LoopItemTaskBinding.loop_item_id)
             .filter(
                 LoopItemTaskBinding.task_user_id == user_id,
-                LoopItemTaskBinding.unlinked_at.is_(None),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
             .all()
-            if item_id is not None
+            if item_id
         }
         collaborator_items = {
             item_id
