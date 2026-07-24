@@ -1160,8 +1160,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               }),
           },
           modelType: modelCategoryType,
-          // Save protocol for openai-responses and gemini-deep-research to distinguish from regular variants
-          ...(providerType === 'openai-responses' && { protocol: 'openai-responses' }),
+          // Save protocol/apiFormat so downstream routing can pick the right upstream endpoint.
+          // Plain OpenAI maps to Chat Completions; openai-responses maps to Responses.
+          ...(providerType === 'openai' && {
+            protocol: 'openai',
+            apiFormat: 'chat/completions',
+          }),
+          ...(providerType === 'openai-responses' && {
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+          }),
           ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
           // Save protocol for video models to specify the provider (seedance, runway, pika, etc.)
           ...(modelCategoryType === 'video' && { protocol: providerType }),

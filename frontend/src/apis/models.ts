@@ -102,6 +102,7 @@ export interface ModelCRD {
       max_output_tokens?: number // Maximum output tokens the model can generate per response
     }
     protocol?: string
+    apiFormat?: string
     isCustomConfig?: boolean
     isWeworkAvailable?: boolean
     costIndex?: string // Relative usage cost compared with the baseline model
