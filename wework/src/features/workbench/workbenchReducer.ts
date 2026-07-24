@@ -98,6 +98,7 @@ export type WorkbenchAction =
       startFreshChat?: boolean
     }
   | { type: 'project_updated'; project: ProjectWithTasks }
+  | { type: 'project_removed'; projectId: number }
   | {
       type: 'project_cleared'
       standaloneDeviceId?: string | null
@@ -1129,6 +1130,12 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         projects: state.projects.map(project =>
           project.id === action.project.id ? action.project : project
         ),
+      }
+    case 'project_removed':
+      return {
+        ...state,
+        currentProject: state.currentProject?.id === action.projectId ? null : state.currentProject,
+        projects: state.projects.filter(project => project.id !== action.projectId),
       }
     case 'project_cleared':
       return {
