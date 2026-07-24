@@ -31,18 +31,19 @@ export interface CodexOfficialModelList {
   models: CodexOfficialModel[]
 }
 
-export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
+export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.6-sol'
 export const CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME = 'codex-official-unavailable'
 
 const CODEX_PICKER_MODELS = [
   { modelId: 'gpt-5.6-sol', label: 'GPT 5.6 Sol' },
   { modelId: 'gpt-5.6-terra', label: 'GPT 5.6 Terra' },
   { modelId: 'gpt-5.6-luna', label: 'GPT 5.6 Luna' },
-  { modelId: 'gpt-5.5', label: 'GPT 5.5' },
   { modelId: 'gpt-5.4', label: 'GPT 5.4' },
   { modelId: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
   { modelId: 'gpt-5.3-codex-spark', label: 'GPT 5.3 Codex Spark' },
 ] as const
+
+const LEGACY_CODEX_PICKER_MODEL_IDS = new Set(['gpt-5.5'])
 
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -104,6 +105,7 @@ function normalizeOfficialModel(
   const record = recordValue(value)
   const modelId = stringValue(record.model) ?? stringValue(record.id)
   if (!modelId) return null
+  if (LEGACY_CODEX_PICKER_MODEL_IDS.has(normalizedModelId(modelId))) return null
   const providerId = stringValue(camelOrSnake(record, 'providerId', 'provider_id')) ?? provider?.id
   const providerName =
     stringValue(camelOrSnake(record, 'providerName', 'provider_name')) ??

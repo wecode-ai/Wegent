@@ -36,6 +36,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemTaskBind, LoopItemUpdate
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.delivery.storage import delivery_storage
+from app.stores.tasks import task_store
 
 
 class LoopItemService:
@@ -468,14 +469,11 @@ class LoopItemService:
     ) -> None:
         if backend_task_id is None:
             return
-        backend_task = (
-            db.query(TaskResource.id)
-            .filter(
-                TaskResource.id == backend_task_id,
-                TaskResource.user_id == user_id,
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
-            )
-            .first()
+        backend_task = task_store.get_task_by_states(
+            db,
+            task_id=backend_task_id,
+            states=TaskResource.is_active_query(),
+            user_id=user_id,
         )
         if backend_task is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")

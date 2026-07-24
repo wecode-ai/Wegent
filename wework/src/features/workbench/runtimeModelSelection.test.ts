@@ -136,7 +136,7 @@ describe('runtimeModelSelection', () => {
 
   test('passes complete cloud model identity as hidden execution options', () => {
     const cloudModel: UnifiedModel = {
-      name: 'cloud:user:shared-model',
+      name: 'shared-model',
       type: 'user',
       modelId: 'gpt-5.6-luna',
       namespace: 'default',
@@ -144,13 +144,6 @@ describe('runtimeModelSelection', () => {
       provider: 'cloud',
       config: {
         context_window: 128000,
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'shared-model',
-          modelType: 'user',
-          modelNamespace: 'default',
-          resourceUserId: 42,
-        },
       },
     }
 
@@ -168,7 +161,7 @@ describe('runtimeModelSelection', () => {
 
   test('does not pass catalog model id as hidden execution option', () => {
     const cloudModel: UnifiedModel = {
-      name: 'cloud:user:shared-model',
+      name: 'shared-model',
       type: 'user',
       modelId: 'gpt-5.6-luna',
       namespace: 'default',
@@ -176,13 +169,6 @@ describe('runtimeModelSelection', () => {
       provider: 'cloud',
       config: {
         context_window: 128000,
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'shared-model',
-          modelType: 'user',
-          modelNamespace: 'default',
-          resourceUserId: 42,
-        },
       },
     }
 
@@ -205,7 +191,7 @@ describe('runtimeModelSelection', () => {
 
   test('passes upstream api format for OpenAI Chat Completions cloud model', () => {
     const cloudModel: UnifiedModel = {
-      name: 'cloud:user:shared-model',
+      name: 'shared-model',
       type: 'user',
       namespace: 'default',
       resourceUserId: 42,
@@ -213,13 +199,6 @@ describe('runtimeModelSelection', () => {
       config: {
         protocol: 'openai',
         apiFormat: 'chat/completions',
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'shared-model',
-          modelType: 'user',
-          modelNamespace: 'default',
-          resourceUserId: 42,
-        },
       },
     }
 
@@ -237,20 +216,13 @@ describe('runtimeModelSelection', () => {
 
   test('passes upstream api format for Anthropic Messages cloud model', () => {
     const cloudModel: UnifiedModel = {
-      name: 'cloud:user:shared-model',
+      name: 'shared-model',
       type: 'user',
       namespace: 'default',
       resourceUserId: 42,
       provider: 'cloud',
       config: {
         protocol: 'claude',
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'shared-model',
-          modelType: 'user',
-          modelNamespace: 'default',
-          resourceUserId: 42,
-        },
       },
     }
 

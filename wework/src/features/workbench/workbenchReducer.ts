@@ -764,6 +764,11 @@ function upsertOpenedRuntimeWorkspace(
   }
   const normalizedDeviceId = deviceId.trim()
   const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspacePath)
+  if (
+    findRuntimeProjectByWorkspace(currentRuntimeWork, normalizedDeviceId, normalizedWorkspacePath)
+  ) {
+    return currentRuntimeWork
+  }
   const projectLabel = runtimeWorkspaceLabel(normalizedWorkspacePath, label)
   const nextWorkspace = runtimeWorkspaceFromOpenedWorkspace(
     normalizedDeviceId,
@@ -1095,13 +1100,19 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         action.deviceId,
         action.workspacePath
       )
+      const selectedWorkspace = runtimeProject?.deviceWorkspaces.find(
+        workspace =>
+          workspace.deviceId === action.deviceId.trim() &&
+          normalizeRuntimeWorkspacePath(workspace.workspacePath) ===
+            normalizeRuntimeWorkspacePath(action.workspacePath)
+      )
       return {
         ...state,
         runtimeWork,
         currentProject: runtimeProject
           ? runtimeProjectToProject(runtimeProject)
           : state.currentProject,
-        selectedDeviceWorkspaceId: null,
+        selectedDeviceWorkspaceId: selectedWorkspace?.id ?? null,
         pendingProjectWorkspaceProjectId: null,
         standaloneDeviceId: action.deviceId,
         standaloneWorkspacePath: normalizeRuntimeWorkspacePath(action.workspacePath),

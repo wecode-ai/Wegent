@@ -17,6 +17,7 @@ from app.core.security import create_access_token, get_password_hash
 from app.models.cloud_project import CloudProject
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.task import TaskResource
 from app.models.user import User
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import DeliveryStorageUnavailableError
@@ -347,6 +348,44 @@ def test_binding_task_advances_unstarted_todo_to_in_progress(
     ).json()
     assert item["status"] == "in_progress"
     assert item["version"] == created["version"] + 1
+
+
+def test_binding_subscription_backend_task_uses_task_store(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    backend_task = TaskResource(
+        user_id=test_user.id,
+        kind="Task",
+        name=f"delivery-subscription-{uuid.uuid4()}",
+        namespace="default",
+        json={},
+        is_active=TaskResource.STATE_SUBSCRIPTION,
+    )
+    test_db.add(backend_task)
+    test_db.commit()
+    test_db.refresh(backend_task)
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Bind subscription task"},
+    ).json()
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{created['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "subscription-task",
+            "backendTaskId": backend_task.id,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["backend_task_id"] == backend_task.id
 
 
 @pytest.mark.parametrize("initial_status", ["in_progress", "in_review", "completed"])
