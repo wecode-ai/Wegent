@@ -312,25 +312,55 @@ async fn handle_for_token(
             ],
         );
         if let Some(conversion) = conversion {
-            let chat_value = match conversion {
-                Conversion::Chat(context) => (value, context),
-                Conversion::Anthropic(context) => {
-                    (anthropic::anthropic_response_to_chat(&value), context)
+            match conversion {
+                Conversion::Chat(context) => {
+                    let source = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(
+                        Bytes::from(format!("data: {}\n\ndata: [DONE]\n\n", value)),
+                    )]);
+                    let responses_stream = chat::chat_sse_to_responses(source, context);
+                    let mut response = Response::new(Body::from_stream(
+                        history::record_responses_stream(responses_stream, history),
+                    ));
+                    response.headers_mut().insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("text/event-stream"),
+                    );
+                    return Ok(response);
                 }
-            };
-            let source = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
-                format!("data: {}\n\ndata: [DONE]\n\n", chat_value.0),
-            ))]);
-            let responses_stream = chat::chat_sse_to_responses(source, chat_value.1);
-            let mut response = Response::new(Body::from_stream(history::record_responses_stream(
-                responses_stream,
-                history,
-            )));
-            response.headers_mut().insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/event-stream"),
-            );
-            return Ok(response);
+                Conversion::Anthropic(context) => {
+                    let chat_value = anthropic::anthropic_response_to_chat(&value);
+                    let source = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(
+                        Bytes::from(format!("data: {}\n\ndata: [DONE]\n\n", chat_value)),
+                    )]);
+                    let responses_stream = chat::chat_sse_to_responses(source, context);
+                    let mut response = Response::new(Body::from_stream(
+                        history::record_responses_stream(responses_stream, history),
+                    ));
+                    response.headers_mut().insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("text/event-stream"),
+                    );
+                    return Ok(response);
+                }
+                Conversion::Responses(context) => {
+                    let event = normalize_responses_event(&format!(
+                        "event: response.completed\ndata: {}",
+                        json!({"type": "response.completed", "response": value})
+                    ));
+                    let source = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(
+                        Bytes::from(format!("{}\n\n", event)),
+                    )]);
+                    let responses_stream = chat::responses_sse_to_responses(source, context);
+                    let mut response = Response::new(Body::from_stream(
+                        history::record_responses_stream(responses_stream, history),
+                    ));
+                    response.headers_mut().insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("text/event-stream"),
+                    );
+                    return Ok(response);
+                }
+            }
         }
         let event = normalize_responses_event(&format!(
             "event: response.completed\ndata: {}",
@@ -359,6 +389,13 @@ async fn handle_for_token(
         }
         Some(Conversion::Anthropic(context)) => {
             let responses_stream = anthropic::anthropic_sse_to_responses(response_stream, context);
+            Response::new(Body::from_stream(history::record_responses_stream(
+                responses_stream,
+                history,
+            )))
+        }
+        Some(Conversion::Responses(context)) => {
+            let responses_stream = chat::responses_sse_to_responses(response_stream, context);
             Response::new(Body::from_stream(history::record_responses_stream(
                 responses_stream,
                 history,
@@ -520,10 +557,14 @@ fn prepare_request(
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     if api_format == "openai-responses" {
-        let mut request_value =
-            serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
+        let request_value = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("Invalid Codex Responses request: {error}"),
+        })?;
+        let (mut request_value, context) =
+            chat::responses_to_responses(&request_value).map_err(|error| HttpError {
                 status: StatusCode::BAD_REQUEST,
-                detail: format!("Invalid Codex Responses request: {error}"),
+                detail: format!("Failed to convert local model request: {error}"),
             })?;
         let expanded_browser_tools =
             codex_responses_proxy_transform::expand_wework_browser_namespace_tools(
@@ -533,7 +574,11 @@ fn prepare_request(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize local model request: {error}"),
         })?;
-        return Ok((body, None, expanded_browser_tools));
+        return Ok((
+            body,
+            Some(Conversion::Responses(context)),
+            expanded_browser_tools,
+        ));
     }
     let responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -561,6 +606,7 @@ fn prepare_request(
 enum Conversion {
     Chat(chat::ToolContext),
     Anthropic(chat::ToolContext),
+    Responses(chat::ToolContext),
 }
 
 #[cfg(test)]
@@ -688,7 +734,7 @@ where
     })
 }
 
-fn is_responses_terminal_event(event: &str) -> bool {
+pub(super) fn is_responses_terminal_event(event: &str) -> bool {
     let mut event_name = None;
     let mut data_lines = Vec::new();
     for line in event.lines() {
@@ -718,7 +764,7 @@ fn is_responses_terminal_event(event: &str) -> bool {
         })
 }
 
-fn responses_failed_event(message: &str) -> Bytes {
+pub(super) fn responses_failed_event(message: &str) -> Bytes {
     Bytes::from(format!(
         "event: response.failed\ndata: {}\n\n",
         json!({
@@ -734,7 +780,7 @@ fn responses_failed_event(message: &str) -> Bytes {
     ))
 }
 
-fn take_sse_block(buffer: &mut String) -> Option<String> {
+pub(super) fn take_sse_block(buffer: &mut String) -> Option<String> {
     let (index, delimiter_len) = buffer
         .find("\r\n\r\n")
         .map(|index| (index, 4))

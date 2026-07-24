@@ -109,10 +109,10 @@ import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
-  CLOUD_MODEL_CATALOG_MODEL_ID_OPTION,
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+  CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
 } from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -130,6 +130,7 @@ const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
 const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
+const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
 const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max']
 const KIMI_K3_DEFAULT_REASONING_EFFORT = 'low'
 
@@ -708,9 +709,7 @@ function localRuntimeModelConfig(
     return {
       model: 'openai',
       model_id: localModel.modelId,
-      ...(localModel.codexCatalogModelId
-        ? { codex_catalog_model_id: localModel.codexCatalogModelId }
-        : {}),
+      codex_catalog_model_id: localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
       tool_profile: localModel.toolProfile,
@@ -755,12 +754,14 @@ function localRuntimeModelConfig(
       throw new Error('Cloud model identity is incomplete')
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
-    const catalogModelId = modelOptions?.[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION]?.trim()
+    const upstreamApiFormat =
+      modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
     return {
       model: 'openai',
       model_id: modelName,
-      ...(catalogModelId ? { codex_catalog_model_id: catalogModelId } : {}),
+      codex_catalog_model_id: DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
+      upstream_api_format: upstreamApiFormat,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,
