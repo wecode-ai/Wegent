@@ -86,6 +86,8 @@ Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打
 
 列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。没有使用 Codex app-server `thread/turns/list` 做长会话分页，因为当前 Codex 实现仍会在每次请求时 replay 整个 rollout 文件；对 Wework 来说它和全量读取成本相同，却不能复用 executor 已经标准化好的 tool/message cache。打开时也不请求 `includeTurns: true`，因为大 transcript 会把完整 turns 通过 app-server 再序列化一次，反而增加 IPC 和前端压力。
 
+分页或按发言跳转可能让前端同时持有不连续的 transcript 区间。Wework 会在相邻消息索引之间显示缺失区间，并在该标记首次进入视口时自动请求一次；如果运行时仍无法补齐同一个区间，前端必须停止自动重试，只保留用户点击重试。缺失区间加载只更新当前标记的状态，不能接管发言导航的滚动状态、关闭浏览器滚动锚定或切换消息虚拟化模式，否则无法补齐的历史会形成请求与布局抖动循环。
+
 可用下面的手工 benchmark 复测本机 rollout：
 
 ```bash

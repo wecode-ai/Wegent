@@ -21,6 +21,8 @@ import type {
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeInterruptAndSendRequest,
+  RuntimeLocalProjectUpsertRequest,
+  RuntimeLocalProjectUpsertResponse,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -1636,7 +1638,7 @@ function adaptRuntimeWorkListResponse(
       continue
     }
     const deviceWorkspace: RuntimeDeviceWorkspace = {
-      id: null,
+      id: stableLocalId(`${workspaceDeviceId}\0${workspacePath}`),
       projectId: null,
       deviceId: workspaceDeviceId,
       deviceName: remoteHostId ?? 'Local Executor',
@@ -1932,6 +1934,11 @@ export function createRuntimeWorkApiFromIpc(
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.open', data)
+    },
+    upsertLocalRuntimeProject(
+      data: RuntimeLocalProjectUpsertRequest
+    ): Promise<RuntimeLocalProjectUpsertResponse> {
+      return requestWithLocalDevice('runtime.projects.upsert_local', data)
     },
     renameRuntimeWorkspace(
       data: RuntimeWorkspaceRenameRequest

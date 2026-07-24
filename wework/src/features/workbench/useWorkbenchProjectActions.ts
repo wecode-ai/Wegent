@@ -173,6 +173,22 @@ export function useWorkbenchProjectActions({
     [dispatch, executorClient, refreshWorkLists, services.projectApi, state.runtimeWork]
   )
 
+  const updateLocalRuntimeProject = useCallback(
+    async (data: { deviceId: string; projectKey: string; name: string; roots: string[] }) => {
+      const response = await executorClient.runtime.upsertLocalRuntimeProject({
+        ...data,
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        const message = response.error || 'Failed to update local project'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      await refreshWorkLists()
+    },
+    [dispatch, executorClient, refreshWorkLists]
+  )
+
   const removeListedRuntimeProject = useCallback(
     async (projectId: number) => {
       const runtimeWorkspace = findProjectMetadataDeviceWorkspace(
@@ -442,6 +458,7 @@ export function useWorkbenchProjectActions({
     listGitRepositories,
     listGitBranches,
     updateProjectName,
+    updateLocalRuntimeProject,
     removeProject,
     reorderRuntimeProjects,
     setRuntimeProjectPinned,

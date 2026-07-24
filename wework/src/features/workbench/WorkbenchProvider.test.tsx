@@ -268,6 +268,14 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       workspacePath: '/workspace/direct-codex',
       runtime: 'codex',
     }),
+    upsertLocalRuntimeProject: vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'device-1',
+      projectKey: 'multi-project',
+      name: 'web',
+      roots: ['/workspace/web', '/workspace/api'],
+      runtime: 'codex',
+    }),
     renameRuntimeWorkspace: vi.fn().mockResolvedValue({
       accepted: true,
       deviceId: 'device-1',
@@ -709,6 +717,27 @@ function ProjectSendProbe() {
         }
       >
         open standalone workspace
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openStandaloneWorkspace('device-1', '/workspace/web', undefined, [
+            '/workspace/web',
+            '/workspace/api',
+          ])
+        }
+      >
+        open multi-root workspace
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openStandaloneWorkspace('device-1', '/workspace/product', 'Product', [
+            '/workspace/product',
+          ])
+        }
+      >
+        create named local project
       </button>
       <button
         type="button"
@@ -4329,6 +4358,137 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
       'deviceWorkspaceId'
+    )
+  })
+
+  test('registers multiple selected local folders as one Codex project', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(createRuntimeWork({ projects: [] }))
+        .mockResolvedValue(
+          createRuntimeWork({
+            projects: [
+              {
+                project: {
+                  key: 'multi-project',
+                  stateDeviceId: 'device-1',
+                  name: 'web',
+                },
+                deviceWorkspaces: ['/workspace/web', '/workspace/api'].map(
+                  (workspacePath, index) => ({
+                    id: 101 + index,
+                    deviceId: 'device-1',
+                    deviceName: 'Local Device',
+                    deviceStatus: 'online',
+                    workspacePath,
+                    workspaceKind: 'workspace',
+                    workspaceSource: 'local',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  })
+                ),
+                totalTasks: 0,
+              },
+            ],
+          })
+        ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+    await userEvent.click(await screen.findByText('open multi-root workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      projectKey: expect.any(String),
+      name: 'web',
+      roots: ['/workspace/web', '/workspace/api'],
+      runtime: 'codex',
+    })
+    expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('web')
+
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/web',
+      })
+    )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
+      'deviceWorkspaceId'
+    )
+  })
+
+  test('registers a named single-folder project through the local project flow', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(createRuntimeWork({ projects: [] }))
+        .mockResolvedValue(
+          createRuntimeWork({
+            projects: [
+              {
+                project: {
+                  key: 'multi-project',
+                  stateDeviceId: 'device-1',
+                  name: 'Product',
+                },
+                deviceWorkspaces: [
+                  {
+                    id: 201,
+                    deviceId: 'device-1',
+                    deviceName: 'Local Device',
+                    deviceStatus: 'online',
+                    workspacePath: '/workspace/product',
+                    workspaceKind: 'workspace',
+                    workspaceSource: 'local',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  },
+                ],
+                totalTasks: 0,
+              },
+            ],
+          })
+        ),
+      upsertLocalRuntimeProject: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-1',
+        projectKey: 'multi-project',
+        name: 'Product',
+        roots: ['/workspace/product'],
+        runtime: 'codex',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+    await userEvent.click(await screen.findByText('create named local project'))
+
+    await waitFor(() => expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      projectKey: expect.any(String),
+      name: 'Product',
+      roots: ['/workspace/product'],
+      runtime: 'codex',
+    })
+    expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Product')
     )
   })
 

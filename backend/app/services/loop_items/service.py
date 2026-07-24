@@ -24,6 +24,7 @@ from app.models.cloud_project import (
 from app.models.delivery import LoopItem, LoopItemAttachment, LoopItemCollaborator
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemTaskBind, LoopItemUpdate

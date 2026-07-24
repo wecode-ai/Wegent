@@ -50,7 +50,20 @@ describe('DesktopAppSwitcher', () => {
     expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-haspopup', 'menu')
   })
 
+  test('hides Kanban while experimental features are disabled', () => {
+    render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
+
+    fireEvent.click(screen.getByTestId('chrome-tab-wework'))
+    expect(screen.queryByTestId('app-switcher-option-todo')).not.toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('desktop-app-switcher-menu'))
+        .getAllByRole('menuitemradio')
+        .map(option => option.textContent)
+    ).toEqual(['任务使用 AI 解决具体问题', '智能体构建并交付可嵌入业务的云端智能体'])
+  })
+
   test('keeps Kanban visible but unavailable while disconnected', () => {
+    experimentalFeatures.enabled = true
     const onNavigate = vi.fn()
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} />)
 
@@ -140,6 +153,7 @@ describe('DesktopAppSwitcher', () => {
   })
 
   test('labels the TODO board as Kanban', () => {
+    experimentalFeatures.enabled = true
     render(<DesktopAppSwitcher activeApp="todo" onNavigate={vi.fn()} />)
 
     expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('看板')
