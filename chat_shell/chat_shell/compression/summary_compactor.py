@@ -38,6 +38,9 @@ from chat_shell.compression.token_counter import TokenCounter
 
 logger = logging.getLogger(__name__)
 
+# Stable content prefix for recognizing a summary message even after an HTTP
+# round-trip drops additional_kwargs. SUMMARY_PREFIX must start with this.
+SUMMARY_CONTENT_MARKER = "[COMPACT SUMMARY]"
 SUMMARY_PREFIX = (
     "[COMPACT SUMMARY] Another model worked on this task and produced the summary "
     "below. Use it to continue the work and avoid repeating completed steps."
@@ -98,6 +101,23 @@ def _message_to_counter_dict(message: BaseMessage) -> dict[str, Any]:
     if tool_calls:
         payload["tool_calls"] = tool_calls
     return payload
+
+
+def _is_summary_message(message: BaseMessage) -> bool:
+    """True for a compaction summary message.
+
+    Recognized by the ``summary_compacted`` marker when present, and by the
+    content prefix as a fallback — after an HTTP history reload the marker in
+    ``additional_kwargs`` is dropped, so a persisted summary comes back as a
+    plain ``HumanMessage`` that must not be mistaken for a real user message.
+    """
+    kwargs = getattr(message, "additional_kwargs", {}) or {}
+    if kwargs.get(SUMMARY_METADATA_FLAG) is True:
+        return True
+    content = getattr(message, "content", "")
+    return isinstance(content, str) and content.lstrip().startswith(
+        SUMMARY_CONTENT_MARKER
+    )
 
 
 def _extract_text(message: BaseMessage) -> str:
@@ -433,8 +453,7 @@ class SummaryCompactor:
         for message in reversed(messages):
             if not isinstance(message, HumanMessage):
                 continue
-            kwargs = getattr(message, "additional_kwargs", {}) or {}
-            if kwargs.get(SUMMARY_METADATA_FLAG) is True:
+            if _is_summary_message(message):
                 continue
             message_tokens = self._token_counter.count_messages(
                 [_message_to_counter_dict(message)]
@@ -492,8 +511,7 @@ class SummaryCompactor:
         for message in reversed(messages):
             if not isinstance(message, HumanMessage):
                 continue
-            kwargs = getattr(message, "additional_kwargs", {}) or {}
-            if kwargs.get(SUMMARY_METADATA_FLAG) is True:
+            if _is_summary_message(message):
                 continue
             return message
         return None

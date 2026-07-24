@@ -320,6 +320,26 @@ async def test_summary_instruction_is_final_turn():
     assert getattr(msgs[0], "content", "") != COMPACT_TASK_INSTRUCTION
 
 
+def test_reloaded_summary_not_retained_as_user():
+    # After an HTTP reload the summary's marker is dropped, so it comes back as a
+    # plain HumanMessage. It must still be recognized (by content) and excluded
+    # from retained recent-user messages, or summaries accumulate each compaction.
+    compactor = SummaryCompactor(
+        llm=object(), token_counter=TokenCounter(model_name="gpt-4")
+    )
+    old_summary = HumanMessage(content=f"{SUMMARY_PREFIX}\n\nold objective")
+    real_user = HumanMessage(content="real question")
+
+    selected = compactor._select_recent_user_messages([old_summary, real_user])
+    contents = [m.content for m in selected]
+
+    assert "real question" in contents
+    assert all(not c.startswith("[COMPACT SUMMARY]") for c in contents)
+    # And it is not treated as the current user message either.
+    current = compactor._find_current_user_message([old_summary, real_user])
+    assert current is real_user
+
+
 def test_replacement_history_marks_retained_user():
     compactor = SummaryCompactor(
         llm=object(), token_counter=TokenCounter(model_name="gpt-4")
