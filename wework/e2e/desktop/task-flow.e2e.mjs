@@ -38,6 +38,9 @@ const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
       : `Persisted transcript verification paragraph ${String(index + 1).padStart(2, '0')}. ${'Scrollable content '.repeat(8)}`
   ),
 ].join('\n\n')
+const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
+const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
+const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 10
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -369,6 +372,19 @@ async function waitForBottomMetrics(control, selector, description, timeoutMs = 
   }
   throw new Error(
     `${description} remained ${distanceFromBottom(metrics)}px from the bottom after ${timeoutMs}ms`
+  )
+}
+
+async function waitForTopMetrics(control, selector, description, timeoutMs = 3_000) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (metrics.scrollTop <= 2) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(
+    `${description} remained ${metrics.scrollTop}px from the top after ${timeoutMs}ms`
   )
 }
 
@@ -1300,6 +1316,47 @@ async function verifyBackgroundTaskWindowLifecycle({
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('08-task-middle-position-after-switch-back.png')
+  )
+
+  setPhase('turn-navigation-virtualized-anchor')
+  control.setScenario('turn_navigation')
+  for (let index = 0; index < TURN_NAVIGATION_REGRESSION_TURN_COUNT; index += 1) {
+    const turnNumber = index + 1
+    const completionText = `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`
+    await sendPrompt(
+      control,
+      composerSelector,
+      `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+    )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+      { text: completionText, timeoutMs: UI_TIMEOUT_MS }
+    )
+  }
+
+  await control.command('waitFor', '[data-testid="message-turn-navigation-marker"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="message-turn-navigation-marker"]')
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
+  const navigationTopMetrics = await waitForTopMetrics(
+    control,
+    '[data-testid="desktop-workbench-content"]',
+    'The conversation after jumping to the first virtualized turn'
+  )
+  assert.ok(
+    navigationTopMetrics.scrollHeight > navigationTopMetrics.clientHeight * 4,
+    'The turn navigation regression conversation was not long enough to exercise virtualization'
+  )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: WINDOW_LIFECYCLE_PROMPT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('09-first-virtualized-turn-navigation-target.png')
   )
 
   setPhase('archived-task-cache-eviction')
@@ -2334,6 +2391,7 @@ class DesktopE2EServer {
         'follow_up',
         'request_user_input',
         'window_lifecycle',
+        'turn_navigation',
         'cancellation',
         'retry',
         'reconnect',
@@ -2881,6 +2939,33 @@ class DesktopE2EServer {
           responseCompleted(responseId),
         ])
       )
+      return
+    }
+
+    if (this.scenario === 'turn_navigation') {
+      this.recordScenarioRequest('turn_navigation', modelRequest)
+      const serializedBody = JSON.stringify(body)
+      const turnMatch = Array.from(
+        serializedBody.matchAll(
+          new RegExp(`${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_(\\d+)`, 'g')
+        )
+      ).at(-1)
+      assert.ok(turnMatch, 'The turn-navigation request did not include its turn number')
+      const turnNumber = Number(turnMatch[1])
+      const completionText = `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`
+      const responseText = [
+        completionText,
+        ...Array.from(
+          { length: 6 },
+          (_, index) =>
+            `Virtualized navigation response ${turnNumber}.${index + 1}. ${'Measured content '.repeat(12)}`
+        ),
+      ].join('\n\n')
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(responseText),
+        responseCompleted(responseId),
+      ])
       return
     }
 
