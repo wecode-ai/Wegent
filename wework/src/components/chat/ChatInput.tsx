@@ -30,9 +30,11 @@ import { TaskPlanProgress } from './composer/TaskPlanProgress'
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 export interface ProjectChatControls {
+  scopeKey?: string
   models: UnifiedModel[]
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
@@ -63,6 +65,7 @@ export interface ProjectWorkControls {
   currentProject?: ProjectWithTasks | null
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
+  currentRuntimeDeviceId?: string | null
   selectedDeviceWorkspaceId?: number | null
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
@@ -381,6 +384,7 @@ export function ChatInput({
           {...composerProps}
           models={controls.models}
           selectedModel={controls.selectedModel}
+          activeModel={controls.activeModel}
           selectedModelOptions={controls.selectedModelOptions}
           modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
@@ -477,6 +481,7 @@ export function ChatInput({
         onListLocalApps={controls.listLocalApps}
         models={controls.models}
         selectedModel={controls.selectedModel}
+        activeModel={controls.activeModel}
         selectedModelOptions={controls.selectedModelOptions}
         onSelectModel={controls.setSelectedModel}
         onBlockedModelSelect={controls.onBlockedModelSelect}

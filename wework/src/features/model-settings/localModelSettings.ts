@@ -1,3 +1,12 @@
+import {
+  createDefaultLocalModelCatalogEntry,
+  type LocalModelCatalogEntry,
+} from './localModelCatalog'
+
+export const KIMI_CODING_CONTEXT_WINDOW = 262_144
+export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
+export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
+
 export interface LocalModelConfig {
   id: string
   providerProfileId?: string
@@ -12,6 +21,10 @@ export interface LocalModelConfig {
   contextWindow?: number
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
+  codexCatalogModelId?: string
+  catalogEntry?: LocalModelCatalogEntry
+  catalogReady: boolean
+  catalogPendingRuntimeInstanceId?: string
   enabled: boolean
   updatedAt: string
 }
@@ -39,12 +52,18 @@ export interface SaveLocalModelConfigInput {
   contextWindow?: number | string | null
   webSearchMode?: LocalModelWebSearchMode | null
   imageGenerationEnabled?: boolean | null
+  codexCatalogModelId?: string | null
+  catalogEntry?: LocalModelCatalogEntry | null
+  catalogReady?: boolean
+  catalogPendingRuntimeInstanceId?: string | null
   enabled?: boolean
 }
 
 export type LocalModelSettingsEventConfig = Omit<LocalModelConfig, 'apiKey'> & {
   apiKeyConfigured: boolean
 }
+
+export type LocalModelCatalogSnapshot = Pick<LocalModelConfig, 'id' | 'updatedAt'>
 
 export const LOCAL_MODEL_SETTINGS_STORAGE_KEY = 'wework.localModelSettings.v1'
 export const LOCAL_MODEL_SETTINGS_CHANGED_EVENT = 'wework:local-model-settings-changed'
@@ -142,7 +161,15 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       record.webSearchMode === 'cached' ||
       record.webSearchMode === 'live') &&
     (record.imageGenerationEnabled === undefined ||
-      typeof record.imageGenerationEnabled === 'boolean')
+      typeof record.imageGenerationEnabled === 'boolean') &&
+    (record.codexCatalogModelId === undefined || typeof record.codexCatalogModelId === 'string') &&
+    (record.catalogEntry === undefined ||
+      (typeof record.catalogEntry === 'object' &&
+        record.catalogEntry !== null &&
+        !Array.isArray(record.catalogEntry))) &&
+    (record.catalogReady === undefined || typeof record.catalogReady === 'boolean') &&
+    (record.catalogPendingRuntimeInstanceId === undefined ||
+      typeof record.catalogPendingRuntimeInstanceId === 'string')
   )
 }
 
@@ -156,6 +183,27 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           baseUrl: legacyConfig.baseUrl,
           requestPath: normalizeLocalModelRequestPath(legacyConfig.requestPath, apiFormat),
         }
+  const isCustomProvider = (legacyConfig.providerProfileId ?? 'custom') === 'custom'
+  const catalogEntry =
+    legacyConfig.catalogEntry ??
+    (isCustomProvider
+      ? createDefaultLocalModelCatalogEntry({
+          id: legacyConfig.id,
+          displayName: legacyConfig.displayName,
+          toolProfile: normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
+          contextWindow: legacyConfig.contextWindow,
+        })
+      : undefined)
+  const needsCatalogMigration = isCustomProvider && !legacyConfig.catalogEntry
+  const kimiCatalogModelId =
+    legacyConfig.providerProfileId === 'kimi-coding'
+      ? legacyConfig.modelId === 'k3'
+        ? KIMI_K3_CATALOG_MODEL_ID
+        : legacyConfig.modelId === 'kimi-for-coding' ||
+            legacyConfig.modelId === 'kimi-for-coding-highspeed'
+          ? KIMI_K27_CATALOG_MODEL_ID
+          : undefined
+      : undefined
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
     ...(legacyConfig.providerProfileId
@@ -168,11 +216,30 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     apiFormat,
     toolProfile: normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
-    ...(legacyConfig.contextWindow ? { contextWindow: legacyConfig.contextWindow } : {}),
+    ...(kimiCatalogModelId
+      ? { contextWindow: KIMI_CODING_CONTEXT_WINDOW }
+      : legacyConfig.contextWindow
+        ? { contextWindow: legacyConfig.contextWindow }
+        : {}),
     webSearchMode: normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
     imageGenerationEnabled: normalizeLocalModelImageGenerationEnabled(
       legacyConfig.imageGenerationEnabled
     ),
+    ...(kimiCatalogModelId ||
+    legacyConfig.codexCatalogModelId ||
+    typeof catalogEntry?.slug === 'string'
+      ? {
+          codexCatalogModelId:
+            kimiCatalogModelId ||
+            legacyConfig.codexCatalogModelId ||
+            (catalogEntry?.slug as string),
+        }
+      : {}),
+    ...(catalogEntry ? { catalogEntry } : {}),
+    catalogReady: legacyConfig.catalogReady ?? !needsCatalogMigration,
+    ...(legacyConfig.catalogPendingRuntimeInstanceId
+      ? { catalogPendingRuntimeInstanceId: legacyConfig.catalogPendingRuntimeInstanceId }
+      : {}),
     enabled: legacyConfig.enabled,
     updatedAt: legacyConfig.updatedAt,
   }
@@ -325,8 +392,16 @@ export function normalizeLocalModelImageGenerationEnabled(value?: boolean | null
   return value === true
 }
 
-function nextConfigId(): string {
+export function createLocalModelConfigId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}`
+}
+
+function nextLocalModelUpdatedAt(previous?: LocalModelConfig): string {
+  const previousTimestamp = previous ? Date.parse(previous.updatedAt) : Number.NaN
+  const timestamp = Number.isFinite(previousTimestamp)
+    ? Math.max(Date.now(), previousTimestamp + 1)
+    : Date.now()
+  return new Date(timestamp).toISOString()
 }
 
 export function listLocalModelConfigs(): LocalModelConfig[] {
@@ -345,9 +420,33 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const contextWindow = normalizeLocalModelContextWindow(input.contextWindow)
   const toolProfile = normalizeLocalModelToolProfile(input.toolProfile, apiFormat)
   validateLocalModelToolProfile(toolProfile, apiFormat)
-  const id = input.id?.trim() || nextConfigId()
+  const id = input.id?.trim() || createLocalModelConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
+  const isCustomProvider =
+    (input.providerProfileId ?? previous?.providerProfileId ?? 'custom') === 'custom'
+  const catalogEntry =
+    input.catalogEntry === undefined
+      ? (previous?.catalogEntry ??
+        (isCustomProvider
+          ? createDefaultLocalModelCatalogEntry({
+              id,
+              displayName,
+              toolProfile,
+              contextWindow,
+            })
+          : undefined))
+      : (input.catalogEntry ?? undefined)
+  const catalogChanged =
+    Boolean(catalogEntry) && JSON.stringify(catalogEntry) !== JSON.stringify(previous?.catalogEntry)
+  const shouldClearPendingRuntimeInstanceId =
+    input.catalogEntry !== undefined || (input.providerProfileId !== undefined && !isCustomProvider)
+  const pendingRuntimeInstanceId =
+    input.catalogPendingRuntimeInstanceId !== undefined
+      ? input.catalogPendingRuntimeInstanceId?.trim() || undefined
+      : shouldClearPendingRuntimeInstanceId
+        ? undefined
+        : previous?.catalogPendingRuntimeInstanceId
   const webSearchMode = normalizeLocalModelWebSearchMode(
     input.webSearchMode ?? previous?.webSearchMode
   )
@@ -368,14 +467,57 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     ...(contextWindow ? { contextWindow } : {}),
     webSearchMode,
     imageGenerationEnabled,
+    ...(input.codexCatalogModelId?.trim() || typeof catalogEntry?.slug === 'string'
+      ? {
+          codexCatalogModelId: input.codexCatalogModelId?.trim() || (catalogEntry?.slug as string),
+        }
+      : {}),
+    ...(catalogEntry ? { catalogEntry } : {}),
+    catalogReady:
+      input.catalogReady ??
+      (!catalogEntry ? true : catalogChanged ? false : (previous?.catalogReady ?? false)),
+    ...(pendingRuntimeInstanceId
+      ? { catalogPendingRuntimeInstanceId: pendingRuntimeInstanceId }
+      : {}),
     enabled: input.enabled ?? previous?.enabled ?? true,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nextLocalModelUpdatedAt(previous),
   }
   const index = existing.findIndex(config => config.id === id)
   const configs =
     index >= 0 ? existing.map(config => (config.id === id ? next : config)) : [...existing, next]
   writeStoredConfigs(configs)
   return next
+}
+
+export function markLocalModelCatalogReady(snapshot: readonly LocalModelCatalogSnapshot[]): void {
+  const writtenVersions = new Map(snapshot.map(model => [model.id, model.updatedAt]))
+  const configs = readStoredConfigs().map(config => {
+    if (writtenVersions.get(config.id) !== config.updatedAt) return config
+    const rest = { ...config }
+    delete rest.catalogPendingRuntimeInstanceId
+    return { ...rest, catalogReady: true }
+  })
+  writeStoredConfigs(configs)
+}
+
+export function reconcileLocalModelCatalogRuntime(runtimeInstanceId?: string): void {
+  if (!runtimeInstanceId) return
+  const configs = readStoredConfigs()
+  let changed = false
+  const next = configs.map(config => {
+    if (
+      config.catalogReady ||
+      !config.catalogPendingRuntimeInstanceId ||
+      config.catalogPendingRuntimeInstanceId === runtimeInstanceId
+    ) {
+      return config
+    }
+    changed = true
+    const rest = { ...config }
+    delete rest.catalogPendingRuntimeInstanceId
+    return { ...rest, catalogReady: true }
+  })
+  if (changed) writeStoredConfigs(next)
 }
 
 export function deleteLocalModelConfig(id: string): boolean {

@@ -16,6 +16,7 @@ This guide explains how to create, execute, and manage code-type tasks in Wegent
 - [Task Status Management](#task-status-management)
 - [Sending Follow-ups While Running](#sending-follow-ups-while-running)
 - [Advanced Features](#advanced-features)
+- [Viewing Codex-generated Visualizations](#viewing-codex-generated-visualizations)
 - [Cleaning Stale Runtimes](#cleaning-stale-runtimes)
 - [Common Issues](#common-issues)
 
@@ -221,6 +222,16 @@ Export task conversation history and code changes:
 3. **Download file** - Save to local
 
 ---
+
+## Viewing Codex-generated Visualizations
+
+When Codex creates an HTML visualization in the task workspace and references it in its response, Wework displays the chart or interactive page directly in that response. You do not need to copy a file path or open a separate browser.
+
+- Wework loads only HTML files created or modified in the current response's file changes. Deleted, reverted, or unlisted files are never loaded inline.
+- The visualization runs in a script-isolated iframe and cannot access the Wework page.
+- Only relative workspace paths ending in `.html`, `.htm`, or `.xhtml` are accepted. Parent traversal, absolute paths, and directives inside code fences remain normal text.
+- A Codex visualization directive may reference only the file name. Wework resolves a unique matching file from the current response's file changes, including fragments organized by date and thread under `.codex/visualizations/`.
+- Wework wraps HTML fragments in a UTF-8 visualization host, supplies the Codex visualization theme variables, and automatically sizes the iframe to the fragment content.
 
 ## Cleaning Stale Runtimes
 

@@ -1055,7 +1055,7 @@ export function DocumentList({
           )}
         </div>
         {/* Header actions (e.g., tabs) + expand-all toggle */}
-        {(knowledgeBase.document_count ?? 0) < 200 && (
+        {folders.length > 0 && (knowledgeBase.document_count ?? 0) < 200 && (
           <Button
             variant="outline"
             size="sm"

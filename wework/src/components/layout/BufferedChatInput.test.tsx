@@ -23,6 +23,26 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('restores submitted text when it is externally returned for editing', async () => {
+    const onSubmit = vi.fn()
+    const props = {
+      onChange: vi.fn(),
+      onSubmit,
+      disabled: false,
+    }
+    const { rerender } = render(<BufferedChatInput {...props} value="queued message" />)
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(onSubmit).toHaveBeenCalledWith('queued message')
+
+    rerender(<BufferedChatInput {...props} value="" />)
+    rerender(<BufferedChatInput {...props} value="queued message" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('queued message')
+    })
+  })
+
   test('appends an insertion without replacing the buffered draft', async () => {
     const props = {
       value: '',
@@ -39,6 +59,75 @@ describe('BufferedChatInput', () => {
       expect(screen.getByTestId('chat-message-input')).toHaveValue(
         'Existing draft\nSelected response'
       )
+    })
+  })
+
+  test('persists ordinary text while the composer is still mounted', async () => {
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'unfinished draft')
+
+    expect(onChange).toHaveBeenLastCalledWith('unfinished draft')
+  })
+
+  test('restores a buffered draft after switching chat scopes', async () => {
+    const drafts = new Map<string, string>()
+    const onBlankChange = vi.fn((value: string) => drafts.set('blank', value))
+    const onTaskChange = vi.fn((value: string) => drafts.set('task', value))
+    const baseProjectChat = {
+      models: [],
+      skills: [],
+      selectedModel: null,
+      selectedModelOptions: {},
+      selectedSkills: [],
+      attachments: [],
+      uploadingFiles: new Map(),
+      errors: new Map(),
+      isOptionsLocked: false,
+      setSelectedModel: vi.fn(),
+      setSelectedModelOption: vi.fn(),
+      toggleSkill: vi.fn(),
+      handleFileSelect: vi.fn(),
+      removeAttachment: vi.fn(),
+      listLocalSkills: vi.fn(),
+    }
+    const { rerender } = render(
+      <BufferedChatInput
+        value=""
+        onChange={onBlankChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={{ ...baseProjectChat, scopeKey: 'blank' }}
+      />
+    )
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'unfinished draft')
+
+    rerender(
+      <BufferedChatInput
+        value=""
+        onChange={onTaskChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={{ ...baseProjectChat, scopeKey: 'task' }}
+      />
+    )
+
+    await waitFor(() => expect(onBlankChange).toHaveBeenCalledWith('unfinished draft'))
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+
+    rerender(
+      <BufferedChatInput
+        value={drafts.get('blank') ?? ''}
+        onChange={onBlankChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={{ ...baseProjectChat, scopeKey: 'blank' }}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('unfinished draft')
     })
   })
 })

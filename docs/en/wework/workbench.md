@@ -6,7 +6,25 @@ sidebar_position: 5
 
 The right workspace displays project files, previews, and change reviews. Local file links in an AI response open the file and can jump to a referenced line.
 
-Press `Command+J` to open the terminal. A project terminal starts in the active project or the task's Git worktree and is preserved when switching tasks.
+Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.
+
+Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop**, depending on the active device's capabilities. Terminal starts in the active project or the task's Git worktree. IDE opens in the system default browser. When available, Desktop opens in Wework's built-in browser.
+
+## Navigate long conversations
+
+When a conversation is taller than the current viewport, turn markers appear along the left side of the message area. The navigation stays centered in the conversation viewport instead of scrolling with message content. Select a marker to jump to that turn, or hover over it to preview the user request and assistant response summary.
+
+## Switch conversations and restore position
+
+The desktop workbench renders only the active conversation. Runtime state and recent messages live in a shared cache while switching, so background tasks continue receiving live events and show their latest state immediately when reopened without retaining hidden conversation pages.
+
+A conversation opens at its latest message the first time. Conversations that were at the bottom remain at the bottom, while conversations viewed in the middle restore their distance from the bottom. Long conversations mount only messages near the viewport and reuse measured message heights to limit WebView memory growth while scrolling.
+
+Message, scroll-position, and virtual-measurement caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
+
+## Use selected response text
+
+Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
 
 ## Review and undo changes
 

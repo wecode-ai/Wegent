@@ -21,6 +21,7 @@ This document provides detailed explanations of the YAML configuration formats f
 - [💼 Workspace](#-workspace)
 - [🎯 Task](#-task)
 - [📚 KnowledgeBase](#-knowledgebase)
+- [🔌 ConnectorApp](#-connectorapp)
 
 ---
 
@@ -628,6 +629,73 @@ spec:
 | `FAILED`    | Execution failed      |
 | `CANCELLED` | Execution cancelled   |
 | `DELETE`    | Task deleted          |
+
+---
+
+## 🔌 ConnectorApp
+
+ConnectorApp defines an external app connection published by administrators for Wework/Codex. Resources are stored in the `kinds` table, `metadata.name` is the app `slug`, and the current namespace is `system`. In normal operation, maintain these resources through **System Administration → App Connections** in Wegent Web instead of hand-writing YAML.
+
+### Complete Example
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: ConnectorApp
+metadata:
+  name: ticket-api
+  namespace: system
+  displayName: Ticket API
+spec:
+  name: Ticket API
+  description: Search and read internal tickets
+  iconUrl: https://example.com/ticket-icon.png
+  enabled: true
+  visibility: roles
+  allowedRoles:
+    - admin
+  authType: none
+  transport: http
+  mcpUrl: https://tickets.example.com/api
+  providerHeadersEncrypted: "base64-encrypted-json"
+  toolAllowlist:
+    - get_ticket
+  httpTools:
+    - name: get_ticket
+      description: Get one ticket
+      method: GET
+      path: /tickets/{id}
+      input_schema:
+        type: object
+        properties:
+          id:
+            type: string
+        required:
+          - id
+      argument_locations:
+        id: path
+      timeout_seconds: 30
+```
+
+### Field Reference
+
+| Field                           | Type    | Required      | Description                                                               |
+| ------------------------------- | ------- | ------------- | ------------------------------------------------------------------------- |
+| `metadata.name`                 | string  | Yes           | Unique Connector App slug, also used as the tool-name prefix              |
+| `metadata.namespace`            | string  | Yes           | Currently `system`                                                        |
+| `spec.name`                     | string  | Yes           | Display name                                                              |
+| `spec.description`              | string  | No            | App description                                                           |
+| `spec.iconUrl`                  | string  | No            | Icon URL                                                                  |
+| `spec.enabled`                  | boolean | Yes           | Whether the app is enabled; disabled apps are hidden from catalogs/runtime |
+| `spec.visibility`               | string  | Yes           | `all` or `roles`                                                          |
+| `spec.allowedRoles`             | array   | No            | User roles allowed when `visibility: roles`                               |
+| `spec.authType`                 | string  | Yes           | Currently only `none` is supported                                        |
+| `spec.transport`                | string  | Yes           | `streamable-http`, `sse`, or `http`                                       |
+| `spec.mcpUrl`                   | string  | Yes           | MCP endpoint or HTTP API base URL                                         |
+| `spec.providerHeadersEncrypted` | string  | No            | Fixed provider headers JSON encrypted with the project sensitive-data tool |
+| `spec.toolAllowlist`            | array   | No            | Upstream tool names allowed for discovery and invocation                  |
+| `spec.httpTools`                | array   | Conditionally | Required for `transport: http`; maps ordinary HTTP APIs to MCP tools      |
+
+`providerHeadersEncrypted` must be an encrypted JSON string. The administrator API accepts plaintext `provider_headers` and encrypts them before storage; do not commit plaintext API keys, service tokens, or headers in hand-written YAML.
 
 ---
 

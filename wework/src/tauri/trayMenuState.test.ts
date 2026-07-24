@@ -201,6 +201,7 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.hasRunningTasks).toBe(true)
     expect(groups.showRunningStatus).toBe(true)
     expect(groups.runningCount).toBe(1)
+    expect(groups.activeTaskIds).toEqual(['running'])
   })
 
   test('hides unread and running task groups when tray status switches are off', () => {
@@ -249,9 +250,24 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.unreadCount).toBe(0)
     expect(groups.running).toEqual([])
     expect(groups.runningCount).toBe(0)
+    expect(groups.activeTaskIds).toEqual(['running'])
     expect(groups.hasRunningTasks).toBe(false)
     expect(groups.showRunningStatus).toBe(false)
     expect(groups.recent.map(item => item.title)).toEqual(['Running task', 'Unread task'])
+  })
+
+  test('ignores stale reminder running state when executor tasks are idle', () => {
+    const groups = buildTrayMenuTaskGroups(runtimeWork(), {
+      reminders: {
+        unreadTaskKeys: new Set(),
+        unreadCount: 0,
+        hasRunningTasks: true,
+      },
+    })
+
+    expect(groups.hasRunningTasks).toBe(false)
+    expect(groups.runningCount).toBe(0)
+    expect(groups.activeTaskIds).toEqual([])
   })
 
   test('limits pinned tasks to three and reports more pinned tasks', () => {

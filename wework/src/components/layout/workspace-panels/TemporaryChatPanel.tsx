@@ -3,6 +3,7 @@ import { MessageCircle } from 'lucide-react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
@@ -48,6 +49,7 @@ export function TemporaryChatPanel({
   initialInput = '',
 }: TemporaryChatPanelProps) {
   const {
+    services,
     state,
     projectChat,
     createTemporaryRuntimeTask,
@@ -56,6 +58,25 @@ export function TemporaryChatPanel({
     subscribeRuntimeTaskStream,
     loadRuntimeTranscriptForPane,
   } = useWorkbenchPaneContext()
+  const attachmentSelection = useWorkbenchAttachments({
+    uploadAttachment: services.attachmentApi?.uploadAttachment,
+    deleteAttachment: services.attachmentApi?.deleteAttachment,
+    scopeKey: instanceId,
+  })
+  const sideChatProjectChat = useMemo(
+    () => ({
+      ...projectChat,
+      attachments: attachmentSelection.attachments,
+      uploadingFiles: attachmentSelection.uploadingFiles,
+      errors: attachmentSelection.errors,
+      isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
+      handleFileSelect: attachmentSelection.handleFileSelect,
+      addExistingAttachment: attachmentSelection.addExistingAttachment,
+      removeAttachment: attachmentSelection.removeAttachment,
+      resetAttachments: attachmentSelection.resetAttachments,
+    }),
+    [attachmentSelection, projectChat]
+  )
   const [address, setAddress] = useState<RuntimeTaskAddress | null>(null)
   const [messages, setMessages] = useState<WorkbenchMessage[]>([])
   const [input, setInput] = useState(initialInput)
@@ -192,7 +213,7 @@ export function TemporaryChatPanel({
       setMessages(current => [...current, createUserMessage(message)])
       setSending(true)
 
-      const currentAttachments = projectChat.attachments
+      const currentAttachments = sideChatProjectChat.attachments
       const attachmentIds = remoteAttachmentIds(currentAttachments)
       const attachments = localRuntimeAttachments(currentAttachments)
       const handleError = (message: string) => {
@@ -205,13 +226,14 @@ export function TemporaryChatPanel({
         (await createTemporaryRuntimeTask(message, {
           project: currentProject,
           source,
+          attachments: currentAttachments,
           onError: handleError,
         }))
 
       if (!targetAddress) return
       if (!address) {
         setAddress(targetAddress)
-        projectChat.resetAttachments()
+        sideChatProjectChat.resetAttachments()
         return
       }
 
@@ -227,7 +249,7 @@ export function TemporaryChatPanel({
         { onError: handleError }
       )
       if (sent) {
-        projectChat.resetAttachments()
+        sideChatProjectChat.resetAttachments()
       } else {
         setSending(false)
       }
@@ -237,7 +259,7 @@ export function TemporaryChatPanel({
       createTemporaryRuntimeTask,
       currentProject,
       input,
-      projectChat,
+      sideChatProjectChat,
       selectedModelFields,
       sendRuntimePaneMessage,
       source,
@@ -280,7 +302,7 @@ export function TemporaryChatPanel({
           error={error}
           placeholder="要求后续变更"
           variant="desktop"
-          projectChat={projectChat}
+          projectChat={sideChatProjectChat}
           showProjectWorkBar={false}
           isStreaming={sending}
           onPause={pause}

@@ -38,16 +38,30 @@ pnpm --filter wework e2e:desktop:cloud
 pnpm --filter wework e2e:desktop:plugins
 ```
 
+在 macOS 上运行桌面内存回归，包括流式输出增长和 10 个并发任务的整机内存检查：
+
+```bash
+pnpm --filter wework e2e:desktop:memory
+```
+
+仅验证助手已有流式文本时，其下方持续显示“正在思考”，并在响应完成后消失：
+
+```bash
+pnpm --filter wework e2e:desktop:streaming-text
+```
+
 该命令会通过 `wework/playwright.config.ts` 启动测试专用 Vite 服务：
 
 ```bash
 pnpm exec vite --host 127.0.0.1 --port 4174 --mode e2e
 ```
 
-同时会启动 Responses API mock：
+同时会启动 Responses API、Sites upstream 和 Connector upstream mock：
 
 ```bash
 node e2e/utils/mock-response-api-server.mjs
+node e2e/utils/mock-sites-upstream-server.mjs
+node e2e/utils/mock-connector-upstream-server.mjs
 ```
 
 配置默认设置：
@@ -56,6 +70,10 @@ node e2e/utils/mock-response-api-server.mjs
 - `VITE_WEWORK_RUNTIME_MODE=backend`
 - `VITE_LOGIN_MODE=password`
 - `WEWORK_RESPONSE_API_MOCK_URL`: `http://127.0.0.1:9998`
+- `WEWORK_SITES_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9997`
+- `WEWORK_CONNECTOR_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9996`
+
+三个 mock 的端口都可以通过同名 `*_PORT` 环境变量覆盖：`WEWORK_RESPONSE_API_MOCK_PORT`、`WEWORK_SITES_UPSTREAM_MOCK_PORT` 和 `WEWORK_CONNECTOR_UPSTREAM_MOCK_PORT`。如果覆盖端口，也可以直接传入完整 URL 环境变量给测试进程。
 
 测试不 mock 后端 API。没有启动 Backend 时，登录页 smoke 测试只验证前端能渲染登录入口；需要登录后的业务流程时，CI 必须先启动真实 Backend 和依赖服务。
 
@@ -74,6 +92,8 @@ node e2e/utils/mock-response-api-server.mjs
 
 测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行“发送 → `apply_patch` → 工具结果回传 → 追问”，工具调用仍由真实 Codex 在隔离工作区内执行。
 
+`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态，验证“正在思考”位于可见回复下方，并在释放响应后消失。该场景会保存就绪、流式和完成三个阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
+
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 
 运行环境需要 Rust、Tauri 构建依赖和真实 Codex 二进制。默认从 `PATH` 查找 `codex`；也可以显式指定已安装或由 `prepare:codex` 准备的真实二进制：
@@ -87,6 +107,10 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。测试只模拟 Codex 使用的模型 Responses API；不得模拟 Backend HTTP 或 WebSocket 接口。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
 插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、在对话编辑器中插入插件引用及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。四个关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
+
+内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 512 MiB、完成后的稳定态增长不超过 256 MiB、稳定期继续增长不超过 32 MiB；前两个阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 调整。
+
+并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、WebKit Web Content/GPU/Networking、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。门禁要求整个进程组峰值低于 800 MiB，可通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB` 调整；场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
 
 ## Responses API Mock
 
@@ -104,6 +128,105 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 ```text
 http://127.0.0.1:9998/v1
+```
+
+## 外部 Upstream Mock
+
+Wework E2E 还会启动两个本机 loopback upstream mock。它们只替代 Wegent 之外的外部服务，不替代 Wegent Backend、Executor、Codex、`/api/sites`、`/api/apps/installed` 或 connector runtime API。
+
+`wework/e2e/utils/mock-sites-upstream-server.mjs` 模拟 Sites project API：
+
+- `GET /api/v1/projects/search`：返回确定性的项目列表，支持 `username`、`limit`、`sitename` 和 `cursor`。
+- `POST /api/v1/projects/deploy/network`：更新项目内外网状态。
+- `POST /api/v1/projects/update`：更新项目名称。
+- `POST /api/v1/projects/del`：删除项目。
+- `GET /captured-requests`、`POST /clear-requests`、`POST /reset`、`GET /health`：用于断言和重置。
+
+需要通过真实 Backend 覆盖 Sites 链路时，让 Backend 使用下面的环境变量启动。注意这些变量必须传给 Backend 进程；传给 Vite 或 Playwright 页面不会配置 Backend。
+
+```text
+SITES_API_BASE_URL=http://127.0.0.1:9997
+SITES_API_TOKEN=e2e-sites-token
+```
+
+示例：
+
+```bash
+cd backend
+SITES_API_BASE_URL=http://127.0.0.1:9997 \
+SITES_API_TOKEN=e2e-sites-token \
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+`wework/e2e/utils/mock-connector-upstream-server.mjs` 模拟 connector 可连接的外部服务：
+
+- `GET /api/tickets/{id}`：作为 HTTP connector upstream。
+- `POST /mcp`：提供最小 Streamable HTTP MCP JSON-RPC 行为，支持 `initialize`、`tools/list` 和 `tools/call`。
+- `GET /captured-requests`、`POST /clear-requests`、`GET /health`：用于断言和重置。
+
+配置 connector app 时可使用：
+
+```text
+HTTP connector base URL: http://127.0.0.1:9996/api
+MCP URL: http://127.0.0.1:9996/mcp
+```
+
+HTTP connector fixture 可以使用：
+
+```json
+{
+  "slug": "ticket-http",
+  "name": "Ticket HTTP API",
+  "description": "E2E HTTP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "http",
+  "mcp_url": "http://127.0.0.1:9996/api",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["get_ticket"],
+  "http_tools": [
+    {
+      "name": "get_ticket",
+      "description": "Get one mock ticket",
+      "method": "GET",
+      "path": "/tickets/{id}",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "expand": { "type": "boolean" }
+        },
+        "required": ["id"]
+      },
+      "argument_locations": {
+        "id": "path",
+        "expand": "query"
+      }
+    }
+  ]
+}
+```
+
+MCP connector fixture 可以使用：
+
+```json
+{
+  "slug": "docs-mcp",
+  "name": "Docs MCP",
+  "description": "E2E Streamable HTTP MCP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "streamable-http",
+  "mcp_url": "http://127.0.0.1:9996/mcp",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["search_docs"]
+}
 ```
 
 ## 自动化接口
@@ -164,6 +287,13 @@ pnpm --filter wework prepare:codex
 xvfb-run -a pnpm --filter wework e2e:desktop:plugins
 xvfb-run -a pnpm --filter wework e2e:desktop
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
+```
+
+内存门禁依赖 macOS 的 WebKit 进程关联和 physical footprint 采样，必须在 macOS runner 上单独运行：
+
+```bash
+pnpm --filter wework prepare:codex
+pnpm --filter wework e2e:desktop:memory
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。

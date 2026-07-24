@@ -11,15 +11,15 @@ export function usePersistentProcessingExpansion(
   initialValue = false
 ): readonly [boolean, (update: ExpansionUpdate) => void] {
   const [localExpanded, setLocalExpanded] = useState(initialValue)
-  const subscribe = useCallback((listener: () => void) => {
-    if (!key) return () => {}
-    expansionStateListeners.add(listener)
-    return () => expansionStateListeners.delete(listener)
-  }, [key])
-  const getSnapshot = useCallback(
-    () => readExpansionState(key, initialValue),
-    [initialValue, key]
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (!key) return () => {}
+      expansionStateListeners.add(listener)
+      return () => expansionStateListeners.delete(listener)
+    },
+    [key]
   )
+  const getSnapshot = useCallback(() => readExpansionState(key, initialValue), [initialValue, key])
   const persistedExpanded = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   const expanded = key ? persistedExpanded : localExpanded
 
@@ -39,6 +39,12 @@ export function usePersistentProcessingExpansion(
   )
 
   return [expanded, setPersistentExpanded]
+}
+
+export function clearPersistentProcessingExpansions() {
+  if (expansionStateByKey.size === 0) return
+  expansionStateByKey.clear()
+  emitExpansionStateChange()
 }
 
 function readExpansionState(key: string | undefined, initialValue: boolean): boolean {

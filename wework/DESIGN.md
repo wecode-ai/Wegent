@@ -552,6 +552,15 @@ Menu items use `14px` text, an `8px` radius, `8px–10px` horizontal padding,
 Icons default to `16px` at `75%` opacity and become fully visible on hover or
 focus. Disabled items use `50%` opacity and do not activate.
 
+In the narrow environment popover, workspace and executor metadata form one
+compact two-line item. Lead with a folder icon and the recognizable workspace
+directory name. For local execution, show the executor name beside a laptop
+icon; for cloud execution, show the device IP beside a cloud icon. Keep
+execution-location and field labels available to assistive
+technology and tooltips instead of repeating them visually. Keep the complete
+workspace path available through the tooltip, accessible name, and copy action;
+copy feedback must not change the row's geometry.
+
 Use a menu for commands, a popover for a compact interactive surface, and a
 dialog when a decision blocks continuation. Do not substitute one merely to get
 a preferred shape.
@@ -644,6 +653,11 @@ semantics for all three.
 - Back returns to the previous meaningful context; Close dismisses a layer.
 - Opening or closing sidebars, previews, terminals, and settings preserves the
   active task and unsent composer input.
+- Opening the bottom workspace panel starts or restores its Terminal directly;
+  it must not show an IDE launcher or require an intermediate tool choice.
+- Workspace IDEs and native editors launch only from the titlebar “Open
+  location” control, including its local-editor picker and remote code-server
+  behavior.
 - Resizable panes keep useful minimum sizes and preserve user-owned allocation
   where the feature supports it.
 - External URLs, applications, and windows must be clear before activation.

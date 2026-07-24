@@ -99,6 +99,10 @@ vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
 }))
 
+vi.mock('@/pages/SitesPage', () => ({
+  SitesPage: () => <div data-testid="sites-page">Sites</div>,
+}))
+
 function enableTauri() {
   Object.defineProperty(window, '__TAURI_INTERNALS__', {
     configurable: true,
@@ -157,6 +161,35 @@ describe('App center route', () => {
           payload = {
             configured: true,
             proxy_url_masked: 'http://127.0.0.1:7890',
+          }
+        } else if (url.includes('/apps/installed')) {
+          payload = {
+            apps: [
+              {
+                id: 'wegent-sites',
+                slug: 'wegent-sites',
+                name: 'Wegent Sites',
+                description: 'Build and deploy Wegent Sites projects.',
+                icon_url: null,
+                runtime_name: 'Wegent Sites',
+                enabled: true,
+                callable: true,
+                connection: {
+                  status: 'connected',
+                  external_account_name: null,
+                  granted_scopes: [],
+                  expires_at: null,
+                },
+                tool_summaries: [
+                  {
+                    name: 'wegent-sites__create_site',
+                    title: 'Create Site',
+                    description: 'Create a site',
+                    raw_tool_name: 'create_site',
+                  },
+                ],
+              },
+            ],
           }
         }
 
@@ -296,6 +329,27 @@ describe('App center route', () => {
     })
     expect(screen.queryByTestId('apps-sidebar-nav')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+  })
+
+  test('shows installed connector apps and opens Sites from Wegent Sites', async () => {
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('apps-nav-installed-apps'))
+
+    expect(await screen.findByTestId('installed-app-wegent-sites')).toHaveTextContent(
+      'Wegent Sites'
+    )
+    expect(screen.getByTestId('installed-app-wegent-sites')).toHaveTextContent('create_site')
+
+    fireEvent.click(screen.getByTestId('installed-app-open-sites'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/sites'))
+    expect(screen.getByTestId('sites-page')).toBeInTheDocument()
   })
 
   test('collapses the apps page header while scrolling the overview', async () => {

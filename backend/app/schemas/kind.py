@@ -249,15 +249,53 @@ class ModelSpec(BaseModel):
         "Only applies when protocol is 'openai'.",
     )
 
-    # Context window and output token limits for LLM models
+    costIndex: Optional[float] = Field(
+        None,
+        gt=0,
+        description="Relative model usage cost. A value of 1 represents the baseline cost.",
+    )
+
+    # Legacy top-level token limits. New configurations should use the
+    # snake_case fields in modelConfig.
     contextWindow: Optional[int] = Field(
         None,
-        description="Maximum context window size in tokens. Used for message compression.",
+        description="Legacy maximum context window size in tokens.",
     )
     maxOutputTokens: Optional[int] = Field(
         None,
-        description="Maximum output tokens the model can generate per response.",
+        description="Legacy maximum output tokens per response.",
     )
+
+    @staticmethod
+    def _model_config_token_limit(value: Any) -> Optional[int]:
+        """Return a numeric token limit from the runtime model config."""
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value
+
+    @field_validator("contextWindow", "maxOutputTokens", mode="before")
+    @classmethod
+    def _normalize_legacy_token_limit(cls, value: Any) -> Optional[int]:
+        """Normalize legacy token limits without Pydantic type coercion."""
+        return cls._model_config_token_limit(value)
+
+    @property
+    def context_window(self) -> Optional[int]:
+        """Return the context window, preferring the runtime model config."""
+        if "context_window" in self.modelConfig:
+            return self._model_config_token_limit(
+                self.modelConfig.get("context_window")
+            )
+        return self._model_config_token_limit(self.contextWindow)
+
+    @property
+    def max_output_tokens(self) -> Optional[int]:
+        """Return the output limit, preferring the runtime model config."""
+        if "max_output_tokens" in self.modelConfig:
+            return self._model_config_token_limit(
+                self.modelConfig.get("max_output_tokens")
+            )
+        return self._model_config_token_limit(self.maxOutputTokens)
 
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(

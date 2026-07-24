@@ -12,14 +12,64 @@ const tauriCoreMock = vi.hoisted(() => ({
   isTauri: vi.fn(() => false),
 }))
 const openExternalUrlMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
+const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 vi.mock('@/lib/external-links', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/external-links')>()),
   openExternalUrl: openExternalUrlMock,
 }))
+vi.mock('@/lib/embedded-browser', () => ({
+  requestEmbeddedBrowserOpen: requestEmbeddedBrowserOpenMock,
+}))
 
 describe('MessageList', () => {
+  test('renders a generated Codex inline visualization from the changed workspace file', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-inline-visualization',
+            role: 'assistant',
+            content: [
+              '已生成折线图。',
+              '',
+              '::codex-inline-vis{file="weekly-values-line-chart.html"}',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-07-23T10:00:00Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'artifact-inline-visualization',
+              device_id: 'device-1',
+              workspace_path: '/Users/dev/workspace',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [
+                {
+                  path: '.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html',
+                  change_type: 'created',
+                  additions: 1,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已生成折线图。')).toBeInTheDocument()
+    expect(screen.queryByText('::codex-inline-vis')).not.toBeInTheDocument()
+    expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/dev/workspace/.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html'
+    )
+  })
+
   test('offers conversation actions for text selected inside one message body', async () => {
     const onAddSelectionToConversation = vi.fn()
     const onAskSelectionInSidebar = vi.fn()
@@ -109,6 +159,57 @@ describe('MessageList', () => {
     fireEvent.mouseUp(content)
 
     expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+  })
+
+  test('keeps captured selection actions when streaming replaces the selected text node', async () => {
+    const onAddSelectionToConversation = vi.fn()
+    const { rerender } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-selection',
+            role: 'assistant',
+            content: 'Select this response',
+            status: 'streaming',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const content = screen.getByTestId('assistant-message-content')
+    const range = document.createRange()
+    range.setStart(firstTextNode(content), 0)
+    range.setEnd(firstTextNode(content), 6)
+    document.getSelection()?.removeAllRanges()
+    document.getSelection()?.addRange(range)
+    fireEvent.pointerUp(content)
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-selection',
+            role: 'assistant',
+            content: 'Select this response while it grows',
+            status: 'streaming',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+    document.getSelection()?.removeAllRanges()
+    fireEvent(document, new Event('selectionchange'))
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('add-selection-to-conversation-button'))
+    expect(onAddSelectionToConversation).toHaveBeenCalledWith('Select')
   })
 
   test('offers selection actions when the whole message body is selected', async () => {
@@ -269,6 +370,87 @@ describe('MessageList', () => {
     } finally {
       getSelectionSpy.mockRestore()
     }
+  })
+
+  test('unmounts distant Tauri message contents and restores them near the viewport', async () => {
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    const callbacks: IntersectionObserverCallback[] = []
+    class IntersectionObserverMock {
+      constructor(callback: IntersectionObserverCallback) {
+        callbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '1200px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+
+    render(
+      <MessageList
+        messages={Array.from({ length: 6 }, (_, index) => ({
+          id: `assistant-windowed-${index}`,
+          role: 'assistant' as const,
+          content: `message ${index}`,
+          status: 'done' as const,
+          createdAt: `2026-06-11T10:00:0${index}Z`,
+        }))}
+      />
+    )
+
+    const articles = screen.getAllByTestId('message-assistant')
+    expect(articles[0]).toBeEmptyDOMElement()
+    expect(articles[1]).toBeEmptyDOMElement()
+    expect(articles[2]).toHaveTextContent('message 2')
+    expect(callbacks).toHaveLength(2)
+
+    await act(async () => {
+      callbacks[0]([{ isIntersecting: true } as IntersectionObserverEntry], {} as never)
+    })
+
+    expect(articles[0]).toHaveTextContent('message 0')
+  })
+
+  test('windows oversized streaming Markdown before mounting every chunk', () => {
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    class IntersectionObserverMock {
+      constructor() {}
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '800px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    const content = Array.from(
+      { length: 60 },
+      (_, index) => `### Streaming section ${index + 1}\n\n${'content '.repeat(40)}\n`
+    ).join('\n')
+
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-windowed',
+            role: 'assistant',
+            content,
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    const chunks = Array.from(container.querySelectorAll('[data-markdown-window-chunk]'))
+    expect(chunks.length).toBeGreaterThan(2)
+    expect(chunks[0]).not.toBeEmptyDOMElement()
+    expect(chunks.at(-1)).not.toBeEmptyDOMElement()
+    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
   })
 
   test('keeps message row containment during a plain text click', () => {
@@ -1046,7 +1228,7 @@ describe('MessageList', () => {
     ).toBeInTheDocument()
   })
 
-  test('hides thinking after partial streaming assistant content becomes visible', () => {
+  test('shows thinking after partial streaming assistant content becomes visible', () => {
     render(
       <MessageList
         messages={[
@@ -1063,7 +1245,7 @@ describe('MessageList', () => {
 
     const content = screen.getByTestId('message-assistant').querySelector('p')
     expect(content).toHaveTextContent('我已经完成前面的检查，继续等最后结果。')
-    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
   test('shows only the running block after partial content', () => {
@@ -2024,6 +2206,75 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
+  test('opens local HTML file links in the Wework built-in browser', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-html-file-link',
+            role: 'assistant',
+            content: '[trend.html](/Users/dev/workspace/trend.html)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
+      'asset://localhost/Users/dev/workspace/trend.html'
+    )
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+  })
+
+  test('treats local filesystem paths encoded as Tauri URLs as file links', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-tauri-file-link',
+            role: 'assistant',
+            content: '[report](tauri://localhost/Users/dev/workspace/report.md)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/workspace/report.md')
+  })
+
+  test('opens Tauri-encoded local HTML paths in the Wework built-in browser', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-tauri-html-file-link',
+            role: 'assistant',
+            content: '[trend](tauri://localhost/Users/dev/workspace/trend.html)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
+      'asset://localhost/Users/dev/workspace/trend.html'
+    )
+  })
+
   test('removes angle brackets from assistant file link destinations', () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
@@ -2709,6 +2960,42 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-image-attachment-strip')).toHaveClass(
       'ml-auto',
       'justify-end'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('restores historical image previews from persisted local paths', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachment: Attachment = {
+      id: -1,
+      filename: 'historical.png',
+      file_size: 1024,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-06-26T15:33:00.000+08:00',
+      local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/42/historical.png',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'historical-image',
+            role: 'user',
+            content: '查看历史图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-06-26T15:33:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/me/.wegent-executor/workspace/attachments/draft/42/historical.png'
     )
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -3778,7 +4065,7 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
   test('renders only thinking before the first streamed response arrives', () => {
@@ -3803,7 +4090,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows full-width processing status without trailing thinking once final text starts streaming', () => {
+  test('shows trailing thinking once final text starts streaming', () => {
     render(
       <MessageList
         messages={[
@@ -3820,7 +4107,7 @@ describe('MessageList', () => {
 
     const status = screen.getByText('1 秒')
 
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
     expect(status.parentElement).toHaveAttribute('data-testid', 'processing-summary-header')
     expect(status.parentElement).not.toHaveClass('border-b')
@@ -3965,7 +4252,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('collapses tool rows once final text is visible without trailing thinking', () => {
+  test('collapses tool rows and shows trailing thinking once final text is visible', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -3991,7 +4278,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')

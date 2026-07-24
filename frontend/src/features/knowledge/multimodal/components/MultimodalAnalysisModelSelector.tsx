@@ -12,6 +12,7 @@ import {
 } from '@/components/model-select/ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getModelCapabilities } from '@/lib/model-capabilities'
 import type { SummaryModelRef } from '@/types/knowledge'
 
 interface MultimodalAnalysisModelSelectorProps {
@@ -30,18 +31,13 @@ interface MultimodalAnalysisModelSelectorProps {
 // a supportsVideo=true Gemini model also handles image analysis, so image-only
 // models are excluded rather than offered. provider is the env.model value,
 // which ModelEditDialog maps to 'gemini' for every Gemini LLM variant (incl.
-// gemini-deep-research). The capability fields are only returned when
-// includeConfig=true (the default includeConfig=false omits the config blob),
-// so we request it explicitly here.
+// gemini-deep-research). Capability fields are returned as top-level model metadata.
 function isGeminiProvider(provider?: string | null): boolean {
   return !!provider && provider.toLowerCase() === 'gemini'
 }
 
 function supportsMultimodalAnalysis(model: UnifiedModel): boolean {
-  const capabilities = (model.config as Record<string, unknown> | undefined)?.modelCapabilities as
-    | Record<string, unknown>
-    | undefined
-  return capabilities?.supportsVideo === true && isGeminiProvider(model.provider)
+  return getModelCapabilities(model).supportsVideo === true && isGeminiProvider(model.provider)
 }
 
 export function MultimodalAnalysisModelSelector({
@@ -58,8 +54,7 @@ export function MultimodalAnalysisModelSelector({
     const fetchModels = async () => {
       setLoading(true)
       try {
-        // includeConfig=true is required to read modelCapabilities.supportsVideo / supportsImage
-        const response = await modelApis.getUnifiedModels(undefined, true, 'all', undefined, 'llm')
+        const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
         const sorted = (response.data || []).filter(supportsMultimodalAnalysis).sort((a, b) => {
           const nameA = a.displayName || a.name
           const nameB = b.displayName || b.name
