@@ -1767,13 +1767,7 @@ where
 
 #[cfg(windows)]
 fn has_read_access(path: &Path) -> bool {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{GetFileAttributesW, INVALID_FILE_ATTRIBUTES};
-
-    let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
-    wide_path.push(0);
-    let attributes = unsafe { GetFileAttributesW(wide_path.as_ptr()) };
-    attributes != INVALID_FILE_ATTRIBUTES
+    std::fs::OpenOptions::new().read(true).open(path).is_ok()
 }
 
 #[cfg(unix)]

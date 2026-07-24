@@ -84,7 +84,7 @@ pnpm --filter wework dev:windows
 
 The cache layout is:
 
-```
+```text
 %USERPROFILE%\.cache\wegent\cargo-target\
   executor-dev\      # dev-reload executor builds
   executor\          # non-reload executor builds
@@ -93,12 +93,12 @@ The cache layout is:
 
 You can customize or disable this behavior with environment variables:
 
-| Variable | Description |
-|----------|-------------|
-| `WEGENT_CARGO_TARGET_ROOT` | Override the shared cache root directory. |
+| Variable                               | Description                                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `WEGENT_CARGO_TARGET_ROOT`             | Override the shared cache root directory.                                                   |
 | `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` | Keep Cargo artifacts inside each project's `target/` directory instead of the shared cache. |
-| `CARGO_TARGET_DIR` | If you explicitly set this, `dev:windows` will use it for all Cargo builds. |
-| `WEGENT_DISABLE_SCCACHE=1` | Do not auto-detect or use `sccache`. |
+| `CARGO_TARGET_DIR`                     | If you explicitly set this, `dev:windows` will use it for all Cargo builds.                 |
+| `WEGENT_DISABLE_SCCACHE=1`             | Do not auto-detect or use `sccache`.                                                        |
 
 To get the fastest rebuilds, install [sccache](https://github.com/mozilla/sccache) and make sure it is on your `PATH`:
 

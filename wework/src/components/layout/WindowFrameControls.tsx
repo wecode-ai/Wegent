@@ -2,12 +2,14 @@ import { Minus, Square, Copy, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
 const FRAME_CONTROL_BUTTON_CLASS =
   'flex h-[30px] w-[46px] shrink-0 items-center justify-center rounded-none border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-black/[0.08] hover:text-text-primary active:bg-black/[0.12] [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]'
 
 export function WindowFrameControls({ className }: { className?: string }) {
+  const { t } = useTranslation('common')
   const [isMaximized, setIsMaximized] = useState(false)
 
   const updateMaximized = useCallback(async () => {
@@ -28,6 +30,7 @@ export function WindowFrameControls({ className }: { className?: string }) {
       })
       .then(unlistenFn => {
         unlisten = unlistenFn
+        void updateMaximized()
       })
 
     return () => {
@@ -79,8 +82,8 @@ export function WindowFrameControls({ className }: { className?: string }) {
         data-testid="window-minimize-button"
         onClick={handleMinimize}
         className={FRAME_CONTROL_BUTTON_CLASS}
-        aria-label="最小化"
-        title="最小化"
+        aria-label={t('window.minimize')}
+        title={t('window.minimize')}
       >
         <Minus className="h-4 w-4" />
       </button>
@@ -89,8 +92,8 @@ export function WindowFrameControls({ className }: { className?: string }) {
         data-testid="window-maximize-button"
         onClick={handleMaximize}
         className={FRAME_CONTROL_BUTTON_CLASS}
-        aria-label={isMaximized ? '还原' : '最大化'}
-        title={isMaximized ? '还原' : '最大化'}
+        aria-label={isMaximized ? t('window.restore') : t('window.maximize')}
+        title={isMaximized ? t('window.restore') : t('window.maximize')}
       >
         {isMaximized ? <Copy className="h-4 w-4" /> : <Square className="h-4 w-4" />}
       </button>
@@ -102,8 +105,8 @@ export function WindowFrameControls({ className }: { className?: string }) {
           FRAME_CONTROL_BUTTON_CLASS,
           'hover:bg-[#e81123] hover:text-white active:bg-[#f1707a] active:text-white'
         )}
-        aria-label="关闭"
-        title="关闭"
+        aria-label={t('window.close')}
+        title={t('window.close')}
       >
         <X className="h-4 w-4" />
       </button>

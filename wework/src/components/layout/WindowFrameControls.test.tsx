@@ -50,6 +50,17 @@ describe('WindowFrameControls', () => {
     expect(mocks.windowMock.unmaximize).not.toHaveBeenCalled()
   })
 
+  test('maximize button calls window.unmaximize when already maximized from initial state', async () => {
+    mocks.windowMock.isMaximized.mockResolvedValue(true)
+
+    render(<WindowFrameControls />)
+    await waitFor(() => expect(mocks.windowMock.isMaximized).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByTestId('window-maximize-button'))
+    await waitFor(() => expect(mocks.windowMock.unmaximize).toHaveBeenCalledTimes(1))
+    expect(mocks.windowMock.maximize).not.toHaveBeenCalled()
+  })
+
   test('maximize button calls window.unmaximize when already maximized', async () => {
     let capturedHandler: (() => void) | undefined
     mocks.windowMock.onResized.mockImplementationOnce((handler: () => void) => {

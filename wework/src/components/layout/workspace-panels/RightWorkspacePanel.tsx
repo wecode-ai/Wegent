@@ -180,7 +180,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       if (event.defaultPrevented || isEditableShortcutTarget(event.target)) return
 
       const key = event.key.toLowerCase()
-      const primaryPressed = (event.metaKey || event.ctrlKey) && !event.shiftKey
+      const primaryPressed =
+        platform === 'win'
+          ? event.ctrlKey && !event.metaKey && !event.shiftKey
+          : event.metaKey && !event.shiftKey
 
       if (primaryPressed && !event.altKey && key === 't' && !browserOpen) {
         event.preventDefault()
@@ -212,6 +215,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     onSelectFiles,
     onSelectReview,
     openBrowserTab,
+    platform,
     visible,
   ])
 

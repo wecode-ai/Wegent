@@ -3,7 +3,15 @@
 // Usage: pnpm --filter wework dev:windows
 
 import { execSync, spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer } from 'node:net'
 import { delimiter, dirname, join, resolve, basename } from 'node:path'
 import process from 'node:process'
@@ -107,7 +115,9 @@ function configureSccache(projectDir, targetDir) {
   process.env.CARGO_INCREMENTAL = '0'
   process.env.WEGENT_SCCACHE_AUTO = '1'
   if (!process.env.SCCACHE_BASEDIRS || process.env.WEGENT_SCCACHE_BASEDIRS_AUTO === '1') {
-    process.env.SCCACHE_BASEDIRS = [canonicalPath(projectDir), canonicalPath(targetDir)].join(delimiter)
+    process.env.SCCACHE_BASEDIRS = [canonicalPath(projectDir), canonicalPath(targetDir)].join(
+      delimiter
+    )
     process.env.WEGENT_SCCACHE_BASEDIRS_AUTO = '1'
   }
 }
@@ -166,7 +176,7 @@ function resolveCommand(command) {
   if (process.platform !== 'win32') {
     return command
   }
-  if (command.includes('.') && command.slice(-4).includes('.')) {
+  if (command.slice(-4).includes('.')) {
     return command
   }
   const cmdPath = `${command}.cmd`
@@ -204,7 +214,9 @@ function run(command, args, options = {}) {
       if (code === 0 || code === null) {
         resolvePromise()
       } else {
-        rejectPromise(new Error(`"${finalCommand} ${finalArgs.join(' ')}" exited with code ${code}`))
+        rejectPromise(
+          new Error(`"${finalCommand} ${finalArgs.join(' ')}" exited with code ${code}`)
+        )
       }
     })
   })
@@ -280,24 +292,39 @@ async function main() {
 
   if (useDevReload) {
     log('Building wegent-executor-dev sidecar...')
-    await run('cargo', [
-      'build',
-      '--manifest-path', join(EXECUTOR_DIR, 'Cargo.toml'),
-      '--features', 'dev-reload',
-      '--bin', 'wegent-executor-dev',
-      '--target', TARGET,
-    ], { cwd: EXECUTOR_DIR })
+    await run(
+      'cargo',
+      [
+        'build',
+        '--manifest-path',
+        join(EXECUTOR_DIR, 'Cargo.toml'),
+        '--features',
+        'dev-reload',
+        '--bin',
+        'wegent-executor-dev',
+        '--target',
+        TARGET,
+      ],
+      { cwd: EXECUTOR_DIR }
+    )
 
     sidecarSource = join(executorTargetDir, TARGET, 'debug', 'wegent-executor-dev.exe')
     process.env.WEGENT_EXECUTOR_SOURCE_DIR = EXECUTOR_DIR
   } else {
     log('Building wegent-executor sidecar...')
-    await run('cargo', [
-      'build',
-      '--manifest-path', join(EXECUTOR_DIR, 'Cargo.toml'),
-      '--bin', 'wegent-executor',
-      '--target', TARGET,
-    ], { cwd: EXECUTOR_DIR })
+    await run(
+      'cargo',
+      [
+        'build',
+        '--manifest-path',
+        join(EXECUTOR_DIR, 'Cargo.toml'),
+        '--bin',
+        'wegent-executor',
+        '--target',
+        TARGET,
+      ],
+      { cwd: EXECUTOR_DIR }
+    )
 
     const sourceBinary = join(executorTargetDir, TARGET, 'debug', 'wegent-executor.exe')
     const binariesDir = join(TAURI_DIR, 'binaries')
@@ -347,7 +374,8 @@ async function main() {
   process.env.VITE_SOCKET_BASE_URL ||= `http://localhost:${port}`
   process.env.VITE_SOCKET_PATH ||= '/socket.io'
   process.env.VITE_API_PROXY_TARGET ||= `http://localhost:${backendPort}`
-  process.env.VITE_SOCKET_PROXY_TARGET ||= process.env.WEGENT_SOCKET_URL || `http://localhost:${backendPort}`
+  process.env.VITE_SOCKET_PROXY_TARGET ||=
+    process.env.WEGENT_SOCKET_URL || `http://localhost:${backendPort}`
   process.env.VITE_WEWORK_DEV_PORT = String(port)
   process.env.VITE_WEWORK_DEV_WORKTREE = PROJECT_DIR
   process.env.VITE_WEWORK_DEV_BRANCH = gitBranch(PROJECT_DIR)
@@ -355,11 +383,9 @@ async function main() {
 
   log('Starting Tauri dev...')
   try {
-    await run('pnpm', [
-      'exec', 'tauri', 'dev',
-      '--config', tmpConfig,
-      '--target', TARGET,
-    ], { cwd: WEWORK_DIR })
+    await run('pnpm', ['exec', 'tauri', 'dev', '--config', tmpConfig, '--target', TARGET], {
+      cwd: WEWORK_DIR,
+    })
   } finally {
     cleanup()
   }

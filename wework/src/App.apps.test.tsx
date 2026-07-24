@@ -15,17 +15,6 @@ vi.mock('@tauri-apps/api/window', () => ({
   }),
 }))
 
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({
-    startDragging: vi.fn(),
-    minimize: vi.fn(),
-    toggleMaximize: vi.fn(),
-    close: vi.fn(),
-    isMaximized: vi.fn().mockResolvedValue(false),
-    onResized: vi.fn().mockResolvedValue(vi.fn()),
-  }),
-}))
-
 vi.mock('@/features/auth/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))

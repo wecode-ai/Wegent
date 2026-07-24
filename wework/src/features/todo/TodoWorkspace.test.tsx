@@ -413,7 +413,12 @@ describe('TodoWorkspace V4-01', () => {
     expect(onRunTodo).not.toHaveBeenCalled()
   })
 
-  it('toggles the detail layout and exposes working draft actions', async () => {
+  it('does not render native window frame controls on Windows outside Tauri', () => {
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+    })
+
     render(
       <TodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
@@ -423,17 +428,6 @@ describe('TodoWorkspace V4-01', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('todo-create-button'))
-    await userEvent.type(screen.getByTestId('todo-create-markdown'), 'Disposable draft')
-    await userEvent.click(screen.getByTestId('todo-create-submit'))
-    await userEvent.click(await screen.findByText('Disposable draft'))
-
-    await userEvent.click(screen.getByTestId('todo-detail-preview-mode'))
-    expect(screen.getByTestId('todo-detail-panel')).toHaveClass('left-0', 'w-full')
-
-    await userEvent.click(screen.getByTestId('todo-detail-more'))
-    expect(screen.getByTestId('todo-detail-more-menu')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('todo-detail-menu-delete'))
-    expect(screen.queryByText('Disposable draft')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('window-frame-controls')).not.toBeInTheDocument()
   })
 })

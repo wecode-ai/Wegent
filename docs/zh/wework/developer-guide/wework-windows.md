@@ -84,7 +84,7 @@ pnpm --filter wework dev:windows
 
 缓存目录结构如下：
 
-```
+```text
 %USERPROFILE%\.cache\wegent\cargo-target\
   executor-dev\      # dev-reload 模式下的 executor 构建
   executor\          # 非 dev-reload 模式下的 executor 构建
@@ -93,12 +93,12 @@ pnpm --filter wework dev:windows
 
 你可以通过以下环境变量自定义或关闭缓存行为：
 
-| 变量 | 说明 |
-|------|------|
-| `WEGENT_CARGO_TARGET_ROOT` | 覆盖共享缓存根目录。 |
-| `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` | 禁用共享缓存，Cargo 产物保留在项目内的 `target/` 目录。 |
-| `CARGO_TARGET_DIR` | 若显式设置，则 `dev:windows` 会将其用于所有 Cargo 构建。 |
-| `WEGENT_DISABLE_SCCACHE=1` | 禁止自动检测和使用 `sccache`。 |
+| 变量                                   | 说明                                                     |
+| -------------------------------------- | -------------------------------------------------------- |
+| `WEGENT_CARGO_TARGET_ROOT`             | 覆盖共享缓存根目录。                                     |
+| `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` | 禁用共享缓存，Cargo 产物保留在项目内的 `target/` 目录。  |
+| `CARGO_TARGET_DIR`                     | 若显式设置，则 `dev:windows` 会将其用于所有 Cargo 构建。 |
+| `WEGENT_DISABLE_SCCACHE=1`             | 禁止自动检测和使用 `sccache`。                           |
 
 如需最快的重建速度，可安装 [sccache](https://github.com/mozilla/sccache) 并确保它在 `PATH` 中：
 

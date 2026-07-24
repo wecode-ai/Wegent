@@ -3,7 +3,13 @@
     "home": "首页"
   },
   "common": {
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "window": {
+      "minimize": "最小化",
+      "maximize": "最大化",
+      "restore": "还原",
+      "close": "关闭"
+    }
   },
   "workbench": {
     "brand": "Wework",

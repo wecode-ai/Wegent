@@ -644,7 +644,7 @@ export function TodoWorkspace({
               <Plus className="h-3.5 w-3.5" />
               {t('todo.create_action', '新建 TODO')}
             </button>
-            {platform === 'win' && (
+            {usesOverlayTitlebar && platform === 'win' && (
               <div className="relative z-chrome h-8" data-tauri-drag-region={false}>
                 <WindowFrameControls className="h-full" />
               </div>
