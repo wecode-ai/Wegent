@@ -309,9 +309,14 @@ class VncDesktopScenario {
     await this.waitForSystemBrowserDesktopConnection()
     const browserSnapshot = await waitForSnapshot(
       control,
-      snapshot => !snapshot.testIds.includes('wework-settings-page'),
-      'Opening the cloud desktop in the system browser did not leave settings',
+      snapshot => snapshot.testIds.includes('wework-settings-page'),
+      'Opening the cloud desktop in the system browser unexpectedly left settings',
       this.uiTimeoutMs
+    )
+    assert.equal(
+      browserSnapshot.testIds.includes('wework-settings-page'),
+      true,
+      'Opening the cloud desktop in the system browser should keep settings open'
     )
     assert.equal(
       browserSnapshot.testIds.includes('right-workspace-browser-tab'),
@@ -333,6 +338,14 @@ class VncDesktopScenario {
       this.vncRfbConnections,
       1,
       'The system browser did not complete the noVNC RFB handshake'
+    )
+
+    await control.command('click', '[data-testid="settings-back-button"]')
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('wework-settings-page'),
+      'The explicit settings back action did not return to the workspace',
+      this.uiTimeoutMs
     )
 
     await control.command('openEmbeddedCloudDesktop', '', {
