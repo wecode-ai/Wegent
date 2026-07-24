@@ -148,7 +148,7 @@ def _set_run_fonts(
     _set_rpr_language(rpr)
 
 
-def _add_document_header(doc: Document, task_title: str):
+def _add_document_header(doc: Document, task_title: str) -> None:
     """Add document header with logo and title"""
     # Logo text
     logo = doc.add_paragraph()

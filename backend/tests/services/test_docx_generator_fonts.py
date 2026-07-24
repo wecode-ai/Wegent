@@ -29,7 +29,7 @@ def _font_attributes(rpr: CT_RPr) -> dict[str, str]:
     }
 
 
-def test_normal_style_defines_latin_and_east_asian_fonts():
+def test_normal_style_defines_latin_and_east_asian_fonts() -> None:
     doc = Document()
 
     _setup_document_styles(doc)
@@ -47,7 +47,7 @@ def test_normal_style_defines_latin_and_east_asian_fonts():
     assert language.get(qn("w:eastAsia")) == EAST_ASIA_LANGUAGE
 
 
-def test_inline_code_uses_monospace_latin_and_document_cjk_font():
+def test_inline_code_uses_monospace_latin_and_document_cjk_font() -> None:
     doc = Document()
     _setup_document_styles(doc)
     paragraph = doc.add_paragraph()

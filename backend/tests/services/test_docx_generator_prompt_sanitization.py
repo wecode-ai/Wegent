@@ -74,7 +74,7 @@ class TestDocxGeneratorPromptSanitization:
         full_text = "\n".join(p.text for p in doc.paragraphs)
         assert "What is the capital of France?" in full_text
 
-    def test_knowledge_base_context_not_written_to_document(self):
+    def test_knowledge_base_context_not_written_to_document(self) -> None:
         """Knowledge base runtime metadata must not appear in DOCX exports."""
         knowledge_base = MagicMock()
         knowledge_base.context_type = "knowledge_base"
