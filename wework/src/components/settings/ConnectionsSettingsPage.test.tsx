@@ -91,6 +91,11 @@ vi.mock('@/lib/external-links', () => ({
 }))
 
 vi.mock('@/tauri/localExecutor', () => ({
+  ensureLocalExecutorStarted: vi.fn().mockResolvedValue({
+    running: true,
+    ready: true,
+    runtimeInstanceId: 'runtime-instance-1',
+  }),
   requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
 
@@ -366,6 +371,19 @@ describe('ConnectionsSettingsPage', () => {
     ).toHaveAttribute('data-tauri-drag-region')
   })
 
+  test('keeps the settings navigation scrollable within the sidebar', () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('shrink-0')
+    expect(screen.getByTestId('settings-sidebar-nav')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
+  })
+
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
     api.getAllDevices.mockResolvedValue([])
     api.createCloudDevice.mockResolvedValue({
@@ -505,6 +523,181 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
   })
 
+  test('waits for a provider selection before showing model fields', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+
+    expect(screen.getByTestId('local-model-provider-select')).toHaveValue('')
+    expect(screen.queryByTestId('local-model-api-format-select')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('local-model-save-button')).not.toBeInTheDocument()
+
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
+
+    expect(screen.getByTestId('local-model-api-format-select')).toBeInTheDocument()
+    expect(screen.getByTestId('local-model-save-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-model-catalog-json-input')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('local-model-context-window-input')).toHaveLength(1)
+  })
+
+  test('persists custom catalog capabilities and silently restarts Codex when idle', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    vi.mocked(requestLocalExecutor).mockImplementation(async method =>
+      method === 'runtime.codex.catalog.custom.write'
+        ? { saved: true, modelCount: 1 }
+        : { restarted: true, requiresConfirmation: false, activeTaskCount: 0 }
+    )
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
+    expect(
+      (screen.getByTestId('local-model-base-instructions-input') as HTMLTextAreaElement).value
+    ).toContain('# Working with the user')
+    await userEvent.clear(screen.getByTestId('local-model-context-window-input'))
+    await userEvent.type(screen.getByTestId('local-model-context-window-input'), '131072')
+    await userEvent.click(screen.getByTestId('local-model-parallel-tools-select'))
+    await userEvent.click(screen.getByTestId('local-model-input-modality-image'))
+    await userEvent.click(screen.getByTestId('local-model-image-generation-checkbox'))
+    await userEvent.click(screen.getByTestId('local-model-reasoning-level-high'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-default-reasoning-input'), 'high')
+    await userEvent.click(screen.getByTestId('local-model-advanced-capabilities-toggle'))
+    await userEvent.click(screen.getByTestId('local-model-advanced-section-metadata'))
+    await userEvent.type(screen.getByTestId('local-model-speed-tiers-input'), 'fast')
+    await userEvent.click(screen.getByTestId('local-model-speed-tiers-add'))
+    await userEvent.click(screen.getByTestId('local-model-service-tiers-add'))
+    await userEvent.type(screen.getByTestId('local-model-service-tiers-0-id'), 'priority')
+    await userEvent.type(screen.getByTestId('local-model-service-tiers-0-name'), 'Priority')
+    await userEvent.type(
+      screen.getByTestId('local-model-service-tiers-0-description'),
+      'Faster requests'
+    )
+    expect(screen.getByTestId('local-model-service-tiers-0-delete').closest('label')).toBeNull()
+    await userEvent.selectOptions(
+      screen.getByTestId('local-model-default-service-tier-input'),
+      'priority'
+    )
+    await userEvent.click(screen.getByTestId('local-model-advanced-capabilities-close'))
+    await userEvent.type(screen.getByTestId('local-model-id-input'), 'custom-coder')
+    await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+    await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+    await waitFor(() =>
+      expect(requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.codex.catalog.custom.write',
+        expect.objectContaining({ models: expect.any(Array) })
+      )
+    )
+    expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+      ifIdle: true,
+    })
+    const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+    expect(stored[0]).toMatchObject({
+      modelId: 'custom-coder',
+      codexCatalogModelId: expect.stringMatching(/^wework-custom-/),
+      catalogReady: true,
+      imageGenerationEnabled: true,
+    })
+    expect(stored[0].catalogEntry.base_instructions).toContain('# Rules for getting work done')
+    expect(stored[0].catalogEntry).toMatchObject({
+      context_window: 131072,
+      max_context_window: 131072,
+      supports_parallel_tool_calls: true,
+      input_modalities: ['text', 'image'],
+      supported_reasoning_levels: [{ effort: 'high', description: 'Deep reasoning' }],
+      default_reasoning_level: 'high',
+      service_tiers: [{ id: 'priority', name: 'Priority', description: 'Faster requests' }],
+      additional_speed_tiers: ['fast'],
+      default_service_tier: 'priority',
+    })
+  })
+
+  test('keeps a custom model pending when active tasks prevent a silent restart', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    vi.mocked(requestLocalExecutor)
+      .mockResolvedValueOnce({ saved: true, modelCount: 1 })
+      .mockResolvedValueOnce({
+        restarted: false,
+        requiresConfirmation: true,
+        activeTaskCount: 1,
+      })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
+    await userEvent.type(screen.getByTestId('local-model-id-input'), 'pending-coder')
+    await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+    await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+    expect(await screen.findByTestId('local-model-catalog-restart-dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('local-model-catalog-restart-later-button'))
+    expect(screen.getByTestId('local-model-settings')).toHaveTextContent('等待重启执行器')
+    const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+    expect(stored[0].catalogReady).toBe(false)
+  })
+
+  test('uses the built-in K3 catalog profile and verified model defaults', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: 'k3' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      ),
+    })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-provider-select'),
+        'kimi-coding'
+      )
+      const groupInput = screen.getByTestId('local-model-group-input')
+      expect(groupInput).toHaveValue('Kimi')
+      await userEvent.clear(groupInput)
+      await userEvent.type(groupInput, '月之暗面')
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'test-key')
+      await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
+      await waitFor(() =>
+        expect(screen.getByTestId('local-model-provider-model-select')).toHaveValue('k3')
+      )
+      await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+      const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+      expect(stored[0]).toMatchObject({
+        providerProfileId: 'kimi-coding',
+        group: '月之暗面',
+        modelId: 'k3',
+        contextWindow: 262_144,
+        codexCatalogModelId: 'wework-kimi-k3',
+        catalogReady: true,
+      })
+      expect(requestLocalExecutor).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
   test('tests a model before saving it', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
@@ -531,6 +724,7 @@ describe('ConnectionsSettingsPage', () => {
       await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
       await screen.findByTestId('model-settings-page')
       await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
       expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
         '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
       )
@@ -592,6 +786,7 @@ describe('ConnectionsSettingsPage', () => {
       await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
       await screen.findByTestId('model-settings-page')
       await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
       await userEvent.selectOptions(
         screen.getByTestId('local-model-api-format-select'),
         'openai-chat-completions'
@@ -643,6 +838,7 @@ describe('ConnectionsSettingsPage', () => {
       await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
       await screen.findByTestId('model-settings-page')
       await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
       await userEvent.selectOptions(
         screen.getByTestId('local-model-api-format-select'),
         'anthropic-messages'
@@ -686,6 +882,7 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
     await screen.findByTestId('model-settings-page')
     await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
     await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
 
     await userEvent.click(screen.getByTestId('local-model-add-button'))
@@ -704,7 +901,8 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('local-model-discard-changes-confirm-button'))
 
     expect(screen.queryByTestId('local-model-discard-changes-dialog')).not.toBeInTheDocument()
-    expect(screen.getByTestId('local-model-url-input')).toHaveValue('')
+    expect(screen.getByTestId('local-model-provider-select')).toHaveValue('')
+    expect(screen.queryByTestId('local-model-url-input')).not.toBeInTheDocument()
   })
 
   test('keeps cloud auth sync controls unavailable when cloud is disconnected', async () => {

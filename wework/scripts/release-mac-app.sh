@@ -26,7 +26,7 @@ APPLE_BUILD_PASSWORD="${APPLE_BUILD_PASSWORD:-}"
 DEFAULT_NOTARY_PROFILE="${DEFAULT_NOTARY_PROFILE:-wework-notary}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-universal-apple-darwin}"
 PRINT_NEXT_VERSION_ONLY="false"
-RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
+RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-1}"
 
 usage() {
   cat <<EOF
@@ -44,7 +44,7 @@ Options:
   --notary-profile <name>    Keychain profile name used by xcrun notarytool.
   --macos-build-target <target>
                               macOS Rust/Tauri target. Default: universal-apple-darwin.
-  --devtools                  Enable Web Inspector support in the release build.
+  --devtools                  Enable Web Inspector support (enabled by default).
   --print-next-version       Only print the next version and exit.
   -h, --help                 Show this help message.
 
@@ -515,7 +515,7 @@ if [ "$TARGET" = "prod" ]; then
 fi
 mkdir -p "$dist_dir"
 
-config_override="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.XXXXXX.json")"
+config_override="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.json.XXXXXX")"
 cleanup() {
   rm -f "$config_override"
 }
@@ -525,8 +525,6 @@ VERSION="$next_version" \
 UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
 UPDATER_PUBKEY="$UPDATER_PUBKEY" \
 SIGNING_IDENTITY="$app_sign_identity" \
-RELEASE_DEVTOOLS="$RELEASE_DEVTOOLS" \
-BASE_TAURI_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
 ENABLE_INSECURE_TRANSPORT="$([ "$TARGET" = "local" ] && printf 'true' || printf 'false')" \
 CONFIG_OVERRIDE="$config_override" \
 python3 - <<'PY'
@@ -555,19 +553,6 @@ if identity:
 
 if os.environ["ENABLE_INSECURE_TRANSPORT"] == "true":
     config["plugins"]["updater"]["dangerousInsecureTransportProtocol"] = True
-
-if os.environ["RELEASE_DEVTOOLS"] == "1":
-    with open(os.environ["BASE_TAURI_CONFIG"], "r", encoding="utf-8") as handle:
-        base_config = json.load(handle)
-    config["app"] = {
-        "windows": [
-            {
-                **window,
-                "devtools": True,
-            }
-            for window in base_config.get("app", {}).get("windows", [])
-        ],
-    }
 
 with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2)

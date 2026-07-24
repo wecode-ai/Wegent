@@ -87,6 +87,7 @@ export interface SendCurrentInputOptions {
 export interface CreateTemporaryRuntimeTaskOptions {
   project?: ProjectWithTasks | null
   source?: RuntimeTaskAddress | null
+  attachments?: Attachment[]
   onError?: (error: string) => void
 }
 
@@ -120,6 +121,7 @@ export interface WorkbenchContextValue {
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
+    activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string

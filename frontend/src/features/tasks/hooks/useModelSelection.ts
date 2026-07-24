@@ -18,6 +18,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { modelApis, UnifiedModel, ModelTypeEnum, ModelCategoryType } from '@/apis/models'
+import type { ModelCapabilities } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   isPredefinedModel,
@@ -56,6 +57,10 @@ export interface Model {
   namespace?: string
   modelGroup?: string | null
   modelSubGroup?: string | null
+  contextWindow?: number | null
+  maxOutputTokens?: number | null
+  costIndex?: number | null
+  modelCapabilities?: ModelCapabilities | null
   config?: Record<string, unknown>
 }
 
@@ -140,6 +145,10 @@ export function unifiedToModel(unified: UnifiedModel): Model {
     namespace: unified.namespace,
     modelGroup: unified.modelGroup,
     modelSubGroup: unified.modelSubGroup,
+    contextWindow: unified.contextWindow,
+    maxOutputTokens: unified.maxOutputTokens,
+    costIndex: unified.costIndex,
+    modelCapabilities: unified.modelCapabilities,
     config: unified.config,
   }
 }

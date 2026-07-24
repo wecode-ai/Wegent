@@ -138,6 +138,7 @@ function runtimeTaskAddressFromWorkspace(
     taskId: task.taskId,
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
     ...(task.taskId ? { taskId: task.taskId } : {}),
+    ...(task.threadId ? { threadId: task.threadId } : {}),
     ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }
@@ -207,9 +208,7 @@ function runtimeTaskMatchesArchivedAddress(
   archivedAddress: RuntimeTaskAddress
 ): boolean {
   if (taskAddress.taskId !== archivedAddress.taskId) return false
-  const archivedPath = archivedAddress.workspacePath?.trim()
-  if (!archivedPath) return taskAddress.deviceId === archivedAddress.deviceId
-  return taskAddress.workspacePath?.trim() === archivedPath
+  return taskAddress.deviceId === archivedAddress.deviceId
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

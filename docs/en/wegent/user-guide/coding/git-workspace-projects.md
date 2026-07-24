@@ -56,6 +56,8 @@ In the new-conversation input area for a local workspace project, you can choose
 - “Local mode”/“Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user. When the directory is a Git repository, the composer shows the current branch dropdown; selecting another branch runs `git checkout <branch>` in the project directory. If Git rejects the checkout because of uncommitted changes, untracked-file overwrite risk, or another conflict, the current branch and local changes stay unchanged, and the menu shows the error.
 - “New worktree”: before sending the new task, Wegent runs `git worktree add` on the same execution device and creates a dedicated worktree for that task. After you select “New worktree”, the composer shows a “Source branch” dropdown. It defaults to the current branch, and you can choose another branch from the same repository as the source used to create the worktree.
 
+Wework refreshes repository environment details in the background while a task is running. A refresh keeps the resolved current branch visible in the composer; the loading state appears only during the initial workspace read.
+
 New worktrees are created under the execution device workspace root:
 
 ```bash
@@ -123,6 +125,8 @@ For a project bound to the local macOS device, the project row menu includes **S
 The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
 
 When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines.
+
+Streaming progress text shown before the assistant's final response uses the same file-link behavior. Absolute paths are not resolved as web links against the Wework page URL; clicking a link with line numbers opens the workspace file directly at the referenced lines.
 
 File link destinations can use Markdown angle-bracket syntax, such as `[file](</absolute/path/file.ts:18>)`. Wework removes the surrounding angle brackets before resolving the absolute path and line number, so the brackets do not become part of the filesystem path.
 

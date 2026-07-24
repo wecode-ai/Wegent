@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
+import { updateAppPreferences } from '@/tauri/appPreferences'
 import type { InstalledPlugin, LocalDeviceSkill } from '@/types/api'
 import './i18n'
 import App from './App'
@@ -751,7 +752,7 @@ describe('App plugins route', () => {
           json: () => Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' }),
         } as Response
       }
-      if (url.includes('/v1/sites?')) {
+      if (url.includes('/sites?')) {
         return {
           ok: true,
           status: 200,
@@ -781,7 +782,7 @@ describe('App plugins route', () => {
 
     expect(await screen.findByText('云端站点')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:9100/api/v1/sites?offset=0&limit=20',
+      'http://127.0.0.1:9100/api/sites?offset=0&limit=20',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
       })
@@ -816,17 +817,18 @@ describe('App plugins route', () => {
     window.history.pushState({}, '', '/sites')
 
     render(<App />)
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
 
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/v1/sites?offset=0&limit=20',
+      '/api/sites?offset=0&limit=20',
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
       })
     )
-    expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
 
     await userEvent.click(screen.getByTestId('sites-create-button'))
 

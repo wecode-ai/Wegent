@@ -9,7 +9,7 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 
@@ -26,7 +26,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|drop-file|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -35,9 +35,12 @@ Options:
   --value TEXT              Replacement value for fill
   --target SELECTOR         Event target selector for pointer-move (default: body)
                             Required destination selector for drag
+  --file PATH               File to dispatch for drop-file
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
+  --visible true            Require a visible element for wait-for
+  --stable MS               Require the wait-for condition to remain stable
   --timeout MS              Command timeout (default: ${defaultTimeoutMs})`)
 }
 
@@ -96,6 +99,16 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
+export function takeWritableCommandPoll(commandPolls) {
+  let poll = commandPolls.shift()
+  while (poll) {
+    clearTimeout(poll.timer)
+    if (!poll.closed && !poll.response.destroyed && !poll.response.writableEnded) return poll
+    poll = commandPolls.shift()
+  }
+  return undefined
+}
+
 async function stopOwnedSessionProcesses(session) {
   if (!Number.isInteger(session.launcherPid)) return
   await signalProcessGroup(session.launcherPid, 'TERM')
@@ -115,6 +128,7 @@ function signalProcessGroup(processGroupId, signal) {
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
+  const commandPolls = []
   const pending = new Map()
   let ready = null
   let app = null
@@ -134,11 +148,28 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
-        if (!command) {
+        if (command) return json(response, 200, command)
+
+        const poll = { response, timer: undefined, closed: false }
+        poll.timer = setTimeout(() => {
+          const index = commandPolls.indexOf(poll)
+          if (index >= 0) commandPolls.splice(index, 1)
           response.writeHead(204, corsHeaders)
-          return response.end()
-        }
-        return json(response, 200, command)
+          response.end()
+        }, defaultTimeoutMs)
+        commandPolls.push(poll)
+        response.once('close', () => {
+          poll.closed = true
+          const index = commandPolls.indexOf(poll)
+          if (index < 0) return
+          commandPolls.splice(index, 1)
+          clearTimeout(poll.timer)
+        })
+        return
+      }
+      if (request.method === 'GET' && url.pathname === '/control-tick') {
+        response.writeHead(204, corsHeaders)
+        return response.end()
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
@@ -165,7 +196,13 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        queue.push({ id, ...command })
+        const nextCommand = { id, ...command }
+        const poll = takeWritableCommandPoll(commandPolls)
+        if (poll) {
+          json(poll.response, 200, nextCommand)
+        } else {
+          queue.push(nextCommand)
+        }
         try {
           return json(response, 200, {
             ok: true,
@@ -325,6 +362,7 @@ async function main() {
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
     drag: 'drag',
+    'drop-file': 'dropFile',
     fill: 'fill',
     hover: 'hover',
     navigate: 'navigate',
@@ -350,13 +388,28 @@ async function main() {
       ? 'body'
       : null)
   if (!selector) throw new Error('--selector is required')
+  const dropFilePath = command === 'drop-file' ? options.file : undefined
+  if (command === 'drop-file' && !dropFilePath) throw new Error('--file is required')
+  const dropFileExtension = dropFilePath ? extname(dropFilePath).toLowerCase() : ''
+  const dropFileMimeType =
+    dropFileExtension === '.png'
+      ? 'image/png'
+      : dropFileExtension === '.jpg' || dropFileExtension === '.jpeg'
+        ? 'image/jpeg'
+        : dropFileExtension === '.txt'
+          ? 'text/plain'
+          : 'application/octet-stream'
   const value = await request(session, session.token, '/command', 'POST', {
     action,
     selector,
     target: options.target,
-    value: options.value,
+    value: dropFilePath ? (await readFile(dropFilePath)).toString('base64') : options.value,
+    filename: dropFilePath ? basename(dropFilePath) : undefined,
+    mimeType: dropFilePath ? dropFileMimeType : undefined,
     key: options.key,
     text: options.text,
+    visible: options.visible === 'true',
+    stableMs: options.stable ? Number(options.stable) : undefined,
     timeoutMs: options.timeout ? Number(options.timeout) : undefined,
   })
   if (command === 'capture') {
@@ -372,7 +425,9 @@ async function main() {
   console.log(typeof value.value === 'string' ? value.value : JSON.stringify(value.value, null, 2))
 }
 
-main().catch(error => {
-  console.error(`ai:verify: ${error.message ?? error}`)
-  process.exitCode = 1
-})
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`ai:verify: ${error.message ?? error}`)
+    process.exitCode = 1
+  })
+}

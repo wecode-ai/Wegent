@@ -24,4 +24,11 @@ describe('browser URL helpers', () => {
       normalizeBrowserUrl('custom://localhost/extension-page.html', 'tauri://localhost/')
     ).toBe(null)
   })
+
+  test('allows local asset protocol URLs for browser previews', () => {
+    expect(normalizeBrowserUrl('asset://localhost/Users/me/workspace/chart.html')).toBe(
+      'asset://localhost/Users/me/workspace/chart.html'
+    )
+    expect(normalizeBrowserUrl('asset://other-host/Users/me/workspace/chart.html')).toBeNull()
+  })
 })

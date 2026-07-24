@@ -11,7 +11,66 @@ describe('localModelProviders', () => {
       requestPath: '/chat/completions',
       modelsPath: '/models',
       toolProfile: 'function',
-      contextWindow: 256_000,
+      contextWindow: 262_144,
+      modelDefaults: {
+        k3: {
+          contextWindow: 262_144,
+          codexCatalogModelId: 'wework-kimi-k3',
+        },
+        'kimi-for-coding': {
+          contextWindow: 262_144,
+          codexCatalogModelId: 'wework-kimi-k2-7',
+        },
+      },
+    })
+  })
+
+  it.each([
+    [
+      'kimi',
+      {
+        baseUrl: 'https://api.moonshot.cn/v1',
+        group: 'Kimi',
+        contextWindow: 1_000_000,
+        modelDefaults: {
+          'kimi-k3': { contextWindow: 1_000_000 },
+          'kimi-k2.6': { contextWindow: 262_144 },
+          'moonshot-v1-8k': { contextWindow: 8_192 },
+          'moonshot-v1-32k': { contextWindow: 32_768 },
+          'moonshot-v1-128k': { contextWindow: 131_072 },
+        },
+      },
+    ],
+    [
+      'deepseek',
+      {
+        baseUrl: 'https://api.deepseek.com',
+        group: 'DeepSeek',
+        contextWindow: 1_000_000,
+        modelDefaults: {
+          'deepseek-v4-flash': { contextWindow: 1_000_000 },
+          'deepseek-v4-pro': { contextWindow: 1_000_000 },
+        },
+      },
+    ],
+    [
+      'glm',
+      {
+        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        group: 'GLM',
+        contextWindow: 200_000,
+        modelDefaults: { 'glm-5.2': { contextWindow: 1_000_000 } },
+      },
+    ],
+  ] as const)('defines the %s official provider profile', (profileId, expected) => {
+    expect(findLocalModelProviderProfile(profileId)).toMatchObject({
+      ...expected,
+      apiFormat: 'openai-chat-completions',
+      requestPath: '/chat/completions',
+      modelsPath: '/models',
+      toolProfile: 'function',
+      webSearchMode: 'disabled',
+      imageGenerationEnabled: false,
     })
   })
 
@@ -19,7 +78,7 @@ describe('localModelProviders', () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
         JSON.stringify({
-          data: [{ id: 'kimi-k3' }, { id: '' }, { id: 'kimi-k2.5' }, { id: 'kimi-k3' }],
+          data: [{ id: 'k3' }, { id: '' }, { id: 'kimi-for-coding' }, { id: 'k3' }],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
@@ -39,8 +98,8 @@ describe('localModelProviders', () => {
       })
     )
     expect(models).toEqual([
-      { id: 'kimi-k2.5', displayName: 'kimi-k2.5' },
-      { id: 'kimi-k3', displayName: 'kimi-k3' },
+      { id: 'k3', displayName: 'k3' },
+      { id: 'kimi-for-coding', displayName: 'kimi-for-coding' },
     ])
   })
 

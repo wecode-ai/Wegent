@@ -13,14 +13,22 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | { action?: string; count?: number; device?: string }) => {
-      if (typeof options === 'string') return options
+    t: (
+      key: string,
+      options?: string | { action?: string; count?: number; device?: string; location?: string },
+      interpolation?: { model?: string }
+    ) => {
+      if (typeof options === 'string') {
+        return interpolation?.model ? options.replace('{{model}}', interpolation.model) : options
+      }
       if (key === 'workbench.code_comment_count') {
         return `${options?.count ?? 0} 个评论`
       }
       if (key === 'workbench.project_work_trigger_device_aria') {
         return `${options?.action ?? ''}，当前设备 ${options?.device ?? ''}`
       }
+      if (key === 'workbench.environment_cloud_device') return '云设备'
+      if (key === 'workbench.environment_local') return '本机'
       if (key === 'workbench.remove_code_comments') {
         return '移除代码评论'
       }
@@ -419,6 +427,61 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
   })
 
+  test('distinguishes the active model from the next-turn model while streaming', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'local-model:second',
+      type: 'runtime',
+      displayName: 'Second Model',
+      isActive: true,
+    }
+
+    const projectChat = projectChatControls({
+      models: [activeModel, selectedModel],
+      activeModel,
+      selectedModel,
+    })
+    const { rerender } = render(
+      <ChatInput
+        value="换模型继续"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+        projectChat={projectChat}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Next · Second Model')
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+    expect(screen.getByTestId('guide-current-turn-option')).toHaveTextContent(
+      'Guide current response · First Model'
+    )
+    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent(
+      'Interrupt and use Second Model'
+    )
+
+    rerender(
+      <ChatInput
+        value="换模型继续"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming={false}
+        projectChat={projectChat}
+      />
+    )
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Second Model')
+    expect(screen.getByTestId('model-selector-button')).not.toHaveTextContent('Next')
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {
@@ -476,6 +539,46 @@ describe('ChatInput', () => {
     expect(onInterruptAndSendQueuedMessage).toHaveBeenNthCalledWith(2, 'queued-1')
     expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
+  })
+
+  test('restores queued message text into the composer when editing', async () => {
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queuedMessages, setQueuedMessages] = useState<QueuedWorkbenchMessage[]>([
+        {
+          id: 'queued-1',
+          content: '先检查引导条里的文本',
+          status: 'queued',
+          createdAt: '2026-05-25T15:08:00.000+08:00',
+        },
+      ])
+
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          queuedMessages={queuedMessages}
+          onEditQueuedMessage={id => {
+            const message = queuedMessages.find(item => item.id === id)
+            if (!message) return
+            setValue(message.content)
+            setQueuedMessages(current => current.filter(item => item.id !== id))
+          }}
+        />
+      )
+    }
+
+    render(<Harness />)
+
+    await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-message-input')).toHaveTextContent('先检查引导条里的文本')
+    )
   })
 
   test('shows lightweight interrupt action while guidance is sending', async () => {
@@ -2269,7 +2372,7 @@ describe('ChatInput', () => {
     expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
   })
 
-  test('flattens model families while keeping controls from the selected GPT model', async () => {
+  test('lists models by family in the second-level menu while keeping selected controls', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',

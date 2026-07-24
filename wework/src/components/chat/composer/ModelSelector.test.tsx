@@ -82,6 +82,17 @@ const SAMPLE_MODEL: UnifiedModel = {
   },
 }
 
+const SECOND_FAMILY_MODEL: UnifiedModel = {
+  name: 'claude-sonnet',
+  modelId: 'claude-sonnet',
+  displayName: 'Claude Sonnet',
+  type: 'runtime',
+  provider: 'local',
+  config: {
+    ui: { family: 'claude' },
+  },
+}
+
 describe('ModelSelector desktop layout', () => {
   const originalInnerWidth = window.innerWidth
   const originalInnerHeight = window.innerHeight
@@ -114,6 +125,21 @@ describe('ModelSelector desktop layout', () => {
     })
   })
 
+  test('keeps the hidden width measurement inside the toolbar bounds', () => {
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL]}
+        selectedModel={SAMPLE_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-width-measure')).toHaveClass('left-0', 'top-0')
+  })
+
   test('positions the menu to the left of the right workspace panel shell', async () => {
     createShellElement()
 
@@ -137,6 +163,52 @@ describe('ModelSelector desktop layout', () => {
     expect(wrapper).not.toBeNull()
     const left = parseInt(wrapper!.style.left, 10)
     expect(left).toBeLessThanOrEqual(SHELL_LEFT - 16)
+  })
+
+  test('expands model options directly when there is only one family', async () => {
+    createShellElement({ hidden: true })
+
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL]}
+        selectedModel={SAMPLE_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+
+    expect(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-family-submenu')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-family-codex-official')).not.toBeInTheDocument()
+  })
+
+  test('shows models from every family in the second-level menu', async () => {
+    createShellElement({ hidden: true })
+
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL, SECOND_FAMILY_MODEL]}
+        selectedModel={SAMPLE_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+
+    const submenu = await screen.findByTestId('model-selector-submenu')
+    expect(submenu).toHaveTextContent('我的CodeX')
+    expect(submenu).toHaveTextContent('Claude')
+    expect(screen.getByTestId(`model-option-${SECOND_FAMILY_MODEL.name}`)).toBeInTheDocument()
+    expect(screen.getByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
   })
 
   test('caps the trigger width when maxClosedWidth is provided', () => {

@@ -62,6 +62,7 @@ interface CompactChatComposerProps {
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
   onSelectModel?: (model: UnifiedModel | null) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
@@ -98,6 +99,7 @@ export function CompactChatComposer({
   onListLocalApps,
   models = [],
   selectedModel,
+  activeModel,
   selectedModelOptions = {},
   onSelectModel,
   onBlockedModelSelect,
@@ -113,6 +115,15 @@ export function CompactChatComposer({
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
+  const modelChangePending = Boolean(
+    activeModel &&
+    (!selectedModel ||
+      activeModel.name !== selectedModel.name ||
+      activeModel.type !== selectedModel.type)
+  )
+  const activeModelLabel = activeModel?.displayName || activeModel?.name
+  const selectedModelLabel =
+    selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
     !disabled &&
@@ -325,13 +336,27 @@ export function CompactChatComposer({
                     onSelect: () => onSubmit(value),
                   },
                   {
-                    label: t('workbench.guide_current_turn', '引导当前回复'),
+                    label:
+                      modelChangePending && activeModelLabel
+                        ? t(
+                            'workbench.guide_current_turn_with_model',
+                            'Guide current response · {{model}}',
+                            { model: activeModelLabel }
+                          )
+                        : t('workbench.guide_current_turn', '引导当前回复'),
                     icon: CornerDownRight,
                     testId: 'guide-current-turn-option',
                     onSelect: () => onSubmit(value, { guideWhenBusy: true }),
                   },
                   {
-                    label: t('workbench.interrupt_and_send', '打断并立即发送'),
+                    label:
+                      modelChangePending && selectedModelLabel
+                        ? t(
+                            'workbench.interrupt_and_send_with_model',
+                            'Interrupt and use {{model}}',
+                            { model: selectedModelLabel }
+                          )
+                        : t('workbench.interrupt_and_send', '打断并立即发送'),
                     icon: Zap,
                     testId: 'interrupt-and-send-option',
                     onSelect: () => onSubmit(value, { interruptWhenBusy: true }),

@@ -8,13 +8,21 @@ import {
   classifyMarkdownLink,
   getAuthenticatedImageFetchUrl,
   isAuthenticatedAttachmentImageSrc,
+  isHtmlFilePath,
+  localHtmlBrowserUrl,
   resolveDirectMarkdownImageSrc,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
+import { splitStaticMarkdownChunks } from './assistantMarkdownWindowing'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
+import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import type { TurnFileChangesSummary } from '@/types/api'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -28,20 +36,37 @@ const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
-
+const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
+  variant?: 'default' | 'process'
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  fileChanges?: TurnFileChangesSummary
 }
+
+type AssistantMarkdownPart =
+  | { kind: 'markdown'; content: string; windowed: boolean }
+  | { kind: 'visualization'; file: string }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
   isStreaming = false,
+  variant = 'default',
   onOpenFile,
+  fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
-  const displayContent = prepareAssistantMarkdownContent(bufferedContent)
+  const windowMarkdown = isTauriRuntime() && variant === 'default'
+  const contentParts = useMemo(() => {
+    const parts = splitCodexInlineVisualizations(bufferedContent)
+    return parts.flatMap<AssistantMarkdownPart>(part => {
+      if (part.kind === 'visualization') return [part]
+      const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
+      const windowed = chunks.length > 1
+      return chunks.map(content => ({ kind: 'markdown', content, windowed }))
+    })
+  }, [bufferedContent, windowMarkdown])
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
@@ -58,45 +83,84 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   const components = useMemo(
     () => ({
       h1: ({ children }: { children?: ReactNode }) => (
-        <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold text-text-primary">
+        <h1
+          data-scroll-anchor
+          className={
+            variant === 'process'
+              ? 'mb-2 mt-3 text-base font-semibold text-text-primary'
+              : 'mb-4 mt-6 text-lg font-semibold text-text-primary'
+          }
+        >
           {children}
         </h1>
       ),
       h2: ({ children }: { children?: ReactNode }) => (
-        <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold text-text-primary">
+        <h2
+          data-scroll-anchor
+          className={
+            variant === 'process'
+              ? 'mb-1.5 mt-3 text-sm font-semibold text-text-primary'
+              : 'mb-3 mt-5 text-base font-semibold text-text-primary'
+          }
+        >
           {children}
         </h2>
       ),
       h3: ({ children }: { children?: ReactNode }) => (
-        <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-primary">
+        <h3
+          data-scroll-anchor
+          className={
+            variant === 'process'
+              ? 'mb-1 mt-2 text-sm font-semibold text-text-primary'
+              : 'mb-2 mt-4 text-sm font-semibold text-text-primary'
+          }
+        >
           {children}
         </h3>
       ),
       p: ({ children }: { children?: ReactNode }) => (
-        <p data-scroll-anchor className="mb-3 min-w-0 break-words leading-6">
+        <p
+          data-scroll-anchor
+          className={`${variant === 'process' ? 'mb-1.5' : 'mb-3'} min-w-0 break-words leading-6`}
+        >
           {children}
         </p>
       ),
       ul: ({ children }: { children?: ReactNode }) => (
-        <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>
+        <ul
+          className={`${variant === 'process' ? 'mb-1.5 space-y-0.5' : 'mb-3 space-y-1.5'} list-disc pl-5`}
+        >
+          {children}
+        </ul>
       ),
       ol: ({ children }: { children?: ReactNode }) => (
-        <ol className="mb-3 list-decimal space-y-1.5 pl-8">{children}</ol>
+        <ol
+          className={`${variant === 'process' ? 'mb-1.5 space-y-0.5 pl-5' : 'mb-3 space-y-1.5 pl-8'} list-decimal`}
+        >
+          {children}
+        </ol>
       ),
       li: ({ children }: { children?: ReactNode }) => (
-        <li data-scroll-anchor className="min-w-0 break-words pl-1 leading-6">
+        <li
+          data-scroll-anchor
+          className={`min-w-0 break-words leading-6 ${variant === 'process' ? '' : 'pl-1'}`}
+        >
           {children}
         </li>
       ),
       strong: ({ children }: { children?: ReactNode }) => (
         <strong className="font-semibold">{children}</strong>
       ),
-      code: MarkdownCode,
-      inlineCode: MarkdownInlineCode,
+      code: (props: MarkdownCodeProps) => (
+        <MarkdownCode {...props} compact={variant === 'process'} />
+      ),
+      inlineCode: ({ children }: { children?: ReactNode }) => (
+        <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
+      ),
       blockquote: ({ children }: { children?: ReactNode }) => (
         <blockquote
           data-scroll-anchor
-          className="mb-3 border-l-3 border-border pl-4 text-text-secondary"
+          className={`${variant === 'process' ? 'mb-1.5 pl-3 opacity-80' : 'mb-3 pl-4'} border-l-3 border-border text-text-secondary`}
         >
           {children}
         </blockquote>
@@ -121,34 +185,119 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [openFile]
+    [openFile, variant]
   )
 
   return (
-    <div className="assistant-markdown min-w-0 max-w-full break-words">
-      <Streamdown
-        mode={isStreaming ? 'streaming' : 'static'}
-        isAnimating={isStreaming}
-        controls={false}
-        linkSafety={{ enabled: false }}
-        lineNumbers={false}
-        urlTransform={url => url}
-        components={components}
-      >
-        {displayContent}
-      </Streamdown>
+    <div
+      className={`${variant === 'process' ? 'thinking-markdown text-text-secondary' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
+    >
+      {contentParts.map((part, index) =>
+        part.kind === 'visualization' ? (
+          <CodexInlineVisualizationHost
+            key={`${part.file}-${index}`}
+            file={part.file}
+            fileChanges={fileChanges}
+          />
+        ) : part.windowed ? (
+          <WindowedMarkdownChunk
+            key={`markdown-${index}`}
+            content={part.content}
+            eager={index === 0 || index === contentParts.length - 1}
+          >
+            <Streamdown
+              mode={isStreaming && index === contentParts.length - 1 ? 'streaming' : 'static'}
+              isAnimating={isStreaming && index === contentParts.length - 1}
+              controls={false}
+              linkSafety={{ enabled: false }}
+              lineNumbers={false}
+              urlTransform={url => url}
+              components={components}
+            >
+              {prepareAssistantMarkdownContent(part.content)}
+            </Streamdown>
+          </WindowedMarkdownChunk>
+        ) : (
+          <Streamdown
+            key={`markdown-${index}`}
+            mode={isStreaming ? 'streaming' : 'static'}
+            isAnimating={isStreaming}
+            controls={false}
+            linkSafety={{ enabled: false }}
+            lineNumbers={false}
+            urlTransform={url => url}
+            components={components}
+          >
+            {prepareAssistantMarkdownContent(part.content)}
+          </Streamdown>
+        )
+      )}
     </div>
   )
 }, areAssistantMarkdownPropsEqual)
 
-function MarkdownCode({
-  className,
+function WindowedMarkdownChunk({
+  content,
+  eager,
   children,
-  node,
-  ...props
 }: {
+  content: string
+  eager: boolean
+  children: ReactNode
+}) {
+  const chunkRef = useRef<HTMLDivElement>(null)
+  const [nearViewport, setNearViewport] = useState(
+    () => typeof IntersectionObserver === 'undefined' || eager
+  )
+  const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return
+    const chunk = chunkRef.current
+    if (!chunk) return
+
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[0]
+        if (!entry) return
+        if (!entry.isIntersecting) {
+          const height = chunk.getBoundingClientRect().height
+          if (height > 0) setRetainedHeight(height)
+        }
+        setNearViewport(entry.isIntersecting)
+      },
+      { rootMargin: MARKDOWN_WINDOW_ROOT_MARGIN }
+    )
+    observer.observe(chunk)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={chunkRef}
+      data-markdown-window-chunk
+      style={
+        nearViewport
+          ? undefined
+          : { minHeight: retainedHeight ?? estimateMarkdownChunkHeight(content) }
+      }
+    >
+      {nearViewport ? children : null}
+    </div>
+  )
+}
+
+function estimateMarkdownChunkHeight(content: string): number {
+  const lineCount = content.split('\n').length
+  return Math.max(120, Math.min(1_200, lineCount * 24))
+}
+
+type MarkdownCodeProps = {
   node?: HastElement
-} & HTMLAttributes<HTMLElement>) {
+  compact?: boolean
+} & HTMLAttributes<HTMLElement>
+
+function MarkdownCode({ className, children, node, compact = false, ...props }: MarkdownCodeProps) {
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
   const isBlock =
@@ -158,14 +307,26 @@ function MarkdownCode({
     text.includes('\n')
   if (isBlock) {
     const lang = match ? match[1] || '' : ''
-    return <MarkdownCodeBlock lang={lang}>{text || children}</MarkdownCodeBlock>
+    return (
+      <MarkdownCodeBlock lang={lang} compact={compact}>
+        {text || children}
+      </MarkdownCodeBlock>
+    )
   }
-  return <MarkdownInlineCode>{children}</MarkdownInlineCode>
+  return <MarkdownInlineCode compact={compact}>{children}</MarkdownInlineCode>
 }
 
-function MarkdownInlineCode({ children }: { children?: ReactNode }) {
+function MarkdownInlineCode({
+  children,
+  compact = false,
+}: {
+  children?: ReactNode
+  compact?: boolean
+}) {
   return (
-    <code className="break-words rounded bg-muted px-1.5 py-0.5 text-code font-medium text-text-primary">
+    <code
+      className={`break-words rounded bg-muted px-1.5 py-0.5 font-medium text-text-primary ${compact ? 'text-xs' : 'text-code'}`}
+    >
       {children}
     </code>
   )
@@ -175,7 +336,12 @@ function areAssistantMarkdownPropsEqual(
   previous: AssistantMarkdownProps,
   next: AssistantMarkdownProps
 ): boolean {
-  return previous.content === next.content && previous.isStreaming === next.isStreaming
+  return (
+    previous.content === next.content &&
+    previous.isStreaming === next.isStreaming &&
+    previous.fileChanges === next.fileChanges &&
+    previous.variant === next.variant
+  )
 }
 
 function prepareAssistantMarkdownContent(content: string): string {
@@ -304,6 +470,10 @@ function AssistantMarkdownLink({
         className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
         data-testid="assistant-markdown-link"
         onClick={() => {
+          if (isHtmlFilePath(filePath)) {
+            const browserUrl = localHtmlBrowserUrl(filePath)
+            if (browserUrl && requestEmbeddedBrowserOpen(browserUrl)) return
+          }
           if (openOptions) {
             onOpenFile?.(filePath, openOptions)
             return

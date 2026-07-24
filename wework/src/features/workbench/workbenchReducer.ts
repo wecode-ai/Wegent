@@ -618,7 +618,8 @@ function updateRuntimeTaskRunning(
 
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  taskId: string
+  taskId: string,
+  deviceId?: string
 ): RuntimeTaskAddress | null {
   if (!runtimeWork) return null
 
@@ -629,6 +630,7 @@ function findRuntimeTaskAddressByTaskId(
   ]
 
   for (const workspace of workspaces) {
+    if (deviceId && workspace.deviceId !== deviceId) continue
     const task = workspace.tasks.find(task => task.taskId === taskId)
     if (!task) continue
 
@@ -637,6 +639,7 @@ function findRuntimeTaskAddressByTaskId(
       taskId,
       workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
       ...(task.taskId ? { taskId: task.taskId } : {}),
+      ...(task.threadId ? { threadId: task.threadId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
     }
     if (match && match.deviceId !== address.deviceId) {
@@ -654,10 +657,25 @@ function reconcileCurrentRuntimeTaskAddress(
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): RuntimeTaskAddress | null {
   if (!currentRuntimeTask) return null
+  const hydratedCurrentDeviceTask = findRuntimeTaskAddressByTaskId(
+    runtimeWork,
+    currentRuntimeTask.taskId,
+    currentRuntimeTask.deviceId
+  )
+  if (hydratedCurrentDeviceTask) {
+    return {
+      ...currentRuntimeTask,
+      ...(hydratedCurrentDeviceTask.threadId
+        ? { threadId: hydratedCurrentDeviceTask.threadId }
+        : {}),
+      ...(hydratedCurrentDeviceTask.runtimeHandle
+        ? { runtimeHandle: hydratedCurrentDeviceTask.runtimeHandle }
+        : {}),
+    }
+  }
   if (devices.some(device => device.device_id === currentRuntimeTask.deviceId)) {
     return currentRuntimeTask
   }
-
   return (
     findRuntimeTaskAddressByTaskId(runtimeWork, currentRuntimeTask.taskId) ?? currentRuntimeTask
   )

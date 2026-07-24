@@ -1,10 +1,5 @@
 #[tauri::command]
 pub async fn capture_main_webview(app: tauri::AppHandle) -> Result<String, String> {
-    if std::env::var("VITE_WEWORK_E2E").as_deref() != Ok("true") {
-        return Err(
-            "Main webview snapshots are only available during E2E verification".to_string(),
-        );
-    }
     capture_main_webview_impl(app).await
 }
 

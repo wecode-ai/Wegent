@@ -4,6 +4,7 @@ import {
   MAX_RUNTIME_TASK_TITLE_LENGTH,
   projectTaskAddresses,
   readLastProjectId,
+  removeRuntimeTasks,
   truncateRuntimeTaskTitle,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -63,6 +64,7 @@ describe('workbenchRuntimeHelpers', () => {
               tasks: [
                 {
                   taskId: 'local-visible-task',
+                  threadId: 'direct-thread-id',
                   workspacePath: '/workspace/project-alpha',
                   title: 'Fix guidance',
                   runtime: 'codex',
@@ -84,11 +86,44 @@ describe('workbenchRuntimeHelpers', () => {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
         taskId: 'local-visible-task',
+        threadId: 'direct-thread-id',
         runtimeHandle: {
           threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
         },
       },
     ])
+  })
+
+  test('removes an archived device task even when its workspace path was normalized', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'device-1',
+          workspacePath: '/home/user/Documents/Codex/task',
+          available: true,
+          tasks: [
+            {
+              taskId: 'standalone-chat',
+              workspacePath: '/home/user/Documents/Codex/task',
+              title: 'Standalone chat',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+
+    expect(
+      removeRuntimeTasks(runtimeWork, [
+        {
+          deviceId: 'device-1',
+          taskId: 'standalone-chat',
+          workspacePath: '/workspace/repository',
+        },
+      ]).totalTasks
+    ).toBe(0)
   })
 
   test('stores the last project per user and ignores invalid values', () => {

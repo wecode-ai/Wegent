@@ -18,6 +18,8 @@ import {
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
   LocalDeviceSkill,
@@ -65,6 +67,7 @@ import {
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
 import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
+import { applyRuntimeConversationAction } from './runtimeConversationCache'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -169,6 +172,7 @@ export function WorkbenchProvider({
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
+        user: cloudConnection.user ?? user,
       }),
     [
       cloudConnection.apiBaseUrl,
@@ -177,7 +181,9 @@ export function WorkbenchProvider({
       cloudConnection.socketBaseUrl,
       cloudConnection.socketPath,
       cloudConnection.token,
+      cloudConnection.user,
       services,
+      user,
     ]
   )
   const executorClient = useMemo(() => {
@@ -204,16 +210,7 @@ export function WorkbenchProvider({
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
-  const currentRuntimeTaskRunning = useMemo(
-    () =>
-      authoritativeRuntimeTaskRunning ||
-      (state.currentRuntimeTask !== null &&
-        state.activeRuntimeTasks.some(
-          address =>
-            getRuntimeTaskRouteKey(address) === getRuntimeTaskRouteKey(state.currentRuntimeTask!)
-        )),
-    [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
-  )
+  const currentRuntimeTaskRunning = authoritativeRuntimeTaskRunning
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
     runtimeWork: state.runtimeWork,
@@ -434,6 +431,10 @@ export function WorkbenchProvider({
     onSelectionChange: persistNewChatModelSelection,
     onSelectionBlocked: handleBlockedModelSelection,
   })
+  const activeModel = useMemo(
+    () => findModelForSelection(modelSelection.models, modelSelectionConfig),
+    [modelSelection.models, modelSelectionConfig]
+  )
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
     teamId: state.defaultTeam?.id,
@@ -925,7 +926,6 @@ export function WorkbenchProvider({
         type: 'project_workspace_selected',
         project,
         deviceWorkspaceId,
-        startFreshChat: true,
       })
       navigateTo('/')
       requestNewChatComposerFocus()
@@ -1124,6 +1124,34 @@ export function WorkbenchProvider({
         },
       })
   )
+
+  const nextBackgroundRunningTasks = getBackgroundRunningRuntimeTasks(
+    state.runtimeWork,
+    state.currentRuntimeTask
+  )
+  const backgroundRunningTaskRoutes = nextBackgroundRunningTasks
+    .map(address => `${address.deviceId}:${address.taskId}`)
+    .join('|')
+  const getLatestBackgroundRunningTasks = useStableEvent(() =>
+    getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask)
+  )
+  const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
+  useEffect(() => {
+    const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
+      subscribeBackgroundRuntimeTaskStream(address, {
+        onMessageAction: action => applyRuntimeConversationAction(address, action),
+        onAssistantStart: () => markRuntimeTaskStarted(address),
+        onAssistantSettled: () => markRuntimeTaskSettled(address),
+      })
+    )
+    return () => unsubscribers.forEach(unsubscribe => unsubscribe())
+  }, [
+    backgroundRunningTaskRoutes,
+    getLatestBackgroundRunningTasks,
+    markRuntimeTaskSettled,
+    markRuntimeTaskStarted,
+    subscribeBackgroundRuntimeTaskStream,
+  ])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
@@ -1207,23 +1235,64 @@ export function WorkbenchProvider({
     } catch (error) {
       console.warn('[Wework] Failed to load local Codex apps; continuing with skills only.', error)
     }
+    if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
+      try {
+        const installedConnectors = await listWegentInstalledConnectorApps(
+          cloudConnection.apiBaseUrl,
+          cloudConnection.token
+        )
+        const connectedApps = installedConnectors.apps.filter(app => app.enabled && app.callable)
+        const synced = await requestLocalExecutor<{
+          apps: Array<{ slug: string; skillPath: string }>
+        }>('runtime.connectors.apps.sync', {
+          apps: connectedApps.map(app => ({
+            slug: app.slug,
+            name: app.runtime_name ?? app.slug,
+            description: app.description ?? '',
+            tools: app.tool_summaries ?? [],
+          })),
+        })
+        const skillPathBySlug = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
+        apps.push(
+          ...connectedApps.map(app => ({
+            id: `wegent:${app.slug}`,
+            name: app.runtime_name ?? app.slug,
+            description: app.description ?? '',
+            logoUrl: app.icon_url ?? null,
+            isAccessible: true,
+            isEnabled: true,
+            pluginDisplayNames: ['Wegent Cloud'],
+            source: 'wegent-connector',
+            skillPath: skillPathBySlug.get(app.slug) ?? null,
+          }))
+        )
+      } catch (error) {
+        console.warn('[Wework] Failed to load Wegent connector apps.', error)
+      }
+    }
     localAppsCacheRef.current = {
       expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
       apps,
     }
     return apps
-  }, [localPluginApi])
+  }, [
+    cloudConnection.apiBaseUrl,
+    cloudConnection.isConnected,
+    cloudConnection.token,
+    localPluginApi,
+  ])
 
   useEffect(() => {
     const clearLocalSkillCache = () => {
       localSkillsCacheRef.current.clear()
       localAppsCacheRef.current = null
     }
+    clearLocalSkillCache()
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     return () => {
       window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     }
-  }, [])
+  }, [cloudConnection.apiBaseUrl, cloudConnection.isConnected, cloudConnection.token])
 
   const workspaceFileApi = useMemo(
     () => ({
@@ -1263,9 +1332,11 @@ export function WorkbenchProvider({
   )
   const projectChatValue = useMemo(
     () => ({
+      scopeKey: projectChatScopeKey,
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
+      activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
@@ -1302,6 +1373,7 @@ export function WorkbenchProvider({
       attachmentSelection.removeAttachment,
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
+      projectChatScopeKey,
       draftInput,
       trialTemplates,
       handleBlockedModelSelect,
@@ -1311,6 +1383,7 @@ export function WorkbenchProvider({
       listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
+      activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.setSelectedModel,
@@ -1327,9 +1400,11 @@ export function WorkbenchProvider({
   )
   const paneProjectChatValue = useMemo(
     () => ({
+      scopeKey: projectChatScopeKey,
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
+      activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
@@ -1366,6 +1441,7 @@ export function WorkbenchProvider({
       attachmentSelection.removeAttachment,
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
+      projectChatScopeKey,
       draftInput,
       trialTemplates,
       handleBlockedModelSelect,
@@ -1374,6 +1450,7 @@ export function WorkbenchProvider({
       listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
+      activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.setSelectedModel,
@@ -1657,6 +1734,7 @@ export function WorkbenchProvider({
       <WorkbenchPaneContext.Provider value={paneValue}>
         <RuntimeTaskCloseGuard runtimeWork={state.runtimeWork} />
         <LocalExecutorCloudBridge
+          apiBaseUrl={cloudConnection.apiBaseUrl}
           backendUrl={cloudConnection.backendUrl}
           isConnected={cloudConnection.isConnected}
           token={cloudConnection.token}
@@ -1678,4 +1756,37 @@ function getProjectChatScopeKey({
     return getRuntimeTaskChatScopeKey(currentRuntimeTask)
   }
   return `blank:${standaloneChatKey}`
+}
+
+function getBackgroundRunningRuntimeTasks(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  currentRuntimeTask: RuntimeTaskAddress | null
+): RuntimeTaskAddress[] {
+  if (!runtimeWork) return []
+
+  const tasks = new Map<string, RuntimeTaskAddress>()
+  const workspaces = [
+    ...runtimeWork.chats,
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+  ]
+  for (const workspace of workspaces) {
+    for (const task of workspace.tasks) {
+      if (task.running !== true) continue
+      if (
+        currentRuntimeTask?.deviceId === workspace.deviceId &&
+        currentRuntimeTask.taskId === task.taskId
+      ) {
+        continue
+      }
+      const address = {
+        deviceId: workspace.deviceId,
+        taskId: task.taskId,
+        threadId: task.threadId,
+        workspacePath: workspace.workspacePath,
+        runtimeHandle: task.runtimeHandle,
+      }
+      tasks.set(`${address.deviceId}:${address.taskId}`, address)
+    }
+  }
+  return [...tasks.values()]
 }
