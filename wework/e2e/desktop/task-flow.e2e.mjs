@@ -46,6 +46,8 @@ const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 10
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
+const RETRY_FAILURE_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'
+const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context window."
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
 const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
@@ -144,6 +146,7 @@ const MACOS_LAUNCH_SERVICES_REGISTER =
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
+const RETRY_ONLY = process.argv.includes('--retry-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -946,6 +949,16 @@ async function waitForPersistedComposerInput(control, expected, message) {
   while (Date.now() - startedAt < UI_TIMEOUT_MS) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     if (snapshot.workbench?.composer?.currentInputLength === expected.length) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForWorkbenchTask(control, taskId, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if (snapshot.workbench?.currentRuntimeTask?.taskId === taskId) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
@@ -3406,7 +3419,7 @@ class DesktopE2EServer {
       if (retryRequests.length === 1) {
         this.writeSse(response, [
           responseCreated(responseId),
-          responseFailed(responseId, 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'),
+          responseFailed(responseId, RETRY_FAILURE_TEXT),
         ])
         return
       }
@@ -4392,6 +4405,84 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
 }
 
+async function verifyRetryFailureRestoration(control, composerSelector) {
+  control.setScenario('retry')
+  await sendPromptUntilScenarioRequest(control, composerSelector, RETRY_PROMPT, 'retry')
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
+    {
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  const retryDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const retryTaskId = retryDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(retryTaskId, 'The failed retry task did not expose its runtime task ID')
+  const retryTaskRowTestId = `runtime-local-task-row-${retryTaskId}`
+  await control.command('waitFor', `[data-testid="${retryTaskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="${retryTaskRowTestId}"]`)
+  await waitForWorkbenchTask(
+    control,
+    retryTaskId,
+    'The failed retry task did not become active again'
+  )
+  await control.command(
+    'clickIfPresent',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
+    {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-details-toggle"]`
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
+    {
+      text: RETRY_CODEX_ERROR_TEXT,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'retry-01-failure-restored-after-switch.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-retry"]`
+  )
+  await waitForScenarioRequestCount(control, 'retry', 2)
+  control.releaseRetryResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: RETRY_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  assert.equal(
+    control.scenarioRequests.get('retry')?.length,
+    2,
+    'Retry did not issue exactly one additional request for the failed user message'
+  )
+}
+
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
@@ -4566,6 +4657,18 @@ async function main() {
     )
     await captureVerificationScreenshot(control, '00-canonical-model-catalog.png')
     await control.command('press', 'body', { key: 'Escape' })
+
+    if (RETRY_ONLY) {
+      phase = 'retry-failure-restoration'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyRetryFailureRestoration(control, ACTIVE_COMPOSER_SELECTOR)
+      console.log(`Wework desktop retry-restoration E2E passed. Evidence: ${resultDir}`)
+      return
+    }
 
     if (SHORT_CONVERSATION_ONLY) {
       phase = 'short-conversation-layout'
@@ -5308,38 +5411,7 @@ async function main() {
     )
 
     phase = 'retry'
-    control.setScenario('retry')
-    await sendPromptUntilScenarioRequest(control, composerSelector, RETRY_PROMPT, 'retry')
-    await control.command(
-      'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
-      {
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
-    await control.command(
-      'clickWhenEnabled',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-retry"]`,
-      {
-        stableMs: COMPOSER_READY_STABILITY_MS,
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
-    await waitForScenarioRequestCount(control, 'retry', 2)
-    control.releaseRetryResponse()
-    await control.command(
-      'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-      {
-        text: RETRY_COMPLETION_TEXT,
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
-    assert.equal(
-      control.scenarioRequests.get('retry')?.length,
-      2,
-      'Retry did not issue exactly one additional request for the failed user message'
-    )
+    await verifyRetryFailureRestoration(control, composerSelector)
 
     phase = 'reconnect'
     await verifyReconnectRecovery({ composerSelector, control })

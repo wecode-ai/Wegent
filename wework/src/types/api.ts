@@ -291,6 +291,9 @@ export interface NormalizedRuntimeMessage {
   turnId?: string | null
   turn_id?: string | null
   status?: string | null
+  error?: string | null
+  errorType?: string | null
+  error_type?: string | null
   createdAt?: string | null
   completedAt?: string | number | null
   completed_at?: string | number | null

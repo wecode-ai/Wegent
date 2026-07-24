@@ -484,6 +484,8 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     runtimeMessageIndex,
     status,
     runtimeStatus,
+    error: message.error ?? undefined,
+    errorType: message.errorType ?? message.error_type ?? undefined,
     source,
     attachments: message.attachments,
     runtimeGoalRequest: normalizeRuntimeGoalRequest(message),

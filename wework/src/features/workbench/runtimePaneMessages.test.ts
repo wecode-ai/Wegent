@@ -20,6 +20,26 @@ describe('runtime transcript status', () => {
 
     expect(message.status).toBe('done')
   })
+
+  test('restores Codex failure details from the runtime transcript', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-failed',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'The upstream response ended before a terminal event.',
+        errorType: 'response.failed',
+      },
+    ])
+
+    expect(message).toMatchObject({
+      status: 'failed',
+      error: 'The upstream response ended before a terminal event.',
+      errorType: 'response.failed',
+    })
+  })
 })
 
 describe('createRuntimeTaskStreamHandlers', () => {
