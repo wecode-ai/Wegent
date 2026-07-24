@@ -3363,10 +3363,24 @@ class DesktopE2EServer {
       `${model.protocol} did not receive a shell tool: ${names.join(', ')}`
     )
     if (model.protocol === 'responses') {
-      assert.equal(tool.type, 'custom', 'Responses apply_patch was not a custom tool')
-      assert.equal(tool.format?.type, 'grammar', 'Responses apply_patch grammar was missing')
-      assert.equal(tool.format?.syntax, 'lark', 'Responses apply_patch grammar was not Lark')
-      assert.ok(tool.format?.definition, 'Responses apply_patch grammar definition was empty')
+      assert.equal(tool.type, 'function', 'Responses apply_patch was not converted to function')
+      const description = tool.description ?? ''
+      this.assertApplyPatchOutputContract(model, description)
+      assert.deepEqual(
+        tool.parameters,
+        {
+          type: 'object',
+          properties: {
+            input: {
+              type: 'string',
+              description: CUSTOM_TOOL_INPUT_DESCRIPTION,
+            },
+          },
+          required: ['input'],
+          additionalProperties: false,
+        },
+        'Responses apply_patch wrapper schema was not preserved'
+      )
       return
     }
     if (model.protocol === 'chat') {
@@ -3438,7 +3452,7 @@ class DesktopE2EServer {
   assertLocalToolOutput(model, body) {
     const patch = localProtocolPatch(model)
     if (model.protocol === 'responses') {
-      const output = body.input?.find(item => item?.type === 'custom_tool_call_output')
+      const output = body.input?.find(item => item?.type === 'function_call_output')
       assert.equal(
         output?.call_id,
         'local-responses-tool',
@@ -3478,7 +3492,7 @@ class DesktopE2EServer {
       const id = `local-${model.protocol}-tool`
       this.writeSse(response, [
         responseCreated(id),
-        customToolCall(id, 'apply_patch', patch),
+        ...functionCall(id, 'apply_patch', { input: patch }),
         responseCompleted(id),
       ])
       return
