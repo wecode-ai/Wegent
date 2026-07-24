@@ -378,7 +378,22 @@ export function findProjectMetadataDeviceWorkspace(
   if (deviceWorkspaceId) {
     return workspaces.find(workspace => workspace.id === deviceWorkspaceId) ?? null
   }
-  return workspaces.length === 1 ? workspaces[0] : null
+  if (workspaces.length === 1) return workspaces[0]
+
+  const projectWork = runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectId
+  )
+  if (projectWork?.project.source !== 'local_project') return null
+
+  const primaryRoot = projectWork.project.roots?.[0]?.path
+  if (primaryRoot) {
+    const normalizedPrimaryRoot = normalizeRuntimeWorkspacePath(primaryRoot)
+    const primaryWorkspace = workspaces.find(
+      workspace => normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedPrimaryRoot
+    )
+    if (primaryWorkspace) return primaryWorkspace
+  }
+  return workspaces[0] ?? null
 }
 
 const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g

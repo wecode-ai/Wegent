@@ -480,6 +480,7 @@ export function WorkbenchProvider({
   const {
     cloudWorkStatus,
     markRuntimeTasksArchived,
+    markRuntimeProjectRemoved,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,
@@ -1057,6 +1058,7 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     refreshWorkLists,
+    markRuntimeProjectRemoved,
     rememberExecutionDevice,
   })
   const runtimeMessaging = useWorkbenchRuntimeMessaging({

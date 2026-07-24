@@ -4953,6 +4953,104 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.projectApi.deleteProject).not.toHaveBeenCalled()
   })
 
+  test('removes a multi-root local runtime project through its primary root', async () => {
+    const multiRootRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: 'product',
+            name: 'Product',
+            source: 'local_project',
+            roots: [
+              { kind: 'local', path: '/workspace/web' },
+              { kind: 'local', path: '/workspace/api' },
+            ],
+          },
+          deviceWorkspaces: [
+            {
+              id: 11,
+              deviceId: 'device-1',
+              workspacePath: '/workspace/web',
+              available: true,
+              tasks: [],
+            },
+            {
+              id: 12,
+              deviceId: 'device-1',
+              workspacePath: '/workspace/api',
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(multiRootRuntimeWork)
+        .mockResolvedValue(createRuntimeWork({ projects: [], totalTasks: 0 })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeProjectMutationProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Product')
+    )
+    await userEvent.click(screen.getByText('remove runtime project'))
+
+    await waitFor(() => expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      projectKey: 'product',
+      workspacePath: '/workspace/web',
+      runtime: 'codex',
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
+    )
+  })
+
+  test('does not restore a removed runtime project from an in-flight cloud refresh', async () => {
+    const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
+    const staleRuntimeWork = createRuntimeWork()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(staleRuntimeWork),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn(() => cloudRuntimeWork.promise),
+      },
+    })
+
+    renderWorkbench(<RuntimeProjectMutationProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Wegent')
+    )
+    await userEvent.click(screen.getByText('remove runtime project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
+    )
+
+    await act(async () => {
+      cloudRuntimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
+    )
+  })
+
   test('renames and removes unavailable runtime projects through runtime-work metadata APIs', async () => {
     const unavailableRuntimeWork = createRuntimeWork({
       projects: [

@@ -41,6 +41,7 @@ import {
   reconcileCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
 } from './remoteRuntimeWorkCache'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 interface UseWorkbenchDataRefreshOptions {
   user: User
@@ -103,6 +104,30 @@ function mergeRuntimeTaskAddresses(
   const addresses = new Map(current.map(address => [getRuntimeTaskRouteKey(address), address]))
   incoming.forEach(address => addresses.set(getRuntimeTaskRouteKey(address), address))
   return [...addresses.values()]
+}
+
+function removeRuntimeProject(
+  runtimeWork: RuntimeWorkListResponse,
+  projectId: number
+): RuntimeWorkListResponse {
+  const projects = runtimeWork.projects.filter(
+    project => runtimeProjectUiId(project.project) !== projectId
+  )
+  const totalTasks =
+    projects.reduce(
+      (projectTotal, project) =>
+        projectTotal +
+        project.deviceWorkspaces.reduce(
+          (workspaceTotal, workspace) => workspaceTotal + workspace.tasks.length,
+          0
+        ),
+      0
+    ) +
+    runtimeWork.chats.reduce(
+      (workspaceTotal, workspace) => workspaceTotal + workspace.tasks.length,
+      0
+    )
+  return { ...runtimeWork, projects, totalTasks }
 }
 
 export function useWorkbenchDataRefresh({
@@ -558,6 +583,11 @@ export function useWorkbenchDataRefresh({
     [executorClient]
   )
 
+  const markRuntimeProjectRemoved = useCallback((projectId: number) => {
+    if (!localRuntimeWorkRef.current) return
+    localRuntimeWorkRef.current = removeRuntimeProject(localRuntimeWorkRef.current, projectId)
+  }, [])
+
   const refreshDevices = useCallback(
     async (options?: { useCacheFallback?: boolean }) => {
       const devices = await loadDevicesForRefresh(options)
@@ -594,6 +624,7 @@ export function useWorkbenchDataRefresh({
   return {
     cloudWorkStatus,
     markRuntimeTasksArchived,
+    markRuntimeProjectRemoved,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,
