@@ -88,7 +88,7 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 5. Sends a follow-up in the same conversation and verifies its request and rendered response.
 6. Starts a streaming response, cancels it through the desktop UI, verifies the stopped task state and rendered stop notice, then verifies the composer accepts a subsequent message.
 7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
-8. Creates a short two-turn conversation, switches to a new conversation, reopens the original conversation, and verifies that its first message remains near the top of the message viewport instead of leaving a large virtual-list gap.
+8. Creates a short two-turn conversation, switches to a new conversation, reopens the original conversation, verifies that both user messages, both assistant messages, and all four unified virtual rows remain mounted, and confirms that the first message stays near the top of the viewport instead of losing content or leaving a large virtual-list gap.
 9. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real provider account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a text response plus a send → `apply_patch` → tool result → completion lifecycle, while real Codex executes the tool in the isolated workspace.

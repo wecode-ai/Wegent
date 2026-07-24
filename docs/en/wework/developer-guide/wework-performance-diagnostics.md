@@ -70,9 +70,13 @@ Conversation rendering still uses `WorkbenchMessage` values produced from transc
 
 ### Pane Cache and Resource Lifetimes
 
-The desktop workbench caches at most 10 ordinary panes and evicts them in least-recently-used order. An inactive pane that is no longer running releases transcript messages, historical DOM, pagination ranges, navigation indexes, and processing expansion state; returning to it reloads from the original runtime transcript. Historical messages far from the viewport in the current pane also retain only a height placeholder and restore their contents when scrolled near the viewport.
+The desktop workbench caches at most 10 ordinary panes and evicts them in least-recently-used order. An inactive pane that is no longer running releases transcript messages, historical DOM, pagination ranges, navigation indexes, and processing expansion state; returning to it reloads from the original runtime transcript.
 
-Terminal and built-in browser sessions are stateful active resources and do not follow ordinary pane eviction. A pane remains mounted while it owns a Terminal or browser tab so its terminal process and page session survive task switches. After the corresponding resources close, the pane is subject to the ordinary cache limit again. Changes to this boundary must continue to cover ordinary-pane LRU eviction, resource-pane retention, historical-message windowing, and the desktop memory E2E.
+Tauri conversations use one message-row virtualizer for every conversation size instead of switching implementations at a message-count threshold. Scroll position is represented as the distance from the viewport bottom to the list bottom. One shared `ResizeObserver` measures mounted message rows. When the viewport is not pinned to the bottom and rows below it change height, the list preserves the first measured visible row as an anchor and compensates the scroll position. The rendered range keeps 2 rows of overscan on each side. Mounted messages and their Markdown remain fully rendered; message content is not unmounted through `IntersectionObserver`. Remaining `IntersectionObserver` usage is limited to independent behavior such as bottom-follow state and attachment previews.
+
+Each conversation stores only a bounded “message ID → measured height” map alongside its distance-from-bottom scroll snapshot. Changes to this path must cover short and long conversations, streaming height growth, historical-position restoration, reopen after switching away, forced mounting for turn navigation, and cache eviction when a task is archived.
+
+Terminal and built-in browser sessions are stateful active resources and do not follow ordinary pane eviction. A pane remains mounted while it owns a Terminal or browser tab so its terminal process and page session survive task switches. After the corresponding resources close, the pane is subject to the ordinary cache limit again. Changes to this boundary must continue to cover ordinary-pane LRU eviction, resource-pane retention, message-row virtualization, and the desktop memory E2E.
 
 ## Local Codex Streaming Logs
 
