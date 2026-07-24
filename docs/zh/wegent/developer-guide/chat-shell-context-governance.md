@@ -87,8 +87,10 @@ sidebar_position: 31
 
 同时明确保留了 Wegent 自己的取舍：
 
-- **不做 Codex 式持久 `replacement_history`**
-  当前压缩只改本轮 live state，不把摘要后的历史永久写回为新的规范历史。
+- **检查点持久化进 `messages_chain`，而不是单独的 blob**（Phase 1）
+  压缩那一轮成为自包含检查点（保留的近期 user 消息 + summary）落进它自己的
+  `messages_chain`，reload 从最新检查点开始。功能上接近 Codex 的
+  `replacement_history`，但复用现有持久化而非新增字段。详见 Phase 1 一节。
 - **不把 summary compact 变成长期记忆层**
   它是 request-time 治理手段，不是新的会话存储模型。
 - **不让单个 fallback 路径承载全部功能**
@@ -138,6 +140,28 @@ Stage 3 解决的是另一个长期问题：附件提取文本会作为 `<attach
 
 这一步的实质是把附件从“隐式历史负担”改成“显式可控上下文源”。
 
+## Phase 1：检查点 reload 与卡死加固
+
+Phase 1 补齐了 Stage 2 遗留的两个缺口。
+
+### 检查点 reload（不再全量复原膨胀）
+
+此前每个新 subtask 都会 reload 完整原始转录并重跑一次全量压缩——跨多天的长会话意味着每一新轮都要压缩约 1.7M tokens。Phase 1 把压缩那一轮做成**自包含检查点**：
+
+- `_select_recent_user_messages` 把保留的近期 user 消息克隆成新 id 并打上 `checkpoint_retained` 标记，让本轮序列化器把它们保留进 `messages_chain`（和带 `summary_compacted` 的 summary、以及其后同轮生成的 suffix 一起）。
+- backend 历史接口新增 `from_latest_compaction=true`：用 chain 内 `summary_compacted` 标记定位最新检查点，返回 `[检查点 chain] + [其后完整 turns]`；`limit` 绝不截断检查点 chain 本身。
+- HTTP 端点与 package 模式共用同一条 `resolve_history_subtasks` 管线，保证 fork、`before_message_id`、`limit`、检查点切片语义一致。
+- 由于 HTTP 传输会丢弃 `additional_kwargs`，reload 回来的 summary 通过内容标记重新识别，避免被再次当作 user 消息保留。
+
+### 卡死加固
+
+针对一次生产卡死（O(n²) 裁剪把 CPU 打满数分钟、随后 backend 读超时取消该轮）对 summary 压缩路径做了加固：
+
+- 裁剪改为对 sanitized prompt 的单趟 O(n) 预算裁剪（不再每删一条重算、不再每条消息叠加一次 reply-priming）
+- 压缩期间心跳 ticker 持续发 `summary_compact` in_progress 状态，保持 SSE 不断连，不再与 backend 读超时赛跑
+- summary LLM 调用带 provider 超时 + `asyncio.timeout` 兜底
+- 超长判定识别 HTTP 413 与非英文 marker；裸 400 不再直接当超长（避免重试风暴）
+
 ## 实现落点
 
 下列模块是后续维护最值得先看的入口：
@@ -146,7 +170,9 @@ Stage 3 解决的是另一个长期问题：附件提取文本会作为 `<attach
 |---|---|
 | `chat_shell/guard/context_guard.py` | 统一治理主入口，串 source pass、summary compact、emergency pass |
 | `chat_shell/guard/tool_output.py` | tool output 的 compact 表示和紧急重截断 |
-| `chat_shell/compression/summary_compactor.py` | summary compact 主逻辑 |
+| `chat_shell/compression/summary_compactor.py` | summary compact 主逻辑、O(n) 裁剪、检查点保留标记 |
+| `chat_shell/history/loader.py` | 历史 reload；透传 `from_latest_compaction` |
+| `backend/app/services/chat/compaction_checkpoint.py` | 定位最新检查点 + 共享 resolve→scope→limit 管线（Phase 1） |
 | `chat_shell/compression/config.py` | 上下文窗口、reserved output、trigger/target limit 计算 |
 | `chat_shell/compression/context_metrics.py` | 上下文指标快照 |
 | `chat_shell/messages/attachment_preview.py` | 附件 preview 预算分配与截断 |
@@ -182,9 +208,9 @@ Stage 3 解决的是另一个长期问题：附件提取文本会作为 `<attach
 
 ## 注意事项
 
-### summary compact 只治理 live state
+### reload 从最新压缩检查点开始（Phase 1）
 
-当前实现不会把 compact 后的 replacement history 永久写回成新的会话标准历史。下一轮仍会从重建后的完整历史重新评估，必要时再压一次。这是有意接受的简化。
+早期实现每一轮都从完整存储历史重建并重新评估压缩，长会话会因此“复原膨胀”。Phase 1 把自包含检查点持久化进压缩那一轮的 `messages_chain`（保留的近期 user 消息带 `checkpoint_retained`，summary 带 `summary_compacted`），并通过 backend 的 `from_latest_compaction` 路径从最新检查点 reload。详见下面的 Phase 1 一节。
 
 ### `max_output_tokens` 主要是预算输入，不是历史改写结果
 
