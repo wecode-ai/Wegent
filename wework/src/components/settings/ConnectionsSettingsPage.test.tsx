@@ -617,7 +617,7 @@ describe('ConnectionsSettingsPage', () => {
       additional_speed_tiers: ['fast'],
       default_service_tier: 'priority',
     })
-  }, 15_000)
+  }, 10_000)
 
   test('keeps a custom model pending when active tasks prevent a silent restart', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
