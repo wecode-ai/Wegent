@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ComponentProps } from 'react'
+import { useCallback, useEffect, type ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import {
@@ -35,17 +35,23 @@ const cloudDesktopExtensionMock = vi.hoisted(() => {
         ) => void
         onOpened: () => void
       }) => {
-        const launchAction = async (options?: { notifyOpened?: boolean }) => {
-          onErrorChange(null)
-          onBusyChange(true)
-          try {
-            const opened = await launch(options)
-            if (opened && options?.notifyOpened !== false) onOpened()
-          } finally {
-            onBusyChange(false)
-          }
-        }
-        onLaunchActionChange?.(launchAction)
+        const launchAction = useCallback(
+          async (options?: { notifyOpened?: boolean }) => {
+            onErrorChange(null)
+            onBusyChange(true)
+            try {
+              const opened = await launch(options)
+              if (opened && options?.notifyOpened !== false) onOpened()
+            } finally {
+              onBusyChange(false)
+            }
+          },
+          [onBusyChange, onErrorChange, onOpened]
+        )
+        useEffect(() => {
+          onLaunchActionChange?.(launchAction)
+          return () => onLaunchActionChange?.(null)
+        }, [launchAction, onLaunchActionChange])
 
         return (
           <button
