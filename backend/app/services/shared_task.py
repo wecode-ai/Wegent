@@ -824,7 +824,7 @@ class SharedTaskService:
             users = db.query(User).filter(User.id.in_(sender_ids)).all()
             user_name_map = {u.id: u.user_name for u in users}
 
-        contexts_by_subtask_id: Dict[int, List[SubtaskContext]] = {}
+        contexts_by_subtask_id: dict[int, list[SubtaskContext]] = {}
         subtask_ids = [sub.id for sub in subtasks]
         if subtask_ids:
             contexts = (
