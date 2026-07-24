@@ -1125,21 +1125,33 @@ export function WorkbenchProvider({
       })
   )
 
-  const backgroundRunningTasks = useMemo(
-    () => getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask),
-    [state.currentRuntimeTask, state.runtimeWork]
+  const nextBackgroundRunningTasks = getBackgroundRunningRuntimeTasks(
+    state.runtimeWork,
+    state.currentRuntimeTask
+  )
+  const backgroundRunningTaskRoutes = nextBackgroundRunningTasks
+    .map(address => `${address.deviceId}:${address.taskId}`)
+    .join('|')
+  const getLatestBackgroundRunningTasks = useStableEvent(() =>
+    getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask)
   )
   const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
   useEffect(() => {
-    const unsubscribers = backgroundRunningTasks.map(address =>
+    const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
       subscribeBackgroundRuntimeTaskStream(address, {
         onMessageAction: action => applyRuntimeConversationAction(address, action),
-        onAssistantStart: () => dispatch({ type: 'runtime_task_started', address }),
-        onAssistantSettled: () => dispatch({ type: 'runtime_task_settled', address }),
+        onAssistantStart: () => markRuntimeTaskStarted(address),
+        onAssistantSettled: () => markRuntimeTaskSettled(address),
       })
     )
     return () => unsubscribers.forEach(unsubscribe => unsubscribe())
-  }, [backgroundRunningTasks, subscribeBackgroundRuntimeTaskStream])
+  }, [
+    backgroundRunningTaskRoutes,
+    getLatestBackgroundRunningTasks,
+    markRuntimeTaskSettled,
+    markRuntimeTaskStarted,
+    subscribeBackgroundRuntimeTaskStream,
+  ])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)

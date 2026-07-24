@@ -549,7 +549,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           }
           const nextMessages = reconcileRuntimeConversationMessages(
             transcript.messages,
-            seededMessages
+            seededMessages,
+            transcript.running === true
           )
           loadedRuntimeTranscriptKeyRef.current = loadKey
           setTranscriptFullContent(transcript.fullContent === true)
@@ -2626,11 +2627,15 @@ function isEditableLastUserMessage(messages: WorkbenchMessage[], targetIndex: nu
   return followingMessages.some(message => message.role === 'assistant')
 }
 
-function reconcileRuntimeConversationMessages(
+export function reconcileRuntimeConversationMessages(
   transcriptMessages: WorkbenchMessage[],
-  cachedMessages: WorkbenchMessage[]
+  cachedMessages: WorkbenchMessage[],
+  transcriptRunning: boolean
 ): WorkbenchMessage[] {
   if (transcriptMessages.length === 0) return cachedMessages
+  if (!transcriptRunning && hasSettledAssistantMessage(transcriptMessages)) {
+    return transcriptMessages
+  }
   if (!hasUnsettledRuntimePaneState(cachedMessages, 'idle')) return transcriptMessages
   if (!hasUnsettledRuntimePaneState(transcriptMessages, 'idle')) return cachedMessages
 

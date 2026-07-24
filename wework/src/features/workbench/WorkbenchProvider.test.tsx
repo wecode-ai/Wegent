@@ -533,6 +533,9 @@ function BootstrapProbe() {
       <span data-testid="device-ids">
         {workbench.state.devices.map(device => device.device_id).join('|')}
       </span>
+      <button type="button" onClick={() => void workbench.refreshDevices()}>
+        Refresh devices
+      </button>
     </div>
   )
 }
@@ -1983,6 +1986,43 @@ describe('WorkbenchProvider runtime tasks', () => {
     await act(async () => {
       runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
     })
+  })
+
+  test('ignores a manual device refresh after its cloud sync revision is replaced', async () => {
+    const runtimeWork = deferred<RuntimeWorkListResponse>()
+    const manualDevices = deferred<DeviceInfo[]>()
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([
+        createDevice({ device_id: 'current-device', device_type: 'remote', is_default: false }),
+      ])
+      .mockImplementationOnce(() => manualDevices.promise)
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices,
+        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+      },
+    })
+
+    renderWorkbench(<BootstrapProbe />, services)
+    await waitFor(() =>
+      expect(screen.getByTestId('device-ids')).toHaveTextContent('current-device')
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
+    await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+      await Promise.resolve()
+      manualDevices.resolve([
+        createDevice({ device_id: 'stale-device', device_type: 'remote', is_default: false }),
+      ])
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('device-ids')).not.toHaveTextContent('stale-device')
+    )
   })
 
   test('restores cached remote task summaries when the device is offline at startup', async () => {

@@ -611,7 +611,9 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   await captureVerificationScreenshot(control, 'memory-04-settled.png')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
-  const settledDriftKiB = settled.physicalFootprintKiB - settledSamples[0].physicalFootprintKiB
+  const recentSettledSamples = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
+  const settledDriftKiB =
+    settled.physicalFootprintKiB - recentSettledSamples[0].physicalFootprintKiB
 
   await writeFile(
     join(resultDir, 'memory-growth.json'),
@@ -1037,18 +1039,7 @@ async function verifyBackgroundTaskWindowLifecycle({
 
   await getSingleElementMetrics(control, ACTIVE_WORKBENCH_SELECTOR, 'The running conversation pane')
   await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      !snapshot.testIds.includes('message-user') &&
-      !snapshot.text.includes(WINDOW_LIFECYCLE_PROMPT),
-    'Switching away from the running task did not activate a blank pane',
-    UI_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  await waitForBlankConversation(control, composerSelector)
 
   await captureVerificationScreenshot(
     control,
@@ -1144,15 +1135,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     )
   }
 
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      !snapshot.testIds.includes('message-user') &&
-      !snapshot.text.includes(WINDOW_LIFECYCLE_PROMPT),
-    'The reopened window did not preserve the active blank pane',
-    UI_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  await waitForBlankConversation(control, composerSelector)
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('03-background-task-after-reopen.png')
@@ -1337,10 +1320,15 @@ async function verifyBackgroundTaskWindowLifecycle({
     snapshot => !snapshot.testIds.includes(freshTaskRowTestId),
     'The archived task remained mounted in the sidebar'
   )
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 3_500))
-  const cacheAfterArchive = JSON.parse(
-    await control.command('performanceSnapshot', 'body')
-  ).runtimeConversationCache
+  const archiveEvictionStartedAt = Date.now()
+  let cacheAfterArchive = cacheBeforeArchive
+  while (Date.now() - archiveEvictionStartedAt < UI_TIMEOUT_MS) {
+    cacheAfterArchive = JSON.parse(
+      await control.command('performanceSnapshot', 'body')
+    ).runtimeConversationCache
+    if (cacheAfterArchive.messageEntries < cacheBeforeArchive.messageEntries) break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
   assert.ok(
     cacheAfterArchive.messageEntries < cacheBeforeArchive.messageEntries,
     `Archiving retained conversation messages (${cacheBeforeArchive.messageEntries} -> ${cacheAfterArchive.messageEntries})`

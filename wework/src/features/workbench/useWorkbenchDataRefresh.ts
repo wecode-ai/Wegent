@@ -244,11 +244,20 @@ export function useWorkbenchDataRefresh({
       if (activeChecks.length === 0) return
       if (cloudRuntimeStateRef.current.inFlightRevision != null) {
         if (options?.trigger !== 'manual-refresh' || !backgroundApi?.listDevices) return
+        const inFlightRevision = cloudRuntimeStateRef.current.inFlightRevision
+        const inFlightBackgroundApi = backgroundApi
         const devicesResult = await timedWorkbenchBootstrapRequest(
           'cloudDevices',
           backgroundApi.listDevices()
         )
-        if (options?.isCancelled?.() || devicesResult.status !== 'fulfilled') return
+        if (
+          options?.isCancelled?.() ||
+          devicesResult.status !== 'fulfilled' ||
+          cloudRuntimeStateRef.current.inFlightRevision !== inFlightRevision ||
+          cloudBackgroundApiRef.current !== inFlightBackgroundApi
+        ) {
+          return
+        }
         const devices = resolveDeviceListWithCache(
           mergeDeviceLists(baseDevices, devicesResult.value)
         )
