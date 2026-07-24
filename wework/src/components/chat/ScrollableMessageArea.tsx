@@ -232,6 +232,7 @@ function ScrollableMessagePaneContent({
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
+  const autoLoadedTranscriptGapKeysRef = useRef(new Set<string>())
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [turnNavigationLoading, setTurnNavigationLoading] = useState(false)
   const [turnNavigationTargetMessageId, setTurnNavigationTargetMessageId] = useState<string | null>(
@@ -336,6 +337,10 @@ function ScrollableMessagePaneContent({
       if (!onLoadTranscriptGap) return
       const gapKey = runtimeTranscriptGapKey(gap)
       if (loadingTranscriptGapKeyRef.current !== null) return
+      if (reason === 'visible') {
+        if (autoLoadedTranscriptGapKeysRef.current.has(gapKey)) return
+        autoLoadedTranscriptGapKeysRef.current.add(gapKey)
+      }
 
       loadingTranscriptGapKeyRef.current = gapKey
       setLoadingTranscriptGapKey(gapKey)
@@ -357,6 +362,10 @@ function ScrollableMessagePaneContent({
     },
     [handleTurnNavigationLoadStateChange, onLoadTranscriptGap]
   )
+
+  useEffect(() => {
+    autoLoadedTranscriptGapKeysRef.current.clear()
+  }, [currentScrollKey])
 
   const renderTranscriptGapAfterMessage = useCallback(
     (message: WorkbenchMessage, nextMessage: WorkbenchMessage | undefined) => {
