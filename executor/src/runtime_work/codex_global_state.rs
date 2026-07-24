@@ -1331,13 +1331,21 @@ fn remove_codex_global_project_payload(
     project_ref: &str,
     workspace_path: &str,
 ) {
+    let normalized_workspace_path = normalize_workspace_path(workspace_path);
+    let index = index_from_payload(payload);
+    let project_ref = index
+        .project_for_key(project_ref)
+        .or_else(|| index.project_for_key(workspace_path))
+        .map(|project| project.key.clone())
+        .unwrap_or_else(|| project_ref.to_owned());
     if let Some(projects) = payload
         .get_mut(LOCAL_PROJECTS_KEY)
         .and_then(Value::as_object_mut)
     {
         let entry_key = projects.iter().find_map(|(key, project)| {
             let id = project.get("id").and_then(clean_string);
-            (key == project_ref || id.as_deref() == Some(project_ref)).then(|| key.clone())
+            (key == &project_ref || id.as_deref() == Some(project_ref.as_str()))
+                .then(|| key.clone())
         });
         if let Some(entry_key) = entry_key {
             projects.remove(&entry_key);
@@ -1347,25 +1355,32 @@ fn remove_codex_global_project_payload(
         .get_mut(PROJECT_WRITABLE_ROOTS_KEY)
         .and_then(Value::as_object_mut)
     {
-        roots.remove(project_ref);
+        roots.remove(&project_ref);
     }
     if let Some(projects) = payload
         .get_mut(REMOTE_PROJECTS_KEY)
         .and_then(Value::as_array_mut)
     {
         projects.retain(|project| {
-            project.get("id").and_then(clean_string).as_deref() != Some(project_ref)
+            project.get("id").and_then(clean_string).as_deref() != Some(project_ref.as_str())
         });
     }
-    let workspace_path = normalize_workspace_path(workspace_path);
-    remove_text_list_item(payload, SAVED_WORKSPACE_ROOTS_KEY, &workspace_path);
-    remove_text_list_item(payload, PROJECT_ORDER_KEY, project_ref);
-    remove_text_list_item(payload, ACTIVE_WORKSPACE_ROOTS_KEY, &workspace_path);
-    remove_text_list_item(payload, PINNED_PROJECT_IDS_KEY, project_ref);
+    remove_text_list_item(
+        payload,
+        SAVED_WORKSPACE_ROOTS_KEY,
+        &normalized_workspace_path,
+    );
+    remove_text_list_item(payload, PROJECT_ORDER_KEY, &project_ref);
+    remove_text_list_item(
+        payload,
+        ACTIVE_WORKSPACE_ROOTS_KEY,
+        &normalized_workspace_path,
+    );
+    remove_text_list_item(payload, PINNED_PROJECT_IDS_KEY, &project_ref);
     if payload
         .get(ACTIVE_REMOTE_PROJECT_ID_KEY)
         .and_then(Value::as_str)
-        == Some(project_ref)
+        == Some(project_ref.as_str())
     {
         payload.remove(ACTIVE_REMOTE_PROJECT_ID_KEY);
     }
@@ -1373,11 +1388,11 @@ fn remove_codex_global_project_payload(
         .get_mut(WORKSPACE_ROOT_LABELS_KEY)
         .and_then(Value::as_object_mut)
     {
-        labels.remove(&workspace_path);
+        labels.remove(&normalized_workspace_path);
     }
     for key in [PROJECT_APPEARANCES_KEY, SIDEBAR_PROJECT_THREAD_ORDERS_KEY] {
         if let Some(items) = payload.get_mut(key).and_then(Value::as_object_mut) {
-            items.remove(project_ref);
+            items.remove(&project_ref);
         }
     }
     if let Some(assignments) = payload
@@ -1389,7 +1404,7 @@ fn remove_codex_global_project_payload(
                 .get("projectId")
                 .and_then(clean_string)
                 .as_deref()
-                != Some(project_ref)
+                != Some(project_ref.as_str())
         });
     }
     if let Some(hints) = payload
@@ -1892,5 +1907,36 @@ mod tests {
 
         remove_codex_global_project_payload(&mut payload, "remote-id", "/srv");
         assert_eq!(payload["remote-projects"], json!([]));
+    }
+
+    #[test]
+    fn removes_typed_local_project_by_workspace_path() {
+        let mut payload = payload(json!({
+            "local-projects": {
+                "local-entry": {"id": "local-id", "name": "Workspace"}
+            },
+            "project-writable-roots": {
+                "local-id": [{"kind": "local", "path": "/repo/workspace"}]
+            },
+            "project-order": ["local-id"],
+            "pinned-project-ids": ["local-id"],
+            "project-appearances": {"local-id": {"color": "blue"}},
+            "sidebar-project-thread-orders": {
+                "local-id": {"threadIds": ["thread-1"]}
+            },
+            "thread-project-assignments": {
+                "thread-1": {"projectId": "local-id"}
+            }
+        }));
+
+        remove_codex_global_project_payload(&mut payload, "/repo/workspace", "/repo/workspace");
+
+        assert!(payload["local-projects"]["local-entry"].is_null());
+        assert!(payload["project-writable-roots"]["local-id"].is_null());
+        assert_eq!(payload["project-order"], json!([]));
+        assert_eq!(payload["pinned-project-ids"], json!([]));
+        assert!(payload["project-appearances"]["local-id"].is_null());
+        assert!(payload["sidebar-project-thread-orders"]["local-id"].is_null());
+        assert!(payload["thread-project-assignments"]["thread-1"].is_null());
     }
 }

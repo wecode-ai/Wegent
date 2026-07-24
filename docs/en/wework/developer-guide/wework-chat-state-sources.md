@@ -108,6 +108,12 @@ The message list detects middle gaps from adjacent `messageIndex` values. A gap 
 
 This boundary prevents a permanently missing record from causing a “load completes → gap remains visible → load again” loop that repeatedly shows the loading state and disturbs the scroll position. Changes to gap loading must cover the case where the server request succeeds without resolving the gap.
 
+### Runtime Task Lists and Project Removal
+
+When the backend validates an executor `runtime.tasks.list` response, task status must cover the executor's complete list semantics: `active`, `running`, `done`, `cancelled`, `failed`, and `archived`. Accepting only project lifecycle states causes one completed task to discard the entire device workspace.
+
+When removing a typed local project, the caller may have only a workspace path rather than the internal project id stored in Codex global state. The executor must resolve that path through writable roots to the real project key before clearing the project, ordering, pin, appearance, and thread-assignment state. Matching the path only against typed project keys or ids is insufficient.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:

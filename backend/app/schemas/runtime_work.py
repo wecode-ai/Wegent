@@ -10,7 +10,14 @@ from typing import Any, Literal, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 RuntimeName = Literal["codex", "claude_code"]
-LocalTaskStatus = Literal["active", "archived"]
+LocalTaskStatus = Literal[
+    "active",
+    "running",
+    "done",
+    "cancelled",
+    "failed",
+    "archived",
+]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
 
