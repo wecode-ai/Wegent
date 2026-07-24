@@ -178,6 +178,9 @@ function createBridge(): WeworkAutomationBridge {
 function seedDesktopE2ECloudConnection() {
   const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
+  const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
+  const localModelsCatalogReady =
+    import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const token =
     import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() || 'wework-desktop-e2e-cloud-token'
 
@@ -226,9 +229,9 @@ function seedDesktopE2ECloudConnection() {
   for (const model of localModels) {
     saveLocalModelConfig({
       ...model,
-      baseUrl: backendUrl,
+      baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
-      catalogReady: false,
+      catalogReady: localModelsCatalogReady,
       enabled: true,
     })
   }

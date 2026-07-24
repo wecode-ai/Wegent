@@ -764,6 +764,7 @@ function localRuntimeModelConfig(
       codex_catalog_model_id: DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
+      tool_profile: 'custom',
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,

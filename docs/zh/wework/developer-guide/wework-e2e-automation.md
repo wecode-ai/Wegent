@@ -91,7 +91,15 @@ node e2e/utils/mock-connector-upstream-server.mjs
 8. 创建两轮短对话，切换到新对话后重新打开原对话，校验首条消息靠近消息视口顶部，防止虚拟列表在短会话上留下大块顶部空白。
 9. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
 
-测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行“发送 → `apply_patch` → 工具结果回传 → 追问”，工具调用仍由真实 Codex 在隔离工作区内执行。
+测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实 provider 账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行文本回复以及“发送 → `apply_patch` → 工具结果回传 → 完成回复”，工具调用仍由真实 Codex 在隔离工作区内执行。
+
+模型协议矩阵按“执行位置 × 模型来源 × 协议”定义 18 个组合：
+
+- 本机执行覆盖本机自定义模型、Codex 内置模型和云端 Model CRD，每种模型来源分别覆盖三种协议，共 9 个完整文本与工具链路。
+- 云端执行覆盖 Codex 内置模型和云端 Model CRD 的三种协议，共 6 个完整文本与工具链路。
+- 本机自定义模型不能用于云端执行；对应三种协议的 3 个组合断言模型不会出现在云端项目的选择器中。
+
+矩阵提交等待上限为 10 秒。如果编辑器已经显示提交错误，runner 会立即抛出该错误；否则在协议阶段未按时推进时输出当前阶段和已捕获请求，避免失败后长时间无反馈。
 
 `e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态，验证“正在思考”位于可见回复下方，并在释放响应后消失。该场景会保存就绪、流式和完成三个阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
 
@@ -107,7 +115,7 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 可选的 `WEWORK_E2E_EXECUTOR_BIN` 和 `WEWORK_E2E_APP_BIN` 分别允许复用已经构建的真实 Executor 和真实 Tauri 应用。传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在 `wework/test-results/desktop-e2e/`。
 
-云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。测试只模拟 Codex 使用的模型 Responses API；不得模拟 Backend HTTP 或 WebSocket 接口。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
+云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
 插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、在对话编辑器中插入插件引用及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。四个关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
 

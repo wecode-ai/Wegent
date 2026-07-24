@@ -2690,6 +2690,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     ]
     const updateCurrentUser = vi.fn().mockResolvedValue({})
     const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
       modelApi: {
         listModels: vi.fn().mockResolvedValue({ data: models }),
       },
@@ -2715,7 +2718,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('restores runtime task model selection without overwriting the new chat default', async () => {
+  test('does not restore a local model for a cloud runtime task', async () => {
     const models: UnifiedModel[] = [
       {
         name: 'gpt-5.5',
@@ -2790,10 +2793,8 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(await screen.findByText('open runtime a'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
-    )
-    expect(screen.getByTestId('selected-mode')).toHaveTextContent('plan')
+    await waitFor(() => expect(screen.getByTestId('selected-model')).toHaveTextContent('gpt-5.5'))
+    expect(screen.getByTestId('selected-mode')).toHaveTextContent('default')
     await userEvent.click(screen.getByText('select mimo'))
     expect(updateCurrentUser).not.toHaveBeenCalled()
   })
