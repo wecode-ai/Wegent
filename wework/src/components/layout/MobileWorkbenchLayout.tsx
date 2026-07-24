@@ -32,7 +32,7 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { TaskForkDialog } from './TaskForkDialog'
-import { CachedWorkbenchPaneStack, type WorkbenchPaneIdentity } from './workbenchPaneStack'
+import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
@@ -62,18 +62,16 @@ export function MobileWorkbenchLayout() {
   return (
     <div className="relative h-dvh overflow-hidden bg-background">
       <WorkbenchBackground />
-      <CachedWorkbenchPaneStack
-        activePane={activePane}
-        maxPanes={1}
-        className={background.imagePath && background.inMain ? 'h-dvh bg-background/20' : 'h-dvh'}
-        renderPane={renderMobileWorkbenchPane}
-      />
+      <div
+        className={cn(
+          'relative flex min-w-0 flex-1 overflow-hidden',
+          background.imagePath && background.inMain ? 'h-dvh bg-background/20' : 'h-dvh'
+        )}
+      >
+        <MobileWorkbenchPane key={getWorkbenchPaneKey(activePane)} pane={activePane} />
+      </div>
     </div>
   )
-}
-
-function renderMobileWorkbenchPane(pane: WorkbenchPaneIdentity) {
-  return <MobileWorkbenchPane pane={pane} />
 }
 
 const MobileWorkbenchPane = memo(function MobileWorkbenchPane({

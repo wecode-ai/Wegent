@@ -122,6 +122,28 @@ describe('runtimeTaskSidebarHelpers', () => {
     })
   })
 
+  test('uses a chat task path when its grouping workspace is a git worktree', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/worktrees/277/repo',
+      available: true,
+      tasks: [],
+    }
+
+    expect(
+      getRuntimeTaskAddress(workspace, {
+        taskId: 'standalone-chat',
+        workspacePath: '/home/user/Documents/Codex/standalone-chat',
+        title: 'Standalone chat',
+        runtime: 'codex',
+      })
+    ).toMatchObject({
+      deviceId: 'device-1',
+      taskId: 'standalone-chat',
+      workspacePath: '/home/user/Documents/Codex/standalone-chat',
+    })
+  })
+
   test('reveals project runtime tasks in preview and step increments', () => {
     const items = Array.from({ length: 26 }, (_, index) => ({
       workspace: {

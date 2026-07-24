@@ -258,9 +258,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           <ModelCapabilityIcons model={model} showTooltips />
           {renderModelBadges?.(model)}
         </span>
-        {modelActions && (
-          <span className="col-start-3 flex items-stretch">{modelActions}</span>
-        )}
+        {modelActions && <span className="col-start-3 flex items-stretch">{modelActions}</span>}
       </div>
     )
   }

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
-import type { WorkbenchPaneIdentity } from './workbenchPaneStack'
+import type { WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 import { requestProjectCreateMode, requestProjectWorkspaceBinding } from './workbenchShellEvents'
 
 export function useWorkbenchProjectWorkControls({
