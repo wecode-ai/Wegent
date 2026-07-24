@@ -91,6 +91,7 @@ def _format_forwarded_headers_for_log(headers) -> str:
 
 def _get_mcp_lifespan_servers():
     from app.mcp_server.server import (
+        delivery_mcp_server,
         interactive_form_question_mcp_server,
         knowledge_mcp_server,
         prompt_optimization_mcp_server,
@@ -104,6 +105,7 @@ def _get_mcp_lifespan_servers():
         ("interactive_form_question", interactive_form_question_mcp_server),
         ("Prompt optimization", prompt_optimization_mcp_server),
         ("Subscription", subscription_mcp_server),
+        ("Delivery", delivery_mcp_server),
     ]
     if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
         from app.mcp_server.server import external_knowledge_mcp_server

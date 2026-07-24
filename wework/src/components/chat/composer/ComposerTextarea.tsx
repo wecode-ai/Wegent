@@ -64,6 +64,7 @@ export function ComposerTextarea({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates = [],
   onListLocalSkills,
   onListLocalApps,
   models = [],
@@ -108,6 +109,7 @@ export function ComposerTextarea({
   const [loadError, setLoadError] = useState(false)
   const [appsLoading, setAppsLoading] = useState(false)
   const [appsLoadError, setAppsLoadError] = useState(false)
+  const [cloudMentionOpen, setCloudMentionOpen] = useState(false)
   const canPickNativeWorkspacePaths =
     canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
 
@@ -120,7 +122,10 @@ export function ComposerTextarea({
       apps,
       skills,
       selectedModel,
-      activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention' ? activeMenu.trigger.query : ''
+      activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention'
+        ? activeMenu.trigger.query
+        : '',
+      cloudMentionCandidates
     )
 
   const workspaceSearch = useWorkspaceMentionSearch(
@@ -247,13 +252,31 @@ export function ComposerTextarea({
       return filteredMentionCandidates.map(candidate => ({ kind: 'candidate', candidate }))
     }
     if (!activeMenu?.trigger.query.trim()) {
+      const cloudRoot = filteredMentionCandidates.find(
+        candidate => candidate.kind === 'cloud' && candidate.key.startsWith('cloud-project:')
+      )
+      const cloudChildren = filteredMentionCandidates.filter(
+        candidate => candidate.kind === 'cloud' && !candidate.key.startsWith('cloud-project:')
+      )
+      const nonCloudCandidates = filteredMentionCandidates.filter(
+        candidate => candidate.kind !== 'cloud'
+      )
+      if (cloudMentionOpen && cloudRoot) {
+        return [
+          { kind: 'cloud-back-action' },
+          ...cloudChildren.map(candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow),
+        ]
+      }
       return [
         { kind: 'files-action' },
         ...(onSetGoal ? ([{ kind: 'goal-action' }] as MentionMenuRow[]) : []),
         ...(!planModeActive && onSetPlanMode
           ? ([{ kind: 'plan-action' }] as MentionMenuRow[])
           : []),
-        ...filteredMentionCandidates.map(
+        ...(cloudRoot
+          ? ([{ kind: 'cloud-action', candidate: cloudRoot }] as MentionMenuRow[])
+          : []),
+        ...nonCloudCandidates.map(
           candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
         ),
       ]
@@ -266,6 +289,7 @@ export function ComposerTextarea({
     ]
   }, [
     activeMenu,
+    cloudMentionOpen,
     filteredMentionCandidates,
     onSetGoal,
     onSetPlanMode,
@@ -443,6 +467,7 @@ export function ComposerTextarea({
         if (!triggerUnchanged) {
           setSelectedIndex(0)
           highlightedIndexRef.current = 0
+          setCloudMentionOpen(false)
         }
         if (
           nextTrigger.kind === 'skill' ||
@@ -553,6 +578,18 @@ export function ComposerTextarea({
       if (row.kind === 'candidate') {
         if (!row.candidate.enabled) return false
         return selectMentionCandidate(row.candidate)
+      }
+      if (row.kind === 'cloud-action') {
+        setCloudMentionOpen(true)
+        setSelectedIndex(0)
+        highlightedIndexRef.current = 0
+        return true
+      }
+      if (row.kind === 'cloud-back-action') {
+        setCloudMentionOpen(false)
+        setSelectedIndex(0)
+        highlightedIndexRef.current = 0
+        return true
       }
 
       const snapshot = editor.getSnapshot()
@@ -973,6 +1010,7 @@ export function ComposerTextarea({
           selectedIndex={highlightedIndex}
           className={skillMenuClassName}
           mentionMode={activeMenu?.kind === 'mention'}
+          cloudScope={cloudMentionOpen && !activeMenu?.trigger.query.trim()}
           loading={isMentionLoading || workspaceSearch.loading}
           error={hasMentionLoadError || workspaceSearch.error}
           canBrowseFiles={canPickNativeWorkspacePaths}

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
@@ -21,6 +21,7 @@ import type {
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
@@ -122,8 +123,10 @@ export interface ChatInputProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   isStreaming?: boolean
   onPause?: () => void
+  toolbarLeadingContext?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
@@ -226,8 +229,10 @@ export function ChatInput({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
   isStreaming = false,
   onPause,
+  toolbarLeadingContext,
   onCompactContext,
   goal,
   goalContinuing = false,
@@ -330,6 +335,7 @@ export function ChatInput({
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,
+    cloudMentionCandidates,
   }
   const errorBanner = error ? (
     <div
@@ -436,6 +442,7 @@ export function ChatInput({
           onListLocalApps={controls.listLocalApps}
           isStreaming={isStreaming}
           onPause={onPause}
+          toolbarLeadingContext={toolbarLeadingContext}
         />
         {queueResumeDialog}
       </div>

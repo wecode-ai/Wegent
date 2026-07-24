@@ -3,6 +3,7 @@ import { createRef, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalDeviceSkill } from '@/types/api'
 import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { ComposerTextarea } from './ComposerTextarea'
 
@@ -143,6 +144,104 @@ describe('ComposerTextarea', () => {
 
     fireEvent.mouseDown(screen.getByTestId('local-skill-chip-gmail'), { button: 0 })
     expect(onOpenSkillFile).toHaveBeenCalledWith('/tmp/gmail/SKILL.md')
+  })
+
+  test('inserts an authorized cloud reference from the @ menu', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const reference = '[$design.md](cloud://projects/11/files/42)'
+    const cloudCandidate: ComposerCloudMentionCandidate = {
+      kind: 'cloud',
+      key: 'cloud-file:42',
+      title: 'design.md',
+      description: 'docs/design.md',
+      metaLabel: '云空间',
+      testId: 'cloud-file-42',
+      enabled: true,
+      reference,
+      searchAliases: ['docs/design.md'],
+    }
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          cloudMentionCandidates={[cloudCandidate]}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '@design'
+      editor.focus()
+    })
+
+    fireEvent.click(await screen.findByTestId('cloud-reference-option-cloud-file-42'))
+    await waitFor(() => expect(editor.value).toBe(`${reference} `))
+  })
+
+  test('drills into cloud space instead of flattening cloud references', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const cloudCandidates: ComposerCloudMentionCandidate[] = [
+      {
+        kind: 'cloud',
+        key: 'cloud-project:11',
+        title: '云空间',
+        description: '当前云项目的共享内容',
+        metaLabel: '云空间',
+        testId: 'cloud-project-11',
+        enabled: true,
+        reference: '[$云空间](cloud://projects/11)',
+        searchAliases: ['cloud'],
+      },
+      {
+        kind: 'cloud',
+        key: 'cloud-file:42',
+        title: 'README.md',
+        description: 'README.md',
+        metaLabel: '云空间',
+        testId: 'cloud-file-42',
+        enabled: true,
+        reference: '[$README.md](cloud://projects/11/files/42)',
+        searchAliases: ['README.md'],
+      },
+    ]
+
+    render(
+      <ComposerTextarea
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend={false}
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        cloudMentionCandidates={cloudCandidates}
+      />
+    )
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '@'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('mention-cloud-space')).toBeInTheDocument()
+    expect(screen.queryByText('README.md')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('mention-cloud-space'))
+
+    expect(await screen.findByTestId('cloud-reference-option-cloud-file-42')).toBeInTheDocument()
+    expect(screen.getByText('返回')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-skill-source-cloud-file-42')).not.toBeInTheDocument()
   })
 
   test('searches the active workspace for an @ token and inserts the relative path', async () => {

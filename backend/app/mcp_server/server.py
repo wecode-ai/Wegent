@@ -39,7 +39,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import settings
 from app.mcp_server.auth import (
+    MCPAuthInfo,
     TaskTokenInfo,
+    authenticate_mcp_token,
     extract_token_from_header,
     verify_task_token,
 )
@@ -65,6 +67,8 @@ PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
 PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
 SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
+DELIVERY_MCP_MOUNT_PATH = "/mcp/delivery"
+DELIVERY_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,7 @@ class McpAppSpec:
     token_context: contextvars.ContextVar[Optional[TaskTokenInfo]]
     log_prefix: str
     include_root_metadata: bool = True
+    allow_user_token: bool = False
 
 
 @dataclass(frozen=True)
@@ -521,6 +526,34 @@ def ensure_subscription_tools_registered() -> None:
     _register_subscription_tools()
 
 
+# ============== Delivery MCP Server ==============
+
+delivery_mcp_server = FastMCP(
+    "wegent-delivery-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+_delivery_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_delivery_request_token_info", default=None)
+)
+_delivery_tools_registered = False
+
+
+def ensure_delivery_tools_registered() -> None:
+    """Register AI-facing tools for authorized delivery snapshots."""
+    global _delivery_tools_registered
+    if _delivery_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import delivery  # noqa: F401
+
+    count = register_tools_to_server(delivery_mcp_server, "delivery")
+    logger.info("[MCP:Delivery] Registered %s tools", count)
+    _delivery_tools_registered = True
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -578,12 +611,35 @@ _SUBSCRIPTION_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_DELIVERY_MCP_SPEC = McpAppSpec(
+    name="delivery",
+    service_name="wegent-delivery-mcp",
+    mount_path=DELIVERY_MCP_MOUNT_PATH,
+    transport_path=DELIVERY_MCP_TRANSPORT_PATH,
+    server=delivery_mcp_server,
+    token_context=_delivery_request_token_info,
+    log_prefix="Delivery",
+    include_root_metadata=True,
+    allow_user_token=True,
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
+    _DELIVERY_MCP_SPEC,
+)
+
+MCP_CONTEXT_SERVER_NAMES = frozenset(
+    {
+        "knowledge",
+        "interactive_form_question",
+        "prompt_optimization",
+        "subscription",
+        "delivery",
+    }
 )
 
 
@@ -617,6 +673,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_prompt_optimization_tools_registered()
     elif spec.name == "subscription":
         ensure_subscription_tools_registered()
+    elif spec.name == "delivery":
+        ensure_delivery_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -645,27 +703,28 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         token = extract_token_from_header(auth_header)
 
         token_info: Optional[TaskTokenInfo] = None
+        auth_info: Optional[MCPAuthInfo] = None
         mcp_ctx_token = None
 
         if token:
-            token_info = verify_task_token(token)
-            if token_info:
+            auth_info = authenticate_mcp_token(
+                token, allow_user_token=spec.allow_user_token
+            )
+            if auth_info:
                 logger.debug(
-                    "[MCP:%s] Authenticated: task=%s, subtask=%s, user=%s",
+                    "[MCP:%s] Authenticated: type=%s, task=%s, subtask=%s, user=%s",
                     spec.log_prefix,
-                    token_info.task_id,
-                    token_info.subtask_id,
-                    token_info.user_name,
+                    auth_info.auth_type,
+                    auth_info.task_id,
+                    auth_info.subtask_id,
+                    auth_info.user_name,
                 )
+                if auth_info.auth_type == "task":
+                    token_info = verify_task_token(token)
                 # Set MCPRequestContext for decorator-based tools
-                if spec.name in (
-                    "knowledge",
-                    "interactive_form_question",
-                    "prompt_optimization",
-                    "subscription",
-                ):
+                if spec.name in MCP_CONTEXT_SERVER_NAMES:
                     mcp_ctx = MCPRequestContext(
-                        token_info=token_info,
+                        token_info=auth_info,
                         tool_name="",  # Will be set by tool invocation
                         server_name=spec.name,
                     )
