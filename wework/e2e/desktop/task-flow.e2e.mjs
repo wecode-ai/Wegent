@@ -2817,6 +2817,9 @@ class DesktopE2EServer {
     this.goalIdleContinuationRelease = new Promise(resolvePromise => {
       this.releaseGoalIdleContinuation = resolvePromise
     })
+    this.cloudFollowUpRelease = new Promise(resolvePromise => {
+      this.releaseCloudFollowUp = resolvePromise
+    })
     this.goalIdleStage = 'initial'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
@@ -3065,6 +3068,10 @@ class DesktopE2EServer {
 
   releaseGoalIdleResponse() {
     this.releaseGoalIdleContinuation()
+  }
+
+  releaseCloudFollowUpResponse() {
+    this.releaseCloudFollowUp()
   }
 
   releaseConcurrentMemoryResponses() {
@@ -3533,11 +3540,20 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
         'The real cloud Codex request did not contain the follow-up prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.cloudFollowUpRelease
+      response.end(
+        createSse([
+          assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+      )
       return
     }
 
@@ -4751,7 +4767,7 @@ async function verifyConnectedModelsOnLocalExecution({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="projects-create-button"]')
-  await control.command('click', '[data-testid="project-create-existing-option"]')
+  await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -4763,6 +4779,15 @@ async function verifyConnectedModelsOnLocalExecution({
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: 'workspace',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('waitFor', composerSelector, {
@@ -4793,16 +4818,26 @@ async function verifyConnectedModelsOnLocalExecution({
     workspacePath,
   })
 
-  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
-  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  const currentProjectSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+    'The local matrix project was not shown before removal'
+  )
+  const currentProjectMenuTestId = currentProjectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(currentProjectMenuTestId, 'The local matrix project did not expose its project menu')
+  const currentProjectId = currentProjectMenuTestId.slice('project-menu-'.length)
+  await control.command('click', `[data-testid="${currentProjectMenuTestId}"]`)
+  await control.command('click', `[data-testid="remove-project-${currentProjectId}"]`)
   await control.command(
     'clickWhenEnabled',
-    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+    `[data-testid="remove-project-dialog-${currentProjectId}-confirm-button"]`
   )
   await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes(projectMenuTestId),
+    snapshot => !snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
     'The local matrix project remained visible after removal'
   )
 }
@@ -4868,11 +4903,15 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     timeoutMs: UI_TIMEOUT_MS,
   })
   const projectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  const deviceStatusTestId = projectSnapshot.testIds.find(testId =>
-    testId.startsWith('project-device-status-')
+  const projectMenuTestIds = projectSnapshot.testIds.filter(testId =>
+    testId.startsWith('project-menu-')
   )
-  assert.ok(deviceStatusTestId, 'The cloud project did not expose its remote device status')
-  const projectId = deviceStatusTestId.slice('project-device-status-'.length)
+  assert.equal(
+    projectMenuTestIds.length,
+    1,
+    'The cloud flow did not expose exactly one remote project'
+  )
+  const projectId = projectMenuTestIds[0].slice('project-menu-'.length)
   await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
   await control.command(
     'clickWhenEnabled',
@@ -4978,17 +5017,28 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'runtime-local-task-row-',
     'runtime-local-task-running-'
   )
-  await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
-  await waitForSnapshot(
-    control,
-    value => value.testIds.includes(runningTaskTestId),
-    'The cloud follow-up task never entered the running state'
+  const unreadTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-unread-dot-'
   )
+  await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
   await withTimeout(
     control.awaitScenarioRequest('cloud_follow_up'),
     UI_TIMEOUT_MS,
     'The real cloud executor did not send the follow-up model request'
   )
+  await waitForSnapshot(
+    control,
+    value =>
+      value.testIds.includes(runningTaskTestId) &&
+      value.testIds.includes('pause-response-button') &&
+      value.testIds.includes('thinking-indicator') &&
+      !value.testIds.includes('send-message-button') &&
+      !value.testIds.includes(unreadTaskTestId),
+    'The cloud follow-up task did not render a consistent sidebar, composer, and message state',
+    UI_TIMEOUT_MS
+  )
+  control.releaseCloudFollowUpResponse()
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
@@ -5005,7 +5055,8 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     cases: REMOTE_MODEL_PROTOCOL_MATRIX_CASES,
     composerSelector,
     control,
-    newConversationSelector: `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`,
+    newConversationSelector:
+      '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]',
     screenshotPrefix: 'cloud-matrix',
     setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
     startIndex:
@@ -5014,17 +5065,22 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     workspacePath,
   })
 
-  const projectMenuTestId = `project-menu-${projectId}`
-  await waitForSnapshot(
+  const currentProjectSnapshot = await waitForSnapshot(
     control,
-    value => value.testIds.includes(projectMenuTestId),
+    value => value.testIds.some(testId => testId.startsWith('project-menu-')),
     'The cloud project was not shown in the sidebar'
   )
+  const currentProjectMenuTestId = currentProjectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(currentProjectMenuTestId, 'The cloud project did not expose its project menu')
+  const currentProjectId = currentProjectMenuTestId.slice('project-menu-'.length)
+  const projectMenuTestId = `project-menu-${currentProjectId}`
   await control.command('click', `[data-testid="${projectMenuTestId}"]`)
-  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  await control.command('click', `[data-testid="remove-project-${currentProjectId}"]`)
   await control.command(
     'clickWhenEnabled',
-    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+    `[data-testid="remove-project-dialog-${currentProjectId}-confirm-button"]`
   )
   await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
   await waitForSnapshot(
