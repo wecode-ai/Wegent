@@ -1986,34 +1986,14 @@ class LangGraphAgentBuilder:
                 )
                 yield final_content
 
-            # Serialize collected messages chain for history persistence
-            # Only keep new messages generated in this turn (skip input messages)
-            if _collected_state_messages:
-                self._last_live_state_messages = [
-                    _message_to_context_metrics_dict(msg)
-                    for msg in _collected_state_messages
-                ]
-                new_msgs = _new_messages_from_state(
-                    _collected_state_messages, _input_message_ids
-                )
-                self._last_messages_chain = _serialize_validated_messages_chain(
-                    new_msgs,
-                    provider=self._provider,
-                    model_id=self._model_id,
-                )
-            else:
-                self._last_messages_chain = []
-                self._last_live_state_messages = []
+            # Read the authoritative post-run state from the checkpointer and
+            # funnel it through the single finalizer. Replaces the event-captured
+            # _collected_state_messages, which could miss the post-compaction
+            # state or be rejected by the length heuristic.
+            snapshot = await agent.aget_state({**exec_config})
+            authoritative = snapshot.values.get("messages", [])
 
-            logger.debug(
-                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s, messages_chain_len=%d",
-                event_count,
-                streamed_content,
-                len(self._last_messages_chain),
-            )
-            final_message = (
-                _collected_state_messages[-1] if _collected_state_messages else None
-            )
+            final_message = authoritative[-1] if authoritative else None
             final_tool_calls = (
                 _tool_call_count(final_message)
                 if isinstance(final_message, AIMessage)
@@ -2026,8 +2006,15 @@ class LangGraphAgentBuilder:
             ):
                 termination_reason = "completed_with_unexecuted_tool_calls"
                 termination_log = logger.warning
-            self._last_termination_reason = termination_reason
 
+            self._finalize_turn_history(authoritative, turn_ctx, termination_reason)
+
+            logger.debug(
+                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s, messages_chain_len=%d",
+                event_count,
+                streamed_content,
+                len(self._last_messages_chain),
+            )
             termination_log(
                 "[stream_tokens] Termination: reason=%s "
                 "agent_iteration=%d max_iterations=%d recursion_limit=%d messages=%d "
@@ -2036,9 +2023,9 @@ class LangGraphAgentBuilder:
                 agent_iteration,
                 self.max_iterations,
                 recursion_limit,
-                len(_collected_state_messages),
-                _tail_signature(_collected_state_messages),
-                _last_tool_call_name(_collected_state_messages) or "none",
+                len(authoritative),
+                _tail_signature(authoritative),
+                _last_tool_call_name(authoritative) or "none",
                 last_model_end_tool_calls,
                 final_tool_calls,
             )
@@ -2119,19 +2106,12 @@ class LangGraphAgentBuilder:
             logger.info(
                 "[stream_tokens] silent/deferred exit caught, re-raising for caller to handle"
             )
-            # Persist partial messages chain before re-raising
-            if _collected_state_messages:
-                self._last_live_state_messages = [
-                    _message_to_context_metrics_dict(msg)
-                    for msg in _collected_state_messages
-                ]
-                new_msgs = _new_messages_from_state(
-                    _collected_state_messages, _input_message_ids
-                )
-                self._last_messages_chain = _serialize_validated_messages_chain(
-                    new_msgs,
-                    provider=self._provider,
-                    model_id=self._model_id,
+            # Persist authoritative state before re-raising.
+            snapshot = await agent.aget_state({**exec_config})
+            authoritative = snapshot.values.get("messages", [])
+            if authoritative:
+                self._finalize_turn_history(
+                    authoritative, turn_ctx, "silent_or_deferred_exit"
                 )
             raise
 

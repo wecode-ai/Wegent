@@ -137,6 +137,9 @@ async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypat
 
     captured: list[dict] = []
 
+    class _EmptySnap:
+        values: dict = {"messages": []}
+
     class _FakeAgent:
         checkpointer = object()
 
@@ -146,6 +149,9 @@ async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypat
             captured.append({"config": config, "durability": durability})
             for _ in []:  # empty async generator
                 yield
+
+        async def aget_state(self, _config):
+            return _EmptySnap()
 
     builder = LangGraphAgentBuilder(llm=_LoopingModel())
     monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
@@ -210,3 +216,58 @@ def test_finalize_turn_history_sets_all_three_fields_atomically():
     assert chain[3]["tool_call_id"] == "t2"
     assert builder._last_termination_reason == "normal_completion"
     assert len(builder._last_live_state_messages) == len(state)
+
+
+@pytest.mark.asyncio
+async def test_normal_completion_persists_from_aget_state(monkeypatch):
+    from langchain_core.messages import ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    # Authoritative post-compaction state the checkpointer would return: input
+    # user already replaced by summary; post-compaction tool pair + final answer.
+    authoritative = [
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t2", "name": "_probe", "args": {}}],
+            id="a2",
+        ),
+        ToolMessage(content="ok", tool_call_id="t2", name="_probe", id="tm2"),
+        AIMessage(content="done", id="a3"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            for _ in []:  # complete immediately, no events
+                yield
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    chain = builder._last_messages_chain
+    # Persisted from the authoritative state: summary marker + post-compaction
+    # tool pair + final assistant, not just the last message.
+    assert any(c.get("additional_kwargs", {}).get("summary_compacted") for c in chain)
+    assert any(c["role"] == "tool" for c in chain)
+    assert chain[-1]["role"] == "assistant"
+    assert builder._last_termination_reason == "normal_completion"
