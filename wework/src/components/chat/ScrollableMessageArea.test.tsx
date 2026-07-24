@@ -712,14 +712,14 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
-  test('merges live turns into a stale transcript navigation snapshot', () => {
+  test('merges live turns when local and runtime message indexes differ', () => {
     const messages = Array.from({ length: 5 }, (_, index) => ({
       id: `live-navigation-user-${index}`,
       role: 'user' as const,
       content: `实时消息 ${index + 1}`,
       status: 'done' as const,
       createdAt: `2026-05-29T00:00:0${index}.000Z`,
-      runtimeMessageIndex: index,
+      runtimeMessageIndex: index === 0 ? 1 : index + 20,
     }))
     render(
       <ScrollableMessageArea
@@ -728,8 +728,8 @@ describe('ScrollableMessageArea', () => {
           {
             id: messages[0].id,
             turnIndex: 0,
-            messageIndex: 0,
-            cursor: 'offset:0',
+            messageIndex: 1,
+            cursor: 'offset:1',
             promptPreview: messages[0].content,
             responsePreview: '',
           },

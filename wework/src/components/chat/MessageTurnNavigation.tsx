@@ -557,11 +557,8 @@ function mergeUserTurnsWithNavigation(
   messages: WorkbenchMessage[]
 ): UserTurn[] {
   const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
-  const navigationMessageIndexes = new Set(navigationTurns.map(turn => turn.messageIndex))
   const navigationIds = new Set(navigationTurns.map(turn => turn.id))
-  const liveTurns = buildUserTurns(messages).filter(
-    turn => !navigationIds.has(turn.id) && !navigationMessageIndexes.has(turn.messageIndex)
-  )
+  const liveTurns = buildUserTurns(messages).filter(turn => !navigationIds.has(turn.id))
   const nextTurnIndex =
     navigationTurns.reduce((maximum, turn) => Math.max(maximum, turn.turnIndex), -1) + 1
 

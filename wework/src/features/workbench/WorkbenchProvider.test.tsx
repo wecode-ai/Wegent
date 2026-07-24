@@ -1816,6 +1816,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     const staleTerminalRefresh = deferred<RuntimeWorkListResponse>()
     const listRuntimeWork = vi
       .fn()
+      .mockResolvedValue(runningRuntimeWork)
       .mockResolvedValueOnce(runningRuntimeWork)
       .mockImplementationOnce(() => staleTerminalRefresh.promise)
     const runtimeWorkApi = createRuntimeWorkApiMock({ listRuntimeWork })

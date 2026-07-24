@@ -1186,6 +1186,7 @@ export function WorkbenchProvider({
     getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask)
   )
   const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
+  const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
   useEffect(() => {
     const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
       subscribeBackgroundRuntimeTaskStream(address, {
@@ -1193,7 +1194,13 @@ export function WorkbenchProvider({
         onAssistantStart: () => markRuntimeTaskStarted(address),
         onAssistantSettled: () => markRuntimeTaskSettled(address),
         onRefreshWorkLists: () => {
-          void refreshWorkLists().catch(() => undefined)
+          void stableRefreshWorkLists().catch(error => {
+            console.warn('[Wework] Background runtime work list refresh failed', {
+              deviceId: address.deviceId,
+              taskId: address.taskId,
+              error,
+            })
+          })
         },
       })
     )
@@ -1203,7 +1210,7 @@ export function WorkbenchProvider({
     getLatestBackgroundRunningTasks,
     markRuntimeTaskSettled,
     markRuntimeTaskStarted,
-    refreshWorkLists,
+    stableRefreshWorkLists,
     subscribeBackgroundRuntimeTaskStream,
   ])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
@@ -1226,7 +1233,6 @@ export function WorkbenchProvider({
     unsubscribeRuntimeTaskNotifications
   )
   const stableRememberExecutionDevice = useStableEvent(rememberExecutionDevice)
-  const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
   const stableRefreshDevices = useStableEvent(refreshDevices)
   const stableGetRemoteDeviceStartupCommand = useStableEvent(getRemoteDeviceStartupCommand)
   const stableUpgradeDevice = useStableEvent(upgradeDevice)

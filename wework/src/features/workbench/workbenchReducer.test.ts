@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
+import type { RuntimeWorkListResponse } from '@/types/api'
 
 describe('workbenchReducer', () => {
   test('selects a project and keeps runtime task empty', () => {
@@ -1309,5 +1310,65 @@ describe('workbenchReducer', () => {
     })
 
     expect(settled.runtimeWork?.chats[0].tasks[0].running).toBe(false)
+  })
+
+  test('keeps a settled task stopped across a stale refresh until it starts again', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/chat',
+          available: true,
+          tasks: [
+            {
+              taskId: 'runtime-1',
+              workspacePath: '/workspace/chat',
+              title: 'Runtime task',
+              runtime: 'codex',
+              running: true,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    const address = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+      workspacePath: '/workspace/chat',
+    }
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork,
+    }
+
+    const settled = workbenchReducer(state, {
+      type: 'runtime_task_settled',
+      address,
+    })
+    const staleRefreshed = workbenchReducer(settled, {
+      type: 'runtime_work_refreshed',
+      runtimeWork,
+    })
+    const restarted = workbenchReducer(staleRefreshed, {
+      type: 'runtime_task_started',
+      address,
+    })
+    const removed = workbenchReducer(staleRefreshed, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    expect(settled.runtimeWork?.chats[0].tasks[0].running).toBe(false)
+    expect(staleRefreshed.runtimeWork?.chats[0].tasks[0].running).toBe(false)
+    expect(staleRefreshed.pendingSettledRuntimeTasks).toEqual([address])
+    expect(restarted.runtimeWork?.chats[0].tasks[0].running).toBe(true)
+    expect(restarted.pendingSettledRuntimeTasks).toEqual([])
+    expect(removed.pendingSettledRuntimeTasks).toEqual([])
   })
 })

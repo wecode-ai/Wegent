@@ -627,6 +627,34 @@ function applyRuntimeTaskActivity(
   )
 }
 
+function retainPendingSettledRuntimeTasks(
+  runtimeWork: RuntimeWorkListResponse | null,
+  pendingSettledRuntimeTasks: RuntimeTaskAddress[]
+): RuntimeTaskAddress[] {
+  if (!runtimeWork || pendingSettledRuntimeTasks.length === 0) {
+    return pendingSettledRuntimeTasks
+  }
+
+  const workspaces = [
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+    ...runtimeWork.chats,
+  ]
+  return pendingSettledRuntimeTasks.filter(address =>
+    workspaces.some(workspace =>
+      workspace.tasks.some(task =>
+        sameRuntimeTaskActivity(
+          {
+            deviceId: workspace.deviceId,
+            taskId: task.taskId,
+            workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+          },
+          address
+        )
+      )
+    )
+  )
+}
+
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   taskId: string,
@@ -917,10 +945,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
       const nextRuntimeWork =
         action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
-      const runtimeWork = applyRuntimeTaskActivity(
+      const pendingSettledRuntimeTasks = retainPendingSettledRuntimeTasks(
         nextRuntimeWork,
         state.pendingSettledRuntimeTasks
       )
+      const runtimeWork = applyRuntimeTaskActivity(nextRuntimeWork, pendingSettledRuntimeTasks)
       return {
         ...state,
         user: action.user,
@@ -928,6 +957,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         projects: action.projects,
         devices,
         runtimeWork,
+        pendingSettledRuntimeTasks,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
           devices,
@@ -953,15 +983,17 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         action.runtimeWork === undefined
           ? state.runtimeWork
           : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
-      const runtimeWork = applyRuntimeTaskActivity(
+      const pendingSettledRuntimeTasks = retainPendingSettledRuntimeTasks(
         mergedRuntimeWork,
         state.pendingSettledRuntimeTasks
       )
+      const runtimeWork = applyRuntimeTaskActivity(mergedRuntimeWork, pendingSettledRuntimeTasks)
       const refreshedState = {
         ...state,
         projects: action.projects,
         devices,
         runtimeWork,
+        pendingSettledRuntimeTasks,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
           devices,
@@ -1009,10 +1041,15 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
     }
     case 'runtime_work_refreshed': {
-      const runtimeWork = applyRuntimeTaskActivity(
-        mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork),
+      const mergedRuntimeWork = mergeRuntimeWorkPreservingTaskOrder(
+        state.runtimeWork,
+        action.runtimeWork
+      )
+      const pendingSettledRuntimeTasks = retainPendingSettledRuntimeTasks(
+        mergedRuntimeWork,
         state.pendingSettledRuntimeTasks
       )
+      const runtimeWork = applyRuntimeTaskActivity(mergedRuntimeWork, pendingSettledRuntimeTasks)
       debugRuntimeSidebarState('reducer-runtime-work-refreshed', {
         incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork),
         previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
@@ -1021,6 +1058,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork,
+        pendingSettledRuntimeTasks,
         currentProject: resolveCurrentProjectAfterRefresh(
           state.currentProject,
           state.projects,

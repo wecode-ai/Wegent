@@ -1150,29 +1150,18 @@ async function waitForExecutorReadyEvidence(logPath, timeoutMs = UI_TIMEOUT_MS) 
   throw new Error(`Timed out waiting for executor stdio-ready evidence in ${logPath}`)
 }
 
-async function waitForLogPattern(logPath, pattern, timeoutMs = UI_TIMEOUT_MS) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    const content = await readFile(logPath, 'utf8').catch(() => '')
-    if (pattern.test(content)) return content
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  throw new Error(`Timed out waiting for ${pattern} in ${logPath}`)
-}
-
-async function waitForNewLogPattern(
+async function waitForLogPattern(
   logPath,
   pattern,
-  previousContentLength,
-  timeoutMs = UI_TIMEOUT_MS
+  { fromOffset = 0, timeoutMs = UI_TIMEOUT_MS } = {}
 ) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const content = await readFile(logPath, 'utf8').catch(() => '')
-    if (pattern.test(content.slice(previousContentLength))) return content
+    if (pattern.test(content.slice(fromOffset))) return content
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`Timed out waiting for new ${pattern} in ${logPath}`)
+  throw new Error(`Timed out waiting for ${pattern} in ${logPath} after offset ${fromOffset}`)
 }
 
 async function reactivateMacApplication(appIdentifier) {
@@ -1775,7 +1764,9 @@ async function verifyAttachmentOnlySidebarLifecycle({
     const tauriLogPath = join(resultDir, `wework-tauri-${app.pid}.log`)
     const tauriLogLengthBeforeClose = (await readFile(tauriLogPath, 'utf8').catch(() => '')).length
     await control.command('closeMainWindowToTray', 'body')
-    await waitForNewLogPattern(tauriLogPath, /windowWillClose:/, tauriLogLengthBeforeClose)
+    await waitForLogPattern(tauriLogPath, /windowWillClose:/, {
+      fromOffset: tauriLogLengthBeforeClose,
+    })
     await reactivateMacApplication(appIdentifier)
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeClose),
@@ -2406,6 +2397,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
     true,
     'The running Goal turn did not keep the composer busy'
   )
+  await captureVerificationScreenshot(control, 'goal-idle-01-running.png')
 
   control.releaseGoalIdleInitialResponse()
   await withTimeout(
@@ -2446,6 +2438,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
     true,
     'The automatic Goal continuation released the composer running state'
   )
+  await captureVerificationScreenshot(control, 'goal-idle-02-continuing.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
@@ -2457,11 +2450,13 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
       snapshot.testIds.includes(goalRunningTestId),
     'The background Goal continuation stopped running or became unread'
   )
+  await captureVerificationScreenshot(control, 'goal-idle-03-background-unread-free.png')
 
   control.releaseGoalIdleResponse()
   await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
+  await captureVerificationScreenshot(control, 'goal-idle-04-settled-unread.png')
   await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
