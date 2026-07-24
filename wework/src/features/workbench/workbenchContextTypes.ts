@@ -121,6 +121,7 @@ export interface WorkbenchContextValue {
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
+    activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string

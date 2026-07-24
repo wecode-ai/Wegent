@@ -41,6 +41,7 @@ import type {
   ArchiveRuntimeTaskResult,
   ArchiveRuntimeConversationsResult,
 } from './workbenchContextTypes'
+import { evictRuntimeConversation } from './runtimeConversationCache'
 
 interface UseWorkbenchRuntimeTasksOptions {
   user: User
@@ -251,6 +252,7 @@ export function useWorkbenchRuntimeTasks({
         result.response?.accepted ? [result.address] : []
       )
       if (archivedAddresses.length > 0) {
+        archivedAddresses.forEach(evictRuntimeConversation)
         markRuntimeTasksArchived(archivedAddresses)
         await removeArchivedWorktrees(
           findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)

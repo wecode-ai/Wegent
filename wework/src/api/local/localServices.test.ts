@@ -1092,6 +1092,11 @@ describe('createLocalAppServices', () => {
     const customModelConfig = sendPayloads[2].executionRequest.model_config
 
     expect(continueModelConfig).toEqual(createModelConfig)
+    expect(sendPayloads.map(payload => payload.modelSelection)).toEqual([
+      { modelName: 'local-model:ollama', modelType: null, options: {} },
+      { modelName: 'local-model:lmstudio', modelType: null, options: {} },
+      { modelName: 'local-model:custom', modelType: null, options: {} },
+    ])
     expect(createModelConfig).toEqual(
       expect.objectContaining({
         model: 'openai',

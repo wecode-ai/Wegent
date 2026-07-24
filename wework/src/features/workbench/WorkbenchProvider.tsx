@@ -67,6 +67,7 @@ import {
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
 import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
+import { applyRuntimeConversationAction } from './runtimeConversationCache'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -430,6 +431,10 @@ export function WorkbenchProvider({
     onSelectionChange: persistNewChatModelSelection,
     onSelectionBlocked: handleBlockedModelSelection,
   })
+  const activeModel = useMemo(
+    () => findModelForSelection(modelSelection.models, modelSelectionConfig),
+    [modelSelection.models, modelSelectionConfig]
+  )
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
     teamId: state.defaultTeam?.id,
@@ -1119,6 +1124,34 @@ export function WorkbenchProvider({
         },
       })
   )
+
+  const nextBackgroundRunningTasks = getBackgroundRunningRuntimeTasks(
+    state.runtimeWork,
+    state.currentRuntimeTask
+  )
+  const backgroundRunningTaskRoutes = nextBackgroundRunningTasks
+    .map(address => `${address.deviceId}:${address.taskId}`)
+    .join('|')
+  const getLatestBackgroundRunningTasks = useStableEvent(() =>
+    getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask)
+  )
+  const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
+  useEffect(() => {
+    const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
+      subscribeBackgroundRuntimeTaskStream(address, {
+        onMessageAction: action => applyRuntimeConversationAction(address, action),
+        onAssistantStart: () => markRuntimeTaskStarted(address),
+        onAssistantSettled: () => markRuntimeTaskSettled(address),
+      })
+    )
+    return () => unsubscribers.forEach(unsubscribe => unsubscribe())
+  }, [
+    backgroundRunningTaskRoutes,
+    getLatestBackgroundRunningTasks,
+    markRuntimeTaskSettled,
+    markRuntimeTaskStarted,
+    subscribeBackgroundRuntimeTaskStream,
+  ])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
@@ -1303,6 +1336,7 @@ export function WorkbenchProvider({
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
+      activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
@@ -1349,6 +1383,7 @@ export function WorkbenchProvider({
       listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
+      activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.setSelectedModel,
@@ -1369,6 +1404,7 @@ export function WorkbenchProvider({
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
+      activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
@@ -1414,6 +1450,7 @@ export function WorkbenchProvider({
       listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
+      activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.setSelectedModel,
@@ -1719,4 +1756,37 @@ function getProjectChatScopeKey({
     return getRuntimeTaskChatScopeKey(currentRuntimeTask)
   }
   return `blank:${standaloneChatKey}`
+}
+
+function getBackgroundRunningRuntimeTasks(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  currentRuntimeTask: RuntimeTaskAddress | null
+): RuntimeTaskAddress[] {
+  if (!runtimeWork) return []
+
+  const tasks = new Map<string, RuntimeTaskAddress>()
+  const workspaces = [
+    ...runtimeWork.chats,
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+  ]
+  for (const workspace of workspaces) {
+    for (const task of workspace.tasks) {
+      if (task.running !== true) continue
+      if (
+        currentRuntimeTask?.deviceId === workspace.deviceId &&
+        currentRuntimeTask.taskId === task.taskId
+      ) {
+        continue
+      }
+      const address = {
+        deviceId: workspace.deviceId,
+        taskId: task.taskId,
+        threadId: task.threadId,
+        workspacePath: workspace.workspacePath,
+        runtimeHandle: task.runtimeHandle,
+      }
+      tasks.set(`${address.deviceId}:${address.taskId}`, address)
+    }
+  }
+  return [...tasks.values()]
 }

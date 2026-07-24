@@ -125,6 +125,21 @@ describe('ModelSelector desktop layout', () => {
     })
   })
 
+  test('keeps the hidden width measurement inside the toolbar bounds', () => {
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL]}
+        selectedModel={SAMPLE_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-width-measure')).toHaveClass('left-0', 'top-0')
+  })
+
   test('positions the menu to the left of the right workspace panel shell', async () => {
     createShellElement()
 

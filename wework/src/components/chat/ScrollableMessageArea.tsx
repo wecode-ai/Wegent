@@ -16,31 +16,20 @@ import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
+import {
+  cacheConversationScrollSnapshot,
+  getConversationScrollSnapshot,
+  hasConversationScrollSnapshot,
+  type ConversationScrollSnapshot,
+} from '@/features/workbench/runtimeConversationCache'
 
 const BOTTOM_THRESHOLD = 48
 const SCROLLED_TO_BOTTOM_THRESHOLD = 8
-const STABLE_SCROLL_DELAYS = [0, 50]
-const MAX_SCROLL_SNAPSHOTS = 50
-const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
-const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
-
-interface ConversationScrollSnapshot {
-  scrollTop: number
-  pinnedToBottom: boolean
-  anchorMessageId?: string
-  anchorOffsetTop?: number
-  anchorDocumentTop?: number
-  anchorIndex?: number
-  anchorKind?: 'message' | 'content'
-  anchorProgress?: number
-}
-
+const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
 interface RuntimeTranscriptGap {
   start: number
   end: number
 }
-
-const conversationScrollSnapshots = new Map<string, ConversationScrollSnapshot>()
 
 interface ScrollableMessageAreaProps {
   messages: WorkbenchMessage[]
@@ -57,6 +46,7 @@ interface ScrollableMessageAreaProps {
   scrollButtonClassName?: string
   scrollTestId?: string
   externalScrollRef?: RefObject<HTMLDivElement | null>
+  turnNavigationPortalTarget?: Element | null
   conversationKey?: string | number | null
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
@@ -124,6 +114,9 @@ function areScrollableMessageAreaPropsEqual(
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
     previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
     previous.externalScrollRef !== next.externalScrollRef ? 'externalScrollRef' : null,
+    previous.turnNavigationPortalTarget !== next.turnNavigationPortalTarget
+      ? 'turnNavigationPortalTarget'
+      : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.devices !== next.devices ? 'devices' : null,
     previous.onRetryFailedMessage !== next.onRetryFailedMessage ? 'onRetryFailedMessage' : null,
@@ -192,6 +185,7 @@ function ScrollableMessagePaneContent({
   scrollButtonClassName,
   scrollTestId = 'chat-message-scroll-area',
   externalScrollRef,
+  turnNavigationPortalTarget,
   conversationKey,
   devices,
   onRetryFailedMessage,
@@ -226,18 +220,23 @@ function ScrollableMessagePaneContent({
   const stickyFooterRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const turnNavigationLoadingRef = useRef(false)
+  const turnNavigationScrollingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const scrollFrameRef = useRef<number | null>(null)
   const restoringScrollKeyRef = useRef<string | null>(null)
+  const followingBottomKeyRef = useRef<string | null>(null)
   const userScrollPausedAutoFollowRef = useRef(false)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [turnNavigationLoading, setTurnNavigationLoading] = useState(false)
+  const [turnNavigationTargetMessageId, setTurnNavigationTargetMessageId] = useState<string | null>(
+    null
+  )
   const [loadingTranscriptGapKey, setLoadingTranscriptGapKey] = useState<string | null>(null)
   const lastMessage = messages[messages.length - 1]
   const currentScrollKey = useMemo(() => scrollPositionKey(conversationKey), [conversationKey])
@@ -279,6 +278,7 @@ function ScrollableMessagePaneContent({
     scrollTimersRef.current.forEach(timer => clearTimeout(timer))
     scrollTimersRef.current = []
     restoringScrollKeyRef.current = null
+    followingBottomKeyRef.current = null
 
     if (scrollFrameRef.current !== null) {
       cancelAnimationFrame(scrollFrameRef.current)
@@ -295,8 +295,29 @@ function ScrollableMessagePaneContent({
   }, [])
 
   const isTurnNavigationAutoScrollSuspended = useCallback(
-    () => turnNavigationLoadingRef.current,
+    () => turnNavigationLoadingRef.current || turnNavigationScrollingRef.current,
     []
+  )
+
+  const handleTurnNavigationScrollTargetChange = useCallback(
+    (messageId: string | null) => {
+      const scrolling = messageId !== null
+      turnNavigationScrollingRef.current = scrolling
+      setTurnNavigationTargetMessageId(messageId)
+      const element = activeScrollRefRef.current.current
+      console.warn('[Wework] Message turn navigation scroll ownership', {
+        scrolling,
+        messageId,
+        conversationKey: currentScrollKey,
+        scrollTop: element?.scrollTop ?? null,
+        scrollHeight: element?.scrollHeight ?? null,
+        clientHeight: element?.clientHeight ?? null,
+      })
+      if (scrolling) {
+        clearScheduledScrolls()
+      }
+    },
+    [clearScheduledScrolls, currentScrollKey]
   )
 
   const handleTurnNavigationLoadStateChange = useCallback(
@@ -358,12 +379,8 @@ function ScrollableMessagePaneContent({
   const saveCurrentScrollPosition = useCallback(
     (scrollTop?: number) => {
       const element = activeScrollRefRef.current.current
-      const content = contentRef.current
       if (!element || currentScrollKey === null || messages.length === 0) return
-      setConversationScrollSnapshot(
-        currentScrollKey,
-        createScrollSnapshot(element, content, scrollTop)
-      )
+      setConversationScrollSnapshot(currentScrollKey, createScrollSnapshot(element, scrollTop))
     },
     [currentScrollKey, messages.length]
   )
@@ -389,7 +406,11 @@ function ScrollableMessagePaneContent({
       } else if (options.forceSave) {
         userScrollPausedAutoFollowRef.current = true
       }
-      if (!isAtBottom && restoringScrollKeyRef.current !== currentScrollKey) {
+      if (
+        !isAtBottom &&
+        restoringScrollKeyRef.current !== currentScrollKey &&
+        followingBottomKeyRef.current !== currentScrollKey
+      ) {
         clearScheduledScrolls()
       }
       if (
@@ -428,15 +449,11 @@ function ScrollableMessagePaneContent({
 
   const restoreSavedScrollPosition = useCallback((key: string) => {
     const element = activeScrollRefRef.current.current
-    const content = contentRef.current
-    const savedSnapshot = conversationScrollSnapshots.get(key)
+    const savedSnapshot = getConversationScrollSnapshot(key)
     if (!element || !savedSnapshot) return
 
     const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
-    const nextScrollTop = Math.min(
-      getRestoredScrollTop(element, content, savedSnapshot),
-      maxScrollTop
-    )
+    const nextScrollTop = Math.min(getRestoredScrollTop(element, savedSnapshot), maxScrollTop)
     if (typeof element.scrollTo === 'function') {
       element.scrollTo({
         top: nextScrollTop,
@@ -460,6 +477,9 @@ function ScrollableMessagePaneContent({
     (key: string) => {
       clearScheduledScrolls()
       restoringScrollKeyRef.current = key
+      followingBottomKeyRef.current = getConversationScrollSnapshot(key)?.pinnedToBottom
+        ? key
+        : null
 
       STABLE_SCROLL_DELAYS.forEach(delay => {
         scheduleScrollTimer(() => {
@@ -499,14 +519,14 @@ function ScrollableMessagePaneContent({
   const scheduleStableScrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
       clearScheduledScrolls()
-
+      followingBottomKeyRef.current = currentScrollKey
       STABLE_SCROLL_DELAYS.forEach(delay => {
         scheduleScrollTimer(() => {
           scrollToBottom(behavior, options)
         }, delay)
       })
     },
-    [clearScheduledScrolls, scheduleScrollTimer, scrollToBottom]
+    [clearScheduledScrolls, currentScrollKey, scheduleScrollTimer, scrollToBottom]
   )
 
   useLayoutEffect(() => {
@@ -517,7 +537,7 @@ function ScrollableMessagePaneContent({
       currentScrollKey &&
       messages.length > 0 &&
       (conversationChanged || messagesLoaded) &&
-      conversationScrollSnapshots.has(currentScrollKey)
+      hasConversationScrollSnapshot(currentScrollKey)
     )
     const shouldForceBottom =
       !shouldRestoreScroll &&
@@ -596,13 +616,26 @@ function ScrollableMessagePaneContent({
     if (!content || typeof ResizeObserver === 'undefined') return
 
     const resizeObserver = new ResizeObserver(() => {
+      if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
+        if (turnNavigationScrollingRef.current) {
+          console.warn('[Wework] Message turn navigation ignored content resize', {
+            conversationKey: currentScrollKey,
+            scrollTop: activeScrollRefRef.current.current?.scrollTop ?? null,
+            scrollHeight: activeScrollRefRef.current.current?.scrollHeight ?? null,
+            clientHeight: activeScrollRefRef.current.current?.clientHeight ?? null,
+          })
+        }
+        return
+      }
+
       const restoringKey = restoringScrollKeyRef.current
       if (restoringKey && restoringKey === currentScrollKey) {
         restoreSavedScrollPosition(restoringKey)
         return
       }
 
-      if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
+      if (followingBottomKeyRef.current === currentScrollKey) {
+        setScrollToBottom('auto', { saveSnapshot: false })
         return
       }
 
@@ -627,6 +660,7 @@ function ScrollableMessagePaneContent({
     isTurnNavigationAutoScrollSuspended,
     restoreSavedScrollPosition,
     scrollToBottom,
+    setScrollToBottom,
     stickyFooter,
   ])
 
@@ -683,6 +717,8 @@ function ScrollableMessagePaneContent({
         contentRef={contentRef}
         onLoadTurnNavigationItem={onLoadTurnNavigationItem}
         onNavigationLoadStateChange={handleTurnNavigationLoadStateChange}
+        onNavigationScrollTargetChange={handleTurnNavigationScrollTargetChange}
+        portalTarget={turnNavigationPortalTarget}
       />
       {turnNavigationLoading && (
         <div
@@ -699,7 +735,8 @@ function ScrollableMessagePaneContent({
         className={cn(
           'h-full overflow-y-auto',
           stickyFooter && 'flex flex-col',
-          (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]',
+          (turnNavigationLoading || turnNavigationTargetMessageId || autoScrollSuspended) &&
+            '[overflow-anchor:none]',
           scrollerClassName
         )}
         onWheel={event => {
@@ -716,7 +753,8 @@ function ScrollableMessagePaneContent({
           className={cn(
             'min-w-0',
             stickyFooter && 'flex-1 shrink-0',
-            (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]'
+            (turnNavigationLoading || turnNavigationTargetMessageId || autoScrollSuspended) &&
+              '[overflow-anchor:none]'
           )}
         >
           {messages.length === 0 ? (
@@ -762,8 +800,11 @@ function ScrollableMessagePaneContent({
               )}
               <MessageList
                 messages={messages}
+                scrollElementRef={scrollRef}
+                initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
                 className={messageListClassName}
                 conversationKey={conversationKey}
+                forceVirtualMessageId={turnNavigationTargetMessageId}
                 isWaitingForAssistant={isWaitingForAssistant}
                 disableContentVisibility={turnNavigationLoading}
                 devices={devices}
@@ -812,151 +853,36 @@ function scrollPositionKey(conversationKey: string | number | null | undefined):
 }
 
 function setConversationScrollSnapshot(key: string, snapshot: ConversationScrollSnapshot) {
-  conversationScrollSnapshots.delete(key)
-  conversationScrollSnapshots.set(key, snapshot)
+  cacheConversationScrollSnapshot(key, snapshot)
+}
 
-  while (conversationScrollSnapshots.size > MAX_SCROLL_SNAPSHOTS) {
-    const oldestKey = conversationScrollSnapshots.keys().next().value
-    if (oldestKey === undefined) return
-    conversationScrollSnapshots.delete(oldestKey)
-  }
+function getInitialDistanceFromBottomPx(key: string | null): number {
+  if (key === null) return 0
+  const distance = getConversationScrollSnapshot(key)?.distanceFromBottomPx
+  return typeof distance === 'number' && Number.isFinite(distance) ? Math.max(0, distance) : 0
 }
 
 function createScrollSnapshot(
   scroller: HTMLElement,
-  content: HTMLElement | null,
   scrollTop?: number
 ): ConversationScrollSnapshot {
   const resolvedScrollTop = scrollTop ?? scroller.scrollTop
-  const snapshot: ConversationScrollSnapshot = {
-    scrollTop: resolvedScrollTop,
-    pinnedToBottom:
-      scroller.scrollHeight - scroller.clientHeight - resolvedScrollTop <=
-      SCROLLED_TO_BOTTOM_THRESHOLD,
-  }
-  if (scrollTop !== undefined || !content) return snapshot
-
-  const anchor = findTopVisibleMessageAnchor(scroller, content)
-  if (!anchor) return snapshot
-
-  const scrollerRect = scroller.getBoundingClientRect()
-  const anchorRect = anchor.getBoundingClientRect()
-  const message = anchor.matches(MESSAGE_ANCHOR_SELECTOR)
-    ? anchor
-    : anchor.closest<HTMLElement>(MESSAGE_ANCHOR_SELECTOR)
-  const messageId = message?.dataset.messageId
-  if (!messageId) return snapshot
-
-  snapshot.anchorMessageId = messageId
-  snapshot.anchorOffsetTop = anchorRect.top - scrollerRect.top
-  snapshot.anchorDocumentTop = snapshot.scrollTop + snapshot.anchorOffsetTop
-  snapshot.anchorKind = anchor.matches(SCROLL_ANCHOR_SELECTOR) ? 'content' : 'message'
-  if (anchorRect.height > scrollerRect.height) {
-    snapshot.anchorProgress = Math.min(
-      1,
-      Math.max(0, (scrollerRect.top - anchorRect.top) / anchorRect.height)
-    )
-  }
-  if (message && snapshot.anchorKind === 'content') {
-    snapshot.anchorIndex = getMessageScrollAnchors(message).indexOf(anchor)
-  }
-  return snapshot
-}
-
-function getRestoredScrollTop(
-  scroller: HTMLElement,
-  content: HTMLElement | null,
-  snapshot: ConversationScrollSnapshot
-): number {
-  if (snapshot.pinnedToBottom) {
-    return Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-  }
-
-  if (!content || !snapshot.anchorMessageId || snapshot.anchorOffsetTop === undefined) {
-    return Math.max(0, snapshot.scrollTop)
-  }
-
-  const anchor = findSavedAnchor(content, snapshot)
-  if (!anchor || !hasMeasurableRect(anchor)) {
-    return Math.max(0, snapshot.scrollTop)
-  }
-
-  const scrollerRect = scroller.getBoundingClientRect()
-  const anchorRect = anchor.getBoundingClientRect()
-  const currentAnchorOffsetTop = anchorRect.top - scrollerRect.top
-  if (snapshot.anchorProgress !== undefined) {
-    const currentAnchorDocumentTop = scroller.scrollTop + currentAnchorOffsetTop
-    return Math.max(0, currentAnchorDocumentTop + anchorRect.height * snapshot.anchorProgress)
-  }
-  if (snapshot.anchorDocumentTop !== undefined) {
-    const currentAnchorDocumentTop = scroller.scrollTop + currentAnchorOffsetTop
-    return Math.max(0, snapshot.scrollTop + currentAnchorDocumentTop - snapshot.anchorDocumentTop)
-  }
-
-  return Math.max(0, scroller.scrollTop + currentAnchorOffsetTop - snapshot.anchorOffsetTop)
-}
-
-function findTopVisibleMessageAnchor(
-  scroller: HTMLElement,
-  content: HTMLElement
-): HTMLElement | null {
-  return (
-    findTopVisibleAnchor(scroller, Array.from(content.querySelectorAll(SCROLL_ANCHOR_SELECTOR))) ??
-    findTopVisibleAnchor(scroller, Array.from(content.querySelectorAll(MESSAGE_ANCHOR_SELECTOR)))
+  const distanceFromBottomPx = Math.max(
+    0,
+    scroller.scrollHeight - scroller.clientHeight - resolvedScrollTop
   )
-}
-
-function findTopVisibleAnchor(scroller: HTMLElement, anchors: Element[]): HTMLElement | null {
-  const scrollerRect = scroller.getBoundingClientRect()
-  let nearestAnchor: HTMLElement | null = null
-  let nearestDistance = Number.POSITIVE_INFINITY
-
-  for (const anchor of anchors) {
-    if (!(anchor instanceof HTMLElement)) continue
-    if (!hasMeasurableRect(anchor)) continue
-
-    const rect = anchor.getBoundingClientRect()
-    if (rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom) {
-      return anchor
-    }
-
-    const distance = Math.abs(rect.top - scrollerRect.top)
-    if (distance < nearestDistance) {
-      nearestDistance = distance
-      nearestAnchor = anchor
-    }
+  return {
+    distanceFromBottomPx,
+    pinnedToBottom: distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD,
   }
-
-  return nearestAnchor
 }
 
-function findSavedAnchor(
-  content: HTMLElement,
-  snapshot: ConversationScrollSnapshot
-): HTMLElement | null {
-  const message = findMessageAnchorById(content, snapshot.anchorMessageId ?? '')
-  if (!message) return null
-  if (snapshot.anchorKind !== 'content' || snapshot.anchorIndex === undefined) return message
-
-  return getMessageScrollAnchors(message)[snapshot.anchorIndex] ?? message
-}
-
-function findMessageAnchorById(content: HTMLElement, messageId: string): HTMLElement | null {
-  if (!messageId) return null
-  return (
-    Array.from(content.querySelectorAll<HTMLElement>(MESSAGE_ANCHOR_SELECTOR)).find(
-      anchor => anchor.dataset.messageId === messageId
-    ) ?? null
-  )
-}
-
-function getMessageScrollAnchors(message: HTMLElement): HTMLElement[] {
-  return Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))
-}
-
-function hasMeasurableRect(element: HTMLElement): boolean {
-  const rect = element.getBoundingClientRect()
-  return rect.bottom > rect.top
+function getRestoredScrollTop(scroller: HTMLElement, snapshot: ConversationScrollSnapshot): number {
+  const storedDistance = Number.isFinite(snapshot.distanceFromBottomPx)
+    ? snapshot.distanceFromBottomPx
+    : 0
+  const distance = snapshot.pinnedToBottom ? 0 : storedDistance
+  return Math.max(0, scroller.scrollHeight - scroller.clientHeight - distance)
 }
 
 function RuntimeTranscriptGapMarker({
