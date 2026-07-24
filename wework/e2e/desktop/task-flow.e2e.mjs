@@ -4891,6 +4891,10 @@ async function main() {
     projectMenuTestId = reopenedProjectMenuTestId
     projectId = projectMenuTestId.slice('project-menu-'.length)
     projectRowSelector = `[data-testid="project-row-${projectId}"]`
+    await control.command('waitFor', projectRowSelector, {
+      text: 'workspace',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
 
     if (MEMORY_ONLY) {
       phase = 'memory-growth'
