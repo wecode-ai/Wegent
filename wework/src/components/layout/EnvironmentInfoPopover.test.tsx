@@ -101,7 +101,7 @@ describe('EnvironmentInfoPopover', () => {
       />
     )
 
-    expect(screen.getByTestId('environment-todo-binding-button')).toHaveTextContent('关联云任务')
+    expect(screen.getByTestId('environment-todo-binding-button')).toHaveTextContent('关联项目空间')
     expect(screen.getByTestId('environment-delivery-button')).toHaveTextContent('交付到任务…')
     await userEvent.click(screen.getByTestId('environment-todo-binding-button'))
     await userEvent.click(screen.getByTestId('environment-delivery-button'))

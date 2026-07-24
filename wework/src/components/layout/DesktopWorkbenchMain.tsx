@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeftRight, Link2, MessageCircle, MessageSquareWarning } from 'lucide-react'
+import { ArrowLeftRight, MessageCircle, MessageSquareWarning } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
@@ -575,7 +575,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
       .catch(cause => {
         if (!active) return
-        setTodoBindingError(cause instanceof Error ? cause.message : '关联云任务失败')
+        setTodoBindingError(cause instanceof Error ? cause.message : '关联项目空间失败')
       })
     return () => {
       active = false
@@ -1683,27 +1683,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     />
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
-  const composerTodoContext = services?.deliveryApi ? (
-    <button
-      type="button"
-      data-testid="composer-todo-binding-button"
-      onClick={() => {
-        setDeliverAfterBinding(false)
-        setTodoBindingPickerOpen(true)
-      }}
-      className="flex h-8 max-w-40 items-center gap-1.5 rounded-md px-2 text-xs text-text-secondary hover:bg-hover"
-      title={
-        composerTodoItem
-          ? `${composerTodoItem.id} · ${composerTodoItem.title}`
-          : (composerCloudProject?.name ?? '关联云协作')
-      }
-    >
-      <Link2 className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">
-        {composerTodoItem?.title ?? composerCloudProject?.name ?? '关联云协作'}
-      </span>
-    </button>
-  ) : undefined
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
@@ -2114,7 +2093,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             onOpenSkillFile={openLocalSkillFile}
                             workspaceTarget={composerWorkspaceTarget}
                             workspaceFileApi={workspaceFileApi}
-                            toolbarLeadingContext={composerTodoContext}
                           />
                         )}
                       </div>
@@ -2234,7 +2212,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     onOpenSkillFile={openLocalSkillFile}
                     workspaceTarget={composerWorkspaceTarget}
                     workspaceFileApi={workspaceFileApi}
-                    toolbarLeadingContext={composerTodoContext}
                   />
                 </>
               }

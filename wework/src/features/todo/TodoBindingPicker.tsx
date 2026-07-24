@@ -143,7 +143,7 @@ export function TodoBindingPicker({
       <section className="w-[480px] max-w-full overflow-hidden rounded-xl border border-border bg-background shadow-lg">
         <header className="flex h-11 items-center border-b border-border px-4">
           <Link2 className="mr-2 h-4 w-4 text-text-secondary" />
-          <h2 className="text-sm font-semibold">关联云协作</h2>
+          <h2 className="text-sm font-semibold">关联项目空间</h2>
           <button
             type="button"
             data-testid="todo-binding-close"

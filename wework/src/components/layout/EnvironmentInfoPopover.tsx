@@ -478,7 +478,7 @@ export function EnvironmentInfoPopover({
                       <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                         <Link2 className="h-[18px] w-[18px]" />
                       </span>
-                      <span className="min-w-0 flex-1 truncate">{todoLabel || '关联云任务'}</span>
+                      <span className="min-w-0 flex-1 truncate">{todoLabel || '关联项目空间'}</span>
                     </button>
                   )}
                   {onDeliver && (
