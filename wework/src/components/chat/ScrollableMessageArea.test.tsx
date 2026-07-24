@@ -1013,6 +1013,93 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('loads an unresolved transcript gap once without taking over message layout', async () => {
+    const observerCallbacks: IntersectionObserverCallback[] = []
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class IntersectionObserverMock {
+        constructor(callback: IntersectionObserverCallback) {
+          observerCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    let resolveGapLoad: (() => void) | undefined
+    const onLoadTranscriptGap = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveGapLoad = resolve
+        })
+    )
+
+    render(
+      <ScrollableMessageArea
+        conversationKey="unresolved-transcript-gap"
+        messages={[
+          {
+            id: 'before-gap',
+            role: 'user',
+            content: '触发模型报错',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'after-gap',
+            role: 'user',
+            content: '报错后的下一条消息',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:02.000Z',
+            runtimeMessageIndex: 2,
+          },
+        ]}
+        onLoadTranscriptGap={onLoadTranscriptGap}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const firstMessage = screen.getByText('触发模型报错').closest('[data-message-id]')!
+    expect(observerCallbacks).toHaveLength(1)
+
+    await act(async () => {
+      observerCallbacks[0](
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+    })
+
+    expect(onLoadTranscriptGap).toHaveBeenCalledTimes(1)
+    expect(onLoadTranscriptGap).toHaveBeenCalledWith({ start: 1, end: 2 })
+    expect(
+      screen.getByTestId('runtime-transcript-gap-marker').querySelector('button')
+    ).toBeDisabled()
+    expect(screen.queryByTestId('message-turn-navigation-loading')).not.toBeInTheDocument()
+    expect(scroller).not.toHaveClass('[overflow-anchor:none]')
+    expect(firstMessage).toHaveClass('[content-visibility:auto]')
+
+    await act(async () => {
+      resolveGapLoad?.()
+      await Promise.resolve()
+    })
+    expect(observerCallbacks).toHaveLength(2)
+
+    await act(async () => {
+      observerCallbacks[1](
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+      await Promise.resolve()
+    })
+
+    expect(onLoadTranscriptGap).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByTestId('runtime-transcript-gap-marker').querySelector('button')!)
+    expect(onLoadTranscriptGap).toHaveBeenCalledTimes(2)
+    vi.unstubAllGlobals()
+  })
+
   test('pins the conversation to the bottom after opening a chat', () => {
     render(
       <ScrollableMessageArea

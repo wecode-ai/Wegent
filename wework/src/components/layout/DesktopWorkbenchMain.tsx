@@ -1758,7 +1758,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onDeliver={
-        currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
           ? () => {
               if (activeDeliveryItem) {
                 setDeliveryDialogOpen(true)
@@ -1773,7 +1773,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
       }
       onManageTodo={
-        currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
           ? () => {
               setDeliverAfterBinding(false)
               setTodoBindingPickerOpen(true)

@@ -31,6 +31,7 @@ import type {
   RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeLocalProjectUpsertRequest,
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
@@ -673,6 +674,9 @@ export function createHybridWorkbenchServices(
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest) {
       return runtimeApi(data.deviceId).openRuntimeWorkspace(data)
+    },
+    upsertLocalRuntimeProject(data: RuntimeLocalProjectUpsertRequest) {
+      return runtimeApi(data.deviceId).upsertLocalRuntimeProject(data)
     },
     renameRuntimeWorkspace(data: RuntimeWorkspaceRenameRequest) {
       return runtimeApi(data.deviceId).renameRuntimeWorkspace(data)

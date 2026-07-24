@@ -86,6 +86,8 @@ Wework uses one primary read path for local Codex conversations so list, open, a
 
 The list, read, and thread-management paths share one persistent Codex app-server connection, avoiding per-RPC child process startup. Wework still does not use Codex app-server `thread/turns/list` for long transcript paging because the current Codex implementation still replays the whole rollout file on each request. That has the same cost as a full read and cannot reuse the executor's normalized tool/message cache. Opening with `includeTurns: true` is also avoided because large transcripts would be serialized through app-server before the executor normalizes them, increasing IPC and frontend pressure.
 
+Paging or turn navigation can leave the frontend holding non-contiguous transcript ranges. Wework shows a missing-range marker between adjacent message indexes and automatically requests that range once when the marker first enters the viewport. If the runtime still cannot fill the same range, the frontend must stop automatic retries and keep only explicit user-triggered retry. Loading a missing range only updates that marker's state; it must not take ownership of turn-navigation scrolling, disable browser scroll anchoring, or switch message virtualization modes, because an unfillable range would otherwise create a request and layout-jitter loop.
+
 Use this manual benchmark to recheck a local rollout:
 
 ```bash

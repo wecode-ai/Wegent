@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
 
@@ -58,6 +58,25 @@ class LoopItemResponse(BaseModel):
     updated_at: datetime
     completed_at: datetime | None
 
+    @field_validator("parent_id", "current_delivery_id", mode="before")
+    @classmethod
+    def normalize_empty_id(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @field_validator("assignee_user_id", mode="before")
+    @classmethod
+    def normalize_empty_user_id(cls, value: object) -> object:
+        return None if value == 0 else value
+
+    @field_validator("due_at", "completed_at", mode="before")
+    @classmethod
+    def normalize_unset_datetime(cls, value: object) -> object:
+        if isinstance(value, datetime) and value == datetime(1970, 1, 1, 0, 0, 1):
+            return None
+        if isinstance(value, str) and value.startswith("1970-01-01 00:00:01"):
+            return None
+        return value
+
 
 class LoopItemListResponse(BaseModel):
     items: list[LoopItemResponse]
@@ -74,6 +93,11 @@ class LoopItemAttachmentResponse(BaseModel):
     sha256: str
     created_by_user_id: int
     created_at: datetime
+
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def normalize_empty_content_type(cls, value: object) -> object:
+        return None if value == "" else value
 
 
 class LoopItemAttachmentAccessResponse(BaseModel):
@@ -130,6 +154,21 @@ class LoopItemTaskBindingResponse(BaseModel):
     linked_at: datetime
     unlinked_at: datetime | None
 
+    @field_validator("loop_item_id", "task_title", mode="before")
+    @classmethod
+    def normalize_empty_text(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @field_validator("backend_task_id", mode="before")
+    @classmethod
+    def normalize_empty_task_id(cls, value: object) -> object:
+        return None if value == 0 else value
+
+    @field_validator("unlinked_at", mode="before")
+    @classmethod
+    def normalize_unlinked_at(cls, value: object) -> object:
+        return LoopItemResponse.normalize_unset_datetime(value)
+
 
 class CloudTaskContextResponse(LoopItemTaskBindingResponse):
     project: CloudProjectResponse
@@ -153,6 +192,11 @@ class DeliveryAssetResponse(BaseModel):
     size_bytes: int
     sha256: str
 
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def normalize_empty_content_type(cls, value: object) -> object:
+        return None if value == "" else value
+
 
 class DeliveryAssetAccessResponse(BaseModel):
     url: str
@@ -171,6 +215,21 @@ class DeliveryResponse(BaseModel):
     created_at: datetime
     delivered_at: datetime | None
     assets: list[DeliveryAssetResponse] = Field(default_factory=list)
+
+    @field_validator("source_task_binding_id", mode="before")
+    @classmethod
+    def normalize_empty_binding_id(cls, value: object) -> object:
+        return None if value in ("", 0) else value
+
+    @field_validator("source_task_snapshot", mode="before")
+    @classmethod
+    def normalize_empty_snapshot(cls, value: object) -> object:
+        return None if value == {} else value
+
+    @field_validator("delivered_at", mode="before")
+    @classmethod
+    def normalize_delivered_at(cls, value: object) -> object:
+        return LoopItemResponse.normalize_unset_datetime(value)
 
 
 class DeliveryDetailResponse(DeliveryResponse):

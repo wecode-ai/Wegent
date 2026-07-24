@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.cloud_project import SnowflakeId
 
@@ -39,6 +39,11 @@ class CloudFileResponse(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("content_type", "sha256", mode="before")
+    @classmethod
+    def normalize_empty_optional_text(cls, value: object) -> object:
+        return None if value == "" else value
 
 
 class CloudFileListResponse(BaseModel):
