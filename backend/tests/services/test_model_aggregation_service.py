@@ -186,7 +186,7 @@ class TestModelAggregationService:
         assert info["provider"] == "openai"
         assert info["context_window"] == 1048576
         assert info["max_output_tokens"] == 131072
-        assert info["cost_index"] == 50
+        assert info["cost_index"] == "50"
         assert info["model_capabilities"] == {
             "supportsImage": True,
             "supportsVideo": True,
@@ -298,7 +298,7 @@ class TestModelAggregationService:
             resource_user_id=0,
             context_window=1048576,
             max_output_tokens=131072,
-            cost_index=50,
+            cost_index="50",
             model_capabilities={"supportsImage": True, "supportsVideo": True},
             config={
                 "env": {
@@ -326,7 +326,7 @@ class TestModelAggregationService:
         assert model_dict["resourceUserId"] == 0
         assert model_dict["contextWindow"] == 1048576
         assert model_dict["maxOutputTokens"] == 131072
-        assert model_dict["costIndex"] == 50
+        assert model_dict["costIndex"] == "50"
         assert model_dict["modelCapabilities"] == {
             "supportsImage": True,
             "supportsVideo": True,
@@ -456,7 +456,7 @@ class TestModelAggregationService:
         assert model_dict["config"]["protocol"] == "openai-responses"
         assert model_dict["contextWindow"] == 1048576
         assert model_dict["maxOutputTokens"] == 131072
-        assert model_dict["costIndex"] == 50
+        assert model_dict["costIndex"] == "50"
         assert model_dict["modelCapabilities"] == {
             "supportsImage": True,
             "supportsVideo": True,

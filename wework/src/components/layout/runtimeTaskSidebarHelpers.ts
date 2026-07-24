@@ -117,6 +117,7 @@ export function getRuntimeTaskWorkspacePath(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
 ) {
+  if (!isRuntimeWorktreeTask(task) && task.workspacePath) return task.workspacePath
   if (isRuntimeWorktreeWorkspace(workspace)) return workspace.workspacePath
   return task.workspacePath || workspace.workspacePath
 }

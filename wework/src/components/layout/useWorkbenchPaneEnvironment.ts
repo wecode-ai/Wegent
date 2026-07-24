@@ -14,7 +14,7 @@ import {
   resolveWorkspaceTarget,
   workspaceTargetKey,
 } from '@/lib/workspace-target'
-import type { WorkbenchPaneIdentity } from './workbenchPaneStack'
+import type { WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 
 export interface WorkbenchPaneEnvironment {
   workspaceProject: ProjectWithTasks | null

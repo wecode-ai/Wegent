@@ -131,7 +131,8 @@ export function ModelSelectorTrigger({
         <span
           ref={measureRef}
           aria-hidden="true"
-          className="pointer-events-none invisible absolute whitespace-nowrap text-sm font-light leading-[18px]"
+          data-testid="model-selector-width-measure"
+          className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-sm font-light leading-[18px]"
         >
           {label}
         </span>

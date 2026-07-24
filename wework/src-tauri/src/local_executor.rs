@@ -1461,7 +1461,7 @@ fn handle_executor_line_inner(
         }
         ExecutorLine::Event(event) => {
             app.state::<crate::system_sleep::SystemSleepState>()
-                .handle_terminal_event(
+                .handle_runtime_event(
                     &event.event,
                     event.payload.get("taskId").and_then(Value::as_str),
                 );

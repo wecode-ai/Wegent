@@ -1614,7 +1614,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const desktopContent = screen.getByTestId('desktop-workbench-content')
-    expect(desktopContent).toHaveClass('overflow-x-hidden', 'overflow-y-auto', 'pt-11')
+    expect(desktopContent).toHaveClass('h-full', 'overflow-x-hidden', 'overflow-y-auto', 'pt-11')
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
@@ -7322,7 +7322,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })
 
-  test('preserves bottom terminal state per runtime task', async () => {
+  test('recreates bottom terminal state when reopening a runtime task', async () => {
     const { localDevice, propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
@@ -7330,6 +7330,7 @@ describe('DesktopWorkbenchLayout', () => {
     startLocalTerminalMock
       .mockResolvedValueOnce('local-terminal-a')
       .mockResolvedValueOnce('local-terminal-b')
+      .mockResolvedValueOnce('local-terminal-a-reopened')
     const visibleLocalTerminals = () =>
       within(screen.getByTestId('desktop-workbench-main'))
         .queryAllByTestId('embedded-local-terminal')
@@ -7380,12 +7381,16 @@ describe('DesktopWorkbenchLayout', () => {
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
-    expect(startLocalTerminalMock).toHaveBeenCalledTimes(2)
+    expect(visibleLocalTerminals()).toHaveLength(0)
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
     await waitFor(() => {
       const terminals = visibleLocalTerminals()
       expect(terminals).toHaveLength(1)
-      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
+      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a-reopened')
     })
+    expect(startLocalTerminalMock).toHaveBeenCalledTimes(3)
+    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
+    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-b')
   })
 
   test('resets cached conversation horizontal scroll when the task becomes active', () => {
@@ -7401,9 +7406,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(activeContent().scrollLeft).toBe(0)
   })
 
-  test('keeps runtime task terminals past the pane cache limit until the task is archived', async () => {
-    const { localDevice, propsForTask, runtimeWork, taskA, taskAddresses } =
-      createLocalRuntimeTaskPanelFixture()
+  test('closes runtime task terminals when switching tasks without a pane cache', async () => {
+    const { localDevice, propsForTask, taskA, taskAddresses } = createLocalRuntimeTaskPanelFixture()
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
     localPathExistsMock.mockResolvedValue(true)
@@ -7431,42 +7435,12 @@ describe('DesktopWorkbenchLayout', () => {
       })
     }
 
-    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
-
     expect(startLocalTerminalMock).toHaveBeenCalledTimes(taskAddresses.length)
-    expect(closeLocalTerminalMock).not.toHaveBeenCalledWith('local-terminal-a')
-    await waitFor(() => {
-      const terminals = visibleLocalTerminals()
-      expect(terminals).toHaveLength(1)
-      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
+    taskAddresses.slice(0, -1).forEach(task => {
+      const suffix = task.taskId.replace('runtime-', '')
+      expect(closeLocalTerminalMock).toHaveBeenCalledWith(`local-terminal-${suffix}`)
     })
-
-    const archivedTaskAWork = {
-      projects: [
-        {
-          ...runtimeWork.projects[0],
-          deviceWorkspaces: [
-            {
-              ...runtimeWork.projects[0].deviceWorkspaces[0],
-              tasks: runtimeWork.projects[0].deviceWorkspaces[0].tasks.filter(
-                task => task.taskId !== taskA.taskId
-              ),
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalTasks: taskAddresses.length - 1,
-    }
-    rerender(
-      <DesktopWorkbenchLayout
-        {...propsForTask(taskAddresses[1], { runtimeWork: archivedTaskAWork })}
-      />
-    )
-
-    await waitFor(() => {
-      expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
-    })
+    expect(closeLocalTerminalMock).not.toHaveBeenCalledWith('local-terminal-k')
   }, 20000)
 
   test('omits the desktop add-menu item when the internal extension is unavailable', async () => {

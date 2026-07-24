@@ -1,7 +1,7 @@
 import { Bot, ChevronLeft } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode, type SVGProps } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import { focusComposerAtEnd, WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { cn } from '@/lib/utils'
 import styles from './DesktopEmptyTaskLauncher.module.css'
 
@@ -188,7 +188,9 @@ export function DesktopEmptyTaskLauncher({
 
   useEffect(() => {
     const focusComposer = () => {
-      launcherRef.current?.querySelector<HTMLElement>('[data-testid="chat-message-input"]')?.focus()
+      focusComposerAtEnd(
+        launcherRef.current?.querySelector<HTMLElement>('[data-testid="chat-message-input"]')
+      )
     }
 
     focusComposer()
@@ -199,7 +201,9 @@ export function DesktopEmptyTaskLauncher({
   const selectSuggestion = (prompt: string) => {
     onSelectSuggestion(prompt)
     window.requestAnimationFrame(() => {
-      launcherRef.current?.querySelector<HTMLElement>('[data-testid="chat-message-input"]')?.focus()
+      focusComposerAtEnd(
+        launcherRef.current?.querySelector<HTMLElement>('[data-testid="chat-message-input"]')
+      )
     })
   }
 
