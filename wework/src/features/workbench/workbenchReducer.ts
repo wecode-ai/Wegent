@@ -25,6 +25,15 @@ import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtime
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
 const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
+const TERMINAL_RUNTIME_TASK_STATUSES = new Set([
+  'done',
+  'complete',
+  'completed',
+  'failed',
+  'error',
+  'cancelled',
+  'canceled',
+])
 
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
@@ -591,7 +600,8 @@ function upsertActiveRuntimeTask(
 function updateRuntimeTaskRunning(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress,
-  running: boolean
+  running: boolean,
+  shouldUpdate: (task: RuntimeTaskSummary) => boolean = () => true
 ): RuntimeWorkListResponse | null {
   if (!runtimeWork) return null
 
@@ -603,7 +613,12 @@ function updateRuntimeTaskRunning(
         taskId: task.taskId,
         workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
       }
-      if (!sameRuntimeTaskActivity(taskAddress, address) || task.running === running) return task
+      if (
+        !sameRuntimeTaskActivity(taskAddress, address) ||
+        task.running === running ||
+        !shouldUpdate(task)
+      )
+        return task
       return { ...task, running }
     }),
   })
@@ -616,6 +631,27 @@ function updateRuntimeTaskRunning(
     })),
     chats: runtimeWork.chats.map(updateWorkspace),
   }
+}
+
+function preserveActiveRuntimeTaskRunning(
+  runtimeWork: RuntimeWorkListResponse | null,
+  activeRuntimeTasks: RuntimeTaskAddress[]
+): RuntimeWorkListResponse | null {
+  return activeRuntimeTasks.reduce(
+    (currentRuntimeWork, address) =>
+      updateRuntimeTaskRunning(
+        currentRuntimeWork,
+        address,
+        true,
+        task => !isTerminalRuntimeTaskStatus(task.status)
+      ),
+    runtimeWork
+  )
+}
+
+function isTerminalRuntimeTaskStatus(status: string | null | undefined): boolean {
+  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
+  return normalized ? TERMINAL_RUNTIME_TASK_STATUSES.has(normalized) : false
 }
 
 function findRuntimeTaskAddressByTaskId(
@@ -938,7 +974,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       const runtimeWork =
         action.runtimeWork === undefined
           ? state.runtimeWork
-          : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
+          : preserveActiveRuntimeTaskRunning(
+              mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork),
+              state.activeRuntimeTasks
+            )
       const refreshedState = {
         ...state,
         projects: action.projects,
@@ -991,7 +1030,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
     }
     case 'runtime_work_refreshed': {
-      const runtimeWork = mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
+      const runtimeWork = preserveActiveRuntimeTaskRunning(
+        mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork),
+        state.activeRuntimeTasks
+      )
       debugRuntimeSidebarState('reducer-runtime-work-refreshed', {
         incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork),
         previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
