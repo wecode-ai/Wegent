@@ -8,7 +8,10 @@
 //! Chat Completions must be adapted at the local executor boundary. The event
 //! shapes and custom-tool mapping preserve Codex semantics across protocols.
 
-use std::{collections::{BTreeMap, HashMap}, pin::Pin};
+use std::{
+    collections::{BTreeMap, HashMap},
+    pin::Pin,
+};
 
 use axum::body::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -280,10 +283,7 @@ pub(super) fn responses_to_responses(body: &Value) -> Result<(Value, ToolContext
     Ok((result, context))
 }
 
-fn convert_responses_input_items(
-    input: &Value,
-    context: &ToolContext,
-) -> Result<Value, String> {
+fn convert_responses_input_items(input: &Value, context: &ToolContext) -> Result<Value, String> {
     let items = match input {
         Value::Array(items) => items,
         _ => return Ok(input.clone()),
@@ -303,7 +303,11 @@ fn convert_responses_input_items(
 
     let mut converted = Vec::new();
     for item in items {
-        converted.push(convert_responses_input_item(item, context, &call_id_to_name)?);
+        converted.push(convert_responses_input_item(
+            item,
+            context,
+            &call_id_to_name,
+        )?);
     }
     Ok(Value::Array(converted))
 }
@@ -321,16 +325,18 @@ fn convert_responses_input_item(
             let mut converted = item.clone();
             converted["type"] = Value::String("function_call".to_owned());
             if let Some(input) = converted.get("input").and_then(Value::as_str) {
-                let arguments =
-                    serde_json::to_string(&json!({CUSTOM_TOOL_INPUT_FIELD: input}))
-                        .map_err(|error| error.to_string())?;
+                let arguments = serde_json::to_string(&json!({CUSTOM_TOOL_INPUT_FIELD: input}))
+                    .map_err(|error| error.to_string())?;
                 converted["arguments"] = Value::String(arguments);
                 converted.as_object_mut().unwrap().remove("input");
             }
             Ok(converted)
         }
         Some("custom_tool_call_output") => {
-            let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or_default();
+            let call_id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if let Some(name) = call_id_to_name.get(call_id) {
                 if context.is_custom(name) {
                     let mut converted = item.clone();
@@ -651,10 +657,7 @@ impl ResponsesCustomToolState {
     }
 
     fn start_call(&mut self, item_id: &str, name: &str) {
-        self.calls
-            .entry(item_id.to_owned())
-            .or_default()
-            .name = name.to_owned();
+        self.calls.entry(item_id.to_owned()).or_default().name = name.to_owned();
     }
 
     fn append_arguments(&mut self, item_id: &str, delta: &str) {
@@ -738,9 +741,12 @@ where
             }
             if state.source_done {
                 state.terminal_seen = true;
-                return Some((Ok(super::responses_failed_event(
-                    "Upstream Responses stream ended before a terminal event",
-                )), state));
+                return Some((
+                    Ok(super::responses_failed_event(
+                        "Upstream Responses stream ended before a terminal event",
+                    )),
+                    state,
+                ));
             }
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
@@ -749,19 +755,18 @@ where
                         if super::is_responses_terminal_event(&block) {
                             state.terminal_seen = true;
                         }
-                        let rewritten = rewrite_responses_sse_block(&block, &mut state.context_state);
+                        let rewritten =
+                            rewrite_responses_sse_block(&block, &mut state.context_state);
                         if let Some(rewritten) = rewritten {
                             if !rewritten.is_empty() {
-                                state.output.push_back(Ok(Bytes::from(format!(
-                                    "{}\n\n",
-                                    rewritten
-                                ))));
+                                state
+                                    .output
+                                    .push_back(Ok(Bytes::from(format!("{}\n\n", rewritten))));
                             }
                         } else {
-                            state.output.push_back(Ok(Bytes::from(format!(
-                                "{}\n\n",
-                                block
-                            ))));
+                            state
+                                .output
+                                .push_back(Ok(Bytes::from(format!("{}\n\n", block))));
                         }
                     }
                 }
@@ -778,19 +783,18 @@ where
                         if super::is_responses_terminal_event(trailing) {
                             state.terminal_seen = true;
                         }
-                        let rewritten = rewrite_responses_sse_block(trailing, &mut state.context_state);
+                        let rewritten =
+                            rewrite_responses_sse_block(trailing, &mut state.context_state);
                         if let Some(rewritten) = rewritten {
                             if !rewritten.is_empty() {
-                                state.output.push_back(Ok(Bytes::from(format!(
-                                    "{}\n\n",
-                                    rewritten
-                                ))));
+                                state
+                                    .output
+                                    .push_back(Ok(Bytes::from(format!("{}\n\n", rewritten))));
                             }
                         } else {
-                            state.output.push_back(Ok(Bytes::from(format!(
-                                "{}\n\n",
-                                trailing
-                            ))));
+                            state
+                                .output
+                                .push_back(Ok(Bytes::from(format!("{}\n\n", trailing))));
                         }
                     }
                 }
@@ -924,7 +928,11 @@ fn rewrite_responses_sse_block(
 }
 
 fn format_sse_event(event: &str, data: &Value) -> String {
-    format!("event: {}\ndata: {}\n\n", event, serde_json::to_string(data).unwrap_or_default())
+    format!(
+        "event: {}\ndata: {}\n\n",
+        event,
+        serde_json::to_string(data).unwrap_or_default()
+    )
 }
 
 fn rewrite_event_data(block: &str, value: &Value) -> Option<String> {
@@ -2067,11 +2075,12 @@ mod tests {
         assert_eq!(converted["tools"][0]["description"], "Run commands");
         assert_eq!(converted["tools"][1]["type"], "function");
         assert_eq!(converted["tools"][1]["name"], "apply_patch");
-        assert!(
-            converted["tools"][1]["description"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("Critical apply_patch input contract:") && !value.contains("Original tool definition:"))
-        );
+        assert!(converted["tools"][1]["description"]
+            .as_str()
+            .is_some_and(
+                |value| value.starts_with("Critical apply_patch input contract:")
+                    && !value.contains("Original tool definition:")
+            ));
         assert_eq!(
             converted["tools"][1]["parameters"]["properties"]["input"]["type"],
             "string"
@@ -2120,11 +2129,26 @@ mod tests {
         )
         .await;
 
-        assert!(output.contains("\"type\":\"custom_tool_call\""), "output: {output}");
-        assert!(output.contains("\"input\":\"*** Begin Patch\\n*** End Patch\""), "output: {output}");
-        assert!(!output.contains("\"type\":\"function_call\""), "output: {output}");
-        assert!(output.contains("response.custom_tool_call_input.delta"), "output: {output}");
-        assert!(output.contains("response.custom_tool_call_input.done"), "output: {output}");
+        assert!(
+            output.contains("\"type\":\"custom_tool_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("\"input\":\"*** Begin Patch\\n*** End Patch\""),
+            "output: {output}"
+        );
+        assert!(
+            !output.contains("\"type\":\"function_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("response.custom_tool_call_input.delta"),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("response.custom_tool_call_input.done"),
+            "output: {output}"
+        );
     }
 
     #[tokio::test]
@@ -2144,8 +2168,14 @@ mod tests {
         )
         .await;
 
-        assert!(output.contains("\"type\":\"function_call\""), "output: {output}");
-        assert!(output.contains("response.function_call_arguments.delta"), "output: {output}");
+        assert!(
+            output.contains("\"type\":\"function_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("response.function_call_arguments.delta"),
+            "output: {output}"
+        );
         assert!(!output.contains("custom_tool_call"), "output: {output}");
     }
 }

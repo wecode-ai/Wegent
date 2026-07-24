@@ -266,10 +266,10 @@ async fn handle_for_token(
             "tool_types": request_body_json.get("tools").and_then(Value::as_array).map(|tools| {
                 tools
                     .iter()
-                    .filter_map(|t| {
+                    .map(|t| {
                         let name = t.get("name").and_then(Value::as_str).unwrap_or("?");
                         let ty = t.get("type").and_then(Value::as_str).unwrap_or("?");
-                        Some(format!("{name}={ty}"))
+                        format!("{name}={ty}")
                     })
                     .collect::<Vec<_>>()
             }),
@@ -589,11 +589,10 @@ fn prepare_request(
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     if api_format == "openai-responses" {
-        let request_value =
-            serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
-                status: StatusCode::BAD_REQUEST,
-                detail: format!("Invalid Codex Responses request: {error}"),
-            })?;
+        let request_value = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("Invalid Codex Responses request: {error}"),
+        })?;
         let incoming_tool_types: Vec<Value> = request_value
             .get("tools")
             .and_then(Value::as_array)
@@ -609,8 +608,8 @@ fn prepare_request(
                     .collect()
             })
             .unwrap_or_default();
-        let (mut request_value, context) = chat::responses_to_responses(&request_value)
-            .map_err(|error| HttpError {
+        let (mut request_value, context) =
+            chat::responses_to_responses(&request_value).map_err(|error| HttpError {
                 status: StatusCode::BAD_REQUEST,
                 detail: format!("Failed to convert local model request: {error}"),
             })?;
@@ -645,7 +644,11 @@ fn prepare_request(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize local model request: {error}"),
         })?;
-        return Ok((body, Some(Conversion::Responses(context)), expanded_browser_tools));
+        return Ok((
+            body,
+            Some(Conversion::Responses(context)),
+            expanded_browser_tools,
+        ));
     }
     let responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,

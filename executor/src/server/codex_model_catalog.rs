@@ -321,8 +321,7 @@ fn kimi_k27_model_entry() -> Value {
 
 fn gpt_56_sol_model_entry() -> Value {
     let mut entry = model_entry(GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"));
-    entry["description"] =
-        Value::String("GPT 5.6 Sol profile for agentic coding".to_owned());
+    entry["description"] = Value::String("GPT 5.6 Sol profile for agentic coding".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
     entry
@@ -330,8 +329,7 @@ fn gpt_56_sol_model_entry() -> Value {
 
 fn gpt_56_terra_model_entry() -> Value {
     let mut entry = model_entry(GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"));
-    entry["description"] =
-        Value::String("GPT 5.6 Terra profile for agentic coding".to_owned());
+    entry["description"] = Value::String("GPT 5.6 Terra profile for agentic coding".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
     entry
@@ -339,8 +337,7 @@ fn gpt_56_terra_model_entry() -> Value {
 
 fn gpt_56_luna_model_entry() -> Value {
     let mut entry = model_entry(GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"));
-    entry["description"] =
-        Value::String("GPT 5.6 Luna profile for agentic coding".to_owned());
+    entry["description"] = Value::String("GPT 5.6 Luna profile for agentic coding".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
     entry
@@ -348,8 +345,7 @@ fn gpt_56_luna_model_entry() -> Value {
 
 fn wework_gpt_56_sol_model_entry() -> Value {
     let mut entry = model_entry(WEWORK_GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"));
-    entry["description"] =
-        Value::String("Wework GPT 5.6 Sol compatibility profile".to_owned());
+    entry["description"] = Value::String("Wework GPT 5.6 Sol compatibility profile".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
     entry
@@ -357,8 +353,7 @@ fn wework_gpt_56_sol_model_entry() -> Value {
 
 fn wework_gpt_56_terra_model_entry() -> Value {
     let mut entry = model_entry(WEWORK_GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"));
-    entry["description"] =
-        Value::String("Wework GPT 5.6 Terra compatibility profile".to_owned());
+    entry["description"] = Value::String("Wework GPT 5.6 Terra compatibility profile".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
     entry
@@ -366,8 +361,7 @@ fn wework_gpt_56_terra_model_entry() -> Value {
 
 fn wework_gpt_56_luna_model_entry() -> Value {
     let mut entry = model_entry(WEWORK_GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"));
-    entry["description"] =
-        Value::String("Wework GPT 5.6 Luna compatibility profile".to_owned());
+    entry["description"] = Value::String("Wework GPT 5.6 Luna compatibility profile".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
     entry

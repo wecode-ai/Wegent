@@ -2079,9 +2079,8 @@ fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
             .or_else(|| request.model_config.get("codexResponsesCompatProxy")),
     )
     .unwrap_or(false);
-    let catalog_model_id =
-        non_empty_config(&request.model_config, "codex_catalog_model_id")
-            .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
+    let catalog_model_id = non_empty_config(&request.model_config, "codex_catalog_model_id")
+        .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
     let resolved = if compat_proxy {
         catalog_model_id.clone().or_else(|| model_id(request))
     } else {
