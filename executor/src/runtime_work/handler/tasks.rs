@@ -18,8 +18,14 @@ impl RuntimeWorkRpcHandler {
         let source_thread_id = runtime_session_id_from_payload(&payload)
             .or_else(|| runtime_session_id_from_link(&source))
             .ok_or_else(|| AppIpcError::new("bad_request", "source task session is not ready"))?;
-        let last_turn_id =
-            runtime_turn_id_from_link(&source, &requested_turn_id).unwrap_or(requested_turn_id);
+        let Some(last_turn_id) = resolve_codex_turn_id(&source, &requested_turn_id) else {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "error": "fork turn was not found",
+                "code": "bad_request",
+            }));
+        };
         let response = match self
             .call_codex_thread_method(
                 "thread/fork",
@@ -650,4 +656,29 @@ pub(super) fn runtime_turn_id_from_link(
         .and_then(|mappings| mappings.get(subtask_id))
         .and_then(Value::as_str)
         .map(str::to_owned)
+}
+
+pub(super) fn resolve_codex_turn_id(
+    link: &RuntimeTaskLink,
+    requested_turn_id: &str,
+) -> Option<String> {
+    let mappings = link
+        .runtime_handle
+        .get("turnIdsBySubtask")
+        .and_then(Value::as_object);
+    if let Some(turn_id) = mappings
+        .and_then(|mappings| mappings.get(requested_turn_id))
+        .and_then(Value::as_str)
+    {
+        return Some(turn_id.to_owned());
+    }
+    if mappings.is_some_and(|mappings| {
+        mappings
+            .values()
+            .any(|turn_id| turn_id.as_str() == Some(requested_turn_id))
+    }) || is_codex_thread_id(requested_turn_id)
+    {
+        return Some(requested_turn_id.to_owned());
+    }
+    None
 }
