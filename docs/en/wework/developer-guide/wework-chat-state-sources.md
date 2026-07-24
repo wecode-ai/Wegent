@@ -76,6 +76,22 @@ current response as stopped. While goal details are still loading, the stop flow
 `goalStatus` from the task-list snapshot to decide whether to pause; it must not skip persistence
 merely because the goal bar has not rendered yet.
 
+## Task Execution, Continuity, and Unread State
+
+The sidebar running indicator, composer state, message state, and unread reminder represent different facts and must not share one ambiguous "active" boolean:
+
+| State          | Definition                                                                        | UI contract                                                                                                                |
+| -------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Executing      | `task.running === true`                                                           | Show the sidebar spinner; expose pause in the current pane composer; allow the message area to show "Thinking"             |
+| Ongoing        | Executing, or `task.goalStatus === 'active'`                                      | Use only to track that the task has not truly ended across refreshes; do not directly show a spinner, "Thinking", or pause |
+| Settled unread | The task transitions from ongoing to not ongoing while it is not the current task | Show the blue unread dot in the sidebar and optionally send one completion notification                                    |
+
+An active goal may briefly report `running: false` between two automatic continuation turns. The task remains ongoing, so this gap must not create an unread dot or completion notification. Execution UI must still reflect the pause accurately: hide the sidebar spinner, show the composer send state instead of pause, and hide "Thinking". Restore those execution indicators only after `running: true` arrives again.
+
+A terminal task event must immediately mark the local task as `running: false` and refresh the work list. If a concurrent refresh returns an older `running: true` snapshot, the reducer must preserve the locally settled state until the same task receives a new start event; a stale response must not relight the spinner, pause button, or "Thinking". Execution identity is `deviceId + taskId`. `workspacePath` is routing metadata that may change between creation, refresh, and transcript recovery, so it must not participate in execution-state identity.
+
+Unread tracking stores only the ongoing-to-settled edge and must not infer terminal state from free-form `status` text. The current task, executing tasks, and tasks with active goals must all be excluded from visible unread state. Opening a task clears its unread state.
+
 ## Composer Mode Indicators
 
 When the composer is in plan mode or goal-draft mode, its bottom mode pill must show a semantic icon to the left of its label: a checklist for plan mode and a target for goal draft. Desktop and compact layouts must reuse the same mode-pill implementation so the state is expressed consistently.
