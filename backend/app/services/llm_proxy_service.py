@@ -80,6 +80,25 @@ def _resolve_upstream_target(
         or wire_api == "responses"
     )
 
+    if protocol == "openai-responses" and api_format == "chat/completions":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Model '{model_name}' has conflicting protocol/apiFormat: "
+                f"protocol={protocol!r}, api_format={api_format!r}. "
+                "Use protocol 'openai-responses' with apiFormat 'responses'."
+            ),
+        )
+    if protocol in {"claude", "anthropic-messages"} and api_format == "responses":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Model '{model_name}' has conflicting protocol/apiFormat: "
+                f"protocol={protocol!r}, api_format={api_format!r}. "
+                "Anthropic Messages does not support apiFormat 'responses'."
+            ),
+        )
+
     if is_anthropic:
         auth_headers: dict[str, str] = {"anthropic-version": "2023-06-01"}
         if provider_api_key:

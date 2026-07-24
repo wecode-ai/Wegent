@@ -425,6 +425,76 @@ async def test_proxy_llm_responses_prefers_responses_format_over_openai_protocol
     assert sent_request.headers["Authorization"] == "Bearer sk-responses-key"
 
 
+async def test_proxy_llm_responses_rejects_openai_responses_protocol_with_chat_completions_format(
+    test_db, test_user: User
+):
+    model = _model_kind(
+        test_user.id,
+        name="conflicting-responses-model",
+        protocol="openai-responses",
+        api_format="chat/completions",
+        api_key="sk-test-key",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"conflicting-responses-model","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert exc_info.value.status_code == 400
+    assert "conflicting" in exc_info.value.detail.lower()
+    assert "openai-responses" in exc_info.value.detail
+    assert "chat/completions" in exc_info.value.detail
+
+
+async def test_proxy_llm_responses_rejects_claude_protocol_with_responses_format(
+    test_db, test_user: User
+):
+    model = _model_kind(
+        test_user.id,
+        name="conflicting-anthropic-model",
+        protocol="claude",
+        api_format="responses",
+        api_key="sk-test-key",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"conflicting-anthropic-model","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert exc_info.value.status_code == 400
+    assert "conflicting" in exc_info.value.detail.lower()
+    assert "claude" in exc_info.value.detail
+    assert "responses" in exc_info.value.detail
+
+
 async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
     test_db, test_user: User
 ):
