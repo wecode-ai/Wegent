@@ -83,6 +83,7 @@ export function ModelSelector({
   onSelectModelAndOptions,
   onSelectModelOption,
   onBlockedModelSelect,
+  onOpenChange,
   openSignal,
   menuPlacement = 'above',
   buttonClassName = '',
@@ -116,6 +117,13 @@ export function ModelSelector({
   const [advancedOpen, setAdvancedOpen] = useState(readModelSelectorPowerViewPreference)
   const [powerSliderInteracting, setPowerSliderInteracting] = useState(false)
   const modelSelectorShortcut = useConfiguredKeybinding(TOGGLE_MODEL_SELECTOR_COMMAND)
+  const reportedOpenRef = useRef(open)
+
+  useEffect(() => {
+    if (reportedOpenRef.current === open) return
+    reportedOpenRef.current = open
+    onOpenChange?.(open)
+  }, [onOpenChange, open])
   const familyGroups = useMemo(() => groupModelsByFamily(models), [models])
   const selectedFamily = selectedModel
     ? inferModelFamily(selectedModel)
