@@ -10,6 +10,8 @@ Projects group conversations that use the same codebase. A project can map to fo
 
 Choose **Use existing folder** for code already on the device. Adding the same folder again restores or reuses its project and conversations.
 
+In local mode, the system directory picker can select multiple folders at once. Wework saves them as one Codex project and uses its primary folder for the project list and new tasks by default. The project list keeps one project row instead of expanding every source folder. Use **Edit project** from the project menu to rename the project, add or remove source folders, or change the primary folder. Multi-folder creation currently applies only to local Codex projects; cloud and remote projects are still added one folder at a time.
+
 To create a Git project, select a device, repository, default branch, and destination. If repositories are unavailable, check the Git connection and token permissions in Settings.
 
 ## Create a project from the composer

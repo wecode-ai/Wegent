@@ -82,6 +82,7 @@ export function DesktopWorkbenchLayout() {
     listGitRepositories: onListGitRepositories,
     listGitBranches: onListGitBranches,
     updateProjectName: onUpdateProjectName,
+    updateLocalRuntimeProject: onUpdateLocalRuntimeProject,
     removeProject: onRemoveProject,
     reorderRuntimeProjects: onReorderRuntimeProjects,
     setRuntimeProjectPinned: onSetRuntimeProjectPinned,
@@ -576,6 +577,7 @@ export function DesktopWorkbenchLayout() {
         void openStandaloneFolderProject(mode, intent)
       }}
       onUpdateProjectName={onUpdateProjectName}
+      onUpdateLocalRuntimeProject={onUpdateLocalRuntimeProject}
       onRemoveProject={onRemoveProject}
       onReorderRuntimeProjects={onReorderRuntimeProjects}
       onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}

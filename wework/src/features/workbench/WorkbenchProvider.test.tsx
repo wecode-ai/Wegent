@@ -268,6 +268,14 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       workspacePath: '/workspace/direct-codex',
       runtime: 'codex',
     }),
+    upsertLocalRuntimeProject: vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'device-1',
+      projectKey: 'multi-project',
+      name: 'web',
+      roots: ['/workspace/web', '/workspace/api'],
+      runtime: 'codex',
+    }),
     renameRuntimeWorkspace: vi.fn().mockResolvedValue({
       accepted: true,
       deviceId: 'device-1',
@@ -709,6 +717,17 @@ function ProjectSendProbe() {
         }
       >
         open standalone workspace
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openStandaloneWorkspace('device-1', '/workspace/web', undefined, [
+            '/workspace/web',
+            '/workspace/api',
+          ])
+        }
+      >
+        open multi-root workspace
       </button>
       <button
         type="button"
@@ -4332,6 +4351,29 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
       'deviceWorkspaceId'
     )
+  })
+
+  test('registers multiple selected local folders as one Codex project', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+    await userEvent.click(await screen.findByText('open multi-root workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.upsertLocalRuntimeProject).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      projectKey: expect.any(String),
+      name: 'web',
+      roots: ['/workspace/web', '/workspace/api'],
+      runtime: 'codex',
+    })
+    expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
   })
 
   test('creates a conversation workspace when sending without a selected project', async () => {

@@ -697,6 +697,24 @@ export interface RuntimeWorkspaceOpenRequest {
   label?: string | null
 }
 
+export interface RuntimeLocalProjectUpsertRequest {
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+}
+
+export interface RuntimeLocalProjectUpsertResponse {
+  accepted: boolean
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+  error?: string | null
+}
+
 export interface RuntimeWorkspaceRenameRequest {
   deviceId: string
   projectKey?: string | null

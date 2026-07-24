@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isImeEnterEvent } from '@/lib/ime'
-import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
+import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
 import {
   canUseForProjectCreation,
   canUseForRemoteProjectCreation,
@@ -148,7 +148,8 @@ export function StandaloneBlankProjectDialog({
   onOpenStandaloneWorkspace?: (
     deviceId: string,
     workspacePath: string,
-    label?: string
+    label?: string,
+    projectRoots?: string[]
   ) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
@@ -304,7 +305,8 @@ export function StandaloneFolderProjectDialog({
   onOpenStandaloneWorkspace?: (
     deviceId: string,
     workspacePath: string,
-    label?: string
+    label?: string,
+    projectRoots?: string[]
   ) => Promise<void> | void
   onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onRefreshDevices?: () => Promise<void>
@@ -438,12 +440,22 @@ export function StandaloneFolderProjectDialog({
       void (async () => {
         try {
           setNativePickerError(null)
-          const selectedPath = await openNativeProjectDirectoryPicker()
+          const selectedPaths = await openNativeProjectDirectoryPickers()
+          const selectedPath = selectedPaths[0]
           if (!selectedPath) {
             closeDialog()
             return
           }
-          await onOpenStandaloneWorkspace?.(nativePickerDeviceId, selectedPath)
+          if (selectedPaths.length > 1) {
+            await onOpenStandaloneWorkspace?.(
+              nativePickerDeviceId,
+              selectedPath,
+              undefined,
+              selectedPaths
+            )
+          } else {
+            await onOpenStandaloneWorkspace?.(nativePickerDeviceId, selectedPath)
+          }
           closeDialog()
         } catch (error) {
           console.error('[Wework project] native picker failed', error)

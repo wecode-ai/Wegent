@@ -570,6 +570,63 @@ describe('ProjectWorkBar', () => {
     expect(onSelectProjectWorkspace).toHaveBeenCalledWith(7, 101)
   })
 
+  test('shows one local multi-root project row and selects its current primary folder', async () => {
+    const onSelectProjectWorkspace = vi.fn()
+    const multiRootWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 7, key: 'multi-root', name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 301,
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/repo/web',
+              tasks: [],
+            },
+            {
+              id: 302,
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/repo/api',
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        runtimeWork={multiRootWork}
+        currentProject={project}
+        currentProjectId={7}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={onSelectProjectWorkspace}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('project-option-7')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('project-option-7')).toHaveTextContent('web')
+    expect(screen.queryByTestId('project-workspace-option-301')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-workspace-option-302')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-option-7'))
+    expect(onSelectProjectWorkspace).toHaveBeenCalledWith(7, 301)
+  })
+
   test('does not read project rows without runtime workspaces', async () => {
     const onBindProjectWorkspace = vi.fn()
     const emptyProject: ProjectWithTasks = {

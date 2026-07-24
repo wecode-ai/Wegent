@@ -677,12 +677,15 @@ export function WorkbenchProvider({
   )
 
   const openStandaloneWorkspace = useCallback(
-    async (deviceId: string, workspacePath: string, label?: string) => {
+    async (deviceId: string, workspacePath: string, label?: string, projectRoots?: string[]) => {
       projectSelectionStartedRef.current = true
       const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
       if (!requestDeviceId || !normalizedWorkspacePath) return
       const normalizedLabel = label?.trim()
+      const normalizedRoots = Array.from(
+        new Set((projectRoots ?? []).map(root => root.trim()).filter(Boolean))
+      )
 
       // CLI open uses the local-device alias. Resolve the real executor device id so
       // online checks, composer enablement, and new-chat buttons match listDevices.
@@ -704,6 +707,27 @@ export function WorkbenchProvider({
         } catch (error) {
           console.warn('[Wework] Failed to load devices before opening workspace', error)
         }
+      }
+
+      if (normalizedRoots.length > 1) {
+        const projectName =
+          normalizedLabel ||
+          normalizedWorkspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
+          'Project'
+        const response = await executorClient.runtime.upsertLocalRuntimeProject({
+          deviceId: requestDeviceId,
+          projectKey: crypto.randomUUID(),
+          name: projectName,
+          roots: normalizedRoots,
+          runtime: 'codex',
+        })
+        if (!response.accepted) {
+          throw new Error(response.error || 'Failed to register local project')
+        }
+        rememberExecutionDevice(requestDeviceId)
+        await refreshWorkLists()
+        navigateTo('/')
+        return
       }
 
       const response = await executorClient.runtime.openRuntimeWorkspace({
@@ -734,7 +758,7 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [executorClient, rememberExecutionDevice, state.devices, user.id]
+    [executorClient, refreshWorkLists, rememberExecutionDevice, state.devices, user.id]
   )
 
   const startNewChat = useCallback(() => {
@@ -1183,6 +1207,7 @@ export function WorkbenchProvider({
   const stableListGitRepositories = useStableEvent(projectActions.listGitRepositories)
   const stableListGitBranches = useStableEvent(projectActions.listGitBranches)
   const stableUpdateProjectName = useStableEvent(projectActions.updateProjectName)
+  const stableUpdateLocalRuntimeProject = useStableEvent(projectActions.updateLocalRuntimeProject)
   const stableRemoveProject = useStableEvent(projectActions.removeProject)
   const stableReorderRuntimeProjects = useStableEvent(projectActions.reorderRuntimeProjects)
   const stableSetRuntimeProjectPinned = useStableEvent(projectActions.setRuntimeProjectPinned)
@@ -1522,6 +1547,7 @@ export function WorkbenchProvider({
     listGitRepositories: projectActions.listGitRepositories,
     listGitBranches: projectActions.listGitBranches,
     updateProjectName: projectActions.updateProjectName,
+    updateLocalRuntimeProject: projectActions.updateLocalRuntimeProject,
     removeProject: projectActions.removeProject,
     reorderRuntimeProjects: projectActions.reorderRuntimeProjects,
     setRuntimeProjectPinned: projectActions.setRuntimeProjectPinned,
@@ -1609,6 +1635,7 @@ export function WorkbenchProvider({
       listGitRepositories: stableListGitRepositories,
       listGitBranches: stableListGitBranches,
       updateProjectName: stableUpdateProjectName,
+      updateLocalRuntimeProject: stableUpdateLocalRuntimeProject,
       removeProject: stableRemoveProject,
       reorderRuntimeProjects: stableReorderRuntimeProjects,
       setRuntimeProjectPinned: stableSetRuntimeProjectPinned,
@@ -1722,6 +1749,7 @@ export function WorkbenchProvider({
       stableSubscribeRuntimeTaskStream,
       stableUnsubscribeRuntimeTaskNotifications,
       stableUpdateGlobalImNotification,
+      stableUpdateLocalRuntimeProject,
       stableUpdateProjectName,
       stableUpgradeDevice,
       upgradingDevices,

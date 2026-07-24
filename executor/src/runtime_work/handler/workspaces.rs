@@ -5,6 +5,65 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn upsert_local_project(&self, payload: Value) -> Result<Value, AppIpcError> {
+        if !payload_runtime_is_codex(&payload) {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "error": "Only Codex local projects support multiple roots",
+                "code": "unsupported_runtime",
+            }));
+        }
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let name = string_field(&payload, "name")
+            .ok_or_else(|| AppIpcError::new("bad_request", "name is required"))?;
+        let roots = payload
+            .get("roots")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|root| !root.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if roots.is_empty() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "roots must contain at least one workspace path",
+            ));
+        }
+        for root in &roots {
+            let canonical = fs::canonicalize(root).map_err(|_| {
+                AppIpcError::new(
+                    "bad_request",
+                    format!("workspace root does not exist: {root}"),
+                )
+            })?;
+            if !canonical.is_dir() {
+                return Err(AppIpcError::new(
+                    "bad_request",
+                    format!("workspace root is not a directory: {root}"),
+                ));
+            }
+            if let Ok(mut opened_roots) = self.opened_workspace_roots.lock() {
+                opened_roots.insert(canonical);
+            }
+        }
+        let project = upsert_codex_global_local_project(&project_key, &name, &roots)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "projectKey": project.key,
+            "name": project.name,
+            "roots": project.roots,
+            "runtime": "codex",
+        }))
+    }
+
     pub(super) async fn open_workspace(&self, payload: Value) -> Result<Value, AppIpcError> {
         if !payload_runtime_is_codex(&payload) {
             return Ok(json!({

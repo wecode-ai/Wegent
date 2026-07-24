@@ -128,6 +128,10 @@ vi.mock('@/e2e/automation', () => ({
 
 vi.mock('@/lib/native-directory-picker', () => ({
   openNativeProjectDirectoryPicker: nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker,
+  openNativeProjectDirectoryPickers: async (...args: unknown[]) => {
+    const selected = await nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker(...args)
+    return selected ? [selected] : []
+  },
 }))
 
 const tauriMenuMocks = vi.hoisted(() => ({
@@ -2761,7 +2765,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(usagePanel).queryByRole('progressbar')).not.toBeInTheDocument()
   })
 
-  test('opens the project create menu from the sidebar project create button', async () => {
+  test('opens the project create dialog with grouped local and cloud choices', async () => {
     const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -2788,9 +2792,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
 
     expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('project-create-blank-option')).toHaveTextContent('新建空白项目')
-    expect(screen.getByTestId('project-create-existing-option')).toHaveTextContent('使用现有文件夹')
-    expect(screen.getByTestId('project-create-remote-option')).toHaveTextContent('远程项目')
+    expect(screen.getByTestId('project-create-local-option')).toHaveTextContent('本地项目')
+    expect(screen.getByTestId('project-create-blank-option')).toHaveTextContent('新建文件夹')
+    expect(screen.getByTestId('project-create-existing-option')).toHaveTextContent('选择文件夹')
+    expect(screen.getByTestId('project-create-remote-option')).toHaveTextContent('云端项目')
     expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
   })
@@ -3109,63 +3114,27 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Remote Device')).not.toBeInTheDocument()
   })
 
-  test('closes the project create menu on outside pointer down', async () => {
+  test('closes the project create dialog from its backdrop', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
     expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
 
-    fireEvent.pointerMove(document, { clientX: 500, clientY: 500 })
-    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
-
-    await userEvent.hover(screen.getByTestId('project-row-1'))
-    expect(screen.getByTestId('projects-create-button-menu')).toBeInTheDocument()
-
-    fireEvent.pointerDown(document.body)
+    await userEvent.click(screen.getByTestId('project-create-dialog-overlay'))
     expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
   })
 
-  test('renders the project create menu as a right-floating overlay', async () => {
-    const getBoundingClientRectSpy = vi
-      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
-      .mockImplementation(function () {
-        const element = this as HTMLElement
+  test('renders the project create dialog as a centered page-level overlay', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
 
-        if (element.dataset.testid === 'projects-create-button') {
-          return createRect({ left: 104, top: 246, width: 28, height: 28 })
-        }
+    await userEvent.click(screen.getByTestId('projects-create-button'))
 
-        if (element.dataset.testid === 'projects-create-button-menu') {
-          return createRect({ left: 0, top: 0, width: 176, height: 76 })
-        }
-
-        return createRect({ left: 0, top: 0, width: 0, height: 0 })
-      })
-
-    try {
-      Object.defineProperty(window, 'innerWidth', {
-        configurable: true,
-        value: 1024,
-      })
-      Object.defineProperty(window, 'innerHeight', {
-        configurable: true,
-        value: 720,
-      })
-
-      render(<DesktopWorkbenchLayout {...baseProps} />)
-
-      const trigger = screen.getByTestId('projects-create-button')
-      await userEvent.click(trigger)
-
-      const menu = screen.getByTestId('projects-create-button-menu')
-      expect(menu).toBeInTheDocument()
-      expect(document.body).toContainElement(menu)
-      expect(document.querySelector('aside')).not.toContainElement(menu)
-      expect(menu).toHaveClass('fixed')
-      expect(menu).toHaveStyle({ left: '140px', top: '282px', width: '248px' })
-    } finally {
-      getBoundingClientRectSpy.mockRestore()
-    }
+    const dialog = screen.getByTestId('projects-create-button-menu')
+    const overlay = screen.getByTestId('project-create-dialog-overlay')
+    expect(document.body).toContainElement(dialog)
+    expect(document.querySelector('aside')).not.toContainElement(dialog)
+    expect(overlay).toHaveClass('fixed', 'inset-0', 'items-center', 'justify-center')
+    expect(dialog).toHaveAttribute('role', 'dialog')
   })
 
   test('renders standalone folder dialog as a page-level overlay', async () => {

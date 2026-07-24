@@ -161,7 +161,8 @@ export interface WorkbenchContextValue {
   openStandaloneWorkspace: (
     deviceId: string,
     workspacePath: string,
-    label?: string
+    label?: string,
+    projectRoots?: string[]
   ) => Promise<void>
   startNewChat: () => void
   startNewSkillChat: (
@@ -233,6 +234,12 @@ export interface WorkbenchContextValue {
   listGitRepositories: () => Promise<GitRepoInfo[]>
   listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
+  updateLocalRuntimeProject: (data: {
+    deviceId: string
+    projectKey: string
+    name: string
+    roots: string[]
+  }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
   setRuntimeProjectPinned: (data: RuntimeProjectPinRequest) => Promise<void>
