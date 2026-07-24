@@ -63,7 +63,7 @@ jobs:
   test-executor:
     name: Test Executor
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
       contents: read
     env:
