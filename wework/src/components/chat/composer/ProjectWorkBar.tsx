@@ -1,7 +1,6 @@
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   Cloud,
   Folder,
   FolderPlus,
@@ -136,7 +135,6 @@ export function ProjectWorkBar({
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
-  const [localProjectSubmenuOpen, setLocalProjectSubmenuOpen] = useState(false)
   const [executionModeOpenProjectId, setExecutionModeOpenProjectId] = useState<number | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
   const [expandedMultiProjectId, setExpandedMultiProjectId] = useState<number | null>(null)
@@ -153,7 +151,6 @@ export function ProjectWorkBar({
   const closeMenu = useCallback(() => {
     setOpen(false)
     setProjectQuery('')
-    setLocalProjectSubmenuOpen(false)
     setExternalMenuAnchorElement(null)
   }, [])
   const closeExecutionModeMenu = useCallback(() => {
@@ -824,58 +821,18 @@ export function ProjectWorkBar({
               <div className="my-1.5 shrink-0 border-t border-border" />
               <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
                 {onCreateProjectMode && (
-                  <div className="relative">
+                  <div>
                     <button
                       type="button"
                       data-testid="add-local-project-option"
-                      onMouseEnter={() => setLocalProjectSubmenuOpen(true)}
-                      onFocus={() => setLocalProjectSubmenuOpen(true)}
-                      onClick={() => setLocalProjectSubmenuOpen(value => !value)}
+                      onClick={() => handleCreateProject('existing')}
                       className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                     >
                       <FolderPlus className="h-4 w-4 shrink-0" />
                       <span className="min-w-0 flex-1">
                         {t('workbench.add_local_project', '添加本地项目')}
                       </span>
-                      <ChevronRight className="h-4 w-4 shrink-0" />
                     </button>
-                    {localProjectSubmenuOpen && (
-                      <div
-                        data-testid="add-local-project-submenu"
-                        onMouseEnter={() => setLocalProjectSubmenuOpen(true)}
-                        className={cn(
-                          isMobile
-                            ? 'mt-1 space-y-0.5 rounded-xl bg-surface/70 p-1'
-                            : 'absolute left-[calc(100%+0.5rem)] top-0 z-popover w-56 rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]'
-                        )}
-                      >
-                        <button
-                          type="button"
-                          data-testid="add-local-blank-project-option"
-                          onClick={() => handleCreateProject('scratch')}
-                          className="flex h-9 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                        >
-                          <FolderPlus className="h-4 w-4 shrink-0" />
-                          <span className="min-w-0 flex-1">
-                            {t('workbench.new_blank_project', '新建空白项目')}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="add-local-existing-project-option"
-                          onClick={() => handleCreateProject('existing')}
-                          className="flex h-9 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                        >
-                          <ProjectFolderIcon
-                            project={{ id: 0, name: 'folder', tasks: [] }}
-                            className="h-4 w-4 shrink-0 text-text-secondary"
-                          />
-                          <span className="min-w-0 flex-1">
-                            {t('workbench.use_existing_folder', '使用现有文件夹')}
-                          </span>
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
                 {onCreateProjectMode && (
@@ -883,8 +840,6 @@ export function ProjectWorkBar({
                     <button
                       type="button"
                       data-testid="add-remote-project-option"
-                      onMouseEnter={() => setLocalProjectSubmenuOpen(false)}
-                      onFocus={() => setLocalProjectSubmenuOpen(false)}
                       onClick={() => handleCreateProject('git')}
                       className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                     >
@@ -899,8 +854,6 @@ export function ProjectWorkBar({
                   <button
                     type="button"
                     data-testid="no-project-option"
-                    onMouseEnter={() => setLocalProjectSubmenuOpen(false)}
-                    onFocus={() => setLocalProjectSubmenuOpen(false)}
                     onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
                     className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                   >

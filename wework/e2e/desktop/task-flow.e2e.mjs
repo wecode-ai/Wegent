@@ -1074,12 +1074,9 @@ async function revealGroupedModelOption(control, targetOptionId) {
 }
 
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
-  const selectedModelText = await control.command(
-    'waitFor',
-    '[data-testid="model-selector-button"]',
-    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
-  )
-  if (selectedModelText.includes(modelLabel)) return
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 
   const targetOptionId = `model-option-${modelId}`
   let optionVisible = false
@@ -4169,6 +4166,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
+  const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
@@ -4176,6 +4174,7 @@ async function main() {
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
+    mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
   await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
@@ -4367,7 +4366,7 @@ async function main() {
 
     phase = 'project-folder-cancel'
     await control.command('click', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('click', '[data-testid="project-create-local-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4384,8 +4383,7 @@ async function main() {
 
     phase = 'composer-project-folder-select'
     await control.command('click', '[data-testid="project-work-button"]')
-    await control.command('hover', '[data-testid="add-local-project-option"]')
-    await control.command('click', '[data-testid="add-local-existing-project-option"]')
+    await control.command('click', '[data-testid="add-local-project-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4405,6 +4403,19 @@ async function main() {
       '[data-testid="confirm-device-folder-picker-button"]',
       {
         stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+      value: 'workspace',
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-local-project-create-button"]',
+      {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
@@ -4463,7 +4474,7 @@ async function main() {
 
     phase = 'project-folder-reopen'
     await control.command('click', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('click', '[data-testid="project-create-local-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4483,6 +4494,19 @@ async function main() {
       '[data-testid="confirm-device-folder-picker-button"]',
       {
         stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+      value: 'workspace',
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-local-project-create-button"]',
+      {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
@@ -5245,13 +5269,30 @@ async function main() {
     )
     await control.command('click', '[data-testid="project-work-button"]')
     await control.command('click', '[data-testid="add-local-project-option"]')
-    await control.command('click', '[data-testid="add-local-blank-project-option"]')
-    await control.command('fill', '[data-testid="standalone-blank-project-name-input"]', {
+    await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await waitForFolderPickerInitialized(control)
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: composerProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, composerProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      { timeoutMs: UI_TIMEOUT_MS }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
       value: COMPOSER_PROJECT_NAME,
     })
     await control.command(
       'clickWhenEnabled',
-      '[data-testid="save-standalone-blank-project-button"]'
+      '[data-testid="confirm-local-project-create-button"]',
+      { timeoutMs: UI_TIMEOUT_MS }
     )
     const createdComposerProjectSnapshot = await waitForSnapshot(
       control,

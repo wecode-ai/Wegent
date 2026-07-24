@@ -57,6 +57,7 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({
             "success": true,
             "accepted": true,
+            "deviceId": self.device_id,
             "projectKey": project.key,
             "name": project.name,
             "roots": project.roots,

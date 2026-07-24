@@ -3028,7 +3028,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
   })
 
-  test('opens blank project dialog from the project work menu add option', async () => {
+  test('opens local folder selection directly from the project work menu', async () => {
     const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -3060,15 +3060,11 @@ describe('DesktopWorkbenchLayout', () => {
       'no-project-option',
     ])
 
-    await userEvent.hover(addLocalProjectOption)
-    await userEvent.click(screen.getByTestId('add-local-blank-project-option'))
+    await userEvent.click(addLocalProjectOption)
 
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('add-local-project-submenu')).not.toBeInTheDocument()
-    expect(screen.getByTestId('standalone-blank-project-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '为项目命名' })).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-blank-project-name-input')).toHaveValue('New project')
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
   })
 
   test('shows an empty remote project dialog when there are no remote or cloud devices', async () => {

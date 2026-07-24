@@ -724,13 +724,13 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
-        rememberExecutionDevice(requestDeviceId)
+        rememberExecutionDevice(response.deviceId)
         await refreshWorkLists()
         dispatch({
           type: 'runtime_workspace_opened',
-          deviceId: requestDeviceId,
-          workspacePath: normalizedRoots[0],
-          label: projectName,
+          deviceId: response.deviceId,
+          workspacePath: response.roots[0],
+          label: response.name,
         })
         navigateTo('/')
         return

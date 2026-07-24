@@ -297,6 +297,7 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
         .expect("local project mutation should succeed");
 
     assert_eq!(response["accepted"], true);
+    assert_eq!(response["deviceId"], "device-1");
     assert_eq!(response["projectKey"], "product");
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
     assert_eq!(state["local-projects"]["product"]["name"], "Product");

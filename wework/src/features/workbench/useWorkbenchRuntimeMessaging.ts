@@ -513,7 +513,8 @@ export function useWorkbenchRuntimeMessaging({
         }
         optimisticDeviceId = selectedProjectWorkspace.deviceId
         runtimeTaskTarget =
-          selectedProjectWorkspace.id != null
+          selectedProjectWorkspace.id != null &&
+          selectedProjectWorkspace.workspaceSource !== 'local'
             ? {
                 projectId,
                 deviceWorkspaceId: selectedProjectWorkspace.id,

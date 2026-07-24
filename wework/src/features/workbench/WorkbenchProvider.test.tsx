@@ -4365,7 +4365,37 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('registers multiple selected local folders as one Codex project', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(createRuntimeWork({ projects: [] }))
+        .mockResolvedValue(
+          createRuntimeWork({
+            projects: [
+              {
+                project: {
+                  key: 'multi-project',
+                  stateDeviceId: 'device-1',
+                  name: 'web',
+                },
+                deviceWorkspaces: ['/workspace/web', '/workspace/api'].map(
+                  (workspacePath, index) => ({
+                    id: 101 + index,
+                    deviceId: 'device-1',
+                    deviceName: 'Local Device',
+                    deviceStatus: 'online',
+                    workspacePath,
+                    workspaceKind: 'workspace',
+                    workspaceSource: 'local',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  })
+                ),
+                totalTasks: 0,
+              },
+            ],
+          })
+        ),
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -4384,11 +4414,64 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('web')
+
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/web',
+      })
+    )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
+      'deviceWorkspaceId'
+    )
   })
 
   test('registers a named single-folder project through the local project flow', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(createRuntimeWork({ projects: [] }))
+        .mockResolvedValue(
+          createRuntimeWork({
+            projects: [
+              {
+                project: {
+                  key: 'multi-project',
+                  stateDeviceId: 'device-1',
+                  name: 'Product',
+                },
+                deviceWorkspaces: [
+                  {
+                    id: 201,
+                    deviceId: 'device-1',
+                    deviceName: 'Local Device',
+                    deviceStatus: 'online',
+                    workspacePath: '/workspace/product',
+                    workspaceKind: 'workspace',
+                    workspaceSource: 'local',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  },
+                ],
+                totalTasks: 0,
+              },
+            ],
+          })
+        ),
+      upsertLocalRuntimeProject: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-1',
+        projectKey: 'multi-project',
+        name: 'Product',
+        roots: ['/workspace/product'],
+        runtime: 'codex',
+      }),
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -4406,6 +4489,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       runtime: 'codex',
     })
     expect(runtimeWorkApi.openRuntimeWorkspace).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Product')
+    )
   })
 
   test('creates a conversation workspace when sending without a selected project', async () => {

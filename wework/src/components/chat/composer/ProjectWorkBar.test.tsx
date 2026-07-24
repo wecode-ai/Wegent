@@ -144,15 +144,7 @@ describe('ProjectWorkBar', () => {
     expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
     expect(screen.queryByTestId('standalone-device-list')).not.toBeInTheDocument()
 
-    await userEvent.hover(screen.getByTestId('add-local-project-option'))
-
-    expect(screen.getByTestId('add-local-project-submenu')).toBeInTheDocument()
-    expect(screen.getByTestId('add-local-blank-project-option')).toHaveTextContent('新建空白项目')
-    expect(screen.getByTestId('add-local-existing-project-option')).toHaveTextContent(
-      '使用现有文件夹'
-    )
-
-    await userEvent.click(screen.getByTestId('add-local-existing-project-option'))
+    await userEvent.click(screen.getByTestId('add-local-project-option'))
 
     expect(onCreateProjectMode).toHaveBeenCalledWith('existing')
   })
