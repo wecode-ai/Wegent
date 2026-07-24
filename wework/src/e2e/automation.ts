@@ -202,7 +202,7 @@ function seedDesktopE2ECloudConnection() {
             displayName: 'Desktop E2E Responses',
             modelId: 'desktop-e2e-responses-model',
             apiFormat: 'openai-responses' as const,
-            toolProfile: 'custom' as const,
+            toolProfile: 'function' as const,
             requestPath: '/v1/responses',
           },
           {
@@ -308,9 +308,34 @@ function desktopControlSnapshot(selector = 'body'): string {
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
-  const snapshot = await invoke<string>('capture_main_webview')
-  if (element === document.body) return snapshot
-  return cropDesktopControlScreenshot(snapshot, element.getBoundingClientRect())
+  if (element === document.body) return invoke<string>('capture_main_webview')
+  const rect = element.getBoundingClientRect()
+  if (selector !== '[data-testid="model-selector-menu"]') {
+    const snapshot = await invoke<string>('capture_main_webview')
+    return cropDesktopControlScreenshot(snapshot, rect)
+  }
+  // NSView snapshots can omit WebKit's separately composited fixed-position popovers.
+  // Mirror the target into the document layer so element evidence captures what is visible.
+  const captureClone = element.cloneNode(true) as HTMLElement
+  Object.assign(captureClone.style, {
+    animation: 'none',
+    height: `${rect.height}px`,
+    left: `${rect.left + window.scrollX}px`,
+    maxHeight: 'none',
+    position: 'absolute',
+    top: `${rect.top + window.scrollY}px`,
+    transform: 'none',
+    width: `${rect.width}px`,
+    zIndex: '2147483647',
+  })
+  document.body.appendChild(captureClone)
+  try {
+    await new Promise<void>(resolve => window.setTimeout(resolve, 50))
+    const snapshot = await invoke<string>('capture_main_webview')
+    return cropDesktopControlScreenshot(snapshot, rect)
+  } finally {
+    captureClone.remove()
+  }
 }
 
 async function cropDesktopControlScreenshot(snapshot: string, rect: DOMRect): Promise<string> {
@@ -559,6 +584,26 @@ function dropDesktopControlFile(command: DesktopControlCommand): string {
   return filename
 }
 
+function pasteDesktopControlFile(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const filename = command.filename?.trim()
+  if (!filename) throw new Error('pasteFile requires a filename')
+  const binary = window.atob(command.value ?? '')
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
+  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const transfer = new DataTransfer()
+  transfer.items.add(file)
+  const event = new ClipboardEvent('paste', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  })
+  Object.defineProperty(event, 'clipboardData', { value: transfer })
+  element.dispatchEvent(event)
+  return filename
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -588,6 +633,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return dragDesktopControlElement(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
+    case 'pasteFile':
+      return pasteDesktopControlFile(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':

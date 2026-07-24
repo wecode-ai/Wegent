@@ -166,6 +166,12 @@ The primary weight is regular. Codex uses subtle intermediate platform weights,
 but Wework maps them to `400` for body and `500` for emphasis. Use `600`
 sparingly and avoid `700` in product chrome.
 
+Entered composer text uses the primary text color so it reads as content. Normal
+menu labels and composer actions such as the quick-phrase trigger also use the
+primary text color, but remain at regular weight so they stay crisp without
+appearing bold. Descriptions, metadata, and shortcuts use secondary or tertiary
+text colors.
+
 Keep sentence case. Do not use uppercase labels for visual hierarchy. Use no
 more than three type roles in a compact surface. Truncate repeated secondary
 context only when the full value remains available through a tooltip, detail

@@ -4766,6 +4766,9 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getAllByTestId('workbench-main-header')).toHaveLength(1)
       expect(screen.getByTestId('workbench-main-header')).toBe(sharedMainHeader)
       expect(sharedMainHeader).toHaveClass('h-[38px]', 'shrink-0')
+      expect(screen.getAllByTestId('workbench-pane-task-title')).toHaveLength(1)
+      expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('Task B')
+      expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveTextContent('Task A')
       expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
     } finally {
       if (previousTauriInternals === undefined) {
@@ -7322,7 +7325,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })
 
-  test('recreates bottom terminal state when reopening a runtime task', async () => {
+  test('preserves bottom terminal state when switching runtime tasks', async () => {
     const { localDevice, propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
@@ -7330,7 +7333,6 @@ describe('DesktopWorkbenchLayout', () => {
     startLocalTerminalMock
       .mockResolvedValueOnce('local-terminal-a')
       .mockResolvedValueOnce('local-terminal-b')
-      .mockResolvedValueOnce('local-terminal-a-reopened')
     const visibleLocalTerminals = () =>
       within(screen.getByTestId('desktop-workbench-main'))
         .queryAllByTestId('embedded-local-terminal')
@@ -7361,7 +7363,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(visibleLocalTerminals()).toHaveLength(0)
     expect(startLocalTerminalMock).toHaveBeenCalledTimes(1)
 
-    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    await userEvent.click(
+      within(screen.getByTestId('desktop-workbench-main')).getByTestId(
+        'toggle-bottom-workspace-panel-button'
+      )
+    )
 
     await waitFor(() =>
       expect(startLocalTerminalMock).toHaveBeenCalledWith({
@@ -7381,16 +7387,71 @@ describe('DesktopWorkbenchLayout', () => {
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
-    expect(visibleLocalTerminals()).toHaveLength(0)
-    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
     await waitFor(() => {
       const terminals = visibleLocalTerminals()
       expect(terminals).toHaveLength(1)
-      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a-reopened')
+      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
     })
-    expect(startLocalTerminalMock).toHaveBeenCalledTimes(3)
-    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
-    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-b')
+    expect(startLocalTerminalMock).toHaveBeenCalledTimes(2)
+    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
+  })
+
+  test('preserves the right workspace browser state when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-browser-option'))
+    await userEvent.type(
+      activePane().getByTestId('workspace-browser-url-input'),
+      'example.com{Enter}'
+    )
+
+    expect(activePane().getByTestId('workspace-browser-url-input')).toHaveValue(
+      'https://example.com/'
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    expect(activePane().queryByTestId('workspace-browser-panel')).not.toBeInTheDocument()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(activePane().getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(activePane().getByTestId('right-workspace-browser-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(activePane().getByTestId('workspace-browser-url-input')).toHaveValue(
+      'https://example.com/'
+    )
+    expect(activePane().getByTestId('workspace-browser-frame')).toHaveAttribute(
+      'src',
+      'https://example.com/'
+    )
+  })
+
+  test('restores serializable right workspace state without retaining the conversation pane', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    expect(activePane().queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(activePane().getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
   })
 
   test('resets cached conversation horizontal scroll when the task becomes active', () => {
@@ -7406,7 +7467,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(activeContent().scrollLeft).toBe(0)
   })
 
-  test('closes runtime task terminals when switching tasks without a pane cache', async () => {
+  test('keeps runtime task terminals alive while switching through many tasks', async () => {
     const { localDevice, propsForTask, taskA, taskAddresses } = createLocalRuntimeTaskPanelFixture()
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
@@ -7427,7 +7488,11 @@ describe('DesktopWorkbenchLayout', () => {
         rerender(<DesktopWorkbenchLayout {...propsForTask(task)} />)
       }
       const suffix = task.taskId.replace('runtime-', '')
-      await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+      await userEvent.click(
+        within(screen.getByTestId('desktop-workbench-main')).getByTestId(
+          'toggle-bottom-workspace-panel-button'
+        )
+      )
       await waitFor(() => {
         const terminals = visibleLocalTerminals()
         expect(terminals).toHaveLength(1)
@@ -7436,11 +7501,7 @@ describe('DesktopWorkbenchLayout', () => {
     }
 
     expect(startLocalTerminalMock).toHaveBeenCalledTimes(taskAddresses.length)
-    taskAddresses.slice(0, -1).forEach(task => {
-      const suffix = task.taskId.replace('runtime-', '')
-      expect(closeLocalTerminalMock).toHaveBeenCalledWith(`local-terminal-${suffix}`)
-    })
-    expect(closeLocalTerminalMock).not.toHaveBeenCalledWith('local-terminal-k')
+    expect(closeLocalTerminalMock).not.toHaveBeenCalled()
   }, 20000)
 
   test('omits the desktop add-menu item when the internal extension is unavailable', async () => {

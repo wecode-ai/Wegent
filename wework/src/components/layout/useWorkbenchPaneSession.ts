@@ -27,7 +27,7 @@ import {
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
-import { visibleRuntimeGoal } from '@/lib/runtime-goal'
+import { updateRuntimeGoalContinuation, visibleRuntimeGoal } from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import {
   markRuntimeTerminalAdditionalContextDelivered,
@@ -41,6 +41,7 @@ import type {
   RuntimeGoalCreateInput,
   RuntimePlanEventPayload,
   RuntimeGoalContinuationPayload,
+  RuntimeAdditionalContext,
   RuntimeRollbackRequest,
   RuntimeSubagentActivityPayload,
   RuntimeSendRequest,
@@ -78,6 +79,7 @@ interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions
   runtimeGoalRequest?: boolean
+  additionalContext?: RuntimeAdditionalContext
 }
 
 interface SendRequestUserInputResponseOptions {
@@ -88,6 +90,8 @@ interface SendRequestUserInputResponseOptions {
 interface RuntimePaneSendOptions {
   guideWhenBusy?: boolean
   interruptWhenBusy?: boolean
+  additionalContext?: RuntimeAdditionalContext
+  onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
 }
 
 interface SendRuntimeMessageOptions {
@@ -638,7 +642,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       onAssistantStart: () => {
         setStreamSettled(false)
         setSendPhase('idle')
-        setGoalContinuation(null)
+        setGoalContinuation(current =>
+          updateRuntimeGoalContinuation(current, { type: 'assistant_started' })
+        )
       },
       onAssistantSettled: () => {
         setStreamSettled(true)
@@ -763,7 +769,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         const loadedGoal = payload.goal ?? null
         commitThreadGoal(loadedGoal)
         void refreshWorkListsRef.current().catch(() => undefined)
-        if (loadedGoal?.status !== 'active') setGoalContinuation(null)
+        if (loadedGoal?.status !== 'active') {
+          setGoalContinuation(current =>
+            updateRuntimeGoalContinuation(current, { type: 'goal_inactive' })
+          )
+        }
         clearRuntimePaneGoalSeed(address)
         const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
         setPendingGoalState(current =>
@@ -781,7 +791,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       },
       onRuntimeGoalContinuation: payload => {
-        setGoalContinuation(payload.status === 'started' ? payload : null)
+        setGoalContinuation(current =>
+          updateRuntimeGoalContinuation(current, { type: 'turn_lifecycle', payload })
+        )
         void refreshWorkListsRef.current().catch(() => undefined)
       },
       onRuntimePlanUpdated: payload => {
@@ -1055,7 +1067,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
-      const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+      const terminalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+      const additionalContext = { ...message.additionalContext, ...terminalContext }
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message: message.content,
@@ -1069,10 +1082,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
-        ...(additionalContext ? { additionalContext } : {}),
+        ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
       })
       if (sent) {
-        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+        markRuntimeTerminalAdditionalContextDelivered(terminalContext)
         setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
       } else {
         setSendPhase('idle')
@@ -1101,7 +1114,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
-      const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+      const terminalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+      const additionalContext = { ...message.additionalContext, ...terminalContext }
       appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
         id: message.id,
         createdAt: message.createdAt,
@@ -1117,7 +1131,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
-          ...(additionalContext ? { additionalContext } : {}),
+          ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
         },
         { onError: setError }
       )
@@ -1141,7 +1155,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         return false
       }
 
-      markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+      markRuntimeTerminalAdditionalContextDelivered(terminalContext)
       setQueuedMessages(messages =>
         messages.filter(item => item.id !== message.id && !interruptedGuidanceIds.has(item.id))
       )
@@ -1653,6 +1667,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 createdAt: new Date().toISOString(),
                 attachments: persistAttachmentReferences(currentAttachments),
                 runtimeGoalRequest: true,
+                additionalContext: options.additionalContext,
                 ...getRuntimeModelFields(),
               }
 
@@ -1686,7 +1701,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             const sent = await sendCurrentInput(submittedInput, {
               clientMessageId: optimisticMessage.id,
               initialGoal,
+              additionalContext: options.additionalContext,
               onRuntimeTaskOptimisticOpen: (address, context) => {
+                options.onRuntimeTaskCreated?.(address)
                 setPendingGoalState(current =>
                   current
                     ? {
@@ -1772,7 +1789,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             : null
         const effectiveSubmittedInput = submittedInput || pendingInitialGoal?.objective.trim() || ''
         if (!effectiveSubmittedInput && currentAttachments.length === 0 && !hasCodeComments) {
-          void sendCurrentInput('', { codeCommentContexts })
+          void sendCurrentInput('', {
+            codeCommentContexts,
+            additionalContext: options.additionalContext,
+          })
           return
         }
 
@@ -1797,8 +1817,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               clientMessageId: optimisticMessage.id,
               codeCommentContexts,
               initialGoal: pendingInitialGoal,
+              additionalContext: options.additionalContext,
               onError: setError,
               onRuntimeTaskOptimisticOpen: (address, context) => {
+                options.onRuntimeTaskCreated?.(address)
                 if (pendingInitialGoal) {
                   setPendingGoalState(current =>
                     current
@@ -1870,6 +1892,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               status: 'queued',
               createdAt: new Date().toISOString(),
               attachments: persistAttachmentReferences(currentAttachments),
+              additionalContext: options.additionalContext,
               ...getRuntimeModelFields(),
             }
 
@@ -1903,6 +1926,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             status: 'queued',
             createdAt: new Date().toISOString(),
             attachments: persistAttachmentReferences(currentAttachments),
+            additionalContext: options.additionalContext,
             ...getRuntimeModelFields(),
           }
 

@@ -26,7 +26,6 @@ from app.models.user import User
 from app.schemas.user import TokenData
 from app.services.k_batch import apply_default_resources_sync
 from app.services.readers.users import userReader
-from app.services.user import user_service
 
 # Lazy imports for telemetry - only import SpanAttributes which is a pure Python class
 from shared.telemetry.context.attributes import SpanAttributes
@@ -100,7 +99,10 @@ def get_current_user(
                 span.set_attribute(SpanAttributes.USER_NAME, username)
 
             # Query user
-            user = user_service.get_user_by_name(db=db, user_name=username)
+            # Authentication only needs the user record. Decrypting optional Git
+            # credentials here makes every protected endpoint depend on Git crypto
+            # configuration and can reject an otherwise valid login.
+            user = db.query(User).filter(User.user_name == username).first()
             if user is None:
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -393,7 +395,10 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.USER_NAME, username)
 
-            user = user_service.get_user_by_name(db=db, user_name=username)
+            # Optional authentication has the same boundary as required
+            # authentication: loading a session user must not decrypt optional
+            # Git credentials.
+            user = db.query(User).filter(User.user_name == username).first()
             if user:
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
@@ -1130,7 +1135,8 @@ def get_current_user_optional(
                 span.set_attribute(SpanAttributes.USER_NAME, username)
 
             # Query user
-            user = user_service.get_user_by_name(db=db, user_name=username)
+            # Loading the session user must not decrypt optional Git credentials.
+            user = db.query(User).filter(User.user_name == username).first()
             if user is None or not user.is_active:
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")

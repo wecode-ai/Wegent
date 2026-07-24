@@ -1375,8 +1375,20 @@ def list_projects(
     Returns:
         List of projects with optional tasks
     """
+    from sqlalchemy import exists, or_
+
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+
+    shared_project = exists().where(
+        ResourceMember.resource_type == ResourceType.PROJECT.value,
+        ResourceMember.resource_id == Project.id,
+        ResourceMember.entity_type == "user",
+        ResourceMember.entity_id == str(user_id),
+        ResourceMember.status == MemberStatus.APPROVED.value,
+    )
     query = db.query(Project).filter(
-        Project.user_id == user_id,
+        or_(Project.user_id == user_id, shared_project),
         Project.is_active == True,
     )
     if client_origin:

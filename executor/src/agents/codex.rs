@@ -60,6 +60,7 @@ const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_B
 const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
+const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
@@ -77,6 +78,7 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
+
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -460,19 +462,10 @@ impl CodexAppServerClient {
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
-        let result: Result<(), String> = async {
-            let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
-            let message = json!({
-                "method": "thread/unsubscribe",
-                "id": request_id,
-                "params": {"threadId": thread_id},
-            });
-            let write_result = handle.write_message(message).await;
-            handle.remove_pending(request_id).await;
-            drop(response_rx);
-            write_result
-        }
-        .await;
+        let result = self
+            .request("thread/unsubscribe", json!({"threadId": thread_id}))
+            .await
+            .map(|_| ());
         if let Err(error) = result {
             log_executor_event(
                 "codex shared thread unsubscribe failed",
@@ -711,6 +704,9 @@ fn persistent_codex_app_server_launch_config(
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
     ]);
+    launch_config
+        .config_overrides
+        .extend(codex_streaming_patch_config_overrides());
     launch_config
 }
 
@@ -1927,7 +1923,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     if use_user_config {
         let inference_provider = inference_model_provider(&request.model_config);
         if let Some(upstream) = configured_codex_provider(&inference_provider) {
-            configure_codex_router(&mut launch_config, upstream);
+            configure_codex_router(&mut launch_config, upstream, model.clone());
         } else {
             launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
@@ -1943,6 +1939,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         configure_codex_router(
             &mut launch_config,
             explicit_codex_upstream(&request.model_config, &base_url, &api_key),
+            model.clone(),
         );
     } else {
         launch_config.model_provider = Some(inference_model_provider(&request.model_config));
@@ -1963,8 +1960,10 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
 
 fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
-    upstream: LocalModelProxyUpstream,
+    mut upstream: LocalModelProxyUpstream,
+    routing_model_id: Option<String>,
 ) {
+    upstream.routing_model_id = routing_model_id;
     let local_token = local_model_proxy::register(upstream);
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
@@ -2001,6 +2000,7 @@ fn explicit_codex_upstream(
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
         model_id: non_empty_config(model_config, "model_id"),
+        routing_model_id: None,
     }
 }
 
@@ -2014,6 +2014,7 @@ fn shell_path_config_override() -> String {
 fn codex_streaming_patch_config_overrides() -> Vec<String> {
     vec![
         CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned(),
+        CODEX_APPLY_PATCH_FREEFORM_OVERRIDE.to_owned(),
         CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
     ]
 }
@@ -2033,23 +2034,20 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
 }
 
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
-    if !bool_value(
+    let compat_proxy = bool_value(
         request
             .model_config
             .get("codex_responses_compat_proxy")
             .or_else(|| request.model_config.get("codexResponsesCompatProxy")),
     )
-    .unwrap_or(false)
-    {
-        return model_id(request);
+    .unwrap_or(false);
+    let catalog_model_id = non_empty_config(&request.model_config, "codex_catalog_model_id")
+        .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
+    if compat_proxy {
+        catalog_model_id.clone().or_else(|| model_id(request))
+    } else {
+        model_id(request)
     }
-    if let Some(catalog_model_id) =
-        non_empty_config(&request.model_config, "codex_catalog_model_id")
-            .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"))
-    {
-        return Some(catalog_model_id);
-    }
-    model_id(request)
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -2125,6 +2123,7 @@ fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> 
         default_headers,
         proxy_url: None,
         model_id: None,
+        routing_model_id: None,
     })
 }
 
@@ -2774,6 +2773,12 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
+    let binary_attachment_context =
+        AttachmentPromptProcessor::build_binary_attachment_context(&success);
+    if !binary_attachment_context.is_empty() {
+        request.prompt =
+            append_text_attachment_context(&request.prompt, &binary_attachment_context);
+    }
     let text_attachment_context =
         AttachmentPromptProcessor::build_text_attachment_context(&success);
     if !text_attachment_context.is_empty() {

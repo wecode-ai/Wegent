@@ -10,6 +10,7 @@ export interface ModelSelectorProps {
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  onOpenChange?: (open: boolean) => void
   openSignal?: number
   menuPlacement?: 'above' | 'below'
   buttonClassName?: string
