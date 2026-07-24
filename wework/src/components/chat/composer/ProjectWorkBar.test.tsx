@@ -112,6 +112,33 @@ const runtimeWork: RuntimeWorkListResponse = {
 }
 
 describe('ProjectWorkBar', () => {
+  test('uses consistent regular typography for desktop selector triggers', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main'])}
+        onCheckoutBranch={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('project-work-button').parentElement).toHaveClass(
+      'text-sm',
+      'font-normal'
+    )
+    expect(screen.getByTestId('execution-mode-button')).toHaveClass('text-sm', 'font-normal')
+    expect(screen.getByTestId('project-branch-button')).toHaveClass('text-sm', 'font-normal')
+  })
+
   test('shows empty project list and grouped project creation actions', async () => {
     const onCreateProjectMode = vi.fn()
 
@@ -661,6 +688,10 @@ describe('ProjectWorkBar', () => {
     )
 
     expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('新工作树')
+    expect(screen.getByTestId('project-worktree-branch-button')).toHaveClass(
+      'text-sm',
+      'font-normal'
+    )
     expect(screen.getByTestId('project-worktree-branch-button')).toHaveTextContent('选择分支')
     expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
     expect(onExecutionModeChange).not.toHaveBeenCalled()

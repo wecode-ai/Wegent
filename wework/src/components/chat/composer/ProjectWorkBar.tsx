@@ -870,7 +870,7 @@ export function ProjectWorkBar({
             <ChevronDown className="h-4 w-4" />
           </button>
         ) : currentProject ? (
-          <div className="flex h-8 min-w-0 items-center rounded-lg text-sm font-medium leading-[18px] text-text-secondary">
+          <div className="flex h-8 min-w-0 items-center rounded-lg text-sm font-normal leading-[18px] text-text-secondary">
             <button
               type="button"
               data-testid="clear-project-button"
@@ -914,7 +914,7 @@ export function ProjectWorkBar({
             data-testid="project-work-button"
             onClick={handleToggleMenu}
             className={cn(
-              'flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              'flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
               open && 'bg-background/70 text-text-primary',
               buttonClassName
             )}
@@ -1000,7 +1000,8 @@ export function ProjectWorkBar({
             data-testid="execution-mode-button"
             onClick={handleToggleExecutionModeMenu}
             className={cn(
-              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              isMobile && 'text-base font-medium leading-5',
               executionModeOpen &&
                 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
             )}
