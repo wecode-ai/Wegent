@@ -18,6 +18,8 @@ const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification 
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const FORK_FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP: continue only in the forked task.'
+const FORK_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP_COMPLETE'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -548,6 +550,93 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
+}
+
+async function verifyCompletedTurnFork({
+  composerSelector,
+  control,
+  executorHome,
+  sourceTaskRowTestId,
+  workspacePath,
+}) {
+  const taskRowsBeforeFork = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('scrollIntoView', '[data-testid="fork-message-button"]')
+  await control.command('waitFor', '[data-testid="fork-message-button"]', {
+    visible: true,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'completed-turn-fork-01-source-ready.png')
+  await control.command('clickWhenEnabled', '[data-testid="fork-message-button"]')
+  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  assert.notEqual(
+    forkTaskRowTestId,
+    sourceTaskRowTestId,
+    'Forking reused the source task instead of creating an independent task'
+  )
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
+  const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
+  const runtimeInstances = await readdir(join(executorHome, 'app-runtime'))
+  assert.equal(runtimeInstances.length, 1, 'The desktop E2E expected one app runtime instance')
+  const runtimeIndex = JSON.parse(
+    await readFile(
+      join(executorHome, 'app-runtime', runtimeInstances[0], 'runtime-work', 'index.json'),
+      'utf8'
+    )
+  )
+  assert.equal(
+    runtimeIndex.tasks[sourceTaskId]?.workspace_path,
+    workspacePath,
+    'The source task did not use the selected project workspace'
+  )
+  assert.equal(
+    runtimeIndex.tasks[forkTaskId]?.workspace_path,
+    workspacePath,
+    'The forked task did not inherit the source workspace'
+  )
+  assert.equal(
+    runtimeIndex.tasks[forkTaskId]?.parent?.taskId,
+    sourceTaskId,
+    'The backend did not persist the fork parent relationship'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'completed-turn-fork-02-target-open.png')
+
+  control.setScenario('fork_follow_up')
+  const forkFollowUpRequest = await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    FORK_FOLLOW_UP_PROMPT,
+    'fork_follow_up'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FORK_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  assert.ok(
+    JSON.stringify(forkFollowUpRequest.body).includes(FORK_FOLLOW_UP_PROMPT),
+    'The forked task did not accept an independent follow-up'
+  )
+  await captureVerificationScreenshot(control, 'completed-turn-fork-03-follow-up-complete.png')
+
+  await control.command('click', `[data-testid="${sourceTaskRowTestId}"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const sourceSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.ok(
+    !sourceSnapshot.text.includes(FORK_FOLLOW_UP_PROMPT) &&
+      !sourceSnapshot.text.includes(FORK_FOLLOW_UP_COMPLETION_TEXT),
+    'The fork follow-up mutated the source task transcript'
+  )
+  await captureVerificationScreenshot(control, 'completed-turn-fork-04-source-unchanged.png')
 }
 
 async function waitForBlankConversation(control, composerSelector) {
@@ -2509,6 +2598,7 @@ class DesktopE2EServer {
       [
         'initial',
         'follow_up',
+        'fork_follow_up',
         'request_user_input',
         'window_lifecycle',
         'turn_navigation',
@@ -3033,6 +3123,20 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'fork_follow_up') {
+      this.recordScenarioRequest('fork_follow_up', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(FORK_FOLLOW_UP_PROMPT),
+        'The real Codex request did not contain the fork follow-up prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(FORK_FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -4727,6 +4831,15 @@ async function main() {
       testId.startsWith('runtime-local-task-row-')
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
+
+    phase = 'completed-turn-fork'
+    await verifyCompletedTurnFork({
+      composerSelector,
+      control,
+      executorHome,
+      sourceTaskRowTestId: taskRowTestId,
+      workspacePath,
+    })
 
     phase = 'blank-task-draft-restoration'
     await control.command(
