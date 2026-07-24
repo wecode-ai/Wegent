@@ -657,6 +657,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       element.click()
       return element.textContent?.trim() ?? ''
     }
+    case 'clickIfPresent': {
+      const element = findDesktopControlElements(command.selector).find(
+        desktopControlElementEnabled
+      )
+      if (!element) return 'missing'
+      element.click()
+      return 'clicked'
+    }
     case 'deferredClick': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)

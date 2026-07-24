@@ -3746,7 +3746,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'The remote device dialog exposed neither a connected device nor its refresh action'
   )
   if (!remoteDialogSnapshot.testIds.includes('standalone-remote-device-select')) {
-    await control.command('clickWhenEnabled', '[data-testid="refresh-remote-devices-button"]')
+    await control.command('clickIfPresent', '[data-testid="refresh-remote-devices-button"]')
   }
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: UI_TIMEOUT_MS,
