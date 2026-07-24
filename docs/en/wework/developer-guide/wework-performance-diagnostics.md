@@ -143,6 +143,8 @@ Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS incl
 - Dense `longtask` or `event-loop-lag` events.
 - Repeated `slow-react-commit` events.
 
+The workbench's full-height sidebar and content-wide top bar should use ordinary semantic backgrounds instead of applying `backdrop-filter` to large persistent surfaces. These filters can cause WebKit to retain additional graphics backing stores for the entire region. When investigating Web Content memory, compare `physical_footprint_kib` before and after the change at the same window size and page state, and exclude the temporary reclaimable high-water mark created by Web Inspector heap snapshots from the steady-state baseline.
+
 Manual marks can also be added:
 
 ```js
