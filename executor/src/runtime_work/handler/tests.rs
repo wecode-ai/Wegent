@@ -30,6 +30,38 @@ fn finishing_an_active_goal_keeps_the_task_idle() {
 }
 
 #[test]
+fn failed_codex_turn_persists_assistant_error_in_runtime_handle() {
+    let index_path = temp_runtime_work_index_path("persist-failed-assistant");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    handler.upsert_local_task(link);
+    let request = ExecutionRequest {
+        subtask_id: "turn-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+
+    handler.persist_failed_assistant_message("task-1", &request, "Codex failure");
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    let messages = cached_messages(&task);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], "assistant");
+    assert_eq!(messages[0]["status"], "failed");
+    assert_eq!(messages[0]["error"], "Codex failure");
+    assert_eq!(messages[0]["errorType"], "response.failed");
+    assert_eq!(messages[0]["subtaskId"], "turn-1");
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn syncing_an_active_goal_does_not_start_an_idle_task() {
     let index_path = temp_runtime_work_index_path("sync-active-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -263,6 +295,26 @@ fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
     append_missing_cached_user_messages(&mut provider_messages, cached_messages);
 
     assert_eq!(provider_messages.len(), 2);
+}
+
+#[test]
+fn transcript_appends_cached_failed_assistant_missing_from_provider() {
+    let mut provider_messages =
+        vec![json!({"id": "user-1", "role": "user", "content": "retry this"})];
+    let cached_messages = vec![json!({
+        "id": "failed-assistant-1",
+        "role": "assistant",
+        "content": "",
+        "status": "failed",
+        "error": "Codex failure"
+    })];
+
+    append_missing_cached_failed_assistant_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(provider_messages.len(), 2);
+    assert_eq!(provider_messages[1]["id"], "failed-assistant-1");
+    assert_eq!(provider_messages[1]["status"], "failed");
+    assert_eq!(provider_messages[1]["error"], "Codex failure");
 }
 
 #[tokio::test]

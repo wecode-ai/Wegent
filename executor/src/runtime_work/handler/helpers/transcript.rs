@@ -175,6 +175,31 @@ fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_message
     }
 }
 
+fn append_missing_cached_failed_assistant_messages(
+    messages: &mut Vec<Value>,
+    cached_messages: Vec<Value>,
+) {
+    let mut message_ids = messages
+        .iter()
+        .filter_map(|message| string_field(message, "id"))
+        .collect::<HashSet<_>>();
+    for message in cached_messages {
+        let is_failed_assistant = string_field(&message, "role")
+            .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+            && string_field(&message, "status")
+                .is_some_and(|status| status.eq_ignore_ascii_case("failed"));
+        if !is_failed_assistant {
+            continue;
+        }
+        let Some(message_id) = string_field(&message, "id") else {
+            continue;
+        };
+        if message_ids.insert(message_id) {
+            messages.push(message);
+        }
+    }
+}
+
 fn cached_user_message_signature(message: &Value) -> Option<String> {
     string_field(message, "role")
         .filter(|role| role.eq_ignore_ascii_case("user"))
