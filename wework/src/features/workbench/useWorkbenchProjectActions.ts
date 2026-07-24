@@ -298,10 +298,9 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw error
       }
-      await refreshWorkLists()
       dispatch({ type: 'project_removed', projectId })
     },
-    [dispatch, refreshWorkLists, services.projectApi, state.projects]
+    [dispatch, services.projectApi, state.projects]
   )
 
   const removeProject = useCallback(
