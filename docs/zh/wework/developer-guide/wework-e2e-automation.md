@@ -88,7 +88,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 5. 在同一会话中发送连续追问，并校验对应请求和页面回复。
 6. 启动流式回复后通过桌面端 UI 取消，校验任务已停止、停止提示已渲染，并在发送后续消息时恢复输入。
 7. 让模型首次请求确定性失败，点击错误卡中的重试，并校验重试请求和最终回复。
-8. 创建两轮短对话，切换到新对话后重新打开原对话，校验首条消息靠近消息视口顶部，防止虚拟列表在短会话上留下大块顶部空白。
+8. 创建两轮短对话，切换到新对话后重新打开原对话，校验 2 条用户消息、2 条助手消息和 4 个统一虚拟行仍完整挂载，并确认首条消息靠近消息视口顶部，防止缓存恢复时丢失消息或留下大块顶部空白。
 9. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
 
 测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实 provider 账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行文本回复以及“发送 → `apply_patch` → 工具结果回传 → 完成回复”，工具调用仍由真实 Codex 在隔离工作区内执行。
