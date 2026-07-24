@@ -6,9 +6,10 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
+import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
   getLocalRuntimeStateDeviceId,
@@ -412,8 +413,33 @@ export function WorkbenchProvider({
       error: message || getBlockedModelSelectionMessage('runtime_family_mismatch', model),
     })
   }, [])
+  const modelExecutionDeviceId = useMemo(() => {
+    if (state.currentRuntimeTask?.deviceId) return state.currentRuntimeTask.deviceId
+    const projectWorkspace = findProjectDeviceWorkspace(
+      state.runtimeWork,
+      activeProject?.id,
+      state.selectedDeviceWorkspaceId
+    )
+    return projectWorkspace?.deviceId ?? (!activeProject ? state.standaloneDeviceId : null)
+  }, [
+    activeProject,
+    state.currentRuntimeTask,
+    state.runtimeWork,
+    state.selectedDeviceWorkspaceId,
+    state.standaloneDeviceId,
+  ])
+  const modelExecutionDevice = findWorkbenchDevice(state.devices, modelExecutionDeviceId)
+  const hideConfiguredLocalModels = Boolean(
+    modelExecutionDevice && modelExecutionDevice.device_type !== 'local'
+  )
+  const filterModelForExecution = useCallback(
+    (model: UnifiedModel) =>
+      !hideConfiguredLocalModels || localModelIdFromModelName(model.name) === null,
+    [hideConfiguredLocalModels]
+  )
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
+    filterModel: filterModelForExecution,
     locked: false,
     scopeKey: projectChatScopeKey,
     persistSelection: !state.currentRuntimeTask,
@@ -548,6 +574,7 @@ export function WorkbenchProvider({
       composer: {
         scopeKey: projectChatScopeKey,
         standaloneChatKey: state.standaloneChatKey,
+        availableModelNames: modelSelection.models.map(model => model.name),
         currentInputLength: draftInput.length,
         scopedInputLengths: Object.fromEntries(
           Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
@@ -565,6 +592,7 @@ export function WorkbenchProvider({
     currentContextUsage,
     draftInput.length,
     draftInputByScope,
+    modelSelection.models,
     projectChatScopeKey,
     state,
   ])

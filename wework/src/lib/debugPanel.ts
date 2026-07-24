@@ -165,6 +165,7 @@ interface RuntimeDeviceWorkspaceDebug {
 interface WorkbenchComposerDebugSnapshot {
   scopeKey: string
   standaloneChatKey: number
+  availableModelNames: string[]
   currentInputLength: number
   scopedInputLengths: Record<string, number>
   attachmentCount: number

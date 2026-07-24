@@ -1996,6 +1996,9 @@ fn explicit_codex_upstream(
         api_format: non_empty_config(model_config, "upstream_api_format")
             .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
             .unwrap_or_else(|| "openai-responses".to_owned()),
+        convert_custom_tools: non_empty_config(model_config, "tool_profile")
+            .or_else(|| non_empty_config(model_config, "toolProfile"))
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
         api_key: api_key.to_owned(),
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
@@ -2113,12 +2116,33 @@ fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> 
                 .collect()
         })
         .unwrap_or_default();
+    let api_format = provider_config
+        .get("upstream_api_format")
+        .or_else(|| provider_config.get("upstreamApiFormat"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai-responses")
+        .to_owned();
+    let convert_custom_tools = api_format != "openai-responses"
+        || provider_config
+            .get("tool_profile")
+            .or_else(|| provider_config.get("toolProfile"))
+            .and_then(|value| value.as_str())
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+    let request_path = match api_format.as_str() {
+        "openai-chat-completions" => "/chat/completions",
+        "anthropic-messages" => "/messages",
+        _ => "/responses",
+    };
+    let base_url = base_url.trim_end_matches('/').to_owned();
 
     Some(LocalModelProxyUpstream {
         registration_id: provider.to_owned(),
-        base_url: base_url.trim_end_matches('/').to_owned(),
-        request_url: None,
-        api_format: "openai-responses".to_owned(),
+        request_url: Some(format!("{base_url}{request_path}")),
+        base_url,
+        api_format,
+        convert_custom_tools,
         api_key,
         default_headers,
         proxy_url: None,
