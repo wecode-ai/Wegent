@@ -3,11 +3,11 @@ import {
   applyRuntimeConversationAction,
   cacheRuntimeConversationMessages,
   cacheConversationScrollSnapshot,
-  cacheConversationVirtualMeasurements,
+  cacheConversationVirtualHeights,
   clearRuntimeConversationCacheForTests,
   evictRuntimeConversation,
   getConversationScrollSnapshot,
-  getConversationVirtualMeasurements,
+  getConversationVirtualHeights,
   getRuntimeConversationMessages,
 } from './runtimeConversationCache'
 
@@ -106,14 +106,12 @@ describe('runtimeConversationCache', () => {
       distanceFromBottomPx: 240,
       pinnedToBottom: false,
     })
-    cacheConversationVirtualMeasurements('device-1:task-1', [
-      { index: 0, key: 'user-1', start: 0, end: 120, size: 120, lane: 0 },
-    ])
+    cacheConversationVirtualHeights('device-1:task-1', { 'user-1': 120 })
 
     evictRuntimeConversation(address)
 
     expect(getRuntimeConversationMessages(address)).toEqual([])
     expect(getConversationScrollSnapshot('device-1:task-1')).toBeUndefined()
-    expect(getConversationVirtualMeasurements('device-1:task-1')).toBeUndefined()
+    expect(getConversationVirtualHeights('device-1:task-1')).toBeUndefined()
   })
 })

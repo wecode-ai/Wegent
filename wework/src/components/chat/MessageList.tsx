@@ -1,9 +1,6 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual'
-import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
-  CSSProperties,
   MouseEvent as ReactMouseEvent,
   ReactNode,
   RefObject,
@@ -67,10 +64,7 @@ import { FileChangesCard } from './FileChangesCard'
 import { composerPathReference, composerSkillFilePath } from './composer/composerMentions'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
-import {
-  cacheConversationVirtualMeasurements,
-  getConversationVirtualMeasurements,
-} from '@/features/workbench/runtimeConversationCache'
+import { useMessageVirtualizer } from './useMessageVirtualizer'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -126,9 +120,6 @@ const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
 const SELECTION_ACTION_GAP = 8
-const MESSAGE_WINDOW_ROOT_MARGIN = '400px 0px'
-const ALWAYS_MOUNT_RECENT_MESSAGE_COUNT = 4
-const VIRTUAL_MESSAGE_MIN_COUNT = 20
 const VIRTUAL_MESSAGE_OVERSCAN = 2
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
@@ -220,7 +211,6 @@ export const MessageList = memo(function MessageList({
     isWaitingForAssistant &&
     waitingForAssistantTurn &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
-  const windowMessages = isTauri && !disableContentVisibility && !isTextSelectionActive
   const messageIntrinsicHeights = useMemo(() => {
     return new Map(
       visibleMessages.map(message => [
@@ -232,82 +222,33 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages =
-    isTauri &&
-    Boolean(scrollElementRef) &&
-    visibleMessages.length >= VIRTUAL_MESSAGE_MIN_COUNT &&
-    !disableContentVisibility
+  const virtualMessages = isTauri && Boolean(scrollElementRef)
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
-  const forcedVirtualMessageIndex = useMemo(
+  const fallbackScrollElementRef = useRef<HTMLDivElement>(null)
+  const virtualEntries = useMemo(
     () =>
-      forceVirtualMessageId === null
-        ? -1
-        : visibleMessages.findIndex(message => message.id === forceVirtualMessageId),
-    [forceVirtualMessageId, visibleMessages]
+      visibleMessages.map(message => ({
+        key: message.id,
+        estimatedHeightPx: Math.ceil(messageIntrinsicHeights.get(message.id) ?? 220),
+      })),
+    [messageIntrinsicHeights, visibleMessages]
   )
-  const initialMeasurementsCache = useMemo(
-    () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
-    [virtualMeasurementKey, visibleMessages]
-  )
-  const initialVirtualOffset = useMemo(() => {
-    const viewportHeight = scrollElementRef?.current?.clientHeight ?? 0
-    const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
-    const contentHeight =
-      MESSAGE_LIST_PADDING_TOP_PX +
-      MESSAGE_LIST_PADDING_BOTTOM_PX +
-      visibleMessages.reduce((total, message, index) => {
-        const size =
-          measuredSizes.get(message.id) ?? Math.ceil(messageIntrinsicHeights.get(message.id) ?? 220)
-        const gap = index < visibleMessages.length - 1 ? MESSAGE_LIST_GAP_PX : 0
-        return total + size + gap
-      }, 0)
-    return Math.max(0, contentHeight - viewportHeight - initialDistanceFromBottomPx)
-  }, [
-    initialDistanceFromBottomPx,
-    initialMeasurementsCache,
-    messageIntrinsicHeights,
-    scrollElementRef,
-    visibleMessages,
-  ])
-  // TanStack Virtual owns mutable measurement callbacks that React Compiler must not memoize.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const messageVirtualizer = useVirtualizer({
-    count: visibleMessages.length,
+  const messageVirtualizer = useMessageVirtualizer({
+    cacheKey: virtualMessages ? virtualMeasurementKey : null,
     enabled: virtualMessages,
-    getScrollElement: () => scrollElementRef?.current ?? null,
-    initialRect: {
-      width: scrollElementRef?.current?.clientWidth ?? 0,
-      height: scrollElementRef?.current?.clientHeight ?? 0,
-    },
-    initialOffset: initialVirtualOffset,
-    getItemKey: index => visibleMessages[index]?.id ?? index,
-    estimateSize: index => {
-      const message = visibleMessages[index]
-      return Math.ceil((message && messageIntrinsicHeights.get(message.id)) ?? 220)
-    },
-    gap: MESSAGE_LIST_GAP_PX,
-    paddingStart: MESSAGE_LIST_PADDING_TOP_PX,
-    paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
-    overscan: VIRTUAL_MESSAGE_OVERSCAN,
-    rangeExtractor: range => {
-      const indexes = defaultRangeExtractor(range)
-      if (forcedVirtualMessageIndex < 0 || indexes.includes(forcedVirtualMessageIndex)) {
-        return indexes
-      }
-      return [...indexes, forcedVirtualMessageIndex].sort((left, right) => left - right)
-    },
-    initialMeasurementsCache,
+    entries: virtualEntries,
+    forceKey: forceVirtualMessageId,
+    gapPx: MESSAGE_LIST_GAP_PX,
+    initialDistanceFromBottomPx,
+    listRef,
+    overscanCount: VIRTUAL_MESSAGE_OVERSCAN,
+    paddingBottomPx: MESSAGE_LIST_PADDING_BOTTOM_PX,
+    paddingTopPx: MESSAGE_LIST_PADDING_TOP_PX,
+    scrollElementRef: scrollElementRef ?? fallbackScrollElementRef,
   })
 
-  useEffect(
-    () => () => {
-      if (!virtualMessages || virtualMeasurementKey === null) return
-      setVirtualMeasurementSnapshot(virtualMeasurementKey, messageVirtualizer.takeSnapshot())
-    },
-    [messageVirtualizer, virtualMeasurementKey, virtualMessages]
-  )
-
   useLayoutEffect(() => {
+    if (!virtualMessages) return
     const element = listRef.current
     if (!element) return
 
@@ -341,7 +282,7 @@ export const MessageList = memo(function MessageList({
         layoutWidthUpdateTimerRef.current = null
       }
     }
-  }, [])
+  }, [virtualMessages])
 
   useEffect(() => {
     if (isTauri && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
@@ -444,7 +385,7 @@ export const MessageList = memo(function MessageList({
         virtualMessages
           ? {
               height:
-                messageVirtualizer.getTotalSize() +
+                messageVirtualizer.layout.totalHeightPx +
                 (shouldShowWaitingIndicator ? MESSAGE_LIST_GAP_PX + 32 : 0),
             }
           : undefined
@@ -479,17 +420,17 @@ export const MessageList = memo(function MessageList({
           document.body
         )}
       {(virtualMessages
-        ? messageVirtualizer.getVirtualItems().map(virtualRow => ({
-            index: virtualRow.index,
-            key: virtualRow.key,
-            measureRef: messageVirtualizer.measureElement,
+        ? messageVirtualizer.rows.map(row => ({
+            index: row.index,
+            key: row.key,
+            measureRef: messageVirtualizer.getRowRef(row.key),
             style: {
-              position: 'absolute',
+              position: 'absolute' as const,
               left: 0,
               top: 0,
               width: '100%',
-              transform: `translateY(${virtualRow.start}px)`,
-            } satisfies CSSProperties,
+              transform: `translateY(${row.startPx}px)`,
+            },
           }))
         : visibleMessages.map((_, index) => ({
             index,
@@ -501,18 +442,16 @@ export const MessageList = memo(function MessageList({
         const { index } = row
         const message = visibleMessages[index]
         const nextMessage = visibleMessages[index + 1]
-        const forceMounted =
-          index >= visibleMessages.length - ALWAYS_MOUNT_RECENT_MESSAGE_COUNT ||
-          message.status === 'streaming' ||
-          message.id === activeEditingMessageId ||
-          message.id === activeSubmittingEditMessageId
         const article = (
-          <WindowedMessageArticle
-            enabled={windowMessages && !virtualMessages}
-            estimatedHeight={messageIntrinsicHeights.get(message.id)}
-            forceMounted={forceMounted}
-            messageRole={message.role}
-            useContentVisibility={!isTauri && !disableContentVisibility && !isTextSelectionActive}
+          <article
+            className={cn(
+              'min-w-0',
+              !isTauri &&
+                !disableContentVisibility &&
+                !isTextSelectionActive &&
+                '[content-visibility:auto]',
+              message.role === 'user' && 'flex justify-end'
+            )}
             data-message-id={message.id}
             data-testid={`message-${message.role}`}
           >
@@ -561,7 +500,7 @@ export const MessageList = memo(function MessageList({
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
               />
             )}
-          </WindowedMessageArticle>
+          </article>
         )
         const gap = renderGapAfterMessage?.(message, nextMessage)
         return virtualMessages ? (
@@ -585,7 +524,7 @@ export const MessageList = memo(function MessageList({
               ? {
                   position: 'absolute',
                   left: 0,
-                  top: messageVirtualizer.getTotalSize() + MESSAGE_LIST_GAP_PX,
+                  top: messageVirtualizer.layout.totalHeightPx + MESSAGE_LIST_GAP_PX,
                   width: '100%',
                 }
               : undefined
@@ -597,98 +536,6 @@ export const MessageList = memo(function MessageList({
     </div>
   )
 }, areMessageListPropsEqual)
-
-function getVirtualMeasurementSnapshot(
-  key: string | null,
-  messages: WorkbenchMessage[]
-): VirtualItem[] {
-  if (key === null) return []
-  const snapshot = getConversationVirtualMeasurements(key)
-  if (!snapshot) return []
-
-  const messageIds = new Set(messages.map(message => message.id))
-  if (snapshot.some(item => typeof item.key === 'string' && !messageIds.has(item.key))) return []
-
-  return snapshot
-}
-
-function setVirtualMeasurementSnapshot(key: string, snapshot: VirtualItem[]) {
-  cacheConversationVirtualMeasurements(key, snapshot)
-}
-
-function WindowedMessageArticle({
-  enabled,
-  estimatedHeight,
-  forceMounted,
-  messageRole,
-  useContentVisibility,
-  children,
-  ...attributes
-}: {
-  enabled: boolean
-  estimatedHeight: number | undefined
-  forceMounted: boolean
-  messageRole: WorkbenchMessage['role']
-  useContentVisibility: boolean
-  children: ReactNode
-  'data-message-id': string
-  'data-testid': string
-}) {
-  const articleRef = useRef<HTMLElement>(null)
-  const canObserve = enabled && typeof IntersectionObserver !== 'undefined'
-  const [nearViewport, setNearViewport] = useState(!canObserve || forceMounted)
-  const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
-  const mounted = forceMounted || !canObserve || nearViewport
-
-  useEffect(() => {
-    if (!canObserve || forceMounted) return
-
-    const article = articleRef.current
-    if (!article) return
-    const observer = new IntersectionObserver(
-      entries => {
-        const entry = entries[0]
-        if (!entry) return
-        if (!entry.isIntersecting) {
-          const height = article.getBoundingClientRect().height
-          if (height > 0) setRetainedHeight(height)
-        }
-        setNearViewport(entry.isIntersecting)
-      },
-      { rootMargin: MESSAGE_WINDOW_ROOT_MARGIN }
-    )
-    observer.observe(article)
-    return () => observer.disconnect()
-  }, [canObserve, forceMounted])
-
-  const placeholderHeight = Math.ceil(retainedHeight ?? estimatedHeight ?? 220)
-  return (
-    <article
-      ref={articleRef}
-      className={cn(
-        'min-w-0',
-        useContentVisibility && '[content-visibility:auto]',
-        messageRole === 'user' && 'flex justify-end'
-      )}
-      style={
-        mounted
-          ? useContentVisibility
-            ? getMessageContainmentStyle(estimatedHeight)
-            : undefined
-          : { minHeight: placeholderHeight }
-      }
-      {...attributes}
-    >
-      {mounted ? children : null}
-    </article>
-  )
-}
-
-function getMessageContainmentStyle(estimatedHeight: number | undefined): CSSProperties {
-  return {
-    containIntrinsicSize: `0 ${Math.ceil(estimatedHeight ?? 220)}px`,
-  } as CSSProperties
-}
 
 function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>('[data-message-selectable-text]')).filter(

@@ -1,13 +1,12 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { Attachment, RuntimeTaskAddress, TurnFileChangesSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
-import type { VirtualItem } from '@tanstack/react-virtual'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
 const messagesByConversation = new Map<string, WorkbenchMessage[]>()
 const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
-const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
+const virtualHeightsByConversation = new Map<string, Record<string, number>>()
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -58,14 +57,17 @@ export function cacheConversationScrollSnapshot(key: string, snapshot: Conversat
   cacheBoundedEntry(scrollSnapshotsByConversation, key, snapshot)
 }
 
-export function getConversationVirtualMeasurements(key: string): VirtualItem[] | undefined {
-  return touchEntry(virtualMeasurementsByConversation, key)
+export function getConversationVirtualHeights(key: string): Record<string, number> | undefined {
+  return touchEntry(virtualHeightsByConversation, key)
 }
 
-export function cacheConversationVirtualMeasurements(key: string, measurements: VirtualItem[]) {
-  virtualMeasurementsByConversation.delete(key)
-  if (measurements.length > 0) {
-    cacheBoundedEntry(virtualMeasurementsByConversation, key, measurements)
+export function cacheConversationVirtualHeights(
+  key: string,
+  heightsByMessageId: Record<string, number>
+) {
+  virtualHeightsByConversation.delete(key)
+  if (Object.keys(heightsByMessageId).length > 0) {
+    cacheBoundedEntry(virtualHeightsByConversation, key, heightsByMessageId)
   }
 }
 
@@ -73,21 +75,21 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   messagesByConversation.delete(runtimeConversationKey(address))
   const viewKey = runtimeConversationViewKey(address)
   scrollSnapshotsByConversation.delete(viewKey)
-  virtualMeasurementsByConversation.delete(viewKey)
+  virtualHeightsByConversation.delete(viewKey)
 }
 
 export function getRuntimeConversationCacheStats() {
   return {
     messageEntries: messagesByConversation.size,
     scrollSnapshotEntries: scrollSnapshotsByConversation.size,
-    virtualMeasurementEntries: virtualMeasurementsByConversation.size,
+    virtualHeightEntries: virtualHeightsByConversation.size,
   }
 }
 
 export function clearRuntimeConversationCacheForTests() {
   messagesByConversation.clear()
   scrollSnapshotsByConversation.clear()
-  virtualMeasurementsByConversation.clear()
+  virtualHeightsByConversation.clear()
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {
