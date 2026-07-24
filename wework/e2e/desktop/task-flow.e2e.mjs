@@ -5171,22 +5171,21 @@ async function main() {
     phase = 'workspace-resources-across-conversation-switch'
     const activeBrowserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
     const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
-    const activeRightPanelToggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-right-workspace-panel-button"]`
+    const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
+    const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
+    const rightBrowserTabCloseSelector = '[data-testid="right-workspace-browser-tab-close-button"]'
     const retainedBrowserUrl = 'https://example.com/session-state'
-    await control.command('waitFor', activeRightPanelToggleSelector, {
+    await control.command('waitFor', rightPanelToggleSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await control.command('click', activeRightPanelToggleSelector)
+    await control.command('click', rightPanelToggleSelector)
     await control.command(
       'click',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
     )
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-bottom-workspace-panel-button"]`
-    )
+    await control.command('click', bottomPanelToggleSelector)
     await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     const secondTaskWorkspaceSnapshot = JSON.parse(
@@ -5222,10 +5221,7 @@ async function main() {
       'click',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="close-bottom-workspace-tab-button"]`
     )
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-tab-close-button"]`
-    )
+    await control.command('click', rightBrowserTabCloseSelector)
 
     await control.command('fill', composerSelector, { value: '' })
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
