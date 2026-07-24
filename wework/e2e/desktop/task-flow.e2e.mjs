@@ -109,6 +109,7 @@ const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET = 160
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
@@ -131,6 +132,7 @@ const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
+const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -312,6 +314,76 @@ async function sendPrompt(control, selector, prompt) {
   )
   await control.command('fill', selector, { value: prompt })
   await control.command('press', selector, { key: 'Enter' })
+}
+
+async function verifyShortConversationLayout({ composerSelector, control }) {
+  const taskRowsBeforeConversation = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await prepareCompletedTurnScreenshot(control)
+  await captureVerificationScreenshot(control, 'short-conversation-00-ready.png')
+  await control.command('fill', composerSelector, { value: FRESH_CHAT_PROMPT })
+  await control.command('waitFor', composerSelector, {
+    text: FRESH_CHAT_PROMPT,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'short-conversation-01-prompt-filled.png')
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
+  await waitForScenarioRequestCount(control, 'fresh_chat', 2)
+  await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const shortConversationTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeConversation,
+    'WEWORK_DESKTOP_E2E_FRESH_CHAT'
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const scroller = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`,
+    'The short conversation message scroller'
+  )
+  const userMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  assert.equal(userMessages.length, 2, 'The short conversation did not render both user messages')
+  const firstMessage = userMessages[0]
+  const messageTopOffset = firstMessage.top - scroller.top
+  await writeFile(
+    join(resultDir, 'short-conversation-layout-metrics.json'),
+    `${JSON.stringify({ firstMessage, messageTopOffset, scroller }, null, 2)}\n`
+  )
+  await captureVerificationScreenshot(control, 'short-conversation-02-completed-top-aligned.png')
+
+  assert.ok(
+    messageTopOffset >= 0,
+    'The first short-conversation message rendered above the viewport'
+  )
+  assert.ok(
+    messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
+    `The short conversation left ${messageTopOffset}px of blank space above its first message`
+  )
 }
 
 async function prepareCompletedTurnScreenshot(control) {
@@ -4147,6 +4219,19 @@ async function main() {
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
 
+    if (SHORT_CONVERSATION_ONLY) {
+      phase = 'short-conversation-layout'
+      control.setScenario('fresh_chat')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyShortConversationLayout({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      console.log(`Wework desktop short-conversation E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (PLUGINS_ONLY) {
       phase = 'plugin-lifecycle'
       await verifyPluginLifecycle(control, pluginMarketplacePath)
@@ -4883,11 +4968,7 @@ async function main() {
       false,
       'The new conversation retained the previous task'
     )
-    await sendPrompt(control, composerSelector, FRESH_CHAT_PROMPT)
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: FRESH_CHAT_COMPLETION_TEXT,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
+    await verifyShortConversationLayout({ composerSelector, control })
 
     phase = 'task-draft-isolation'
     const secondTaskSnapshot = await waitForSnapshot(
