@@ -4,6 +4,7 @@
 """Single-table project, task, execution, file, and delivery nodes."""
 
 import secrets
+from datetime import datetime
 
 from sqlalchemy import (
     JSON,
@@ -15,7 +16,10 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    event,
+    or_,
 )
+from sqlalchemy.engine import Connection
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -179,3 +183,87 @@ class Delivery(LoopNode):
 
 class DeliveryAsset(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "delivery_asset"}
+
+
+_MYSQL_UNSET_DATETIME = datetime(1970, 1, 1, 0, 0, 1)
+_MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
+    "cloud_project_id": "",
+    "parent_id": "",
+    "loop_item_id": "",
+    "delivery_id": "",
+    "public_id": "",
+    "project_key": "",
+    "name": "",
+    "title": "",
+    "storage_prefix": "",
+    "sequence_number": 0,
+    "created_by_user_id": 0,
+    "updated_by_user_id": 0,
+    "assignee_user_id": 0,
+    "user_id": 0,
+    "added_by_user_id": 0,
+    "source": "",
+    "status": "",
+    "priority": "",
+    "due_at": _MYSQL_UNSET_DATETIME,
+    "current_delivery_id": "",
+    "local_project_id": 0,
+    "device_id": "",
+    "is_default": False,
+    "task_user_id": 0,
+    "task_id": "",
+    "task_title": "",
+    "backend_task_id": 0,
+    "linked_by_user_id": 0,
+    "linked_at": _MYSQL_UNSET_DATETIME,
+    "unlinked_at": _MYSQL_UNSET_DATETIME,
+    "path": "",
+    "kind": "",
+    "display_name": "",
+    "relative_path": "",
+    "object_key": "",
+    "content_type": "",
+    "size_bytes": 0,
+    "sha256": "",
+    "source_task_binding_id": "",
+    "source_task_snapshot": {},
+    "markdown_object_key": "",
+    "chat_object_key": "",
+    "manifest_object_key": "",
+    "metadata_json": {},
+    "completed_at": _MYSQL_UNSET_DATETIME,
+    "delivered_at": _MYSQL_UNSET_DATETIME,
+}
+
+
+def adapt_loop_node_values_for_dialect(
+    values: dict[str, object], dialect_name: str
+) -> dict[str, object]:
+    """Convert explicit nulls to sentinels required by the production schema."""
+    if dialect_name != "mysql":
+        return values
+    adapted = values.copy()
+    for attribute, default in _MYSQL_NON_NULL_DEFAULTS.items():
+        if attribute in adapted and adapted[attribute] is None:
+            adapted[attribute] = (
+                default.copy() if isinstance(default, dict) else default
+            )
+    return adapted
+
+
+def loop_datetime_is_unset(column: object) -> object:
+    """Match unset datetimes in both nullable and sentinel schemas."""
+    return or_(column.is_(None), column == _MYSQL_UNSET_DATETIME)
+
+
+@event.listens_for(LoopNode, "before_insert", propagate=True)
+def _populate_mysql_non_null_defaults(
+    _mapper: object, connection: Connection, target: LoopNode
+) -> None:
+    """Adapt nullable model values to the production MySQL sentinel schema."""
+    values = {
+        attribute: getattr(target, attribute) for attribute in _MYSQL_NON_NULL_DEFAULTS
+    }
+    adapted = adapt_loop_node_values_for_dialect(values, connection.dialect.name)
+    for attribute, value in adapted.items():
+        setattr(target, attribute, value)

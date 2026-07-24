@@ -136,7 +136,13 @@ describe('ModelSelector desktop layout', () => {
       />
     )
 
-    expect(screen.getByTestId('model-selector-width-measure')).toHaveClass('left-0', 'top-0')
+    expect(screen.getByTestId('model-selector-button')).toHaveClass('text-sm', 'font-normal')
+    expect(screen.getByTestId('model-selector-width-measure')).toHaveClass(
+      'left-0',
+      'top-0',
+      'text-sm',
+      'font-normal'
+    )
   })
 
   test('positions the menu to the left of the right workspace panel shell', async () => {
