@@ -12,11 +12,11 @@ import {
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
@@ -309,12 +309,24 @@ function desktopControlSnapshot(selector = 'body'): string {
 }
 
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
+  const restoreMainWindow = async () => {
+    const mainWindow = getCurrentWindow()
+    await mainWindow.show()
+    await mainWindow.unminimize()
+    await mainWindow.setFocus()
+    await new Promise<void>(resolve => window.setTimeout(resolve, 50))
+  }
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
-  if (element === document.body) return invoke<string>('capture_main_webview')
+  if (element === document.body) {
+    const snapshot = await invoke<string>('capture_main_webview')
+    await restoreMainWindow()
+    return snapshot
+  }
   const rect = element.getBoundingClientRect()
   if (selector !== '[data-testid="model-selector-menu"]') {
     const snapshot = await invoke<string>('capture_main_webview')
+    await restoreMainWindow()
     return cropDesktopControlScreenshot(snapshot, rect)
   }
   // NSView snapshots can omit WebKit's separately composited fixed-position popovers.
@@ -335,6 +347,7 @@ async function captureDesktopControlScreenshot(selector: string): Promise<string
   try {
     await new Promise<void>(resolve => window.setTimeout(resolve, 50))
     const snapshot = await invoke<string>('capture_main_webview')
+    await restoreMainWindow()
     return cropDesktopControlScreenshot(snapshot, rect)
   } finally {
     captureClone.remove()
@@ -793,6 +806,15 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
 
 async function runDesktopControlClient(url: string): Promise<void> {
   const clientId = crypto.randomUUID()
+  const pollForCommand = () =>
+    fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
+      headers: desktopControlHeaders(),
+    })
+  await getCurrentWindow().show()
+  await getCurrentWindow().unminimize()
+  await getCurrentWindow().setFocus()
+  let commandRequest = pollForCommand()
+  await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
@@ -804,17 +826,17 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
   while (true) {
     try {
-      const response = await fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
-        headers: desktopControlHeaders(),
-      })
+      const response = await commandRequest
       if (response.status === 204) {
         await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+        commandRequest = pollForCommand()
         continue
       }
       if (!response.ok) {
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      commandRequest = pollForCommand()
       try {
         const value = await executeDesktopControlCommand(command)
         await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
@@ -832,6 +854,7 @@ async function runDesktopControlClient(url: string): Promise<void> {
     } catch (error) {
       console.error('[Wework] Desktop E2E control client failed:', error)
       await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+      commandRequest = pollForCommand()
     }
   }
 }

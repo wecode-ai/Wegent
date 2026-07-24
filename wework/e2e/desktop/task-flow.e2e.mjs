@@ -4925,6 +4925,7 @@ async function waitForMatrixStage(control, model, ...expectedStages) {
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
+  const secondaryProjectPath = join(resultDir, 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
@@ -4933,6 +4934,7 @@ async function main() {
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
+    mkdir(secondaryProjectPath, { recursive: true }),
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
@@ -5228,6 +5230,27 @@ async function main() {
     await control.command('fill', '[data-testid="local-project-create-name-input"]', {
       value: 'workspace',
     })
+    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: secondaryProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, secondaryProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
+      text: 'secondary-project-root',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     await control.command(
       'clickWhenEnabled',
       '[data-testid="confirm-local-project-create-button"]',
@@ -5318,6 +5341,27 @@ async function main() {
     })
     await control.command('fill', '[data-testid="local-project-create-name-input"]', {
       value: 'workspace',
+    })
+    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: secondaryProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, secondaryProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
+      text: 'secondary-project-root',
+      timeoutMs: UI_TIMEOUT_MS,
     })
     await control.command(
       'clickWhenEnabled',

@@ -317,7 +317,12 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
 
-            let direct_project = project_index.project_for_thread(thread_id, &link.workspace_path);
+            let explicit_project = link
+                .runtime_project_key
+                .as_deref()
+                .and_then(|project_key| project_index.project_for_key(project_key));
+            let direct_project = explicit_project
+                .or_else(|| project_index.project_for_thread(thread_id, &link.workspace_path));
             let group_project = if direct_project.is_none() {
                 project_index.project_for_thread(thread_id, &group_path)
             } else {

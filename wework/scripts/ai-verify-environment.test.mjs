@@ -39,6 +39,7 @@ describe('buildAiVerifyEnvironment', () => {
       '/tmp/session/executor-home/workspace/projects'
     )
     expect(environment.WEWORK_EXECUTOR_ISOLATION_OVERRIDE).toBe('true')
+    expect(environment.WEWORK_DISABLE_BACKGROUND_THROTTLING).toBe('1')
     expect(environment.WEGENT_EXECUTOR_APP_IPC_ADDR).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_APP_IPC_ADDR_FILE).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_APP_IPC_SOCKET).toBeUndefined()

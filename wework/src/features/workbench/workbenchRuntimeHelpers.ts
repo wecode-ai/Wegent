@@ -1,6 +1,10 @@
 import { joinDevicePath } from '@/lib/device-workspace-path'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  normalizeRuntimeWorkspacePath,
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+} from '@/lib/runtime-project'
 import type {
   DeviceInfo,
   RuntimeTaskSummary,
@@ -310,12 +314,34 @@ function getProjectDeviceWorkspaces(
   return projectWork?.deviceWorkspaces ?? []
 }
 
-export function getSingleProjectDeviceWorkspaceId(
+export function getDefaultProjectDeviceWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | null | undefined
+): RuntimeDeviceWorkspace | null {
+  const workspaces = getSelectableProjectDeviceWorkspaces(runtimeWork, projectId)
+  if (workspaces.length === 1) return workspaces[0]
+
+  const projectWork = runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectId
+  )
+  if (projectWork?.project.source !== 'local_project') return null
+
+  const primaryRoot = projectWork.project.roots?.[0]?.path
+  if (primaryRoot) {
+    const normalizedPrimaryRoot = normalizeRuntimeWorkspacePath(primaryRoot)
+    const primaryWorkspace = workspaces.find(
+      workspace => normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedPrimaryRoot
+    )
+    if (primaryWorkspace) return primaryWorkspace
+  }
+  return workspaces[0] ?? null
+}
+
+export function getDefaultProjectDeviceWorkspaceId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: number | null | undefined
 ): number | null {
-  const workspaces = getSelectableProjectDeviceWorkspaces(runtimeWork, projectId)
-  return workspaces.length === 1 ? (workspaces[0].id ?? null) : null
+  return getDefaultProjectDeviceWorkspace(runtimeWork, projectId)?.id ?? null
 }
 
 export function findSelectableProject(
@@ -340,7 +366,7 @@ export function findProjectDeviceWorkspace(
   if (deviceWorkspaceId) {
     return workspaces.find(workspace => workspace.id === deviceWorkspaceId) ?? null
   }
-  return workspaces.length === 1 ? workspaces[0] : null
+  return getDefaultProjectDeviceWorkspace(runtimeWork, projectId)
 }
 
 export function findProjectMetadataDeviceWorkspace(

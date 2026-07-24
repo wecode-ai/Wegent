@@ -79,7 +79,7 @@ import {
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
-  getSingleProjectDeviceWorkspaceId,
+  getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -796,7 +796,7 @@ export function WorkbenchProvider({
       dispatch({
         type: 'project_workspace_selected',
         project,
-        deviceWorkspaceId: getSingleProjectDeviceWorkspaceId(state.runtimeWork, project.id),
+        deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
       })
       navigateTo('/')
       requestNewChatComposerFocus()
@@ -967,7 +967,7 @@ export function WorkbenchProvider({
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
-      const deviceWorkspaceId = getSingleProjectDeviceWorkspaceId(state.runtimeWork, projectId)
+      const deviceWorkspaceId = getDefaultProjectDeviceWorkspaceId(state.runtimeWork, projectId)
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (!project) return
       projectSelectionStartedRef.current = true

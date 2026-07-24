@@ -830,6 +830,9 @@ function ProjectSendProbe() {
       >
         open runtime b
       </button>
+      <button type="button" onClick={() => void workbench.refreshWorkLists()}>
+        refresh work lists
+      </button>
       <MessageList
         messages={paneSession.messages}
         isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
@@ -2015,6 +2018,89 @@ describe('WorkbenchProvider runtime tasks', () => {
     await act(async () => {
       runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
     })
+  })
+
+  test('does not let a stale cloud refresh remove a newer local runtime task', async () => {
+    const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
+    const emptyRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const refreshedRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-new-local',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'New local task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      totalTasks: 1,
+    })
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(emptyRuntimeWork)
+      .mockResolvedValue(refreshedRuntimeWork)
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn(() => cloudRuntimeWork.promise),
+      },
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-titles')).toHaveTextContent('New local task')
+    )
+
+    await act(async () => {
+      cloudRuntimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-titles')).toHaveTextContent('New local task')
+    )
   })
 
   test('ignores a manual device refresh after its cloud sync revision is replaced', async () => {
@@ -3357,6 +3443,82 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('goal-objective')).toHaveTextContent('none')
+  })
+
+  test('starts and sends a multi-root local project chat from its primary root', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'product',
+                name: 'Product',
+                source: 'local_project',
+                roots: [
+                  { kind: 'local', path: '/workspace/web' },
+                  { kind: 'local', path: '/workspace/api' },
+                ],
+              },
+              deviceWorkspaces: [
+                {
+                  id: 11,
+                  deviceId: 'device-1',
+                  deviceName: 'Local Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/web',
+                  workspaceSource: 'local',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+                {
+                  id: 12,
+                  deviceId: 'device-1',
+                  deviceName: 'Local Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/api',
+                  workspaceSource: 'local',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-1',
+        taskId: 'multi-root-task',
+        workspacePath: '/workspace/web',
+        runtime: 'codex',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('start new project chat'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/web',
+        runtimeProjectKey: 'product',
+        runtimeProjectName: 'Product',
+        runtimeWorkspaceRoots: ['/workspace/web', '/workspace/api'],
+      })
+    )
+    expect(screen.getByTestId('workbench-error')).toHaveTextContent('')
   })
 
   test('enters goal draft mode when setting a goal without input', async () => {

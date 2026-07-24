@@ -109,6 +109,34 @@ describe('EnvironmentInfoPopover', () => {
     expect(onDeliver).toHaveBeenCalledOnce()
   })
 
+  test('shows every workspace root for a multi-folder project', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: '/workspace/web',
+          workspaceRoots: ['/workspace/web', '/workspace/api'],
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('web')
+    expect(screen.getByTestId('environment-workspace-root-1')).toHaveTextContent('api')
+    expect(screen.getByTestId('environment-workspace-root-button-1')).toHaveAttribute(
+      'title',
+      '/workspace/api'
+    )
+  })
+
   test('hides git controls and diff stats for a non-git workspace', () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)

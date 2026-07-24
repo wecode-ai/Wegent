@@ -83,6 +83,91 @@ fn execution_request_with_model_config(
 }
 
 #[tokio::test]
+async fn runtime_task_forwards_all_local_project_roots_to_codex() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-multi-root-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-multi-root-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let first_root = temp_path("runtime-multi-root-web", "dir");
+    let second_root = temp_path("runtime-multi-root-api", "dir");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_root).unwrap();
+    let first_root = first_root.display().to_string();
+    let second_root = second_root.display().to_string();
+    let log_path = temp_path("runtime-multi-root-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let mut execution_request =
+        codex_execution_request("inspect both folders", &first_root, "gpt-5.5");
+    execution_request["runtime_project_key"] = json!("product");
+    execution_request["runtime_project_name"] = json!("Product");
+    execution_request["runtime_workspace_roots"] = json!([first_root, second_root]);
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-multi-root",
+                "workspacePath": first_root,
+                "message": "inspect both folders",
+                "runtimeProjectKey": "product",
+                "runtimeProjectName": "Product",
+                "runtimeWorkspaceRoots": [first_root, second_root],
+                "executionRequest": execution_request
+            }
+        }))
+        .await
+        .expect("task should be accepted");
+    assert_eq!(created["accepted"], true);
+    wait_for_turn_count(&log_path, 1).await;
+
+    let calls = read_json_lines(&log_path);
+    for method in ["thread/start", "turn/start"] {
+        let call = calls
+            .iter()
+            .find(|call| call["method"] == method)
+            .unwrap_or_else(|| panic!("{method} should be recorded"));
+        assert_eq!(
+            call["params"]["runtimeWorkspaceRoots"],
+            json!([first_root, second_root])
+        );
+    }
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("multi-root task should remain listed");
+    let product_workspaces = listed["workspaces"]
+        .as_array()
+        .map(|workspaces| {
+            workspaces
+                .iter()
+                .filter(|workspace| workspace["projectKey"] == "product")
+                .collect::<Vec<_>>()
+        })
+        .expect("workspace list should be present");
+    assert_eq!(product_workspaces.len(), 2);
+    assert_eq!(
+        product_workspaces[0]["projectRoots"],
+        json!([first_root, second_root])
+    );
+    let total_tasks = product_workspaces
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .map(Vec::len)
+        .sum::<usize>();
+    assert_eq!(total_tasks, 1);
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
