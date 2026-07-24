@@ -303,6 +303,7 @@ impl RuntimeWorkRpcHandler {
                         json!({"error": {"message": message}}),
                     ),
                     ExecutionOutcome::Failed { message } => {
+                        self.persist_failed_assistant_message(local_task_id, request, &message);
                         let mut fields = task_fields(&request.task_id, &request.subtask_id);
                         fields.push(("local_task_id", local_task_id.to_owned()));
                         fields.push(("error", message.clone()));
@@ -323,6 +324,7 @@ impl RuntimeWorkRpcHandler {
             Err(error) => {
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
                 self.finish_local_task(local_task_id, None, "failed");
+                self.persist_failed_assistant_message(local_task_id, request, &error);
                 let mut fields = task_fields(&request.task_id, &request.subtask_id);
                 fields.push(("local_task_id", local_task_id.to_owned()));
                 fields.push(("error", error.clone()));
@@ -338,6 +340,30 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
+    }
+
+    pub(super) fn persist_failed_assistant_message(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        error: &str,
+    ) {
+        let timestamp = now_ms();
+        let message = json!({
+            "id": format!("{local_task_id}:assistant:{}", request.subtask_id),
+            "role": "assistant",
+            "content": "",
+            "status": "failed",
+            "error": error,
+            "errorType": "response.failed",
+            "subtaskId": request.subtask_id,
+            "createdAt": timestamp,
+            "completedAt": timestamp,
+        });
+        self.store.update_task(local_task_id, |link| {
+            append_runtime_handle_message(&mut link.runtime_handle, message.clone());
+            link.updated_at = timestamp;
+        });
     }
 
     pub(super) fn register_codex_thread_workspace_root(

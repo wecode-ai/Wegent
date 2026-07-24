@@ -72,6 +72,7 @@ fn transcript_messages_with_options(
         let subtask_id = turn_subtask_id(turn, &turn_id);
         let turn_cancelled = turn_interrupted(turn);
         let assistant_status = turn_assistant_status(turn);
+        let assistant_error = turn_error_message(turn);
         let fold_commentary = turn_should_fold_commentary(turn);
         let mut assistant_segment_index = 0;
         let mut assistant = AssistantTurnAccumulation::new(turn_file_changes.clone());
@@ -106,6 +107,7 @@ fn transcript_messages_with_options(
                             created_at,
                             completed_at,
                             status: assistant_status,
+                            error: assistant_error.as_deref(),
                         },
                         &mut assistant,
                         false,
@@ -247,6 +249,7 @@ fn transcript_messages_with_options(
                                 created_at,
                                 completed_at,
                                 status: assistant_status,
+                                error: assistant_error.as_deref(),
                             },
                             &mut assistant,
                             false,
@@ -323,6 +326,7 @@ fn transcript_messages_with_options(
                 created_at,
                 completed_at,
                 status: assistant_status,
+                error: assistant_error.as_deref(),
             },
             &mut assistant,
             true,
@@ -791,14 +795,33 @@ fn turn_running(turn: &Value) -> bool {
     })
 }
 
+fn turn_failed(turn: &Value) -> bool {
+    turn_status(turn).is_some_and(|status| {
+        matches!(
+            status.as_str(),
+            "failed" | "failure" | "error" | "systemerror"
+        )
+    })
+}
+
 fn turn_assistant_status(turn: &Value) -> &'static str {
     if turn_running(turn) {
         "streaming"
     } else if turn_interrupted(turn) {
         "cancelled"
+    } else if turn_failed(turn) {
+        "failed"
     } else {
         "done"
     }
+}
+
+fn turn_error_message(turn: &Value) -> Option<String> {
+    let error = turn.get("error")?;
+    error
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| string_field(error, "message"))
 }
 
 fn turn_status(turn: &Value) -> Option<String> {
@@ -882,6 +905,7 @@ struct AssistantEmitContext<'a> {
     created_at: i64,
     completed_at: Option<i64>,
     status: &'a str,
+    error: Option<&'a str>,
 }
 
 fn push_accumulated_assistant(
@@ -896,7 +920,7 @@ fn push_accumulated_assistant(
         assistant.has_output()
     } else {
         assistant.has_non_file_output()
-    };
+    } || (include_file_only && context.status == "failed" && *segment_index == 0);
     if !should_emit {
         return;
     }
@@ -914,6 +938,7 @@ fn push_accumulated_assistant(
         created_at: context.created_at,
         completed_at: context.completed_at,
         status: context.status,
+        error: context.error,
         stopped_notice,
         blocks: &assistant.blocks,
         file_changes: assistant.file_changes.clone(),
@@ -1292,6 +1317,7 @@ struct AssistantMessageDraft<'a> {
     created_at: i64,
     completed_at: Option<i64>,
     status: &'a str,
+    error: Option<&'a str>,
     stopped_notice: bool,
     blocks: &'a [Value],
     file_changes: Option<Value>,
@@ -1323,6 +1349,13 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
     if draft.status == "cancelled" {
         if let Some(object) = message.as_object_mut() {
             object.insert("stoppedNotice".to_owned(), json!(draft.stopped_notice));
+        }
+    }
+    if draft.status == "failed" {
+        if let Some(error) = draft.error {
+            if let Some(object) = message.as_object_mut() {
+                object.insert("error".to_owned(), Value::String(error.to_owned()));
+            }
         }
     }
     if draft.status != "streaming" {
@@ -2480,6 +2513,75 @@ fn memory_citation(item: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcript_restores_failed_turn_without_assistant_output() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [{
+                "id": "turn-1",
+                "startedAt": 1_780_000_000,
+                "completedAt": 1_780_000_005,
+                "status": "failed",
+                "error": {
+                    "message": "stream disconnected before completion"
+                },
+                "items": [{
+                    "id": "user-1",
+                    "type": "userMessage",
+                    "content": [{
+                        "type": "inputText",
+                        "text": "Why did this fail?"
+                    }]
+                }]
+            }]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["subtaskId"], "turn-1");
+        assert_eq!(messages[1]["status"], "failed");
+        assert_eq!(
+            messages[1]["error"],
+            "stream disconnected before completion"
+        );
+        assert_eq!(messages[1]["content"], "");
+    }
+
+    #[test]
+    fn transcript_preserves_partial_output_on_failed_turn() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [{
+                "id": "turn-1",
+                "startedAt": 1_780_000_000,
+                "completedAt": 1_780_000_005,
+                "status": "failed",
+                "error": {
+                    "message": "upstream stream closed"
+                },
+                "items": [{
+                    "id": "assistant-1",
+                    "type": "agentMessage",
+                    "phase": "final",
+                    "text": "Partial answer"
+                }]
+            }]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "Partial answer");
+        assert_eq!(messages[0]["status"], "failed");
+        assert_eq!(messages[0]["error"], "upstream stream closed");
+    }
 
     #[test]
     fn web_search_updates_preserve_all_action_payloads() {
