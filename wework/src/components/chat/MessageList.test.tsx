@@ -304,7 +304,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
-  test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {
+  test('uses browser-native content visibility without message window placeholders', () => {
     render(
       <MessageList
         messages={[
@@ -328,12 +328,10 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('message-user').className).toContain('[content-visibility:auto]')
     expect(screen.getByTestId('message-assistant').className).toContain('[content-visibility:auto]')
-    expect(
-      screen.getByTestId('message-user').style.getPropertyValue('contain-intrinsic-size')
-    ).toContain('0 ')
-    expect(
-      screen.getByTestId('message-assistant').style.getPropertyValue('contain-intrinsic-size')
-    ).toContain('0 ')
+    expect(screen.getByTestId('message-user')).toHaveTextContent('hello')
+    expect(screen.getByTestId('message-assistant')).toHaveTextContent('world')
+    expect(screen.getByTestId('message-user').style.containIntrinsicSize).toBe('')
+    expect(screen.getByTestId('message-assistant').style.containIntrinsicSize).toBe('')
   })
 
   test('does not use message row content visibility in the Tauri app', () => {
@@ -372,61 +370,8 @@ describe('MessageList', () => {
     }
   })
 
-  test('unmounts distant Tauri message contents and restores them near the viewport', async () => {
+  test('renders every oversized streaming Markdown section without nested windowing', () => {
     tauriCoreMock.isTauri = vi.fn(() => true)
-    const callbacks: IntersectionObserverCallback[] = []
-    class IntersectionObserverMock {
-      constructor(callback: IntersectionObserverCallback) {
-        callbacks.push(callback)
-      }
-      observe = vi.fn()
-      disconnect = vi.fn()
-      unobserve = vi.fn()
-      takeRecords = vi.fn(() => [])
-      root = null
-      rootMargin = '1200px 0px'
-      thresholds = [0]
-    }
-    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
-
-    render(
-      <MessageList
-        messages={Array.from({ length: 6 }, (_, index) => ({
-          id: `assistant-windowed-${index}`,
-          role: 'assistant' as const,
-          content: `message ${index}`,
-          status: 'done' as const,
-          createdAt: `2026-06-11T10:00:0${index}Z`,
-        }))}
-      />
-    )
-
-    const articles = screen.getAllByTestId('message-assistant')
-    expect(articles[0]).toBeEmptyDOMElement()
-    expect(articles[1]).toBeEmptyDOMElement()
-    expect(articles[2]).toHaveTextContent('message 2')
-    expect(callbacks).toHaveLength(2)
-
-    await act(async () => {
-      callbacks[0]([{ isIntersecting: true } as IntersectionObserverEntry], {} as never)
-    })
-
-    expect(articles[0]).toHaveTextContent('message 0')
-  })
-
-  test('windows oversized streaming Markdown before mounting every chunk', () => {
-    tauriCoreMock.isTauri = vi.fn(() => true)
-    class IntersectionObserverMock {
-      constructor() {}
-      observe = vi.fn()
-      disconnect = vi.fn()
-      unobserve = vi.fn()
-      takeRecords = vi.fn(() => [])
-      root = null
-      rootMargin = '800px 0px'
-      thresholds = [0]
-    }
-    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
     const content = Array.from(
       { length: 60 },
       (_, index) => `### Streaming section ${index + 1}\n\n${'content '.repeat(40)}\n`
@@ -446,11 +391,10 @@ describe('MessageList', () => {
       />
     )
 
-    const chunks = Array.from(container.querySelectorAll('[data-markdown-window-chunk]'))
-    expect(chunks.length).toBeGreaterThan(2)
-    expect(chunks[0]).not.toBeEmptyDOMElement()
-    expect(chunks.at(-1)).not.toBeEmptyDOMElement()
-    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
+    expect(container.querySelector('[data-markdown-window-chunk]')).toBeNull()
+    expect(screen.getByText('Streaming section 1')).toBeInTheDocument()
+    expect(screen.getByText('Streaming section 30')).toBeInTheDocument()
+    expect(screen.getByText('Streaming section 60')).toBeInTheDocument()
   })
 
   test('keeps message row containment during a plain text click', () => {
@@ -485,7 +429,7 @@ describe('MessageList', () => {
       fireEvent.pointerUp(document)
 
       expect(article.className).toContain('[content-visibility:auto]')
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+      expect(article.style.containIntrinsicSize).toBe('')
       expect(article.style.contentVisibility).toBe('')
     } finally {
       getSelectionSpy.mockRestore()
@@ -662,69 +606,11 @@ describe('MessageList', () => {
 
       await waitFor(() => {
         expect(article.className).toContain('[content-visibility:auto]')
-        expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+        expect(article.style.containIntrinsicSize).toBe('')
       })
     } finally {
       getSelectionSpy.mockRestore()
       requestAnimationFrameSpy.mockRestore()
-    }
-  })
-
-  test('coalesces intrinsic size recalculation during message list resize', async () => {
-    vi.useFakeTimers()
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    const originalResizeObserver = globalThis.ResizeObserver
-
-    class ResizeObserverMock {
-      constructor(callback: ResizeObserverCallback) {
-        resizeCallbacks.push(callback)
-      }
-
-      observe = vi.fn()
-      disconnect = vi.fn()
-    }
-
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
-
-    try {
-      render(
-        <MessageList
-          messages={[
-            {
-              id: 'assistant-resize',
-              role: 'assistant',
-              content: 'x'.repeat(2000),
-              status: 'done',
-              createdAt: '2026-06-11T10:00:01Z',
-            },
-          ]}
-        />
-      )
-
-      const article = screen.getByTestId('message-assistant')
-      const list = article.parentElement as HTMLElement
-      const initialIntrinsicSize = article.style.getPropertyValue('contain-intrinsic-size')
-      Object.defineProperty(list, 'clientWidth', {
-        configurable: true,
-        value: 640,
-      })
-
-      act(() => {
-        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-        vi.advanceTimersByTime(119)
-      })
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe(initialIntrinsicSize)
-
-      act(() => {
-        vi.advanceTimersByTime(1)
-      })
-
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).not.toBe(
-        initialIntrinsicSize
-      )
-    } finally {
-      vi.useRealTimers()
-      vi.stubGlobal('ResizeObserver', originalResizeObserver)
     }
   })
 
