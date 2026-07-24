@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
@@ -92,6 +93,7 @@ export interface ModelFormData {
   videoWatermark?: boolean
   supportsImageInput?: boolean
   supportsVideoInput?: boolean
+  isWeworkAvailable?: boolean
 }
 
 // Initial data for editing (can be from ModelCRD or admin model JSON)
@@ -119,6 +121,7 @@ export interface ModelInitialData {
   imageConfig?: import('@/apis/models').ImageGenerationConfig
   thinkingConfig?: Record<string, unknown>
   modelCapabilities?: ModelCapabilities
+  isWeworkAvailable?: boolean
 }
 
 /**
@@ -315,6 +318,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             videoConfig: model.spec.videoConfig,
             imageConfig: model.spec.imageConfig,
             thinkingConfig: extractThinkingConfig(model),
+            isWeworkAvailable: model.spec.isWeworkAvailable,
           }
         : null)
     )
@@ -378,6 +382,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Multimodal capabilities (LLM models only)
   const [supportsImageInput, setSupportsImageInput] = useState(false)
   const [supportsVideoInput, setSupportsVideoInput] = useState(false)
+
+  // Wework desktop client availability
+  const [isWeworkAvailable, setIsWeworkAvailable] = useState(false)
 
   // Video capabilities state
   const [capRatios, setCapRatios] = useState<string[]>([])
@@ -514,6 +521,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Load multimodal capabilities (LLM models)
         setSupportsImageInput(effectiveInitialData.modelCapabilities?.supportsImage ?? false)
         setSupportsVideoInput(effectiveInitialData.modelCapabilities?.supportsVideo ?? false)
+        // Load wework availability
+        setIsWeworkAvailable(effectiveInitialData.isWeworkAvailable ?? false)
       } else {
         // Reset for new model
         setModelIdName('')
@@ -549,6 +558,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Reset multimodal capabilities
         setSupportsImageInput(false)
         setSupportsVideoInput(false)
+        // Reset wework availability
+        setIsWeworkAvailable(false)
         setCostIndex(undefined)
         // Reset video capabilities
         setCapRatios([])
@@ -1167,6 +1178,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           ...(videoConfig && { videoConfig }),
           ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
           ...(modelCapabilities && { modelCapabilities }),
+          ...(isWeworkAvailable && { isWeworkAvailable: true }),
         },
         status: {
           state: 'Available',
@@ -1217,6 +1229,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         videoWatermark,
         supportsImageInput,
         supportsVideoInput,
+        isWeworkAvailable,
       }
 
       // If custom onSave callback is provided, use it
@@ -1367,6 +1380,22 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               />
               <p className="text-xs text-text-muted">{t('common:models.model_sub_group_hint')}</p>
             </div>
+          </div>
+
+          {/* Wework availability toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="wework-available" className="text-sm font-medium">
+                {t('common:models.wework_available')}
+              </Label>
+              <p className="text-xs text-text-muted">{t('common:models.wework_available_hint')}</p>
+            </div>
+            <Switch
+              id="wework-available"
+              data-testid="model-wework-available-switch"
+              checked={isWeworkAvailable}
+              onCheckedChange={checked => setIsWeworkAvailable(checked)}
+            />
           </div>
 
           {/* Provider Type and Model ID - Two columns */}

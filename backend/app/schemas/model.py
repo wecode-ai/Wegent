@@ -78,6 +78,7 @@ class ModelBulkCreateItem(BaseModel):
     name: str
     env: dict[str, Any]
     is_active: bool = True
+    wework_available: Optional[bool] = None
 
 
 class ModelBulkCreateResponse(BaseModel):

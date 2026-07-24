@@ -103,6 +103,7 @@ export interface ModelCRD {
     }
     protocol?: string
     isCustomConfig?: boolean
+    isWeworkAvailable?: boolean
     costIndex?: string // Relative usage cost compared with the baseline model
     // New fields for multi-type model support
     modelType?: ModelCategoryType

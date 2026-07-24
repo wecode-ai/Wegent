@@ -31,6 +31,7 @@ class ModelAdapter:
         config = {}
         display_name = None
         is_advanced = False
+        is_wework_available = False
         model_category_type = "llm"
         model_group = None
         model_sub_group = None
@@ -56,6 +57,9 @@ class ModelAdapter:
                         bool(model_crd.spec.isAdvanced)
                         if model_crd.spec.isAdvanced
                         else False
+                    )
+                    is_wework_available = (
+                        bool(model_crd.spec.isWeworkAvailable) or False
                     )
                     if model_crd.spec.modelType:
                         model_category_type = model_crd.spec.modelType.value
@@ -142,6 +146,7 @@ class ModelAdapter:
             "model_id": model_id_value,
             "is_active": kind.is_active,
             "is_advanced": is_advanced,
+            "is_wework_available": is_wework_available,
             "modelGroup": model_group,
             "modelSubGroup": model_sub_group,
             "contextWindow": context_window,
@@ -241,18 +246,23 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                         model_crd.spec.modelConfig["env"] = (
                             dict(it.env) if isinstance(it.env, dict) else {}
                         )
-                        existed.json = model_crd.model_dump()
+                        if it.wework_available is not None:
+                            model_crd.spec.isWeworkAvailable = it.wework_available
+                        existed.json = model_crd.model_dump(exclude_none=True)
                     else:
                         # Fallback for invalid JSON
+                        spec: Dict[str, Any] = {
+                            "modelConfig": {
+                                "env": (
+                                    dict(it.env) if isinstance(it.env, dict) else {}
+                                )
+                            }
+                        }
+                        if it.wework_available is not None:
+                            spec["isWeworkAvailable"] = it.wework_available
                         json_data = {
                             "kind": "Model",
-                            "spec": {
-                                "modelConfig": {
-                                    "env": (
-                                        dict(it.env) if isinstance(it.env, dict) else {}
-                                    )
-                                }
-                            },
+                            "spec": spec,
                             "status": {"state": "Available"},
                             "metadata": {"name": it.name, "namespace": "default"},
                             "apiVersion": "agent.wecode.io/v1",
@@ -268,9 +278,12 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     updated.append(existed)
                 else:
                     # Create new
+                    spec: Dict[str, Any] = {"modelConfig": {"env": it.env}}
+                    if it.wework_available is not None:
+                        spec["isWeworkAvailable"] = it.wework_available
                     json_data = {
                         "kind": "Model",
-                        "spec": {"modelConfig": {"env": it.env}},
+                        "spec": spec,
                         "status": {"state": "Available"},
                         "metadata": {"name": it.name, "namespace": "default"},
                         "apiVersion": "agent.wecode.io/v1",

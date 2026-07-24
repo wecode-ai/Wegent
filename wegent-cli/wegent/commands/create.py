@@ -28,6 +28,7 @@ TEMPLATES = {
             },
             "protocol": "openai",
             "isCustomConfig": True,
+            "isWeworkAvailable": False,
         },
     },
     "shell": {
