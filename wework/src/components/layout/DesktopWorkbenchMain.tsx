@@ -1758,7 +1758,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onDeliver={
-        currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
           ? () => {
               if (activeDeliveryItem) {
                 setDeliveryDialogOpen(true)
@@ -1773,7 +1773,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
       }
       onManageTodo={
-        currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
           ? () => {
               setDeliverAfterBinding(false)
               setTodoBindingPickerOpen(true)
@@ -2001,7 +2001,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
-      {tauriMainHeaderContent ? (
+      {/* Portals escape the hidden cached pane, so only the visible active pane may own the header. */}
+      {tauriMainHeaderContent && paneActive && workbenchVisible ? (
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
       <>
@@ -2018,9 +2019,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             testId="workbench-topbar"
             className={cn(
               'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
-              background.imagePath && background.inTopBar
-                ? 'bg-background/20'
-                : 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}

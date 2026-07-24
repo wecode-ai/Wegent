@@ -527,7 +527,7 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                     "collaborationMode": "plan"
                 },
                 "modelSelection": {
-                    "modelName": "cloud:user:local-model:mimo",
+                    "modelName": "shared-model",
                     "modelType": "user",
                     "options": {
                         "collaborationMode": "plan",
@@ -542,7 +542,7 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
     assert_eq!(
         response["runtimeHandle"]["modelSelection"],
         json!({
-            "modelName": "cloud:user:local-model:mimo",
+            "modelName": "shared-model",
             "modelType": "user",
             "options": {
                 "collaborationMode": "plan",
@@ -557,7 +557,7 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
     assert_eq!(
         link.runtime_handle["modelSelection"],
         json!({
-            "modelName": "cloud:user:local-model:mimo",
+            "modelName": "shared-model",
             "modelType": "user",
             "options": {
                 "collaborationMode": "plan",

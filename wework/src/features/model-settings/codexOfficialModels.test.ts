@@ -21,7 +21,6 @@ describe('codexOfficialModels', () => {
       'zeta',
       'alpha',
       'gpt-5.6-sol',
-      'gpt-5.5',
       'gpt-5.4',
     ])
   })
@@ -31,7 +30,6 @@ describe('codexOfficialModels', () => {
       'gpt-5.3-codex-spark',
       'gpt-5.4-mini',
       'gpt-5.4',
-      'gpt-5.5',
       'gpt-5.6-luna',
       'gpt-5.6-terra',
       'gpt-5.6-sol',
@@ -58,11 +56,18 @@ describe('codexOfficialModels', () => {
       'GPT 5.6 Sol',
       'GPT 5.6 Terra',
       'GPT 5.6 Luna',
-      'GPT 5.5',
       'GPT 5.4',
       'GPT 5.4 Mini',
       'GPT 5.3 Codex Spark',
     ])
+  })
+
+  test('filters legacy Codex picker models that should not be selectable', () => {
+    const result = normalizeCodexOfficialModelList({
+      data: [{ model: 'gpt-5.6-sol' }, { model: 'gpt-5.5' }],
+    })
+
+    expect(result.models.map(model => model.modelId)).toEqual(['gpt-5.6-sol'])
   })
 
   test('preserves the supported reasoning effort sequence advertised by Codex', () => {

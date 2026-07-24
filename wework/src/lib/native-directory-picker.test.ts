@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
 import { openNativeWorkspacePathPicker } from './native-workspace-path-picker'
-import { openNativeProjectDirectoryPicker } from './native-directory-picker'
+import {
+  openNativeProjectDirectoryPicker,
+  openNativeProjectDirectoryPickers,
+} from './native-directory-picker'
 
 vi.mock('./native-workspace-path-picker', () => ({
   openNativeWorkspacePathPicker: vi.fn(),
@@ -26,5 +29,23 @@ describe('openNativeProjectDirectoryPicker', () => {
     openWorkspacePickerMock.mockResolvedValue([])
 
     await expect(openNativeProjectDirectoryPicker('/Users/alice')).resolves.toBeNull()
+  })
+
+  test('returns every selected directory for a multi-root project', async () => {
+    openWorkspacePickerMock.mockResolvedValue([
+      { path: '/Users/alice/web', isDirectory: true },
+      { path: '/Users/alice/api', isDirectory: true },
+      { path: '/Users/alice/readme.md', isDirectory: false },
+    ])
+
+    await expect(openNativeProjectDirectoryPickers('/Users/alice')).resolves.toEqual([
+      '/Users/alice/web',
+      '/Users/alice/api',
+    ])
+    expect(openWorkspacePickerMock).toHaveBeenCalledWith('/Users/alice', {
+      directoriesOnly: true,
+      multiple: true,
+      defaultToHome: true,
+    })
   })
 })

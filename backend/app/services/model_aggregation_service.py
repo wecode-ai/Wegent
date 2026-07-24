@@ -222,6 +222,7 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "is_wework_available": False,
                 "model_group": None,
                 "model_sub_group": None,
                 "context_window": None,
@@ -299,6 +300,7 @@ class ModelAggregationService:
                     if model_crd.spec.isAdvanced
                     else False
                 ),
+                "is_wework_available": bool(model_crd.spec.isWeworkAvailable) or False,
                 "model_group": model_crd.spec.modelGroup,
                 "model_sub_group": model_crd.spec.modelSubGroup,
                 "context_window": model_crd.spec.context_window,
@@ -315,6 +317,7 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "is_wework_available": False,
                 "model_group": None,
                 "model_sub_group": None,
                 "context_window": None,
@@ -435,40 +438,29 @@ class ModelAggregationService:
             logger.warning("Failed to check if model is custom: %s", e)
             return False
 
-    def _build_codex_runtime_model(
-        self,
-        db: Session,
-        current_user: User,
-        shell_type: Optional[str],
-        actual_shell_type: str,
-        support_model: List[str],
-        scope: str,
-        model_category_type: Optional[str],
-        client_origin: Optional[str],
-    ) -> Optional[UnifiedModel]:
-        """Build the Wework-only runtime Codex model when user auth is enabled."""
-        if client_origin != CLIENT_ORIGIN_WEWORK:
-            return None
-        if scope == "group":
-            return None
-        if (
-            model_category_type
-            and model_category_type != CODEX_RUNTIME_MODEL_CATEGORY_TYPE
-        ):
-            return None
-        if not is_codex_runtime_model_enabled(db, current_user):
-            return None
+    def _is_model_available_in_wework(self, model_data: Dict[str, Any]) -> bool:
+        """
+        Check if a model should be exposed to the wework desktop client.
 
-        config = build_codex_runtime_model_config()
-        if shell_type and not self._is_model_compatible_with_shell(
-            CODEX_RUNTIME_MODEL_PROVIDER,
-            actual_shell_type,
-            support_model,
-            config,
-        ):
-            return None
+        Only models with isWeworkAvailable=True in their spec are returned
+        when client_origin is 'wework'. Missing or False values are treated
+        as not available.
 
-        return self._create_codex_runtime_model()
+        Args:
+            model_data: Model CRD data dictionary
+
+        Returns:
+            True if the model is available in wework, False otherwise
+        """
+        if not isinstance(model_data, dict):
+            return False
+
+        try:
+            model_crd = Model.model_validate(model_data)
+            return bool(model_crd.spec.isWeworkAvailable)
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.warning("Failed to check wework availability: %s", e)
+            return False
 
     def _create_codex_runtime_model(self) -> UnifiedModel:
         """Create the runtime-only Codex model representation."""
@@ -612,6 +604,13 @@ class ModelAggregationService:
                 ):
                     continue
 
+                # Filter out models not enabled for wework
+                if (
+                    client_origin == CLIENT_ORIGIN_WEWORK
+                    and not self._is_model_available_in_wework(model_data)
+                ):
+                    continue
+
                 # Deduplicate by name
                 if resource.name in seen_names:
                     continue
@@ -671,6 +670,12 @@ class ModelAggregationService:
             ):
                 continue
 
+            # Filter out public models not enabled for wework
+            if client_origin == CLIENT_ORIGIN_WEWORK and not model_dict.get(
+                "is_wework_available", False
+            ):
+                continue
+
             unified = UnifiedModel(
                 name=model_dict.get("name", ""),
                 model_type=ModelType.PUBLIC,  # Mark as public model
@@ -708,19 +713,6 @@ class ModelAggregationService:
             result.append(unified)
             if model_name not in seen_names:
                 seen_names[model_name] = ModelType.PUBLIC
-
-        runtime_model = self._build_codex_runtime_model(
-            db=db,
-            current_user=current_user,
-            shell_type=shell_type,
-            actual_shell_type=actual_shell_type,
-            support_model=support_model,
-            scope=scope,
-            model_category_type=model_category_type,
-            client_origin=client_origin,
-        )
-        if runtime_model:
-            result.append(runtime_model)
 
         # Sort by name
         result.sort(key=lambda x: x.name)

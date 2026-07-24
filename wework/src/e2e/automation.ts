@@ -202,7 +202,7 @@ function seedDesktopE2ECloudConnection() {
             displayName: 'Desktop E2E Responses',
             modelId: 'desktop-e2e-responses-model',
             apiFormat: 'openai-responses' as const,
-            toolProfile: 'custom' as const,
+            toolProfile: 'function' as const,
             requestPath: '/v1/responses',
           },
           {
@@ -584,6 +584,26 @@ function dropDesktopControlFile(command: DesktopControlCommand): string {
   return filename
 }
 
+function pasteDesktopControlFile(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const filename = command.filename?.trim()
+  if (!filename) throw new Error('pasteFile requires a filename')
+  const binary = window.atob(command.value ?? '')
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
+  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const transfer = new DataTransfer()
+  transfer.items.add(file)
+  const event = new ClipboardEvent('paste', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  })
+  Object.defineProperty(event, 'clipboardData', { value: transfer })
+  element.dispatchEvent(event)
+  return filename
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -613,6 +633,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return dragDesktopControlElement(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
+    case 'pasteFile':
+      return pasteDesktopControlFile(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':

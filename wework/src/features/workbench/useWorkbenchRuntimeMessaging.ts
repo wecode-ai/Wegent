@@ -4,7 +4,6 @@ import { ApiError } from '@/api/http'
 import { WEWORK_CLIENT_ORIGIN } from '@/api/backend/backendServices'
 import type { ExecutorClient } from '@/api/executorAccess'
 import i18n from '@/i18n'
-import { getModelExecutionOverride } from '@/features/cloud-connection/modelExecution'
 import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -116,9 +115,7 @@ interface UseWorkbenchRuntimeMessagingOptions {
 
 function isConfiguredLocalModel(model: UnifiedModel | null): boolean {
   if (!model) return false
-  const override = getModelExecutionOverride(model)
-  const modelName = override?.modelName ?? model.name
-  return localModelIdFromModelName(modelName) !== null
+  return localModelIdFromModelName(model.name) !== null
 }
 
 function isLocalDeviceTarget(
@@ -520,7 +517,8 @@ export function useWorkbenchRuntimeMessaging({
         }
         optimisticDeviceId = selectedProjectWorkspace.deviceId
         runtimeTaskTarget =
-          selectedProjectWorkspace.id != null
+          selectedProjectWorkspace.id != null &&
+          selectedProjectWorkspace.workspaceSource !== 'local'
             ? {
                 projectId,
                 deviceWorkspaceId: selectedProjectWorkspace.id,

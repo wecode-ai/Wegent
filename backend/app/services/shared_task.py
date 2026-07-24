@@ -827,10 +827,13 @@ class SharedTaskService:
         # Convert to public subtask data (exclude sensitive fields)
         public_subtasks = []
         for sub in subtasks:
-            # Get ALL contexts for this subtask (attachments and knowledge bases)
+            # Knowledge base contexts are runtime metadata and are not public.
             contexts = (
                 db.query(SubtaskContext)
-                .filter(SubtaskContext.subtask_id == sub.id)
+                .filter(
+                    SubtaskContext.subtask_id == sub.id,
+                    SubtaskContext.context_type != ContextType.KNOWLEDGE_BASE.value,
+                )
                 .all()
             )
 

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getModelExecutionOverride } from '@/features/cloud-connection/modelExecution'
 import { createHybridWorkbenchServices } from './hybridServices'
 
 const mocks = vi.hoisted(() => {
@@ -224,6 +223,7 @@ const codexModel = {
   name: 'gpt-5.5',
   type: 'runtime',
   displayName: 'gpt-5.5',
+  modelId: 'gpt-5.5',
   config: {
     protocol: 'openai-responses',
     weworkModelKind: 'codex-official',
@@ -231,6 +231,13 @@ const codexModel = {
   },
   runtime: { family: 'openai.openai-responses' },
   isActive: true,
+}
+
+const synthesizedCodexModel = {
+  ...codexModel,
+  name: 'codex-gpt-5.5',
+  displayName: 'GPT-5.5 (Codex)',
+  provider: 'openai',
 }
 
 const chatCompletionsModel = {
@@ -310,7 +317,7 @@ describe('createHybridWorkbenchServices', () => {
       },
     ])
     mocks.localListModels.mockResolvedValue({ data: [codexModel] })
-    mocks.cloudListModels.mockResolvedValue({ data: [codexModel] })
+    mocks.cloudListModels.mockResolvedValue({ data: [synthesizedCodexModel] })
     mocks.localSearchRuntimeWork.mockResolvedValue({ items: [] })
     mocks.localGetWorktreeSettings.mockResolvedValue({
       deviceId: 'local-device',
@@ -384,6 +391,7 @@ describe('createHybridWorkbenchServices', () => {
   })
 
   it('loads cloud models in the background without delaying local models', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const services = createServices()
     const response = await services.modelApi.listModels()
 
@@ -391,18 +399,29 @@ describe('createHybridWorkbenchServices', () => {
 
     await vi.waitFor(async () => {
       const refreshed = await services.modelApi.listModels()
-      expect(refreshed.data.map(model => model.name)).toEqual(['gpt-5.5', 'cloud:runtime:gpt-5.5'])
+      expect(refreshed.data.map(model => model.name)).toEqual(['gpt-5.5'])
     })
     const refreshed = await services.modelApi.listModels()
 
-    expect(refreshed.data.map(model => model.name)).toEqual(['gpt-5.5', 'cloud:runtime:gpt-5.5'])
-    expect(refreshed.data.map(model => getModelExecutionOverride(model)?.modelName)).toEqual([
-      'gpt-5.5',
-      'gpt-5.5',
-    ])
+    expect(refreshed.data.map(model => model.name)).toEqual(['gpt-5.5'])
+    expect(info).toHaveBeenCalledWith('[Wework] Cloud model catalog loaded', {
+      count: 1,
+      models: [
+        {
+          name: 'codex-gpt-5.5',
+          displayName: 'GPT-5.5 (Codex)',
+          type: 'runtime',
+          provider: 'openai',
+          modelId: 'gpt-5.5',
+          namespace: null,
+          resourceUserId: null,
+        },
+      ],
+    })
+    info.mockRestore()
   })
 
-  it('only displays Backend models that explicitly support the Responses API', async () => {
+  it('displays cloud models that support Responses, Chat Completions, or Anthropic Messages protocols', async () => {
     mocks.localListModels.mockResolvedValue({ data: [chatCompletionsModel] })
     mocks.cloudListModels.mockResolvedValue({
       data: [chatCompletionsModel, responsesModel],
@@ -414,16 +433,16 @@ describe('createHybridWorkbenchServices', () => {
       const refreshed = await services.modelApi.listModels()
       expect(refreshed.data.map(model => model.name)).toEqual([
         'chat-completions-model',
-        'cloud:public:responses-model',
+        'responses-model',
       ])
     })
     const response = await services.modelApi.listModels()
 
     expect(response.data.map(model => model.name)).toEqual([
       'chat-completions-model',
-      'cloud:public:responses-model',
+      'responses-model',
     ])
-    expect(getModelExecutionOverride(response.data[1])?.source).toBe('cloud')
+    expect(response.data[1]).toEqual(responsesModel)
   })
 
   it('does not wait for an unresponsive cloud model request', async () => {
