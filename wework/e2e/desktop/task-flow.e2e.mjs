@@ -111,6 +111,8 @@ const LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT =
   'WEWORK_LOCAL_MODEL_SWITCH_FOLLOW_UP: continue this conversation with the second custom model.'
 const LOCAL_MODEL_SWITCH_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
+const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
@@ -118,6 +120,9 @@ const SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET = 160
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
+const PASTED_ZIP_FILENAME = 'pasted-feedback.zip'
+const PASTED_ZIP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_ZIP_COMPLETE'
+const PASTED_ZIP_BASE64 = Buffer.from('PK\x03\x04WEWORK_E2E_ZIP').toString('base64')
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
@@ -1059,6 +1064,7 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
 
 async function revealGroupedModelOption(control, targetOptionId) {
   const menu = JSON.parse(await control.command('snapshot', 'body'))
+  if (menu.testIds.includes(targetOptionId)) return true
   const familyTestIds = menu.testIds.filter(testId => testId.startsWith('model-family-'))
 
   for (const familyTestId of familyTestIds) {
@@ -1073,6 +1079,38 @@ async function revealGroupedModelOption(control, targetOptionId) {
   return false
 }
 
+async function ensureModelOptionVisible(control, targetOptionId) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    let menu = JSON.parse(await control.command('snapshot', 'body'))
+    if (menu.testIds.includes(targetOptionId)) return menu
+    if (menu.testIds.includes('model-control-menu-model')) {
+      await control
+        .command('hover', '[data-testid="model-control-menu-model"]', {
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        .catch(() => undefined)
+    } else {
+      await control
+        .command('hover', '[data-testid="model-selector-button"]', {
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        .catch(() => undefined)
+      await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+        stableMs: 100,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
+    menu = JSON.parse(await control.command('snapshot', 'body'))
+    if (menu.testIds.includes(targetOptionId)) return menu
+    if (await revealGroupedModelOption(control, targetOptionId)) {
+      return JSON.parse(await control.command('snapshot', 'body'))
+    }
+  }
+
+  throw new Error(`Model option ${targetOptionId} did not become visible`)
+}
+
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
   const selectedModelText = await control.command(
     'waitFor',
@@ -1082,35 +1120,7 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   if (selectedModelText.includes(modelLabel)) return
 
   const targetOptionId = `model-option-${modelId}`
-  let optionVisible = false
-  for (let attempt = 0; attempt < 6 && !optionVisible; attempt += 1) {
-    let menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (menu.testIds.includes(targetOptionId)) {
-      optionVisible = true
-      break
-    }
-    if (menu.testIds.includes('model-control-menu-model')) {
-      await control.command('hover', '[data-testid="model-control-menu-model"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-    } else {
-      await control.command('hover', '[data-testid="model-selector-button"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
-        stableMs: 100,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
-    menu = JSON.parse(await control.command('snapshot', 'body'))
-    optionVisible = menu.testIds.includes(targetOptionId)
-    if (!optionVisible) {
-      optionVisible = await revealGroupedModelOption(control, targetOptionId)
-    }
-  }
-
-  assert.ok(optionVisible, `Model option ${modelId} did not become visible`)
+  await ensureModelOptionVisible(control, targetOptionId)
   await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -1665,6 +1675,36 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
       'The attachment filename was not forwarded to the real Codex request'
     )
   }
+}
+
+async function verifyPastedZipAttachment({ composerSelector, control }) {
+  control.setScenario('pasted_zip_attachment')
+  await control.command('snapshot', 'body')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('pasteFile', composerSelector, {
+    filename: PASTED_ZIP_FILENAME,
+    mimeType: 'application/zip',
+    value: PASTED_ZIP_BASE64,
+  })
+  await control.command('waitFor', '[data-testid="attachment-badge"]', {
+    text: PASTED_ZIP_FILENAME,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('pasted_zip_attachment', 1)
+  await control.command('waitFor', '[data-testid="message-document-attachment"]', {
+    text: PASTED_ZIP_FILENAME,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PASTED_ZIP_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'pasted-zip-attachment.png')
 }
 
 async function verifySideChatAttachmentIsolation({ control, taskRowTestId }) {
@@ -2333,6 +2373,7 @@ class DesktopE2EServer {
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
     this.failCloudModels = false
+    this.cloudModelsAvailable = false
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
     this.scenario = 'initial'
@@ -2495,6 +2536,11 @@ class DesktopE2EServer {
     }
   }
 
+  restoreCloudModels() {
+    this.failCloudModels = false
+    this.cloudModelsAvailable = true
+  }
+
   awaitFailedCloudModelRequest() {
     if (this.failedCloudModelRequests > 0) return this.guard(Promise.resolve())
     return this.guard(
@@ -2517,6 +2563,7 @@ class DesktopE2EServer {
         'reconnect',
         'fresh_chat',
         'attachment_only',
+        'pasted_zip_attachment',
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
@@ -2655,6 +2702,45 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
+      if (this.cloudModelsAvailable) {
+        json(response, 200, {
+          data: [
+            {
+              name: `codex-${DEFAULT_MODEL_ID}`,
+              type: 'runtime',
+              displayName: `${DEFAULT_MODEL_LABEL} (Codex)`,
+              provider: 'openai',
+              modelId: DEFAULT_MODEL_ID,
+              namespace: 'default',
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                weworkModelKind: 'codex-official',
+                ui: { family: 'codex-official', modelLabel: DEFAULT_MODEL_LABEL },
+              },
+              runtime: { family: 'openai.openai-responses' },
+              isActive: true,
+            },
+            {
+              name: CLOUD_PUBLIC_MODEL_NAME,
+              type: 'public',
+              displayName: CLOUD_PUBLIC_MODEL_LABEL,
+              provider: 'openai',
+              modelId: 'desktop-e2e-public-upstream-model',
+              namespace: 'default',
+              resourceUserId: 0,
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                ui: { family: 'gpt', modelLabel: CLOUD_PUBLIC_MODEL_LABEL },
+              },
+              runtime: { family: 'openai.openai-responses' },
+              isActive: true,
+            },
+          ],
+        })
+        return
+      }
       if (this.failCloudModels) {
         this.failedCloudModelRequests += 1
         this.failedCloudModelWaiter?.()
@@ -3153,6 +3239,25 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_${requestNumber}`),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'pasted_zip_attachment') {
+      this.recordScenarioRequest('pasted_zip_attachment', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(PASTED_ZIP_FILENAME),
+        'The pasted ZIP filename was not forwarded to the real Codex request'
+      )
+      assert.ok(
+        requestText.includes('application/zip'),
+        'The pasted ZIP MIME type was not forwarded to the real Codex request'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PASTED_ZIP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -4054,6 +4159,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
   await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
@@ -4069,10 +4175,15 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
-  await withTimeout(
+  const cloudInitialRequest = await withTimeout(
     control.awaitScenarioRequestCount('cloud_initial', 2),
     UI_TIMEOUT_MS,
     'The real cloud executor did not complete its model tool loop'
+  )
+  assert.equal(
+    cloudInitialRequest.body?.model,
+    DEFAULT_MODEL_ID,
+    'The remote executor did not receive the selected canonical model id'
   )
   assert.equal(
     (await readFile(join(workspacePath, CLOUD_ARTIFACT_NAME), 'utf8')).trim(),
@@ -4321,6 +4432,37 @@ async function main() {
     })
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
+    control.restoreCloudModels()
+    await control.command('dispatchLocalModelSettingsChanged', '')
+    const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
+    const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
+    const legacyGpt55ModelOption = 'model-option-gpt-5.5'
+    const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`
+    const recoveredModelMenu = await ensureModelOptionVisible(control, canonicalModelOption)
+    assert.equal(
+      recoveredModelMenu.testIds.filter(testId => testId === canonicalModelOption).length,
+      1,
+      'The canonical Executor model appeared more than once'
+    )
+    assert.equal(
+      recoveredModelMenu.testIds.includes(synthesizedModelOption),
+      false,
+      'The Backend-synthesized runtime Codex duplicate remained visible'
+    )
+    assert.equal(
+      recoveredModelMenu.testIds.includes(legacyGpt55ModelOption),
+      false,
+      'The legacy GPT 5.5 Codex model remained visible'
+    )
+    assert.equal(
+      (await ensureModelOptionVisible(control, publicModelOption)).testIds.includes(
+        publicModelOption
+      ),
+      true,
+      'The independent public model was removed while deduplicating runtime Codex'
+    )
+    await captureVerificationScreenshot(control, '00-canonical-model-catalog.png')
+    await control.command('press', 'body', { key: 'Escape' })
 
     if (SHORT_CONVERSATION_ONLY) {
       phase = 'short-conversation-layout'
@@ -5118,23 +5260,40 @@ async function main() {
     phase = 'workspace-resources-across-conversation-switch'
     const activeBrowserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
     const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
-    const activeRightPanelToggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-right-workspace-panel-button"]`
+    const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
+    const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
+    const bottomWorkspaceTabCloseSelector = '[data-testid="close-bottom-workspace-tab-button"]'
+    const rightBrowserTabCloseSelector = '[data-testid="right-workspace-browser-tab-close-button"]'
     const retainedBrowserUrl = 'https://example.com/session-state'
-    await control.command('waitFor', activeRightPanelToggleSelector, {
+    await control.command('waitFor', rightPanelToggleSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await control.command('click', activeRightPanelToggleSelector)
+    await control.command('click', rightPanelToggleSelector)
     await control.command(
       'click',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
     )
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-bottom-workspace-panel-button"]`
+    await control.command('click', bottomPanelToggleSelector)
+    const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
+      control,
+      value => {
+        const terminalOpened =
+          value.testIds.includes('workspace-terminal-window') &&
+          !value.testIds.includes('workspace-tool-launcher')
+        const localTerminalUnavailable =
+          value.testIds.includes('workspace-tool-launcher') &&
+          value.testIds.includes('workspace-local-device-limited-tools')
+        return terminalOpened || localTerminalUnavailable
+      },
+      'The first task bottom workspace panel did not open a terminal or limited-tools launcher',
+      UI_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
     )
-    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    const firstTaskOpenedTerminal = firstTaskBottomWorkspaceSnapshot.testIds.includes(
+      'workspace-terminal-window'
+    )
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     const secondTaskWorkspaceSnapshot = JSON.parse(
       await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
@@ -5149,30 +5308,40 @@ async function main() {
       false,
       'The first task browser leaked into the second task'
     )
+    assert.equal(
+      secondTaskWorkspaceSnapshot.testIds.includes('workspace-tool-launcher'),
+      false,
+      'The first task bottom workspace launcher leaked into the second task'
+    )
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
-    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    if (firstTaskOpenedTerminal) {
+      await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    } else {
+      await waitForSnapshot(
+        control,
+        value =>
+          value.testIds.includes('bottom-workspace-panel') &&
+          value.testIds.includes('workspace-tool-launcher') &&
+          value.testIds.includes('workspace-local-device-limited-tools'),
+        'The first task bottom workspace limited-tools state was not restored',
+        UI_TIMEOUT_MS,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
+    }
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     assert.equal(
       await control.command('getValue', activeBrowserInputSelector),
       retainedBrowserUrl,
       'The Wework built-in browser URL was reset after switching conversations'
     )
-    const restoredWorkspaceSnapshot = JSON.parse(
-      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-    )
+    const restoredWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.ok(
       restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
       'The browser tab was not restored after switching conversations'
     )
     await captureVerificationScreenshot(control, 'workspace-resources-restored-after-switch.png')
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="close-bottom-workspace-tab-button"]`
-    )
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-tab-close-button"]`
-    )
+    await control.command('click', bottomWorkspaceTabCloseSelector)
+    await control.command('click', rightBrowserTabCloseSelector)
 
     await control.command('fill', composerSelector, { value: '' })
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
@@ -5307,6 +5476,9 @@ async function main() {
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
     await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
+
+    phase = 'pasted-zip-attachment'
+    await verifyPastedZipAttachment({ composerSelector, control })
 
     await writeFile(
       join(resultDir, 'model-requests.json'),

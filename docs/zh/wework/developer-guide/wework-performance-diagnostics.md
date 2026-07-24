@@ -143,6 +143,8 @@ window.__WEWORK_PERF__.snapshot();
 - 是否存在密集 `longtask` 或 `event-loop-lag`。
 - 是否存在重复的 `slow-react-commit`。
 
+主工作台的全高侧栏和横跨内容区的顶部栏应使用普通语义背景，避免在大面积常驻表面应用 `backdrop-filter`。这类滤镜可能让 WebKit 为整个区域保留额外图形 backing store；排查 Web Content 内存时，应在相同窗口尺寸和页面状态下比较启用前后的 `physical_footprint_kib`，并把 Web Inspector 堆快照产生的短期可回收内存高水位排除在稳定基线之外。
+
 也可以手动打点：
 
 ```js

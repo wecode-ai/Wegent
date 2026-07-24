@@ -3060,7 +3060,7 @@ export function DesktopSidebar({
         'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
-          : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+          : 'bg-[rgb(var(--color-sidebar))]',
         !windowFocused &&
           !(background.imagePath && background.inSidebar) &&
           'bg-[rgb(var(--color-sidebar-unfocused))]',

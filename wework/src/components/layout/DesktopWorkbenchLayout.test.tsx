@@ -4766,6 +4766,9 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getAllByTestId('workbench-main-header')).toHaveLength(1)
       expect(screen.getByTestId('workbench-main-header')).toBe(sharedMainHeader)
       expect(sharedMainHeader).toHaveClass('h-[38px]', 'shrink-0')
+      expect(screen.getAllByTestId('workbench-pane-task-title')).toHaveLength(1)
+      expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('Task B')
+      expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveTextContent('Task A')
       expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
     } finally {
       if (previousTauriInternals === undefined) {

@@ -19,6 +19,8 @@ Cloud connection state is owned by the frontend `cloud-connection` layer and is 
 
 Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
 
+The desktop authorization window defaults to `1000 × 640` with a minimum size of `960 × 620`, which accommodates enterprise login pages that do not provide responsive layouts. The authorization window uses the Wework main window as its native parent, so it remains above Wework throughout authorization without becoming globally always-on-top across other applications.
+
 When the entered address matches the packaged `VITE_WEGENT_BACKEND_URL` or `VITE_API_BASE_URL`, Wework uses the packaged `VITE_SOCKET_BASE_URL` and `VITE_SOCKET_PATH`, allowing the HTTP API and Socket.IO service to use separate domains. This also covers manually entered Backends when `VITE_WEGENT_BACKEND_URL` is unset but the address corresponds to the packaged API. Connections saved with the old same-origin Socket URL are migrated on startup. Other user-entered Backends continue to use same-origin normalization.
 
 Local Wework does not render cloud username/password forms and does not call `/auth/login` or `/auth/admin-password/setup`. Cloud login, OIDC, and admin initialization all happen on the cloud Wegent Web authorization page. After login, the user must explicitly approve Wework access; only then does Backend store a one-time claimable cloud JWT in the authorization session. Local Wework claims it, verifies the user through `/users/me`, and persists the cloud connection state.
@@ -81,17 +83,11 @@ wework /path/to/project
 
 `wework` and `wework .` resolve the current directory to an absolute path and ask Wework to open it as a local workspace. Release builds forward the request to the existing window through the macOS app single-instance path; debug builds still allow multiple instances, so the CLI starts the current debug executable with `--open-workspace <path>`.
 
-## Model Naming
+## Model Identity and Execution Transport
 
-The frontend merge layer must avoid name collisions between local Codex, user-configured local models, and cloud-synced Codex models. The UI uses unique names:
+Models keep one canonical identity across the UI, task state, and execution requests: `name`, `type`, `namespace`, and `resourceUserId`. The frontend must not add `local:` or `cloud:` prefixes to distinguish execution locations, and model config must not carry a separate transport source. When catalogs are merged, an Executor-discovered model wins over a Backend-synthesized runtime Codex model with the same `modelId`.
 
-```text
-local:runtime:codex-gpt-5.5
-local:runtime:local-model:<config-id>
-cloud:runtime:codex-gpt-5.5
-```
-
-Before execution, `weworkExecution` metadata on the selected model maps the UI name back to the original `modelName` and `modelType`. The local IPC execution boundary then normalizes local Codex UI model names to the real model id accepted by Codex app-server; for example, `codex-gpt-5.5` is converted to `gpt-5.5` before sending. User-configured local models use `local-model:<config-id>` and can only be sent to a local device; if the target is a cloud task, the frontend blocks sending and asks the user to switch device or model. Cloud relay paths continue to pass the original execution model name for their source.
+The target device alone selects the transport: local devices call Executor through IPC, while remote devices call Executor through the WebSocket relay. Both paths use the same `runtime.tasks.*` protocol and model selection. Public, personal, and group model resource identity is forwarded to Executor and resolved by the same model gateway. User-configured local models use `local-model:<config-id>`; because their configuration exists only on the local device, the frontend blocks sending them to a remote device and asks the user to switch the device or model.
 
 The local Codex model catalog follows only the active provider in the current Codex configuration. executor reads `config/read` once through Codex app-server to get the active `model_provider` and display name, then calls `model/list` once for that provider's catalog. Even when `config.toml` contains multiple `[model_providers.*]` entries, Wework does not enumerate them as parallel model groups because Codex `model/list` does not expose a stable provider-scoped query protocol. Use the local model config flow below when Wework needs to show multiple model interfaces.
 

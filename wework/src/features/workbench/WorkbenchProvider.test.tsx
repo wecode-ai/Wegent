@@ -2515,7 +2515,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('project-worktree-branch')).toHaveTextContent('feature/beta')
   })
 
-  test('locks existing runtime task model choices to its runtime protocol', async () => {
+  test('keeps executor-backed model choices selectable inside existing runtime tasks', async () => {
     const models: UnifiedModel[] = [
       {
         name: 'wecode-claude-sonnet-4-5',
@@ -2555,14 +2555,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         [
           'wecode-claude-sonnet-4-5:enabled',
           'kimi-k2.5:enabled',
-          'codex-gpt-5.5:runtime_family_mismatch',
-          'gpt-5-2025-08-07:runtime_family_mismatch',
+          'codex-gpt-5.5:enabled',
+          'gpt-5-2025-08-07:enabled',
         ].join('|')
       )
     )
   })
 
-  test('keeps ChatGPT models selectable inside existing Codex runtime tasks', async () => {
+  test('keeps all executor-backed catalog models selectable inside existing Codex runtime tasks', async () => {
     const models: UnifiedModel[] = [
       {
         name: 'codex-gpt-5.5',
@@ -2630,7 +2630,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         [
           'codex-gpt-5.5:enabled',
           'gpt-5-2025-08-07:enabled',
-          'wecode-claude-sonnet-4-5:runtime_family_mismatch',
+          'wecode-claude-sonnet-4-5:enabled',
         ].join('|')
       )
     )
@@ -3530,7 +3530,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('stores the selector model identity separately from its execution model id', async () => {
+  test('stores one canonical model identity for selection and execution', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn(async request => ({
         accepted: true,
@@ -3545,15 +3545,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         listModels: vi.fn().mockResolvedValue({
           data: [
             {
-              name: 'cloud:user:shared-model',
+              name: 'shared-model',
               type: 'user',
               provider: 'cloud',
               config: {
-                weworkExecution: {
-                  source: 'cloud',
-                  modelName: 'shared-model',
-                  modelType: 'user',
-                },
                 weworkModelKind: 'model-interface',
                 ui: { family: 'model-interface', controls: ['collaborationMode'] },
               },
@@ -3578,7 +3573,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         modelId: 'shared-model',
         modelType: 'user',
         modelSelection: {
-          modelName: 'cloud:user:shared-model',
+          modelName: 'shared-model',
           modelType: 'user',
           options: {
             collaborationMode: 'plan',

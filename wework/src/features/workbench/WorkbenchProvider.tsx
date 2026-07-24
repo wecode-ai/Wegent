@@ -62,7 +62,6 @@ import type {
 } from './workbenchContextTypes'
 import {
   getBlockedModelSelectionMessage,
-  getCurrentRuntimeTaskCompatibilityFamily,
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
@@ -381,11 +380,6 @@ export function WorkbenchProvider({
     }
     return getNewChatModelSelection(currentUser) ?? null
   }, [currentUser, state.currentRuntimeTask, state.runtimeWork])
-  const modelCompatibilityConfig = useMemo(() => null, [])
-  const modelCompatibilityFamily = useMemo(
-    () => getCurrentRuntimeTaskCompatibilityFamily(state.runtimeWork, state.currentRuntimeTask),
-    [state.currentRuntimeTask, state.runtimeWork]
-  )
   const defaultModelSelectionConfig = useCallback(
     (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
     []
@@ -424,8 +418,6 @@ export function WorkbenchProvider({
     scopeKey: projectChatScopeKey,
     persistSelection: !state.currentRuntimeTask,
     selectionConfig: modelSelectionConfig,
-    compatibilityConfig: modelCompatibilityConfig,
-    compatibilityFamily: modelCompatibilityFamily,
     defaultSelectionConfig: defaultModelSelectionConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
