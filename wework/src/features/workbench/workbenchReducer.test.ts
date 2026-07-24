@@ -1272,4 +1272,42 @@ describe('workbenchReducer', () => {
       title: 'Chat B updated',
     })
   })
+
+  test('settles a runtime task after its workspace path changes', () => {
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-1',
+            workspacePath: '/generated/conversation',
+            available: true,
+            tasks: [
+              {
+                taskId: 'runtime-1',
+                workspacePath: '/generated/conversation',
+                title: 'Runtime task',
+                runtime: 'codex' as const,
+                status: 'creating',
+                running: true,
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    }
+
+    const settled = workbenchReducer(state, {
+      type: 'runtime_task_settled',
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+        workspacePath: '/restored/project',
+      },
+    })
+
+    expect(settled.runtimeWork?.chats[0].tasks[0].running).toBe(false)
+  })
 })
