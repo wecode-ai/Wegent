@@ -44,16 +44,19 @@ describe('CodexHomeInitializer', () => {
     expect(screen.queryByTestId('workbench-child')).not.toBeInTheDocument()
   })
 
-  test('creates Wework Codex config with the selected remote apps setting', async () => {
+  test('creates Wework Codex config with online connectors disabled', async () => {
     render(<CodexHomeInitializer />)
 
-    await userEvent.click(await screen.findByTestId('codex-home-initializer-remote-apps-checkbox'))
+    await screen.findByTestId('codex-home-initializer-dialog')
+    expect(
+      screen.queryByTestId('codex-home-initializer-remote-apps-checkbox')
+    ).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('codex-home-initializer-create-button'))
 
     await waitFor(() =>
       expect(localCodexPluginApiMock.initializeCodexHome).toHaveBeenCalledWith({
         migrateNativeHome: false,
-        remoteAppsEnabled: true,
+        remoteAppsEnabled: false,
       })
     )
     expect(window.localStorage.getItem('wework.plugins.codexMigrationDismissed')).toBe('1')
