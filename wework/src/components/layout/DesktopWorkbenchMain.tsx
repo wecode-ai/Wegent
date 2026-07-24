@@ -127,11 +127,17 @@ const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
-const MAX_CACHED_DESKTOP_WORKBENCH_PANES = 10
+const MAX_CACHED_DESKTOP_WORKBENCH_PANES = 1
 interface SelectedAssistantPlan {
   blockId: string
   subtaskId: string
   fallbackContent: string
+}
+
+interface WorkbenchPaneWorkspaceState {
+  rightPanelOpen: boolean
+  rightPanelView: RightWorkspacePanelView
+  rightPanelTabs: RightWorkspacePanelTab[]
 }
 
 interface PendingBlankBrowserMigration {
@@ -263,6 +269,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const [terminalPinOwnersByPane, setTerminalPinOwnersByPane] = useState<Record<string, string[]>>(
     {}
   )
+  const paneWorkspaceStateRef = useRef(new Map<string, WorkbenchPaneWorkspaceState>())
   const terminalPinnedPaneKeys = useMemo(
     () =>
       Object.keys(terminalPinOwnersByPane).filter(key => terminalPinOwnersByPane[key].length > 0),
@@ -297,6 +304,19 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       return { ...current, [paneKey]: nextOwners }
     })
   }, [])
+  const rememberPaneWorkspaceState = useCallback(
+    (paneKey: string, workspaceState: WorkbenchPaneWorkspaceState) => {
+      paneWorkspaceStateRef.current.set(paneKey, workspaceState)
+    },
+    []
+  )
+  useEffect(() => {
+    paneWorkspaceStateRef.current.forEach((_, key) => {
+      if (key.startsWith('runtime:') && !runtimePaneKeySet.has(key)) {
+        paneWorkspaceStateRef.current.delete(key)
+      }
+    })
+  }, [runtimePaneKeySet])
   const paneStack = (
     <CachedWorkbenchPaneStack
       activePane={props.activePane}
@@ -318,6 +338,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           onEnvironmentInfoPinnedChange={setEnvironmentInfoPinned}
           onEnvironmentInfoOverlayOpenChange={setEnvironmentInfoOverlayOpen}
           onTerminalPanePinChange={setTerminalPanePinned}
+          initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
+          onWorkspaceStateChange={rememberPaneWorkspaceState}
         />
       )}
     />
@@ -352,6 +374,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onEnvironmentInfoPinnedChange,
   onEnvironmentInfoOverlayOpenChange,
   onTerminalPanePinChange,
+  initialWorkspaceState,
+  onWorkspaceStateChange,
 }: {
   pane: WorkbenchPaneIdentity
   workbenchVisible: boolean
@@ -364,6 +388,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onEnvironmentInfoPinnedChange: (open: boolean) => void
   onEnvironmentInfoOverlayOpenChange: (open: boolean) => void
   onTerminalPanePinChange: (paneKey: string, owner: string, pinned: boolean) => void
+  initialWorkspaceState?: WorkbenchPaneWorkspaceState
+  onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
 }) {
   const paneActive = useWorkbenchPaneActive()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
@@ -448,14 +474,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
   }, [currentRuntimeTask, runtimeWork])
   const [rightPanelOpen, setRightPanelOpen] = useState(
-    () => initialBlankBrowserMigration?.rightPanelOpen ?? false
+    () =>
+      initialBlankBrowserMigration?.rightPanelOpen ?? initialWorkspaceState?.rightPanelOpen ?? false
   )
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(
-    () => initialBlankBrowserMigration?.rightPanelView ?? 'launcher'
+    () =>
+      initialBlankBrowserMigration?.rightPanelView ??
+      initialWorkspaceState?.rightPanelView ??
+      'launcher'
   )
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(
-    () => initialBlankBrowserMigration?.rightPanelTabs ?? []
+    () =>
+      initialBlankBrowserMigration?.rightPanelTabs ?? initialWorkspaceState?.rightPanelTabs ?? []
   )
+  useEffect(() => {
+    onWorkspaceStateChange(paneKey, { rightPanelOpen, rightPanelTabs, rightPanelView })
+  }, [onWorkspaceStateChange, paneKey, rightPanelOpen, rightPanelTabs, rightPanelView])
   const [migratedEmbeddedBrowserLabel, setMigratedEmbeddedBrowserLabel] = useState<string | null>(
     () => initialBlankBrowserMigration?.browserLabel ?? null
   )

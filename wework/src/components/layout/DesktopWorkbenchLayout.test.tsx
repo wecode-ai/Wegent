@@ -7431,6 +7431,26 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('restores serializable right workspace state without retaining the conversation pane', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    expect(activePane().queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(activePane().getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
+  })
+
   test('resets cached conversation horizontal scroll when the task becomes active', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
