@@ -2770,6 +2770,12 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
+    let binary_attachment_context =
+        AttachmentPromptProcessor::build_binary_attachment_context(&success);
+    if !binary_attachment_context.is_empty() {
+        request.prompt =
+            append_text_attachment_context(&request.prompt, &binary_attachment_context);
+    }
     let text_attachment_context =
         AttachmentPromptProcessor::build_text_attachment_context(&success);
     if !text_attachment_context.is_empty() {

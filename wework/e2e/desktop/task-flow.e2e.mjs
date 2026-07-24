@@ -118,6 +118,9 @@ const SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET = 160
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
+const PASTED_ZIP_FILENAME = 'pasted-feedback.zip'
+const PASTED_ZIP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_ZIP_COMPLETE'
+const PASTED_ZIP_BASE64 = Buffer.from('PK\x03\x04WEWORK_E2E_ZIP').toString('base64')
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
@@ -1667,6 +1670,35 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
   }
 }
 
+async function verifyPastedZipAttachment({ composerSelector, control }) {
+  control.setScenario('pasted_zip_attachment')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('pasteFile', composerSelector, {
+    filename: PASTED_ZIP_FILENAME,
+    mimeType: 'application/zip',
+    value: PASTED_ZIP_BASE64,
+  })
+  await control.command('waitFor', '[data-testid="attachment-badge"]', {
+    text: PASTED_ZIP_FILENAME,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('pasted_zip_attachment', 1)
+  await control.command('waitFor', '[data-testid="message-document-attachment"]', {
+    text: PASTED_ZIP_FILENAME,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PASTED_ZIP_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'pasted-zip-attachment.png')
+}
+
 async function verifySideChatAttachmentIsolation({ control, taskRowTestId }) {
   const sideChatSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-chat-panel"]`
   const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
@@ -2517,6 +2549,7 @@ class DesktopE2EServer {
         'reconnect',
         'fresh_chat',
         'attachment_only',
+        'pasted_zip_attachment',
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
@@ -3153,6 +3186,25 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_${requestNumber}`),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'pasted_zip_attachment') {
+      this.recordScenarioRequest('pasted_zip_attachment', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(PASTED_ZIP_FILENAME),
+        'The pasted ZIP filename was not forwarded to the real Codex request'
+      )
+      assert.ok(
+        requestText.includes('application/zip'),
+        'The pasted ZIP MIME type was not forwarded to the real Codex request'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PASTED_ZIP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -5293,6 +5345,9 @@ async function main() {
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
     await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
+
+    phase = 'pasted-zip-attachment'
+    await verifyPastedZipAttachment({ composerSelector, control })
 
     await writeFile(
       join(resultDir, 'model-requests.json'),

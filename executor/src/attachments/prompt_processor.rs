@@ -163,6 +163,17 @@ impl AttachmentPromptProcessor {
         )
     }
 
+    pub fn build_binary_attachment_context(success_attachments: &[AttachmentRecord]) -> String {
+        let binary_attachments = success_attachments
+            .iter()
+            .filter(|attachment| {
+                !is_text_attachment(attachment) && !is_image_attachment(attachment)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        Self::build_attachment_context(&binary_attachments)
+    }
+
     pub fn build_image_content_blocks(success_attachments: &[AttachmentRecord]) -> Vec<Value> {
         success_attachments
             .iter()
@@ -360,6 +371,14 @@ fn is_text_attachment(attachment: &AttachmentRecord) -> bool {
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
         .is_some_and(|extension| TEXT_ATTACHMENT_EXTENSIONS.contains(&extension.as_str()))
+}
+
+fn is_image_attachment(attachment: &AttachmentRecord) -> bool {
+    attachment
+        .mime_type
+        .as_deref()
+        .map(|value| value.to_ascii_lowercase())
+        .is_some_and(|mime_type| IMAGE_MIME_TYPES.contains(&mime_type.as_str()))
 }
 
 fn read_text_attachment_preview(local_path: &str) -> (String, bool) {

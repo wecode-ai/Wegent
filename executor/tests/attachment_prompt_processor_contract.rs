@@ -127,6 +127,26 @@ fn attachment_context_lists_available_files_without_layout_guidance() {
 }
 
 #[test]
+fn binary_attachment_context_lists_zip_path_without_duplicating_text_or_images() {
+    let mut archive = attachment(275, "logs.zip", "/tmp/logs.zip");
+    archive.file_size = Some(8192);
+    archive.mime_type = Some("application/zip".to_owned());
+    let mut text = attachment(276, "notes.txt", "/tmp/notes.txt");
+    text.mime_type = Some("text/plain".to_owned());
+    let mut image = attachment(277, "screen.png", "/tmp/screen.png");
+    image.mime_type = Some("image/png".to_owned());
+
+    let context =
+        AttachmentPromptProcessor::build_binary_attachment_context(&[archive, text, image]);
+
+    assert!(context.contains("logs.zip"));
+    assert!(context.contains("application/zip"));
+    assert!(context.contains("/tmp/logs.zip"));
+    assert!(!context.contains("notes.txt"));
+    assert!(!context.contains("screen.png"));
+}
+
+#[test]
 fn text_attachment_context_includes_file_content_and_path() {
     let attachment_path = std::env::temp_dir().join(format!(
         "wegent-text-attachment-{}-{}.txt",
