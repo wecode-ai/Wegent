@@ -2253,7 +2253,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   void forkCurrentRuntimeTask(
                     {
                       deviceId: currentRuntimeTask.deviceId,
-                      workspacePath: currentRuntimeTask.workspacePath,
+                      workspacePath: currentRuntimeTask.workspacePath ?? '',
                     },
                     { lastTurnId: forkTurnId }
                   )
