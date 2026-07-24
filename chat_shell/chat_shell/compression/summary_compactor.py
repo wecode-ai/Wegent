@@ -281,8 +281,11 @@ class SummaryCompactor:
         request_started = time.perf_counter()
         try:
             if self._request_timeout is not None:
-                async with asyncio.timeout(self._request_timeout):
-                    result = await self._llm.ainvoke(prompt_messages)
+                # asyncio.wait_for (not asyncio.timeout, which is 3.11+) keeps the
+                # chat_shell >=3.10 support floor.
+                result = await asyncio.wait_for(
+                    self._llm.ainvoke(prompt_messages), self._request_timeout
+                )
             else:
                 result = await self._llm.ainvoke(prompt_messages)
         except BaseException as exc:
