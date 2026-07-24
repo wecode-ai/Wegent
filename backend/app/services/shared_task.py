@@ -824,18 +824,27 @@ class SharedTaskService:
             users = db.query(User).filter(User.id.in_(sender_ids)).all()
             user_name_map = {u.id: u.user_name for u in users}
 
-        # Convert to public subtask data (exclude sensitive fields)
-        public_subtasks = []
-        for sub in subtasks:
-            # Knowledge base contexts are runtime metadata and are not public.
+        contexts_by_subtask_id: Dict[int, List[SubtaskContext]] = {}
+        subtask_ids = [sub.id for sub in subtasks]
+        if subtask_ids:
             contexts = (
                 db.query(SubtaskContext)
                 .filter(
-                    SubtaskContext.subtask_id == sub.id,
+                    SubtaskContext.subtask_id.in_(subtask_ids),
                     SubtaskContext.context_type != ContextType.KNOWLEDGE_BASE.value,
                 )
                 .all()
             )
+            for context in contexts:
+                contexts_by_subtask_id.setdefault(context.subtask_id, []).append(
+                    context
+                )
+
+        # Convert to public subtask data (exclude sensitive fields)
+        public_subtasks = []
+        for sub in subtasks:
+            # Knowledge base contexts are runtime metadata and are not public.
+            contexts = contexts_by_subtask_id.get(sub.id, [])
 
             # Convert contexts to public format (exclude binary data and image base64)
             public_contexts = []

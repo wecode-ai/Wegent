@@ -123,6 +123,7 @@ class TestPublicSharedTaskContexts:
         test_db: Session,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
@@ -135,18 +136,25 @@ class TestPublicSharedTaskContexts:
             name="Shared task",
             created_at=datetime(2025, 1, 1),
         )
-        subtask = SimpleNamespace(
-            id=300,
-            role="USER",
+        subtask = Subtask(
+            user_id=1,
+            task_id=task.id,
+            team_id=1,
+            title="Question",
+            bot_ids=[],
+            role=SubtaskRole.USER,
             prompt="Question",
             result=None,
-            status="COMPLETED",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=1,
             created_at=datetime(2025, 1, 1),
             updated_at=datetime(2025, 1, 1),
-            sender_type=None,
-            sender_user_id=None,
-            reply_to_subtask_id=None,
         )
+        test_db.add(subtask)
+        test_db.flush()
+        assert subtask.id is not None
+
         test_db.add_all(
             [
                 SubtaskContext(
