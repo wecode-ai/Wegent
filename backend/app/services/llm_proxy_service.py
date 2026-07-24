@@ -53,29 +53,32 @@ PROTECTED_UPSTREAM_HEADER_MARKERS = (
 
 
 def _resolve_upstream_target(
+    model_name: str,
     model_config: dict[str, Any],
 ) -> tuple[str, dict[str, str]]:
     """Choose the upstream endpoint path and auth headers from model config.
 
     Supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages.
-    Falls back to /responses to preserve previous behavior.
+    The model's DB configuration is the single source of truth; if it cannot be
+    mapped to a known upstream API, an explicit error is returned so operators
+    can fix the Model CRD instead of silently falling back to /responses.
     """
     api_format = str(model_config.get("api_format") or "").strip().lower()
     protocol = str(model_config.get("protocol") or "").strip().lower()
     wire_api = str(model_config.get("wire_api") or "").strip().lower()
     provider_api_key = str(model_config.get("api_key") or "").strip()
 
+    is_anthropic = protocol in {"claude", "anthropic-messages"}
+    is_chat_completions = (
+        api_format == "chat/completions"
+        or protocol in {"openai", "openai-chat-completions"}
+        or wire_api == "chat/completions"
+    )
     is_responses = (
         api_format == "responses"
         or protocol == "openai-responses"
         or wire_api == "responses"
     )
-    is_chat_completions = (
-        api_format == "chat/completions"
-        or protocol == "openai"
-        or protocol == "openai-chat-completions"
-    )
-    is_anthropic = protocol == "claude" or protocol == "anthropic-messages"
 
     if is_anthropic:
         auth_headers: dict[str, str] = {"anthropic-version": "2023-06-01"}
@@ -89,11 +92,24 @@ def _resolve_upstream_target(
             auth_headers["Authorization"] = f"Bearer {provider_api_key}"
         return "/chat/completions", auth_headers
 
-    # Default to Responses (covers is_responses and unknown configs).
-    auth_headers = {}
-    if provider_api_key:
-        auth_headers["Authorization"] = f"Bearer {provider_api_key}"
-    return "/responses", auth_headers
+    if is_responses:
+        auth_headers = {}
+        if provider_api_key:
+            auth_headers["Authorization"] = f"Bearer {provider_api_key}"
+        return "/responses", auth_headers
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"Model '{model_name}' has an unsupported or ambiguous protocol/apiFormat "
+            f"configuration: protocol={protocol!r}, api_format={api_format!r}, "
+            f"wire_api={wire_api!r}. "
+            "Please update the Model CRD: use protocol 'openai-responses' with "
+            "apiFormat 'responses' for OpenAI Responses, protocol 'openai' with "
+            "apiFormat 'chat/completions' for OpenAI Chat Completions, or protocol "
+            "'claude'/'anthropic-messages' for Anthropic Messages."
+        ),
+    )
 
 
 def _is_protected_upstream_header(name: str) -> bool:
@@ -301,7 +317,7 @@ async def proxy_llm_responses(
 
     body_json["model"] = provider_model_id
     body_bytes = json.dumps(body_json).encode("utf-8")
-    upstream_path, auth_headers = _resolve_upstream_target(model_config)
+    upstream_path, auth_headers = _resolve_upstream_target(model_name, model_config)
     upstream_url = f"{provider_base_url.rstrip('/')}{upstream_path}"
 
     configured_headers = (

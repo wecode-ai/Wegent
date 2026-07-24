@@ -420,3 +420,88 @@ async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
     assert sent_request.headers["x-api-key"] == "sk-anthropic-key"
     assert sent_request.headers["anthropic-version"] == "2023-06-01"
     assert "Authorization" not in sent_request.headers
+
+
+async def test_proxy_llm_responses_forwards_responses_to_provider(
+    test_db, test_user: User
+):
+    model = _model_kind(
+        test_user.id,
+        name="responses-model",
+        protocol="openai-responses",
+        api_key="sk-responses-key",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"responses-model","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    upstream_response_mock = MagicMock()
+    upstream_response_mock.status_code = 200
+    upstream_response_mock.headers = {"content-type": "text/event-stream"}
+
+    async def fake_aiter_raw():
+        yield b"data: ok\n\n"
+
+    upstream_response_mock.aiter_raw = fake_aiter_raw
+    client_mock = AsyncMock()
+    client_mock.send = AsyncMock(return_value=upstream_response_mock)
+    client_mock.aclose = AsyncMock()
+
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient",
+        return_value=client_mock,
+    ):
+        response = await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert response.status_code == 200
+    sent_request = client_mock.send.call_args[0][0]
+    assert str(sent_request.url) == "https://api.example.com/v1/responses"
+    assert sent_request.headers["Authorization"] == "Bearer sk-responses-key"
+
+
+async def test_proxy_llm_responses_rejects_unsupported_model_protocol(
+    test_db, test_user: User
+):
+    model = _model_kind(
+        test_user.id,
+        name="unsupported-model",
+        protocol="unsupported-protocol",
+        api_key="sk-test-key",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"unsupported-model","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert exc_info.value.status_code == 400
+    assert "unsupported-model" in exc_info.value.detail
+    assert "unsupported-protocol" in exc_info.value.detail
+    assert "Please update the Model CRD" in exc_info.value.detail
