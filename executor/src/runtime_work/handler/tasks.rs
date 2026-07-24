@@ -7,7 +7,7 @@ use super::*;
 impl RuntimeWorkRpcHandler {
     pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {
         let source = self.task_link_from_payload(&payload, false).await?;
-        if source.running && self.is_active_local_task(&source.local_task_id) {
+        if source.running || self.is_active_local_task(&source.local_task_id) {
             return Ok(
                 json!({"success": false, "accepted": false, "error": "runtime task is already running", "code": "bad_request"}),
             );

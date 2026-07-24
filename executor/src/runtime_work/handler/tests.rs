@@ -4,6 +4,44 @@
 
 use super::*;
 
+#[tokio::test]
+async fn fork_rejects_each_running_signal_independently() {
+    for (case, persisted_running, active_in_memory) in
+        [("persisted", true, false), ("active", false, true)]
+    {
+        let index_path = temp_runtime_work_index_path(&format!("fork-running-{case}"));
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.running = persisted_running;
+        handler.upsert_local_task(link);
+        if active_in_memory {
+            handler.mark_active_local_task("task-1");
+        }
+
+        let response = handler
+            .fork_task_at_turn(json!({
+                "taskId": "task-1",
+                "lastTurnId": "turn-1",
+            }))
+            .await
+            .expect("running task fork should return a structured failure");
+
+        assert_eq!(response["accepted"], false, "{case}");
+        assert_eq!(response["code"], "bad_request", "{case}");
+        assert_eq!(
+            response["error"], "runtime task is already running",
+            "{case}"
+        );
+
+        let _ = fs::remove_file(index_path);
+    }
+}
+
 #[test]
 fn finishing_an_active_goal_keeps_the_task_idle() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
