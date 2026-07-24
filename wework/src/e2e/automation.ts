@@ -270,13 +270,17 @@ function desktopControlElementMetrics(selector: string): string {
     elements.map(element => {
       const rect = element.getBoundingClientRect()
       return {
+        bottom: rect.bottom,
         clientHeight: element.clientHeight,
         clientWidth: element.clientWidth,
         height: rect.height,
+        left: rect.left,
+        right: rect.right,
         scrollHeight: element.scrollHeight,
         scrollLeft: element.scrollLeft,
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
+        top: rect.top,
         width: rect.width,
       }
     })

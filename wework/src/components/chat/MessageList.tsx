@@ -125,6 +125,7 @@ const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
 const SELECTION_ACTION_GAP = 8
 const MESSAGE_WINDOW_ROOT_MARGIN = '400px 0px'
 const ALWAYS_MOUNT_RECENT_MESSAGE_COUNT = 4
+const VIRTUAL_MESSAGE_MIN_COUNT = 20
 const VIRTUAL_MESSAGE_OVERSCAN = 2
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
@@ -228,7 +229,11 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = isTauri && Boolean(scrollElementRef) && !disableContentVisibility
+  const virtualMessages =
+    isTauri &&
+    Boolean(scrollElementRef) &&
+    visibleMessages.length >= VIRTUAL_MESSAGE_MIN_COUNT &&
+    !disableContentVisibility
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>
