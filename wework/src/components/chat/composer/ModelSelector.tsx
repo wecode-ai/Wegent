@@ -476,7 +476,7 @@ export function ModelSelector({
                   className="flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm text-text-primary hover:bg-muted"
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block font-medium">
+                    <span className="block font-normal">
                       {option.labelKey ? t(option.labelKey, option.label) : option.label}
                     </span>
                     {option.description && (
@@ -517,13 +517,13 @@ export function ModelSelector({
         onFocus={() => activateControl(control.id)}
         onClick={() => activateControl(control.id)}
         className={[
-          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
+          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal leading-[18px]',
           active
             ? 'bg-muted text-text-primary'
             : 'text-text-secondary hover:bg-muted hover:text-text-primary',
         ].join(' ')}
       >
-        <span className="min-w-0 flex-1 truncate text-text-primary">
+        <span className="min-w-0 flex-1 truncate">
           {control.labelKey ? t(control.labelKey, control.label) : control.label}
         </span>
         <span className="max-w-24 truncate text-text-muted">{selectedLabel}</span>
@@ -568,7 +568,7 @@ export function ModelSelector({
               : 'text-text-primary hover:bg-muted',
           ].join(' ')}
         >
-          <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-medium">
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-normal">
             {disabledMessage ? (
               <span className="min-w-0 flex-1 truncate">
                 <span className="block truncate">
@@ -864,13 +864,13 @@ export function ModelSelector({
                       onFocus={activateModels}
                       onClick={activateModels}
                       className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
+                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal leading-[18px]',
                         modelRowActive
                           ? 'bg-muted text-text-primary'
                           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                       )}
                     >
-                      <span className="min-w-0 flex-1 truncate text-text-primary">
+                      <span className="min-w-0 flex-1 truncate">
                         {t('workbench.model_version', '模型')}
                       </span>
                       <span className="max-w-24 truncate text-text-muted">{desktopModelLabel}</span>

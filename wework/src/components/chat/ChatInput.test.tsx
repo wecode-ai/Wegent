@@ -848,6 +848,7 @@ describe('ChatInput', () => {
       'py-[14px]',
       'scrollbar-none',
       'text-chat',
+      'text-text-primary',
       'leading-5'
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
@@ -2529,6 +2530,14 @@ describe('ChatInput', () => {
     expect(menu.getByText('设置 WeWork 将持续努力实现的目标')).toBeInTheDocument()
     expect(menu.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
     expect(menu.queryByText('插件')).not.toBeInTheDocument()
+    expect(screen.getByTestId('attach-files-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
+    expect(screen.getByTestId('set-plan-mode-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
 
     await userEvent.click(screen.getByTestId('set-plan-mode-button'))
 
