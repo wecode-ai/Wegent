@@ -256,6 +256,12 @@ describe('App center route', () => {
     render(<App />)
 
     await waitForStartupScreenToClose()
+    expect(screen.getByTestId('wework-dev-instance-trigger')).toHaveClass(
+      'h-8',
+      'w-8',
+      'rounded-full'
+    )
+    fireEvent.click(screen.getByTestId('wework-dev-instance-trigger'))
     expect(screen.getByTestId('wework-dev-instance-badge')).toHaveTextContent('Runtime task')
     fireEvent.click(screen.getByTestId('copy-wework-dev-port-button'))
     expect(writeText).toHaveBeenCalledWith('1420')
