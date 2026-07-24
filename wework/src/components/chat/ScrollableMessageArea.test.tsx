@@ -853,6 +853,75 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTop).toBe(624)
   })
 
+  test('keeps turn navigation in control while a clicked target settles', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    const originalResizeObserver = globalThis.ResizeObserver
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+    const messages = [
+      {
+        id: 'settle-user-1',
+        role: 'user' as const,
+        content: '第一条需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: 'settle-assistant-1',
+        role: 'assistant' as const,
+        content: '很长的回复',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+      {
+        id: 'settle-user-2',
+        role: 'user' as const,
+        content: '最新需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:02.000Z',
+      },
+    ]
+    render(<ScrollableMessageArea conversationKey="navigation-settle" messages={messages} />)
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const content = screen.getByTestId('chat-message-scroll-area-content')
+    const firstMessageAnchor = screen.getByText('第一条需求').closest('[data-message-id]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', { value: 700, writable: true, configurable: true })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      if (typeof top === 'number') scroller.scrollTop = top
+    })
+    mockRect(scroller, 0, 300)
+    mockScrollRelativeRect(firstMessageAnchor, scroller, 120, 60)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+    fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[0])
+    expect(scroller.scrollTop).toBe(24)
+
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1600, configurable: true })
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+    expect(scroller.scrollTop).toBe(24)
+
+    mockScrollRelativeRect(firstMessageAnchor, scroller, 180, 60)
+    act(() => vi.advanceTimersByTime(80))
+    expect(scroller.scrollTop).toBe(84)
+    expect(content).toBeInTheDocument()
+    vi.stubGlobal('ResizeObserver', originalResizeObserver)
+  })
+
   test('jumps to the resolved client message id after loading an older turn', async () => {
     let resolveLoad: (() => void) | undefined
     const onLoadTurnNavigationItem = vi.fn(

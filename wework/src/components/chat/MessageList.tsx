@@ -1,6 +1,6 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
   CSSProperties,
@@ -77,6 +77,7 @@ interface MessageListProps {
   conversationKey?: string | number | null
   isWaitingForAssistant?: boolean
   disableContentVisibility?: boolean
+  forceVirtualMessageId?: string | null
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
@@ -161,6 +162,7 @@ export const MessageList = memo(function MessageList({
   conversationKey,
   isWaitingForAssistant = false,
   disableContentVisibility = false,
+  forceVirtualMessageId = null,
   devices = [],
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
@@ -228,6 +230,13 @@ export const MessageList = memo(function MessageList({
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
   const virtualMessages = isTauri && Boolean(scrollElementRef) && !disableContentVisibility
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
+  const forcedVirtualMessageIndex = useMemo(
+    () =>
+      forceVirtualMessageId === null
+        ? -1
+        : visibleMessages.findIndex(message => message.id === forceVirtualMessageId),
+    [forceVirtualMessageId, visibleMessages]
+  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
@@ -272,6 +281,13 @@ export const MessageList = memo(function MessageList({
     paddingStart: MESSAGE_LIST_PADDING_TOP_PX,
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
+    rangeExtractor: range => {
+      const indexes = defaultRangeExtractor(range)
+      if (forcedVirtualMessageIndex < 0 || indexes.includes(forcedVirtualMessageIndex)) {
+        return indexes
+      }
+      return [...indexes, forcedVirtualMessageIndex].sort((left, right) => left - right)
+    },
     initialMeasurementsCache,
   })
 
@@ -709,6 +725,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.disableContentVisibility !== next.disableContentVisibility
       ? 'disableContentVisibility'
       : null,
+    previous.forceVirtualMessageId !== next.forceVirtualMessageId ? 'forceVirtualMessageId' : null,
     previous.devices !== next.devices ? 'devices' : null,
     previous.onRetryFailedMessage !== next.onRetryFailedMessage ? 'onRetryFailedMessage' : null,
     previous.onSwitchModelForFailedMessage !== next.onSwitchModelForFailedMessage
