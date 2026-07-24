@@ -13,6 +13,23 @@ describe('workbenchReducer', () => {
     expect(state.currentRuntimeTask).toBeNull()
   })
 
+  test('removes a deleted cloud project from the visible project state', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        projects: [
+          { id: 7, name: 'Deleted project', tasks: [] },
+          { id: 8, name: 'Retained project', tasks: [] },
+        ],
+        currentProject: { id: 7, name: 'Deleted project', tasks: [] },
+      },
+      { type: 'project_removed', projectId: 7 }
+    )
+
+    expect(state.projects.map(project => project.id)).toEqual([8])
+    expect(state.currentProject).toBeNull()
+  })
+
   test('preserves the current blank chat draft when clearing the runtime task', () => {
     const state = workbenchReducer(
       {

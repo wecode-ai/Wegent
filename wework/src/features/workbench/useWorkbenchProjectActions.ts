@@ -299,6 +299,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
       await refreshWorkLists()
+      dispatch({ type: 'project_removed', projectId })
     },
     [dispatch, refreshWorkLists, services.projectApi, state.projects]
   )
