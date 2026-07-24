@@ -3580,7 +3580,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         modelSelection: {
           modelName: 'cloud:user:shared-model',
           modelType: 'user',
-          options: { collaborationMode: 'plan', reasoning: 'high' },
+          options: {
+            collaborationMode: 'plan',
+            reasoning: 'high',
+          },
         },
       })
     )

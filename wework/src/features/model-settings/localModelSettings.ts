@@ -110,9 +110,6 @@ function validateLocalModelToolProfile(
   if (toolProfile === 'custom' && apiFormat !== 'openai-responses') {
     throw new Error('Native custom tools require the OpenAI Responses API format')
   }
-  if (toolProfile === 'function' && apiFormat === 'openai-responses') {
-    throw new Error('Function tool conversion requires Chat Completions or Anthropic Messages')
-  }
 }
 
 function readStoredConfigs(): LocalModelConfig[] {

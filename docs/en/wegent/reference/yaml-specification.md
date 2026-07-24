@@ -188,6 +188,9 @@ spec:
 | `spec.modelCapabilities.supportsVideo` | boolean | No | Whether the model supports video understanding; when enabled, model selectors show the Video Understanding capability indicator |
 | `spec.modelConfig`     | object | Yes      | Model configuration object                         |
 | `spec.modelConfig.env` | object | Yes      | Environment variables configuration                |
+| `spec.protocol`        | string | No       | Upstream protocol (`openai`, `openai-responses`, `claude`, ...). Inferred from `env.model` when omitted. |
+| `spec.apiFormat`       | string | No       | Upstream API format (`responses`, `chat/completions`, ...). Derived from `spec.protocol` when omitted. |
+| `spec.isWeworkAvailable` | boolean | No     | Whether the model is distributed to the wework desktop client. |
 
 ### Model Selector Grouping
 
