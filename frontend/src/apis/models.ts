@@ -103,7 +103,7 @@ export interface ModelCRD {
     }
     protocol?: string
     isCustomConfig?: boolean
-    costIndex?: number // Relative usage cost compared with the baseline model
+    costIndex?: string // Relative usage cost compared with the baseline model
     // New fields for multi-type model support
     modelType?: ModelCategoryType
     modelGroup?: string
@@ -177,7 +177,7 @@ export interface UnifiedModel {
   modelSubGroup?: string | null
   contextWindow?: number | null
   maxOutputTokens?: number | null
-  costIndex?: number | null
+  costIndex?: string | null
   modelCapabilities?: ModelCapabilities | null
   created_at?: string | null
   updated_at?: string | null

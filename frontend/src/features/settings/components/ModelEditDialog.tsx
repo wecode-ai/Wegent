@@ -69,7 +69,7 @@ export interface ModelFormData {
   customHeaders: string
   contextWindow?: number
   maxOutputTokens?: number
-  costIndex?: number
+  costIndex?: string
   // Type-specific configs
   ttsVoice?: string
   ttsSpeed?: number
@@ -109,7 +109,7 @@ export interface ModelInitialData {
   protocol?: string
   contextWindow?: number
   maxOutputTokens?: number
-  costIndex?: number
+  costIndex?: string
   // Type-specific configs
   ttsConfig?: TTSConfig
   sttConfig?: STTConfig
@@ -342,7 +342,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // LLM-specific config state
   const [contextWindow, setContextWindow] = useState<number | undefined>(undefined)
   const [maxOutputTokens, setMaxOutputTokens] = useState<number | undefined>(undefined)
-  const [costIndex, setCostIndex] = useState<number | undefined>(undefined)
+  const [costIndex, setCostIndex] = useState<string | undefined>(undefined)
   // Thinking/Reasoning config (JSON passthrough)
   const [thinkingConfigStr, setThinkingConfigStr] = useState('')
   const [thinkingConfigError, setThinkingConfigError] = useState('')
@@ -1604,14 +1604,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 <Input
                   id="cost_index"
                   data-testid="model-cost-index-input"
-                  type="number"
-                  min="0.1"
-                  step="0.1"
+                  type="text"
                   value={costIndex ?? ''}
-                  onChange={e => {
-                    const value = Number(e.target.value)
-                    setCostIndex(e.target.value && value > 0 ? value : undefined)
-                  }}
+                  onChange={e => setCostIndex(e.target.value || undefined)}
                   placeholder="1"
                   className="bg-base"
                 />

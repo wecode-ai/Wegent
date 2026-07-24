@@ -89,7 +89,7 @@ const SetupModelStep: React.FC = () => {
       protocol: spec?.protocol as string,
       contextWindow: modelConfig?.context_window as number | undefined,
       maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
-      costIndex: spec?.costIndex as number | undefined,
+      costIndex: typeof spec?.costIndex === 'string' ? spec.costIndex : undefined,
       modelCapabilities: getModelCapabilitiesFromSpec({
         modelCapabilities: spec?.modelCapabilities,
         modelConfig,

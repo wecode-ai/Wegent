@@ -59,7 +59,7 @@ export interface Model {
   modelSubGroup?: string | null
   contextWindow?: number | null
   maxOutputTokens?: number | null
-  costIndex?: number | null
+  costIndex?: string | null
   modelCapabilities?: ModelCapabilities | null
   config?: Record<string, unknown>
 }

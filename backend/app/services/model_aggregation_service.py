@@ -108,7 +108,7 @@ class UnifiedModel:
         model_sub_group: Optional[str] = None,
         context_window: Optional[int] = None,
         max_output_tokens: Optional[int] = None,
-        cost_index: Optional[float] = None,
+        cost_index: Optional[str] = None,
         model_capabilities: Optional[Dict[str, bool]] = None,
         resource_user_id: Optional[int] = None,
         runtime_family: Optional[str] = None,
