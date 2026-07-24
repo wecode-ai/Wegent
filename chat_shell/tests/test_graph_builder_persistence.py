@@ -161,3 +161,52 @@ async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypat
     t0 = captured[0]["config"]["configurable"]["thread_id"]
     t1 = captured[1]["config"]["configurable"]["thread_id"]
     assert t0 and t1 and t0 != t1  # present and unique per turn
+
+
+def test_finalize_turn_history_sets_all_three_fields_atomically():
+    from langchain_core.messages import ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+    from chat_shell.agents.turn_context import TurnExecutionContext
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    # Authoritative post-compaction state: input "u1" already removed; the
+    # retained clone / summary / suffix carry fresh ids (not in original_input_ids).
+    state = [
+        HumanMessage(
+            content="retained",
+            additional_kwargs={"checkpoint_retained": True},
+            id="r1",
+        ),
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t2", "name": "_probe", "args": {}}],
+            id="a2",
+        ),
+        ToolMessage(content="ok", tool_call_id="t2", name="_probe", id="tm2"),
+        AIMessage(content="final answer", id="a3"),
+    ]
+    ctx = TurnExecutionContext(
+        original_input_ids=frozenset({"u1"}), current_thread_id="root"
+    )
+
+    builder._finalize_turn_history(state, ctx, "normal_completion")
+
+    chain = builder._last_messages_chain
+    assert [c["role"] for c in chain] == [
+        "user",
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert chain[0]["additional_kwargs"]["checkpoint_retained"] is True
+    assert chain[1]["additional_kwargs"]["summary_compacted"] is True
+    assert chain[3]["tool_call_id"] == "t2"
+    assert builder._last_termination_reason == "normal_completion"
+    assert len(builder._last_live_state_messages) == len(state)

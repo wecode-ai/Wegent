@@ -39,6 +39,7 @@ from opentelemetry import trace as otel_trace
 
 from shared.telemetry.decorators import add_span_event, trace_sync
 
+from ..compression.tool_sanitizer import sanitize_tool_pairs
 from ..core.config import settings
 from ..llm_logging import env_bool as _env_bool
 from ..llm_logging import log_direct_llm_request as _log_direct_llm_request
@@ -1399,6 +1400,32 @@ class LangGraphAgentBuilder:
                 logger.info("Streaming cancelled by user")
                 return
             yield event
+
+    def _finalize_turn_history(
+        self,
+        authoritative_messages: list[BaseMessage],
+        turn_ctx: TurnExecutionContext,
+        termination_reason: str,
+    ) -> None:
+        """Single atomic choke point for turn-result state.
+
+        Every terminal path funnels through here so ``_last_messages_chain``,
+        ``_last_live_state_messages`` and ``_last_termination_reason`` can never
+        drift apart. Sanitizes tool pairs, filters to this turn's new messages
+        using the turn-invariant ``original_input_ids``, then serializes and
+        validates.
+        """
+        sanitized = sanitize_tool_pairs(authoritative_messages)
+        new_msgs = _new_messages_from_state(sanitized, turn_ctx.original_input_ids)
+        self._last_messages_chain = _serialize_validated_messages_chain(
+            new_msgs,
+            provider=self._provider,
+            model_id=self._model_id,
+        )
+        self._last_live_state_messages = [
+            _message_to_context_metrics_dict(msg) for msg in authoritative_messages
+        ]
+        self._last_termination_reason = termination_reason
 
     async def stream_tokens(
         self,
