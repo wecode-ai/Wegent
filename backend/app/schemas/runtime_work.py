@@ -717,6 +717,15 @@ class RuntimeTaskCreateRequest(BaseModel):
     )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     execution: Optional[dict[str, Any]] = None
+    delivery_id: Optional[str] = Field(
+        default=None, alias="deliveryId", min_length=36, max_length=36
+    )
+    cloud_project_id: Optional[int] = Field(default=None, alias="cloudProjectId", ge=1)
+    additional_context: Optional[dict[str, dict[str, Any]]] = Field(
+        default=None,
+        alias="additionalContext",
+        validation_alias=AliasChoices("additionalContext", "additional_context"),
+    )
 
 
 class RuntimeTaskCreateResponse(BaseModel):

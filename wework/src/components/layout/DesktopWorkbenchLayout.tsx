@@ -34,13 +34,15 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
-import { TodoWorkspace } from '@/features/todo/TodoWorkspace'
+import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import {
   WorkbenchBackground,
   defaultAppearance,
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { DesktopAppSwitcher, type DesktopAppKey } from './DesktopAppSwitcher'
 import { WindowFrameControls } from './WindowFrameControls'
@@ -65,10 +67,10 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
 export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
   const windowFocused = useWindowFocus()
+  const cloudConnection = useOptionalCloudConnection()
   const { logout: onLogout } = useAuth()
   const {
     state,
-    projectChat,
     cloudWorkStatus,
     upgradingDevices,
     selectProject: onSelectProject,
@@ -115,9 +117,13 @@ export function DesktopWorkbenchLayout() {
     services,
     refreshWorkLists,
   } = useWorkbench()
+  const localTodoProjects = useMemo(
+    () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
+    [state.projects, state.runtimeWork]
+  )
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
-  const todoOpen = currentPath === '/todo'
+  const todoOpen = currentPath === '/todo' && cloudConnection.isConnected
   const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const createPermanentWorktree = useCallback(
@@ -759,27 +765,43 @@ export function DesktopWorkbenchLayout() {
           />
         )}
         <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-          {todoOpen && (
-            <TodoWorkspace
-              user={state.user}
-              projects={state.projects}
-              runtimeWork={state.runtimeWork}
-              currentProjectId={state.currentProject?.id}
-              services={services}
-              modelName={projectChat.selectedModel?.displayName ?? projectChat.selectedModel?.name}
-              onRunTodo={({ project, message, goal, attachments }) =>
-                onCreateProjectRuntimeTask(message, {
+          {todoOpen &&
+            (state.user && services.deliveryApi ? (
+              <CloudTodoWorkspace
+                user={state.user}
+                localProjects={localTodoProjects}
+                services={services}
+                onRunTodo={({
                   project,
+                  message,
+                  goal,
                   attachments,
-                  initialGoal: goal ? { objective: goal } : null,
-                })
-              }
-              onOpenRuntimeTask={async address => {
-                navigateTo('/')
-                await onOpenRuntimeTask?.(address)
-              }}
-            />
-          )}
+                  collaborationMode,
+                  deliveryId,
+                  cloudProjectId,
+                }) =>
+                  onCreateProjectRuntimeTask(message, {
+                    project,
+                    attachments,
+                    initialGoal: goal ? { objective: goal } : null,
+                    collaborationMode,
+                    deliveryId,
+                    cloudProjectId,
+                  })
+                }
+                onOpenRuntimeTask={async address => {
+                  navigateTo('/')
+                  await onOpenRuntimeTask?.(address)
+                }}
+              />
+            ) : (
+              <div
+                data-testid="cloud-board-loading"
+                className="flex h-full flex-1 items-center justify-center text-sm text-text-muted"
+              >
+                {t('workbench.cloud_board_loading', '正在加载云端看板…')}
+              </div>
+            ))}
           <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
             <DesktopWorkbenchMain
               visible={!settingsOpen && !todoOpen}

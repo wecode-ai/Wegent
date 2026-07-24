@@ -220,6 +220,7 @@ function ScrollableMessagePaneContent({
   const stickyFooterRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const turnNavigationLoadingRef = useRef(false)
+  const turnNavigationScrollingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
@@ -233,6 +234,9 @@ function ScrollableMessagePaneContent({
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [turnNavigationLoading, setTurnNavigationLoading] = useState(false)
+  const [turnNavigationTargetMessageId, setTurnNavigationTargetMessageId] = useState<string | null>(
+    null
+  )
   const [loadingTranscriptGapKey, setLoadingTranscriptGapKey] = useState<string | null>(null)
   const lastMessage = messages[messages.length - 1]
   const currentScrollKey = useMemo(() => scrollPositionKey(conversationKey), [conversationKey])
@@ -291,8 +295,29 @@ function ScrollableMessagePaneContent({
   }, [])
 
   const isTurnNavigationAutoScrollSuspended = useCallback(
-    () => turnNavigationLoadingRef.current,
+    () => turnNavigationLoadingRef.current || turnNavigationScrollingRef.current,
     []
+  )
+
+  const handleTurnNavigationScrollTargetChange = useCallback(
+    (messageId: string | null) => {
+      const scrolling = messageId !== null
+      turnNavigationScrollingRef.current = scrolling
+      setTurnNavigationTargetMessageId(messageId)
+      const element = activeScrollRefRef.current.current
+      console.warn('[Wework] Message turn navigation scroll ownership', {
+        scrolling,
+        messageId,
+        conversationKey: currentScrollKey,
+        scrollTop: element?.scrollTop ?? null,
+        scrollHeight: element?.scrollHeight ?? null,
+        clientHeight: element?.clientHeight ?? null,
+      })
+      if (scrolling) {
+        clearScheduledScrolls()
+      }
+    },
+    [clearScheduledScrolls, currentScrollKey]
   )
 
   const handleTurnNavigationLoadStateChange = useCallback(
@@ -592,6 +617,14 @@ function ScrollableMessagePaneContent({
 
     const resizeObserver = new ResizeObserver(() => {
       if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
+        if (turnNavigationScrollingRef.current) {
+          console.warn('[Wework] Message turn navigation ignored content resize', {
+            conversationKey: currentScrollKey,
+            scrollTop: activeScrollRefRef.current.current?.scrollTop ?? null,
+            scrollHeight: activeScrollRefRef.current.current?.scrollHeight ?? null,
+            clientHeight: activeScrollRefRef.current.current?.clientHeight ?? null,
+          })
+        }
         return
       }
 
@@ -684,6 +717,7 @@ function ScrollableMessagePaneContent({
         contentRef={contentRef}
         onLoadTurnNavigationItem={onLoadTurnNavigationItem}
         onNavigationLoadStateChange={handleTurnNavigationLoadStateChange}
+        onNavigationScrollTargetChange={handleTurnNavigationScrollTargetChange}
         portalTarget={turnNavigationPortalTarget}
       />
       {turnNavigationLoading && (
@@ -701,7 +735,8 @@ function ScrollableMessagePaneContent({
         className={cn(
           'h-full overflow-y-auto',
           stickyFooter && 'flex flex-col',
-          (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]',
+          (turnNavigationLoading || turnNavigationTargetMessageId || autoScrollSuspended) &&
+            '[overflow-anchor:none]',
           scrollerClassName
         )}
         onWheel={event => {
@@ -718,7 +753,8 @@ function ScrollableMessagePaneContent({
           className={cn(
             'min-w-0',
             stickyFooter && 'flex-1 shrink-0',
-            (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]'
+            (turnNavigationLoading || turnNavigationTargetMessageId || autoScrollSuspended) &&
+              '[overflow-anchor:none]'
           )}
         >
           {messages.length === 0 ? (
@@ -768,6 +804,7 @@ function ScrollableMessagePaneContent({
                 initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
                 className={messageListClassName}
                 conversationKey={conversationKey}
+                forceVirtualMessageId={turnNavigationTargetMessageId}
                 isWaitingForAssistant={isWaitingForAssistant}
                 disableContentVisibility={turnNavigationLoading}
                 devices={devices}

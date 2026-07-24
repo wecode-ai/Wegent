@@ -9,6 +9,7 @@ import {
   GitBranch,
   GitPullRequest,
   Info,
+  Link2,
   Laptop,
   LoaderCircle,
   Square,
@@ -54,6 +55,9 @@ interface EnvironmentInfoPopoverProps {
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
   onOpenChangesReview?: () => void
+  onDeliver?: () => void
+  todoLabel?: string
+  onManageTodo?: () => void
 }
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
@@ -83,6 +87,9 @@ export function EnvironmentInfoPopover({
   onCheckoutBranch,
   onCreateBranch,
   onOpenChangesReview,
+  onDeliver,
+  todoLabel,
+  onManageTodo,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
   const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
@@ -456,6 +463,36 @@ export function EnvironmentInfoPopover({
                         </span>
                       </button>
                     </>
+                  )}
+                </section>
+              )}
+              {(onManageTodo || onDeliver) && (
+                <section className="border-t border-border pt-3">
+                  {onManageTodo && (
+                    <button
+                      type="button"
+                      data-testid="environment-todo-binding-button"
+                      onClick={onManageTodo}
+                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                    >
+                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                        <Link2 className="h-[18px] w-[18px]" />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{todoLabel || '关联项目空间'}</span>
+                    </button>
+                  )}
+                  {onDeliver && (
+                    <button
+                      type="button"
+                      data-testid="environment-delivery-button"
+                      onClick={onDeliver}
+                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                    >
+                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                        <GitBranch className="h-[18px] w-[18px]" />
+                      </span>
+                      <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
+                    </button>
                   )}
                 </section>
               )}

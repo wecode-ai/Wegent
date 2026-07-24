@@ -7,8 +7,7 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import type { DragEventHandler } from 'react'
-import { useState } from 'react'
+import { useState, type DragEventHandler, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
@@ -19,6 +18,7 @@ import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { readDroppedFiles } from '@/tauri/droppedFiles'
+import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 
 interface ProjectChatComposerProps {
   value: string
@@ -33,6 +33,7 @@ interface ProjectChatComposerProps {
   activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   attachments: Attachment[]
   codeComments?: CodeCommentContext[]
@@ -47,6 +48,7 @@ interface ProjectChatComposerProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -62,6 +64,7 @@ interface ProjectChatComposerProps {
   showProjectWorkBar?: boolean
   isStreaming?: boolean
   onPause?: () => void
+  toolbarLeadingContext?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -81,6 +84,7 @@ export function ProjectChatComposer({
   activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
+  onModelSelectorOpenChange,
   isModelSelectionReady,
   attachments,
   codeComments = [],
@@ -95,6 +99,7 @@ export function ProjectChatComposer({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -110,6 +115,7 @@ export function ProjectChatComposer({
   showProjectWorkBar = true,
   isStreaming = false,
   onPause,
+  toolbarLeadingContext,
 }: ProjectChatComposerProps) {
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const textareaRef = useAutoResizeTextarea(value, 168)
@@ -250,7 +256,8 @@ export function ProjectChatComposer({
           onOpenSkillFile={onOpenSkillFile}
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-secondary outline-none placeholder:text-text-muted/55"
+          cloudMentionCandidates={cloudMentionCandidates}
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           onListLocalApps={onListLocalApps}
@@ -272,6 +279,7 @@ export function ProjectChatComposer({
           activeModel={activeModel}
           selectedModelOptions={selectedModelOptions}
           modelSelectorOpenSignal={modelSelectorOpenSignal}
+          onModelSelectorOpenChange={onModelSelectorOpenChange}
           isModelSelectionReady={isModelSelectionReady}
           onSelectModel={onSelectModel}
           onSelectModelAndOptions={onSelectModelAndOptions}
@@ -290,6 +298,7 @@ export function ProjectChatComposer({
           onPause={onPause}
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
+          leadingContext={toolbarLeadingContext}
         />
       </form>
     </div>

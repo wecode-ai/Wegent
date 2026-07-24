@@ -276,6 +276,37 @@ describe('App center route', () => {
     expect(writeText).toHaveBeenCalledWith('1420')
     fireEvent.click(screen.getByTestId('copy-wework-dev-parent-title-button'))
     expect(writeText).toHaveBeenCalledWith('Parent task')
+
+    fireEvent.click(screen.getByTestId('collapse-wework-dev-instance-button'))
+    expect(screen.getByTestId('wework-dev-instance-trigger')).toHaveClass(
+      'h-8',
+      'w-8',
+      'rounded-full'
+    )
+    expect(screen.getByTestId('wework-dev-instance-badge')).toHaveTextContent('Port')
+
+    const badge = screen.getByTestId('wework-dev-instance-badge')
+    vi.spyOn(badge, 'getBoundingClientRect').mockReturnValue({
+      left: 900,
+      top: 700,
+      width: 32,
+      height: 32,
+      right: 932,
+      bottom: 732,
+      x: 900,
+      y: 700,
+      toJSON: () => ({}),
+    })
+    const trigger = screen.getByTestId('wework-dev-instance-trigger')
+    fireEvent.pointerDown(trigger, { button: 0, clientX: 916, clientY: 716 })
+    fireEvent.pointerMove(window, { clientX: 816, clientY: 616 })
+    fireEvent.pointerUp(window)
+    fireEvent.click(trigger)
+    expect(badge).toHaveStyle({ left: '800px', top: '600px' })
+    expect(trigger).toHaveClass('rounded-full')
+
+    fireEvent.click(screen.getByTestId('wework-dev-instance-trigger'))
+    expect(screen.getByTestId('wework-dev-instance-trigger')).not.toHaveClass('rounded-full')
   })
 
   test('keeps the app center sidebar available on desktop app widths', async () => {
