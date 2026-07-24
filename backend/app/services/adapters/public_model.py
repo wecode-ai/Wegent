@@ -17,6 +17,21 @@ from app.services.base import BaseService
 from app.services.model_capabilities import normalize_model_capabilities
 
 
+def _split_model_config_protocol(
+    config: Dict[str, Any],
+) -> tuple[Dict[str, Any], Optional[str], Optional[str]]:
+    """Move protocol/apiFormat from modelConfig to spec level if present.
+
+    Older clients and bulk-import payloads may place protocol/apiFormat inside
+    the modelConfig dict. The Model CRD schema keeps them at spec level, so
+    normalize them here to keep adapter-created models consistent with CRD
+    models created by the frontend.
+    """
+    protocol = config.pop("protocol", None) if isinstance(config, dict) else None
+    api_format = config.pop("apiFormat", None) if isinstance(config, dict) else None
+    return config, protocol, api_format
+
+
 class ModelAdapter:
     """
     Adapter to convert Kind (Model) to Model-like object for API compatibility
@@ -194,10 +209,20 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
         if existed:
             raise HTTPException(status_code=400, detail="Model name already exists")
 
-        # Convert config to JSON format matching kinds table structure
+        # Convert config to JSON format matching kinds table structure.
+        # Pull protocol/apiFormat up to spec level if the caller nested them
+        # inside the config dict.
+        model_config, protocol, api_format = _split_model_config_protocol(
+            dict(obj_in.config) if obj_in.config else {}
+        )
+        spec: Dict[str, Any] = {"modelConfig": model_config}
+        if protocol:
+            spec["protocol"] = protocol
+        if api_format:
+            spec["apiFormat"] = api_format
         json_data = {
             "kind": "Model",
-            "spec": {"modelConfig": obj_in.config},
+            "spec": spec,
             "status": {"state": "Available"},
             "metadata": {"name": obj_in.name, "namespace": "default"},
             "apiVersion": "agent.wecode.io/v1",
@@ -248,6 +273,10 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                         )
                         if it.wework_available is not None:
                             model_crd.spec.isWeworkAvailable = it.wework_available
+                        if it.protocol is not None:
+                            model_crd.spec.protocol = it.protocol
+                        if it.api_format is not None:
+                            model_crd.spec.apiFormat = it.api_format
                         existed.json = model_crd.model_dump(exclude_none=True)
                     else:
                         # Fallback for invalid JSON
@@ -260,6 +289,10 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                         }
                         if it.wework_available is not None:
                             spec["isWeworkAvailable"] = it.wework_available
+                        if it.protocol is not None:
+                            spec["protocol"] = it.protocol
+                        if it.api_format is not None:
+                            spec["apiFormat"] = it.api_format
                         json_data = {
                             "kind": "Model",
                             "spec": spec,
@@ -281,6 +314,10 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     spec: Dict[str, Any] = {"modelConfig": {"env": it.env}}
                     if it.wework_available is not None:
                         spec["isWeworkAvailable"] = it.wework_available
+                    if it.protocol is not None:
+                        spec["protocol"] = it.protocol
+                    if it.api_format is not None:
+                        spec["apiFormat"] = it.api_format
                     json_data = {
                         "kind": "Model",
                         "spec": spec,
@@ -515,10 +552,18 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     model_crd.metadata.name = value
                     model.json = model_crd.model_dump()
             elif field == "config":
-                # Update modelConfig in json
+                # Update modelConfig in json and pull protocol/apiFormat up to
+                # spec level if the caller nested them inside the config dict.
                 if isinstance(model.json, dict):
                     model_crd = Model.model_validate(model.json)
-                    model_crd.spec.modelConfig = value
+                    model_config, protocol, api_format = _split_model_config_protocol(
+                        dict(value) if value else {}
+                    )
+                    model_crd.spec.modelConfig = model_config
+                    if protocol:
+                        model_crd.spec.protocol = protocol
+                    if api_format:
+                        model_crd.spec.apiFormat = api_format
                     model.json = model_crd.model_dump()
             else:
                 setattr(model, field, value)

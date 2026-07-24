@@ -79,6 +79,8 @@ class ModelBulkCreateItem(BaseModel):
     env: dict[str, Any]
     is_active: bool = True
     wework_available: Optional[bool] = None
+    protocol: Optional[str] = None
+    api_format: Optional[str] = None
 
 
 class ModelBulkCreateResponse(BaseModel):

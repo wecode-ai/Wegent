@@ -35,6 +35,24 @@ def test_extract_model_config_uses_spec_protocol_and_api_format():
     assert config["api_format"] == "responses"
 
 
+def test_extract_model_config_falls_back_to_model_config_protocol_and_api_format():
+    spec = {
+        "modelConfig": {
+            "env": {
+                "model": "openai",
+                "model_id": "gpt-test",
+                "api_key": "sk-test",
+            },
+            "protocol": "openai",
+            "apiFormat": "chat/completions",
+        }
+    }
+    config = _extract_model_config(spec)
+
+    assert config["protocol"] == "openai"
+    assert config["api_format"] == "chat/completions"
+
+
 def test_extract_model_config_infers_openai_chat_completions_from_env_model():
     spec = _make_spec(env_model="openai", protocol=None, api_format=None)
     config = _extract_model_config(spec)

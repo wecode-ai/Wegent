@@ -935,16 +935,15 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             logger.warning(f"Failed to decrypt API key, using as-is: {e}")
 
     # Extract API format (for OpenAI-compatible models)
-    # Priority: 1. apiFormat field, 2. protocol field (openai-responses)
-    # Default to None for backward compatibility (will use chat/completions)
-    api_format = model_spec.get("apiFormat")
-    protocol = model_spec.get("protocol")
+    # Priority: 1. spec field, 2. modelConfig field, 3. protocol/env inference
+    api_format = model_spec.get("apiFormat") or model_config.get("apiFormat")
+    protocol = model_spec.get("protocol") or model_config.get("protocol")
 
     env_model = (
         str(env.get("model") or "").strip().lower() if isinstance(env, dict) else ""
     )
 
-    # Fallback: infer protocol from env.model when the spec does not set it.
+    # Fallback: infer protocol from env.model when the spec/modelConfig does not set it.
     # This fixes models created by older frontend versions that only stored
     # env.model (e.g. "openai" or "claude") without spec.protocol/apiFormat.
     if not protocol and env_model:
