@@ -4911,11 +4911,10 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     1,
     'The cloud flow did not expose exactly one remote project'
   )
-  const projectId = projectMenuTestIds[0].slice('project-menu-'.length)
   await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
   await control.command(
     'clickWhenEnabled',
-    `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+    '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]'
   )
   await control.command('waitFor', '[data-testid="project-work-button"]', {
     text: 'workspace',
@@ -4946,6 +4945,11 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   )
 
   control.setScenario('cloud_initial')
+  const taskRowsBeforeCloudTask = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
   const cloudInitialRequest = await withTimeout(
     control.awaitScenarioRequestCount('cloud_initial', 2),
@@ -4962,15 +4966,11 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     CLOUD_ARTIFACT_CONTENT,
     'The real cloud executor did not create the verification artifact'
   )
-  const taskSnapshot = await waitForSnapshot(
+  const taskRowTestId = await waitForNewTaskRow(
     control,
-    value => value.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
-    'The completed cloud task was not persisted in the sidebar'
+    taskRowsBeforeCloudTask,
+    'WEWORK_DESKTOP_E2E_CLOUD_TASK'
   )
-  const taskRowTestId = taskSnapshot.testIds.find(testId =>
-    testId.startsWith('runtime-local-task-row-')
-  )
-  assert.ok(taskRowTestId, 'The completed cloud task row was not available')
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_COMPLETION_TEXT,
@@ -5087,7 +5087,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     control,
     value =>
       !value.testIds.includes(projectMenuTestId) &&
-      !value.testIds.includes(`remove-project-dialog-${projectId}`),
+      !value.testIds.includes(`remove-project-dialog-${currentProjectId}`),
     'The removed cloud project remained visible in the workbench'
   )
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
