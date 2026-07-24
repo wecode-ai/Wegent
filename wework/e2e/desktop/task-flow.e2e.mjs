@@ -129,8 +129,7 @@ const CLOUD_FOLLOW_UP_PROMPT =
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
-const ACTIVE_WORKBENCH_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 const MACOS_LAUNCH_SERVICES_REGISTER =
@@ -5101,6 +5100,66 @@ async function main() {
       UNSENT_FIRST_TASK_DRAFT,
       'The first task lost its unsent composer draft after switching tasks'
     )
+
+    phase = 'workspace-resources-across-conversation-switch'
+    const activeBrowserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
+    const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
+    const activeRightPanelToggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-right-workspace-panel-button"]`
+    const retainedBrowserUrl = 'https://example.com/session-state'
+    await control.command('waitFor', activeRightPanelToggleSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', activeRightPanelToggleSelector)
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
+    )
+    await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
+    await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-bottom-workspace-panel-button"]`
+    )
+    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
+    const secondTaskWorkspaceSnapshot = JSON.parse(
+      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    assert.equal(
+      secondTaskWorkspaceSnapshot.testIds.includes('workspace-terminal-window'),
+      false,
+      'The first task terminal leaked into the second task'
+    )
+    assert.equal(
+      secondTaskWorkspaceSnapshot.testIds.includes('workspace-browser-panel'),
+      false,
+      'The first task browser leaked into the second task'
+    )
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
+    assert.equal(
+      await control.command('getValue', activeBrowserInputSelector),
+      retainedBrowserUrl,
+      'The Wework built-in browser URL was reset after switching conversations'
+    )
+    const restoredWorkspaceSnapshot = JSON.parse(
+      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    assert.ok(
+      restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
+      'The browser tab was not restored after switching conversations'
+    )
+    await captureVerificationScreenshot(control, 'workspace-resources-restored-after-switch.png')
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="close-bottom-workspace-tab-button"]`
+    )
+    await control.command(
+      'click',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-tab-close-button"]`
+    )
+
     await control.command('fill', composerSelector, { value: '' })
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     await control.command('fill', composerSelector, { value: '' })
