@@ -1672,6 +1672,7 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
 
 async function verifyPastedZipAttachment({ composerSelector, control }) {
   control.setScenario('pasted_zip_attachment')
+  await control.command('snapshot', 'body')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
   await control.command('pasteFile', composerSelector, {

@@ -147,6 +147,18 @@ fn binary_attachment_context_lists_zip_path_without_duplicating_text_or_images()
 }
 
 #[test]
+fn image_mime_type_overrides_text_filename_extension() {
+    let mut image = attachment(278, "preview.txt", "/tmp/preview.txt");
+    image.mime_type = Some("image/png".to_owned());
+
+    let text_context = AttachmentPromptProcessor::build_text_attachment_context(&[image.clone()]);
+    let binary_context = AttachmentPromptProcessor::build_binary_attachment_context(&[image]);
+
+    assert!(text_context.is_empty());
+    assert!(binary_context.is_empty());
+}
+
+#[test]
 fn text_attachment_context_includes_file_content_and_path() {
     let attachment_path = std::env::temp_dir().join(format!(
         "wegent-text-attachment-{}-{}.txt",

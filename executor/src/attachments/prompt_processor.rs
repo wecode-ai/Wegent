@@ -343,6 +343,10 @@ fn append_failed_download_warning(
 }
 
 fn is_text_attachment(attachment: &AttachmentRecord) -> bool {
+    if is_image_attachment(attachment) {
+        return false;
+    }
+
     if attachment
         .mime_type
         .as_deref()
