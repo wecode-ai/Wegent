@@ -102,6 +102,12 @@ When a runtime transcript page is loaded or refreshed, the server-provided `mess
 
 When loading an older page or filling a middle gap, indexed messages remain ordered by the server index, while local messages sharing an anchor keep their stable pane order. Deduplication uses only stable message ids and must not infer identity from content, role, or subtask.
 
+### Transcript Gap Loading
+
+The message list detects middle gaps from adjacent `messageIndex` values. A gap may automatically request its transcript range once when it first enters the viewport. If a model failure or another runtime condition means that the server has no record for that range, the gap remains visible after the request, but the same range must not be requested automatically again within that conversation. Users can still click the gap marker to retry manually. Automatic-attempt tracking resets by `conversationKey` when the conversation changes.
+
+This boundary prevents a permanently missing record from causing a “load completes → gap remains visible → load again” loop that repeatedly shows the loading state and disturbs the scroll position. Changes to gap loading must cover the case where the server request succeeds without resolving the gap.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
