@@ -122,8 +122,8 @@ class LocalTaskSummary(BaseModel):
     git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
     children: list[RuntimeTaskAddressRef] = Field(default_factory=list)
-    created_at: Optional[str] = Field(default=None, alias="createdAt")
-    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+    created_at: Optional[str | int] = Field(default=None, alias="createdAt")
+    updated_at: Optional[str | int] = Field(default=None, alias="updatedAt")
     running: bool = False
     status: Optional[LocalTaskStatus] = None
 

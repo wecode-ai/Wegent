@@ -1412,7 +1412,7 @@ fn remove_codex_global_project_payload(
         .and_then(Value::as_object_mut)
     {
         hints.retain(|_, root| {
-            root.as_str().map(normalize_workspace_path).as_deref() != Some(workspace_path.as_str())
+            root.as_str().map(normalize_workspace_path).as_deref() != Some(workspace_path)
         });
     }
 }
