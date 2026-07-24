@@ -198,7 +198,10 @@ class SummaryCompactor:
         preserve_initial_context: bool,
     ) -> SummaryCompactResult:
         """Run compact task with codex-style ``remove_oldest`` self-retry."""
-        working_messages = list(messages)
+        # Sanitize up front so the budget reflects what will actually be sent
+        # (orphan tool messages and unresolved tool_calls are dropped), rather
+        # than over-counting raw messages that sanitize would remove anyway.
+        working_messages = self._sanitize_tool_message_sequence(list(messages))
         removed = 0
         current_user = self._find_current_user_message(working_messages)
         logger.info(
@@ -312,14 +315,20 @@ class SummaryCompactor:
         """Drop oldest removable messages in one O(n) pass to fit the budget.
 
         Token counts are computed once per message (not re-summed per removal).
-        System messages and the current user message are never dropped. Uses raw
-        per-message counts (a safe over-estimate of the sanitized prompt).
+        System messages and the current user message are never dropped. Callers
+        pass an already-sanitized list so the estimate matches the sent prompt.
+
+        Per-message cost excludes the counter's one-time reply-priming so the sum
+        does not inflate by ~priming*N; the priming is added back exactly once via
+        ``framing``. The result equals a single ``count_messages`` over the full
+        compact prompt.
         """
         if self._max_compact_input_tokens is None:
             return 0
 
+        priming = self._token_counter.count_messages([])
         counts = [
-            self._token_counter.count_messages([_message_to_counter_dict(m)])
+            self._token_counter.count_messages([_message_to_counter_dict(m)]) - priming
             for m in messages
         ]
         framing = self._token_counter.count_messages(

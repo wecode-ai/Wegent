@@ -255,9 +255,73 @@ def test_trim_to_budget_single_pass_counts_each_message_once():
     assert system in messages
     assert current in messages
     assert removed > 0
-    # O(n): one count per original message + one framing count (+1 slack),
-    # NOT O(n^2).
-    assert call_count["n"] <= original_len + 2
+    # O(n): one priming baseline + one count per original message + one framing
+    # count (+1 slack), NOT O(n^2).
+    assert call_count["n"] <= original_len + 3
+
+
+def test_trim_to_budget_uses_exact_prompt_count_no_priming_inflation():
+    from chat_shell.compression.summary_compactor import (
+        COMPACT_TASK_INSTRUCTION,
+        _message_to_counter_dict,
+    )
+
+    counter = TokenCounter(model_name="gpt-4")
+    msgs = [
+        SystemMessage(content="sys"),
+        HumanMessage(content="a " * 30),
+        HumanMessage(content="b " * 30),
+        HumanMessage(content="current"),
+    ]
+    # Exact tokens of the prompt actually sent (messages + instruction), one call.
+    exact = counter.count_messages(
+        [_message_to_counter_dict(m) for m in msgs]
+        + [_message_to_counter_dict(HumanMessage(content=COMPACT_TASK_INSTRUCTION))]
+    )
+    compactor = SummaryCompactor(
+        llm=object(), token_counter=counter, max_compact_input_tokens=exact
+    )
+    before = list(msgs)
+    removed = compactor._trim_to_budget(msgs, current_user=msgs[-1])
+    # Budget == exact prompt size → nothing to trim. The old per-message priming
+    # inflation would have over-estimated and deleted messages.
+    assert removed == 0
+    assert msgs == before
+
+
+@pytest.mark.asyncio
+async def test_compact_sanitizes_orphan_before_budget():
+    from chat_shell.compression.summary_compactor import (
+        COMPACT_TASK_INSTRUCTION,
+        _message_to_counter_dict,
+    )
+
+    llm = _FakeLLM([AIMessage(content="Current objective:\nok")])
+    counter = TokenCounter(model_name="gpt-4")
+    valid = HumanMessage(content="valid old message")
+    orphan = ToolMessage(content="x " * 1000, tool_call_id="missing", name="t")
+    current = HumanMessage(content="current question")
+    # Budget fits only the sanitized prompt (valid + current + instruction); the
+    # orphan's tokens would push a raw-based estimate over and wrongly delete the
+    # valid message before it.
+    exact = counter.count_messages(
+        [
+            _message_to_counter_dict(valid),
+            _message_to_counter_dict(current),
+            _message_to_counter_dict(HumanMessage(content=COMPACT_TASK_INSTRUCTION)),
+        ]
+    )
+    compactor = SummaryCompactor(
+        llm=llm, token_counter=counter, max_compact_input_tokens=exact
+    )
+
+    result = await compactor.compact(
+        [valid, orphan, current], preserve_initial_context=False
+    )
+
+    assert result.removed_history_items == 0
+    sent_contents = [getattr(m, "content", "") for m in llm.calls[0]]
+    assert "valid old message" in sent_contents
 
 
 def test_is_context_too_long_error_matches_status_and_chinese():
