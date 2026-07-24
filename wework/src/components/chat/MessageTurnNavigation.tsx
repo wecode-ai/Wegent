@@ -282,7 +282,12 @@ export function MessageTurnNavigation({
     window.addEventListener('resize', handleResize)
 
     const mutationObserver = new MutationObserver(() => scheduleCalculateMarkers('mutation'))
-    mutationObserver.observe(content, { childList: true })
+    mutationObserver.observe(content, {
+      attributes: true,
+      attributeFilter: ['style'],
+      childList: true,
+      subtree: true,
+    })
 
     const resizeObserver =
       typeof ResizeObserver === 'undefined'

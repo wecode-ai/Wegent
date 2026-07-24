@@ -774,6 +774,50 @@ describe('ScrollableMessageArea', () => {
     querySelectorAllSpy.mockRestore()
   })
 
+  test('recalculates turn navigation after virtualized row styles change', async () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'virtualized-user',
+            role: 'user',
+            content: 'Virtualized request',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: 'virtualized-assistant',
+            role: 'assistant',
+            content: 'Virtualized response',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    const userAnchor = screen.getByText('Virtualized request').closest('[data-message-id]')!
+    mockRect(userAnchor, 120, 180)
+    fireEvent.resize(window)
+    flushScheduledTimers()
+    expect(screen.queryByTestId('message-turn-navigation-marker')).not.toBeInTheDocument()
+
+    scroller.scrollHeight = 1200
+    userAnchor.setAttribute('style', 'transform: translateY(120px)')
+    await act(async () => Promise.resolve())
+    flushScheduledTimers()
+
+    expect(screen.getByTestId('message-turn-navigation-marker')).toBeInTheDocument()
+  })
+
   test('clicks a message navigation marker to jump to that user message', () => {
     render(
       <ScrollableMessageArea
