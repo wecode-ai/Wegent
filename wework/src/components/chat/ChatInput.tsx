@@ -46,6 +46,7 @@ export interface ProjectChatControls {
   contextUsage?: RuntimeContextUsage
   isOptionsLocked: boolean
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   setSelectedModelOption: (optionId: string, value: string) => void
@@ -393,6 +394,7 @@ export function ChatInput({
           activeModel={controls.activeModel}
           selectedModelOptions={controls.selectedModelOptions}
           modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
+          onModelSelectorOpenChange={controls.onModelSelectorOpenChange}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           attachments={controls.attachments}
           codeComments={codeComments}

@@ -577,7 +577,7 @@ export function ComposerTextarea({
       if (!trigger || !editor) return false
       if (row.kind === 'candidate') {
         if (!row.candidate.enabled) return false
-        return selectMentionCandidate(row.candidate)
+        return selectMentionCandidate(row.candidate, trigger)
       }
       if (row.kind === 'cloud-action') {
         setCloudMentionOpen(true)

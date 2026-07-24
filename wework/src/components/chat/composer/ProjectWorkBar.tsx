@@ -632,7 +632,6 @@ export function ProjectWorkBar({
                       : true
                     const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
                     const selected = project.id === currentProjectId
-                    const projectTextClass = selected ? 'text-text-primary' : 'text-text-secondary'
                     const expanded =
                       option?.kind === 'multi' && pendingProjectWorkspaceProjectId === project.id
                     const bindRequired =
@@ -643,7 +642,7 @@ export function ProjectWorkBar({
                           type="button"
                           data-testid={`project-option-${project.id}`}
                           onClick={() => handleSelectProject(project.id)}
-                          className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted ${projectTextClass}`}
+                          className="flex h-9 w-full rounded-lg px-4 text-left text-text-primary hover:bg-muted"
                         >
                           <div className="flex min-h-0 w-full items-center gap-3">
                             <ProjectFolderIcon
@@ -654,7 +653,7 @@ export function ProjectWorkBar({
                             <div className="flex min-w-0 flex-1 items-center gap-2">
                               <span
                                 className={cn(
-                                  'min-w-0 truncate text-sm font-semibold leading-[18px]',
+                                  'min-w-0 truncate text-sm font-normal leading-[18px]',
                                   deviceLabel ? 'max-w-[9rem] shrink' : 'flex-1',
                                   'text-text-primary'
                                 )}

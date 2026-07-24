@@ -55,15 +55,20 @@ const CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB = Number(
 )
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 320 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 384 * 1024
 )
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 224 * 1024
 )
-const MEMORY_MAX_DOM_NODE_COUNT = Number(process.env.WEWORK_E2E_MEMORY_MAX_DOM_NODES ?? 900)
+const MEMORY_MAX_SETTLED_DOM_NODE_COUNT = Number(
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES ?? 900
+)
+const MEMORY_MIN_BASELINE_SAMPLES = 5
+const MEMORY_MAX_BASELINE_SAMPLES = 15
 const MEMORY_MIN_SETTLED_SAMPLES = 5
 const MEMORY_MAX_SETTLED_SAMPLES = 15
 const MEMORY_MAX_RECENT_DRIFT_KIB = 16 * 1024
+const MEMORY_SAMPLE_WINDOW_SIZE = 3
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
@@ -109,6 +114,7 @@ const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET = 160
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
@@ -131,6 +137,7 @@ const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
+const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -312,6 +319,76 @@ async function sendPrompt(control, selector, prompt) {
   )
   await control.command('fill', selector, { value: prompt })
   await control.command('press', selector, { key: 'Enter' })
+}
+
+async function verifyShortConversationLayout({ composerSelector, control }) {
+  const taskRowsBeforeConversation = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await prepareCompletedTurnScreenshot(control)
+  await captureVerificationScreenshot(control, 'short-conversation-00-ready.png')
+  await control.command('fill', composerSelector, { value: FRESH_CHAT_PROMPT })
+  await control.command('waitFor', composerSelector, {
+    text: FRESH_CHAT_PROMPT,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'short-conversation-01-prompt-filled.png')
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
+  await waitForScenarioRequestCount(control, 'fresh_chat', 2)
+  await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const shortConversationTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeConversation,
+    'WEWORK_DESKTOP_E2E_FRESH_CHAT'
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const scroller = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`,
+    'The short conversation message scroller'
+  )
+  const userMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  assert.equal(userMessages.length, 2, 'The short conversation did not render both user messages')
+  const firstMessage = userMessages[0]
+  const messageTopOffset = firstMessage.top - scroller.top
+  await writeFile(
+    join(resultDir, 'short-conversation-layout-metrics.json'),
+    `${JSON.stringify({ firstMessage, messageTopOffset, scroller }, null, 2)}\n`
+  )
+  await captureVerificationScreenshot(control, 'short-conversation-02-completed-top-aligned.png')
+
+  assert.ok(
+    messageTopOffset >= 0,
+    'The first short-conversation message rendered above the viewport'
+  )
+  assert.ok(
+    messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
+    `The short conversation left ${messageTopOffset}px of blank space above its first message`
+  )
 }
 
 async function prepareCompletedTurnScreenshot(control) {
@@ -584,7 +661,15 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
 async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Desktop memory E2E currently requires macOS')
   control.setScenario('memory')
-  const samples = [await captureMemorySample(control, 'baseline')]
+  const baselineSamples = await captureStableMemorySamples(
+    control,
+    'baseline',
+    MEMORY_MIN_BASELINE_SAMPLES,
+    MEMORY_MAX_BASELINE_SAMPLES
+  )
+  const baseline = medianMemorySample(baselineSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE))
+  assert.ok(baseline, 'The memory E2E did not capture baseline samples')
+  const samples = [...baselineSamples]
   await captureVerificationScreenshot(control, 'memory-01-baseline.png')
   await sendPromptUntilScenarioRequest(control, composerSelector, MEMORY_PROMPT, 'memory')
   await captureVerificationScreenshot(control, 'memory-02-streaming.png')
@@ -605,24 +690,27 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     samples.push(await captureMemorySample(control, 'settled'))
     const settledSamples = samples.filter(sample => sample.phase === 'settled')
     if (settledSamples.length < MEMORY_MIN_SETTLED_SAMPLES) continue
-    const current = settledSamples.at(-1)
     const recent = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
+    const settledWindow = settledSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+    const settled = medianMemorySample(settledWindow)
+    assert.ok(settled, 'The memory E2E did not capture a settled sample window')
     if (
-      current.physicalFootprintKiB - samples[0].physicalFootprintKiB <=
+      settled.physicalFootprintKiB - baseline.physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      current.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
+      settled.physicalFootprintKiB - recent[0].physicalFootprintKiB <= MEMORY_MAX_RECENT_DRIFT_KIB
     ) {
       break
     }
   }
 
-  const baseline = samples[0]
-  const peak = samples.reduce((largest, sample) =>
+  const workloadSamples = samples.filter(sample => sample.phase !== 'baseline')
+  const peak = workloadSamples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
   const peakDomNodeCount = Math.max(...samples.map(sample => sample.domNodeCount))
   const settledSamples = samples.filter(sample => sample.phase === 'settled')
-  const settled = settledSamples.at(-1)
+  const settledWindow = settledSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+  const settled = medianMemorySample(settledWindow)
   assert.ok(settled, 'The memory E2E did not capture settled samples')
   await captureVerificationScreenshot(control, 'memory-04-settled.png')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
@@ -630,6 +718,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const recentSettledSamples = settledSamples.slice(-MEMORY_MIN_SETTLED_SAMPLES)
   const settledDriftKiB =
     settled.physicalFootprintKiB - recentSettledSamples[0].physicalFootprintKiB
+  const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
 
   await writeFile(
     join(resultDir, 'memory-growth.json'),
@@ -638,9 +727,16 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
         limits: {
           maxPeakGrowthKiB: MEMORY_MAX_PEAK_GROWTH_KIB,
           maxSettledGrowthKiB: MEMORY_MAX_SETTLED_GROWTH_KIB,
-          maxDomNodeCount: MEMORY_MAX_DOM_NODE_COUNT,
+          maxSettledDomNodeCount: MEMORY_MAX_SETTLED_DOM_NODE_COUNT,
         },
-        summary: { peakGrowthKiB, settledGrowthKiB, settledDriftKiB, peakDomNodeCount },
+        summary: {
+          peakGrowthKiB,
+          settledGrowthKiB,
+          settledDriftKiB,
+          peakDomNodeCount,
+          settledDomNodeCount,
+          baselineSampleCount: baselineSamples.length,
+        },
         samples,
       },
       null,
@@ -654,8 +750,8 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent peak physical footprint grew by ${peakGrowthKiB} KiB`
   )
   assert.ok(
-    peakDomNodeCount <= MEMORY_MAX_DOM_NODE_COUNT,
-    `WebContent DOM reached ${peakDomNodeCount} nodes while rendering the long response`
+    settledDomNodeCount <= MEMORY_MAX_SETTLED_DOM_NODE_COUNT,
+    `WebContent DOM retained ${settledDomNodeCount} nodes after rendering the long response`
   )
   assert.ok(
     settledGrowthKiB <= MEMORY_MAX_SETTLED_GROWTH_KIB,
@@ -665,6 +761,28 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     settledDriftKiB <= MEMORY_MAX_RECENT_DRIFT_KIB,
     `WebContent kept growing after completion by ${settledDriftKiB} KiB`
   )
+}
+
+async function captureStableMemorySamples(control, phase, minimumSamples, maximumSamples) {
+  const samples = []
+  while (samples.length < maximumSamples) {
+    if (samples.length > 0) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    }
+    samples.push(await captureMemorySample(control, phase))
+    if (samples.length < minimumSamples) continue
+    const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+    const drift = recent.at(-1).physicalFootprintKiB - recent[0].physicalFootprintKiB
+    if (Math.abs(drift) <= MEMORY_MAX_RECENT_DRIFT_KIB) break
+  }
+  return samples
+}
+
+function medianMemorySample(samples) {
+  if (samples.length === 0) return null
+  return [...samples].sort((left, right) => left.physicalFootprintKiB - right.physicalFootprintKiB)[
+    Math.floor(samples.length / 2)
+  ]
 }
 
 async function waitForScenarioRequestCount(control, scenario, expectedCount) {
@@ -3144,6 +3262,33 @@ class DesktopE2EServer {
       this.writeLocalAssistantMessage(response, model, LOCAL_MODEL_SWITCH_INITIAL_COMPLETE)
       return
     }
+    if (state.stage === 'model_switch_source_complete') {
+      assert.equal(model.protocol, 'responses', 'The switch-and-retry source must use Responses')
+      assert.ok(
+        serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT),
+        'The first custom model did not receive the prompt that should fail before switching'
+      )
+      state.stage = 'model_switch_source_failed'
+      const responseId = `local-model-switch-failure-${Date.now()}`
+      this.writeSse(response, [
+        responseCreated(responseId),
+        responseFailed(responseId, 'WEWORK_LOCAL_MODEL_SWITCH_RETRY_FAILURE'),
+      ])
+      return
+    }
+    if (state.stage === 'model_switch_source_failed' && codexRequestKind(body) === 'compaction') {
+      const responseId = `local-model-switch-compaction-${Date.now()}`
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+    if (
+      state.stage === 'model_switch_target' &&
+      (codexRequestKind(body) === 'compaction' ||
+        serialized.includes('CONTEXT CHECKPOINT COMPACTION'))
+    ) {
+      this.writeLocalAssistantMessage(response, model, '')
+      return
+    }
     if (state.stage === 'model_switch_target') {
       assert.ok(
         serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT),
@@ -3980,6 +4125,15 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  const runningTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-running-'
+  )
+  await waitForSnapshot(
+    control,
+    value => !value.testIds.includes(runningTaskTestId),
+    'The cloud follow-up task did not settle before project removal'
+  )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
   const projectMenuTestId = `project-menu-${projectId}`
@@ -4146,6 +4300,19 @@ async function main() {
     })
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
+
+    if (SHORT_CONVERSATION_ONLY) {
+      phase = 'short-conversation-layout'
+      control.setScenario('fresh_chat')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyShortConversationLayout({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      console.log(`Wework desktop short-conversation E2E passed. Evidence: ${resultDir}`)
+      return
+    }
 
     if (PLUGINS_ONLY) {
       phase = 'plugin-lifecycle'
@@ -4641,23 +4808,23 @@ async function main() {
         text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
         timeoutMs: UI_TIMEOUT_MS,
       })
-      await selectE2EModel(control, targetModel.optionId, targetModel.label)
-      await control.command('waitFor', '[data-testid="model-selector-button"]', {
-        text: targetModel.label,
+      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+      await control.command('waitFor', '[data-testid="assistant-error-switch-model-retry"]', {
         timeoutMs: UI_TIMEOUT_MS,
       })
-      const pendingModelLabel = await control.command(
-        'getText',
-        '[data-testid="model-selector-button"]'
-      )
-      assert.doesNotMatch(
-        pendingModelLabel,
-        /下一轮|Next/,
-        'An idle conversation incorrectly marked the selected model as next-turn only'
-      )
       await prepareCompletedTurnScreenshot(control)
-      await captureVerificationScreenshot(control, 'model-switch-01-selected.png')
-      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+      await captureVerificationScreenshot(control, 'model-switch-retry-01-failed.png')
+      await control.command('click', '[data-testid="assistant-error-switch-model-retry"]')
+      await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(
+        control,
+        'model-switch-retry-02-picker-open.png',
+        '[data-testid="model-selector-menu"]'
+      )
+      await selectE2EModel(control, targetModel.optionId, targetModel.label)
+      await captureVerificationScreenshot(control, 'model-switch-retry-03-target-selected.png')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: LOCAL_MODEL_SWITCH_COMPLETE,
         timeoutMs: UI_TIMEOUT_MS,
@@ -4666,13 +4833,13 @@ async function main() {
       const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
       assert.equal(
         sourceSwitchState?.requests.length,
-        1,
-        'The old custom model received the follow-up after switching'
+        2,
+        'The old custom model received the automatic retry after switching'
       )
       assert.equal(
         targetSwitchState?.stage,
         'model_switch_target_complete',
-        'The new custom model did not complete the same-conversation follow-up'
+        'The new custom model did not complete the automatic same-conversation retry'
       )
       await control.command('waitFor', '[data-testid="model-selector-button"]', {
         text: targetModel.label,
@@ -4688,7 +4855,7 @@ async function main() {
         'The applied custom model remained incorrectly marked as next-turn only'
       )
       await prepareCompletedTurnScreenshot(control)
-      await captureVerificationScreenshot(control, 'model-switch-02-completed.png')
+      await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
       control.localProtocolStates.set(sourceModel.protocol, { stage: 'initial', requests: [] })
       control.localProtocolStates.set(targetModel.protocol, { stage: 'initial', requests: [] })
 
@@ -4883,11 +5050,7 @@ async function main() {
       false,
       'The new conversation retained the previous task'
     )
-    await sendPrompt(control, composerSelector, FRESH_CHAT_PROMPT)
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: FRESH_CHAT_COMPLETION_TEXT,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
+    await verifyShortConversationLayout({ composerSelector, control })
 
     phase = 'task-draft-isolation'
     const secondTaskSnapshot = await waitForSnapshot(

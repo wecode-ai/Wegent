@@ -19,6 +19,7 @@ interface ComposerToolbarProps {
   activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => void
@@ -51,6 +52,7 @@ export function ComposerToolbar({
   activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
+  onModelSelectorOpenChange,
   isModelSelectionReady,
   contextUsage,
   onSelectModel,
@@ -141,6 +143,7 @@ export function ComposerToolbar({
             selectedModelOptions={selectedModelOptions}
             nextTurn={isStreaming && modelChangePending}
             openSignal={modelSelectorOpenSignal}
+            onOpenChange={onModelSelectorOpenChange}
             disabled={disabled}
             onSelectModel={onSelectModel}
             onSelectModelAndOptions={onSelectModelAndOptions}

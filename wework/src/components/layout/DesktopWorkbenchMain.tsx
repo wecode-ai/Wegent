@@ -1103,6 +1103,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const rightPanelSessionKey = paneKey
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
+  const pendingModelRetryRef = useRef<WorkbenchMessage | null>(null)
+  const retryFailedMessage = paneSession.retryFailedMessage
   const [projectMenuOpenSignal, setProjectMenuOpenSignal] = useState(0)
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
@@ -1149,12 +1151,33 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const inlineComposerDisabledReason = showConversationDeviceBanner
     ? undefined
     : composerDisabledReason
+  const retryFailedMessageAfterModelSelect = useCallback(() => {
+    const message = pendingModelRetryRef.current
+    if (!message) return
+    pendingModelRetryRef.current = null
+    queueMicrotask(() => {
+      void retryFailedMessage(message)
+    })
+  }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal = useMemo<ProjectChatControls>(
     () => ({
       ...projectChat,
       modelSelectorOpenSignal,
+      setSelectedModel: model => {
+        projectChat.setSelectedModel(model)
+        if (model) retryFailedMessageAfterModelSelect()
+      },
+      setSelectedModelAndOptions: projectChat.setSelectedModelAndOptions
+        ? (model, options) => {
+            projectChat.setSelectedModelAndOptions?.(model, options)
+            retryFailedMessageAfterModelSelect()
+          }
+        : undefined,
+      onModelSelectorOpenChange: open => {
+        if (!open) pendingModelRetryRef.current = null
+      },
     }),
-    [modelSelectorOpenSignal, projectChat]
+    [modelSelectorOpenSignal, projectChat, retryFailedMessageAfterModelSelect]
   )
   const emptyProjectWork = useMemo(
     () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
@@ -2103,9 +2126,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onRetryFailedMessage={message => {
                   void paneSession.retryFailedMessage(message)
                 }}
-                onSwitchModelForFailedMessage={() =>
+                onSwitchModelForFailedMessage={message => {
+                  pendingModelRetryRef.current = message
                   setModelSelectorOpenSignal(signal => signal + 1)
-                }
+                }}
                 onLoadFileChangesDiff={(subtaskId, fileChanges) =>
                   loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
                 }
