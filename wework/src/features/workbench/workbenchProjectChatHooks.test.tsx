@@ -386,7 +386,6 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedModel).toEqual(customModel)
     expect(result.current.selectedModelOptions).toEqual({
       reasoning: 'high',
-      catalogModelId: '',
     })
   })
 

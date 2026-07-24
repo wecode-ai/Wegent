@@ -6,7 +6,6 @@ import { getModelExecutionOverride } from '@/features/cloud-connection/modelExec
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
-  CATALOG_MODEL_ID_CONTROL_ID,
   type ModelControlConfig,
   getControlsForModel,
   getModelDisplayLabel,
@@ -102,7 +101,6 @@ export function ModelSelector({
   const modelButtonRef = useRef<HTMLButtonElement>(null)
   const reasoningButtonRef = useRef<HTMLButtonElement>(null)
   const speedButtonRef = useRef<HTMLButtonElement>(null)
-  const catalogButtonRef = useRef<HTMLButtonElement>(null)
   const handledOpenSignalRef = useRef<number | undefined>(undefined)
   const [open, setOpen] = useState(false)
   const [mobileQuery, setMobileQuery] = useState('')
@@ -143,7 +141,6 @@ export function ModelSelector({
   }, [setActiveDesktopSubmenu, setMobileQuery, setOpen, setPowerSliderInteracting])
   const handleSelectModelOption = useCallback(
     (optionId: string, value: string) => {
-       
       console.log('[wework] handleSelectModelOption', { optionId, value })
       onSelectModelOption(optionId, value)
       if (isMobile) {
@@ -327,9 +324,7 @@ export function ModelSelector({
       const buttonRef =
         activeDesktopSubmenu.id === 'reasoning'
           ? reasoningButtonRef.current
-          : activeDesktopSubmenu.id === CATALOG_MODEL_ID_CONTROL_ID
-            ? catalogButtonRef.current
-            : speedButtonRef.current
+          : speedButtonRef.current
       updateSubmenuLayout(buttonRef)
       return
     }
@@ -381,12 +376,9 @@ export function ModelSelector({
     selectedReasoningValue === 'ultra' ? t('workbench.intelligence_ultra', 'Extra High') : undefined
   const supportsReasoningControl = Boolean(reasoningControl)
   const speedControl = controlsBelowModels.find(control => control.id === 'speed')
-  const catalogControl = controlsBelowModels.find(
-    control => control.id === CATALOG_MODEL_ID_CONTROL_ID
-  )
   const fastModeState = desktopFastModeState(speedControl, selectedModelOptions)
   const desktopReasoningControl = desktopModelControl(reasoningControl)
-  const desktopControls = [desktopReasoningControl, speedControl, catalogControl].filter(
+  const desktopControls = [desktopReasoningControl, speedControl].filter(
     (control): control is ModelControlConfig =>
       Boolean(control && !DESKTOP_HIDDEN_CONTROL_IDS.has(control.id))
   )
@@ -517,13 +509,7 @@ export function ModelSelector({
 
     return (
       <button
-        ref={
-          control.id === 'reasoning'
-            ? reasoningButtonRef
-            : control.id === CATALOG_MODEL_ID_CONTROL_ID
-              ? catalogButtonRef
-              : speedButtonRef
-        }
+        ref={control.id === 'reasoning' ? reasoningButtonRef : speedButtonRef}
         key={control.id}
         type="button"
         data-testid={`model-control-menu-${control.id}`}
@@ -921,7 +907,6 @@ export function ModelSelector({
                         <span>{t('workbench.speed_standard', '标准')}</span>
                       </button>
                     )}
-                    {catalogControl ? renderControlMenuItem(catalogControl) : null}
                   </div>
                   <div className="mx-3 my-1.5 border-t border-border" />
                 </>

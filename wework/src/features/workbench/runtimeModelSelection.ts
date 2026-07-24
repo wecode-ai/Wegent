@@ -3,11 +3,7 @@ import {
   resolveModelExecutionSelection,
   supportsCloudExecution,
 } from '@/features/cloud-connection/modelExecution'
-import {
-  CATALOG_MODEL_ID_CONTROL_ID,
-  getDefaultModelOptions,
-  normalizeModelOptionAliases,
-} from '@/lib/model-ui'
+import { getDefaultModelOptions, normalizeModelOptionAliases } from '@/lib/model-ui'
 import type {
   ModelOptions,
   ModelSelectionConfig,
@@ -19,7 +15,6 @@ const MODEL_EXECUTION_CONFIG_KEY = 'weworkExecution'
 export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
 export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUserId'
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
-export const CLOUD_MODEL_CATALOG_MODEL_ID_OPTION = 'weworkCloudModelCatalogModelId'
 export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = 'weworkCloudModelUpstreamApiFormat'
 
 function getStringConfigValue(
@@ -144,10 +139,6 @@ export function selectedModelExecutionFields(
     if (typeof executionModel.resourceUserId === 'number') {
       modelOptions[CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = String(executionModel.resourceUserId)
     }
-    const catalogModelId = selectedModelOptions[CATALOG_MODEL_ID_CONTROL_ID]?.trim()
-    if (catalogModelId) {
-      modelOptions[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION] = catalogModelId
-    }
     const upstreamApiFormat = getCloudModelUpstreamApiFormat(selectedModel)
     if (upstreamApiFormat) {
       modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
@@ -156,7 +147,6 @@ export function selectedModelExecutionFields(
     console.log('[wework] selectedModelExecutionFields', {
       modelId: executionModel.modelName,
       modelType: executionModel.modelType,
-      catalogModelId,
       modelOptions,
     })
     const contextWindow =

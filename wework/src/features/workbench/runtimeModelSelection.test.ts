@@ -166,7 +166,7 @@ describe('runtimeModelSelection', () => {
     })
   })
 
-  test('passes selected catalog model id as hidden execution option', () => {
+  test('does not pass catalog model id as hidden execution option', () => {
     const cloudModel: UnifiedModel = {
       name: 'cloud:user:shared-model',
       type: 'user',
@@ -199,7 +199,6 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelContextWindow: '128000',
-        weworkCloudModelCatalogModelId: 'wework-gpt-5.6-sol',
       },
     })
   })

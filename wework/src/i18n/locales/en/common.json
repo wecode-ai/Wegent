@@ -698,8 +698,6 @@
     "speed_standard_description": "Default speed",
     "speed_fast": "⚡ Fast",
     "speed_fast_description": "1.5x speed, increased usage",
-    "catalog_model_id": "Catalog model",
-    "catalog_model_default": "Default",
     "default_permission": "Default permission",
     "auto_review": "Auto review",
     "full_access_permission": "Full access permission",

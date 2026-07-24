@@ -698,8 +698,6 @@
     "speed_standard_description": "默认速度",
     "speed_fast": "⚡ 快速",
     "speed_fast_description": "1.5 倍速度，消耗增加",
-    "catalog_model_id": "Catalog 模型",
-    "catalog_model_default": "默认",
     "default_permission": "默认权限",
     "auto_review": "自动审查",
     "full_access_permission": "完全访问权限",

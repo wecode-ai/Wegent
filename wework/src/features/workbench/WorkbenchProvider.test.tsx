@@ -3581,7 +3581,6 @@ describe('WorkbenchProvider runtime tasks', () => {
           modelName: 'cloud:user:shared-model',
           modelType: 'user',
           options: {
-            catalogModelId: '',
             collaborationMode: 'plan',
             reasoning: 'high',
           },

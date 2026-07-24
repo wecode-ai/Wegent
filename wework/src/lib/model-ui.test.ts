@@ -231,9 +231,6 @@ describe('model-ui', () => {
     }
 
     expect(inferModelFamily(deepseekResponsesModel)).toBe('deepseek')
-    expect(getControlsForModel(deepseekResponsesModel).map(control => control.id)).toContain(
-      'catalogModelId'
-    )
     expect(getControlsForModel(deepseekNonResponsesModel).map(control => control.id)).not.toContain(
       'catalogModelId'
     )
