@@ -27,7 +27,7 @@ import {
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
-import { visibleRuntimeGoal } from '@/lib/runtime-goal'
+import { updateRuntimeGoalContinuation, visibleRuntimeGoal } from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import {
   markRuntimeTerminalAdditionalContextDelivered,
@@ -638,7 +638,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       onAssistantStart: () => {
         setStreamSettled(false)
         setSendPhase('idle')
-        setGoalContinuation(null)
+        setGoalContinuation(current =>
+          updateRuntimeGoalContinuation(current, { type: 'assistant_started' })
+        )
       },
       onAssistantSettled: () => {
         setStreamSettled(true)
@@ -763,7 +765,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         const loadedGoal = payload.goal ?? null
         commitThreadGoal(loadedGoal)
         void refreshWorkListsRef.current().catch(() => undefined)
-        if (loadedGoal?.status !== 'active') setGoalContinuation(null)
+        if (loadedGoal?.status !== 'active') {
+          setGoalContinuation(current =>
+            updateRuntimeGoalContinuation(current, { type: 'goal_inactive' })
+          )
+        }
         clearRuntimePaneGoalSeed(address)
         const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
         setPendingGoalState(current =>
@@ -781,7 +787,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       },
       onRuntimeGoalContinuation: payload => {
-        setGoalContinuation(payload.status === 'started' ? payload : null)
+        setGoalContinuation(current =>
+          updateRuntimeGoalContinuation(current, { type: 'turn_lifecycle', payload })
+        )
         void refreshWorkListsRef.current().catch(() => undefined)
       },
       onRuntimePlanUpdated: payload => {
