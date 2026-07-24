@@ -5015,11 +5015,12 @@ async function main() {
     phase = 'workspace-resources-across-conversation-switch'
     const activeBrowserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
     const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
+    const activeRightPanelToggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-right-workspace-panel-button"]`
     const retainedBrowserUrl = 'https://example.com/session-state'
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="toggle-right-workspace-panel-button"]`
-    )
+    await control.command('waitFor', activeRightPanelToggleSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', activeRightPanelToggleSelector)
     await control.command(
       'click',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
