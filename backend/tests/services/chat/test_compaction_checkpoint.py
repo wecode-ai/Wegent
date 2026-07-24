@@ -170,3 +170,30 @@ def test_resolve_history_subtasks_is_single_pipeline(monkeypatch):
         statuses=None,
     )
     assert [s.message_id for s in out] == [1, 2]
+
+
+def test_resolve_history_no_checkpoint_uses_plain_limit(monkeypatch):
+    from app.services.chat import compaction_checkpoint as cc
+
+    # Five uncompacted turns (no summary_compacted marker anywhere).
+    items = [
+        SimpleNamespace(
+            subtask=_assistant(i, [{"role": "assistant", "content": f"t{i}"}])
+        )
+        for i in range(5)
+    ]
+    monkeypatch.setattr(
+        cc.task_fork_history_resolver, "resolve_for_task", lambda *a, **k: items
+    )
+
+    out = cc.resolve_history_subtasks(
+        db=None,
+        task_id=1,
+        user_id=1,
+        before_message_id=None,
+        limit=2,
+        from_latest_compaction=True,
+        statuses=None,
+    )
+    # No checkpoint yet -> plain "most recent N", NOT [oldest] + last N-1.
+    assert [s.message_id for s in out] == [3, 4]

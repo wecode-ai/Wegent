@@ -98,8 +98,13 @@ def resolve_history_subtasks(
         db, task_id=task_id, user_id=user_id, before_message_id=before_message_id
     )
     subtasks = [item.subtask for item in items if item.subtask.status in statuses]
+    # Only preserve subtasks[0] as inviolable when a checkpoint was actually
+    # found; otherwise (uncompacted task) fall back to plain "most recent N",
+    # or `limit` would wrongly pin the oldest turn instead of the checkpoint.
+    scoped_to_checkpoint = False
     if from_latest_compaction:
-        subtasks, _idx = scope_to_latest_checkpoint(subtasks)
+        subtasks, checkpoint_index = scope_to_latest_checkpoint(subtasks)
+        scoped_to_checkpoint = checkpoint_index is not None
     return apply_checkpoint_limit(
-        subtasks, limit=limit, from_latest_compaction=from_latest_compaction
+        subtasks, limit=limit, from_latest_compaction=scoped_to_checkpoint
     )
