@@ -15,6 +15,7 @@ Design principles:
 - All modules import the same classes
 """
 
+import os
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Optional, Union
@@ -239,6 +240,25 @@ class ExecutionRequest:
     def task_token(self) -> str:
         """Alias for auth_token, used by MCP configs as ${{task_token}}."""
         return self.auth_token
+
+    @property
+    def effective_backend_url(self) -> str:
+        """Backend URL reachable from the current execution runtime."""
+        backend_url = (self.backend_url or "").strip().rstrip("/")
+        if backend_url:
+            return backend_url
+
+        executor_mode = os.getenv("EXECUTOR_MODE", "")
+        if executor_mode.strip().lower() == "local":
+            local_backend_url = os.getenv("WEGENT_BACKEND_URL", "").strip().rstrip("/")
+            if local_backend_url:
+                return local_backend_url
+
+        task_api_domain = os.getenv("TASK_API_DOMAIN", "").strip().rstrip("/")
+        if task_api_domain:
+            return task_api_domain
+
+        return "http://wegent-backend:8000"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionRequest":
