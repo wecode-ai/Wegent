@@ -2116,8 +2116,13 @@ class LangGraphAgentBuilder:
             raise
 
         except GraphRecursionError:
+            # Set upfront so even a recovery-LLM failure records the reason.
             self._last_termination_reason = "graph_recursion_limit_recovery"
-            # Tool call limit reached - ask model to provide final response
+            # Tool call limit reached - ask the model for a final response using
+            # the CURRENT authoritative state (post-compaction, with completed
+            # tool pairs), not the pre-run lc_messages.
+            snapshot = await agent.aget_state({**exec_config})
+            safe_state = sanitize_tool_pairs(snapshot.values.get("messages", []))
             logger.warning(
                 "[stream_tokens] GraphRecursionError: Tool call limit reached "
                 "(agent_iteration=%d, max_iterations=%d, recursion_limit=%d). "
@@ -2125,14 +2130,13 @@ class LangGraphAgentBuilder:
                 agent_iteration,
                 self.max_iterations,
                 recursion_limit,
-                len(_collected_state_messages),
-                _tail_signature(_collected_state_messages),
-                _last_tool_call_name(_collected_state_messages) or "none",
+                len(safe_state),
+                _tail_signature(safe_state),
+                _last_tool_call_name(safe_state) or "none",
             )
 
-            # Build messages with the limit reached notice
-            # Add a human message to prompt the model to provide final response
-            limit_messages = list(lc_messages) + [
+            # Internal control message: fed to the recovery LLM but NOT persisted.
+            recovery_input = safe_state + [
                 HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
             ]
             recovery_response_parts: list[str] = []
@@ -2140,11 +2144,11 @@ class LangGraphAgentBuilder:
             # Call the LLM directly (without tools) to get final response
             try:
                 _log_direct_llm_request(
-                    messages=limit_messages,
+                    messages=recovery_input,
                     tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
                     request_name="tool_limit_recovery_stream",
                 )
-                async for chunk in self.llm.astream(limit_messages):
+                async for chunk in self.llm.astream(recovery_input):
                     if hasattr(chunk, "content"):
                         content = chunk.content
                         if isinstance(content, str) and content:
@@ -2162,32 +2166,15 @@ class LangGraphAgentBuilder:
                                         yield text
 
                 recovery_response_text = "".join(recovery_response_parts)
-                recovery_chain_messages = _build_limit_recovery_messages_chain(
-                    collected_state_messages=_collected_state_messages,
-                    limit_messages=limit_messages,
-                    input_ids=_input_message_ids,
-                    final_response_text=recovery_response_text,
+                # Final state = safe authoritative state + recovery reply. The
+                # tool-limit instruction is excluded so it never persists.
+                final_state = safe_state + (
+                    [AIMessage(content=recovery_response_text)]
+                    if recovery_response_text
+                    else []
                 )
-                self._last_messages_chain = _serialize_validated_messages_chain(
-                    recovery_chain_messages,
-                    provider=self._provider,
-                    model_id=self._model_id,
-                )
-                self._last_live_state_messages = (
-                    [
-                        _message_to_context_metrics_dict(msg)
-                        for msg in _collected_state_messages
-                    ]
-                    if _collected_state_messages
-                    else [
-                        _message_to_context_metrics_dict(msg)
-                        for msg in list(limit_messages)
-                        + (
-                            [AIMessage(content=recovery_response_text)]
-                            if recovery_response_text
-                            else []
-                        )
-                    ]
+                self._finalize_turn_history(
+                    final_state, turn_ctx, "graph_recursion_limit_recovery"
                 )
 
                 logger.info(
@@ -2200,11 +2187,11 @@ class LangGraphAgentBuilder:
                     agent_iteration,
                     self.max_iterations,
                     recursion_limit,
-                    len(_collected_state_messages),
-                    _tail_signature(_collected_state_messages),
-                    _last_tool_call_name(_collected_state_messages) or "none",
+                    len(final_state),
+                    _tail_signature(final_state),
+                    _last_tool_call_name(final_state) or "none",
                 )
-            except Exception as recovery_error:
+            except Exception:
                 logger.exception(
                     "Error generating final response after tool limit reached"
                 )

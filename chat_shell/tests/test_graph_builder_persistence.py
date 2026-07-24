@@ -271,3 +271,75 @@ async def test_normal_completion_persists_from_aget_state(monkeypatch):
     assert any(c["role"] == "tool" for c in chain)
     assert chain[-1]["role"] == "assistant"
     assert builder._last_termination_reason == "normal_completion"
+
+
+@pytest.mark.asyncio
+async def test_tool_limit_recovery_persists_full_chain_without_instruction(monkeypatch):
+    from langchain_core.messages import ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    authoritative = [
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t2", "name": "_probe", "args": {}}],
+            id="a2",
+        ),
+        ToolMessage(content="ok", tool_call_id="t2", name="_probe", id="tm2"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            raise GraphRecursionError("limit")
+            yield  # pragma: no cover - marks this an async generator
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    recovery_seen: list = []
+
+    class _Chunk:
+        def __init__(self, content):
+            self.content = content
+
+    class _RecoveryLLM:
+        async def astream(self, messages):
+            recovery_seen.extend(messages)
+            yield _Chunk("final ")
+            yield _Chunk("answer")
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    monkeypatch.setattr(builder, "llm", _RecoveryLLM())
+
+    tokens: list[str] = []
+    async for token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        tokens.append(token)
+
+    assert "".join(tokens) == "final answer"  # recovery streamed to the client
+    chain = builder._last_messages_chain
+    assert any(c.get("additional_kwargs", {}).get("summary_compacted") for c in chain)
+    assert any(c["role"] == "tool" for c in chain)  # post-compaction pair kept
+    assert chain[-1]["role"] == "assistant"
+    assert chain[-1]["content"] == "final answer"  # recovery reply last
+    # The tool-limit instruction never persists...
+    assert all("Tool call limit reached" not in str(c.get("content")) for c in chain)
+    # ...but the recovery LLM did see it (control message).
+    assert any(
+        "Tool call limit" in str(getattr(m, "content", "")) for m in recovery_seen
+    )
+    assert builder._last_termination_reason == "graph_recursion_limit_recovery"
