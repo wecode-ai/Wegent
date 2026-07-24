@@ -14,6 +14,7 @@ vi.mock('@/hooks/useConfiguredKeybinding', () => ({
 
 const modelExecutionMock = vi.hoisted(() => ({
   getModelExecutionOverride: vi.fn(),
+  supportsResponsesApi: vi.fn().mockReturnValue(false),
 }))
 vi.mock('@/features/cloud-connection/modelExecution', () => modelExecutionMock)
 

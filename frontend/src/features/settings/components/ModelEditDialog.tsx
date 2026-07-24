@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
@@ -92,6 +93,7 @@ export interface ModelFormData {
   videoSeed?: number
   videoCameraFixed?: boolean
   videoWatermark?: boolean
+  isWeworkAvailable?: boolean
 }
 
 // Initial data for editing (can be from ModelCRD or admin model JSON)
@@ -119,6 +121,7 @@ export interface ModelInitialData {
   videoConfig?: VideoGenerationConfig
   imageConfig?: import('@/apis/models').ImageGenerationConfig
   thinkingConfig?: Record<string, unknown>
+  isWeworkAvailable?: boolean
 }
 
 /**
@@ -315,6 +318,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             videoConfig: model.spec.videoConfig,
             imageConfig: model.spec.imageConfig,
             thinkingConfig: extractThinkingConfig(model),
+            isWeworkAvailable: model.spec.isWeworkAvailable,
           }
         : null)
     )
@@ -377,6 +381,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Image - use ImageConfigState from extracted component
   const [imageConfig, setImageConfig] = useState<ImageConfigState>(getDefaultImageConfig())
 
+  // Wework desktop client availability
+  const [isWeworkAvailable, setIsWeworkAvailable] = useState(false)
   // Video capabilities state
   const [capRatios, setCapRatios] = useState<string[]>([])
   const [capResolutions, setCapResolutions] = useState<string[]>([])
@@ -511,6 +517,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setThinkingConfigStr('')
         }
         setThinkingConfigError('')
+        // Load wework availability
+        setIsWeworkAvailable(effectiveInitialData.isWeworkAvailable ?? false)
       } else {
         // Reset for new model
         setModelIdName('')
@@ -545,6 +553,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setVideoWatermark(false)
         // Reset image-specific configs
         setImageConfig(getDefaultImageConfig())
+        // Reset wework availability
+        setIsWeworkAvailable(false)
         setCostIndex(undefined)
         // Reset video capabilities
         setCapRatios([])
@@ -1153,8 +1163,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               }),
           },
           modelType: modelCategoryType,
-          // Save protocol for openai-responses and gemini-deep-research to distinguish from regular variants
-          ...(providerType === 'openai-responses' && { protocol: 'openai-responses' }),
+          // Save protocol/apiFormat so downstream routing can pick the right upstream endpoint.
+          // Plain OpenAI maps to Chat Completions; openai-responses maps to Responses.
+          ...(providerType === 'openai' && {
+            protocol: 'openai',
+            apiFormat: 'chat/completions',
+          }),
+          ...(providerType === 'openai-responses' && {
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+          }),
           ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
           // Save protocol for video models to specify the provider (seedance, runway, pika, etc.)
           ...(modelCategoryType === 'video' && { protocol: providerType }),
@@ -1171,6 +1189,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           ...(rerankConfig && { rerankConfig }),
           ...(videoConfig && { videoConfig }),
           ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
+          ...(isWeworkAvailable && { isWeworkAvailable: true }),
         },
         status: {
           state: 'Available',
@@ -1221,6 +1240,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         videoSeed,
         videoCameraFixed,
         videoWatermark,
+        isWeworkAvailable,
       }
 
       // If custom onSave callback is provided, use it
@@ -1371,6 +1391,22 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               />
               <p className="text-xs text-text-muted">{t('common:models.model_sub_group_hint')}</p>
             </div>
+          </div>
+
+          {/* Wework availability toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="wework-available" className="text-sm font-medium">
+                {t('common:models.wework_available')}
+              </Label>
+              <p className="text-xs text-text-muted">{t('common:models.wework_available_hint')}</p>
+            </div>
+            <Switch
+              id="wework-available"
+              data-testid="model-wework-available-switch"
+              checked={isWeworkAvailable}
+              onCheckedChange={checked => setIsWeworkAvailable(checked)}
+            />
           </div>
 
           {/* Provider Type and Model ID - Two columns */}

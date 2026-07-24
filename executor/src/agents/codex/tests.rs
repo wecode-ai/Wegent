@@ -98,6 +98,14 @@ fn normalize_reasoning_effort_uses_default_for_disabled_or_unknown_values() {
 }
 
 #[test]
+fn streaming_patch_overrides_enable_freeform_apply_patch() {
+    let overrides = codex_streaming_patch_config_overrides();
+    assert!(overrides.contains(&"features.apply_patch_streaming_events=true".to_owned()));
+    assert!(overrides.contains(&"features.apply_patch_freeform=true".to_owned()));
+    assert!(overrides.contains(&"suppress_unstable_features_warning=true".to_owned()));
+}
+
+#[test]
 fn wework_codex_home_defaults_to_executor_home_codex() {
     let _lock = crate::test_env::lock();
     let home = unique_test_path("wework-codex-home-default");
@@ -604,6 +612,12 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     assert!(launch_config
         .config_overrides
         .contains(&"goals=true".to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.apply_patch_freeform=true".to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.apply_patch_streaming_events=true".to_owned()));
     assert!(launch_config.model_provider.is_none());
     assert!(launch_config.effort.is_none());
     assert!(launch_config.summary.is_none());

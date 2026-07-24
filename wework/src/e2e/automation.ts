@@ -202,7 +202,7 @@ function seedDesktopE2ECloudConnection() {
             displayName: 'Desktop E2E Responses',
             modelId: 'desktop-e2e-responses-model',
             apiFormat: 'openai-responses' as const,
-            toolProfile: 'custom' as const,
+            toolProfile: 'function' as const,
             requestPath: '/v1/responses',
           },
           {

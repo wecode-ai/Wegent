@@ -188,6 +188,9 @@ spec:
 | `spec.modelCapabilities.supportsVideo` | boolean | 否 | 是否支持视频理解；开启后模型选择器显示“视频理解”能力标识 |
 | `spec.modelConfig`     | object | 是   | 模型配置对象                       |
 | `spec.modelConfig.env` | object | 是   | 环境变量配置                       |
+| `spec.protocol`        | string | 否   | 上游协议（如 `openai`、`openai-responses`、`claude`）。省略时从 `env.model` 推断。 |
+| `spec.apiFormat`       | string | 否   | 上游 API 格式（如 `responses`、`chat/completions`）。省略时由 `spec.protocol` 推导。 |
+| `spec.isWeworkAvailable` | boolean | 否 | 是否将该模型分发到 wework 桌面客户端。 |
 
 ### 模型选择器分组
 

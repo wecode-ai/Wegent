@@ -222,6 +222,7 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "is_wework_available": False,
                 "model_group": None,
                 "model_sub_group": None,
                 "context_window": None,
@@ -299,6 +300,7 @@ class ModelAggregationService:
                     if model_crd.spec.isAdvanced
                     else False
                 ),
+                "is_wework_available": bool(model_crd.spec.isWeworkAvailable) or False,
                 "model_group": model_crd.spec.modelGroup,
                 "model_sub_group": model_crd.spec.modelSubGroup,
                 "context_window": model_crd.spec.context_window,
@@ -315,6 +317,7 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "is_wework_available": False,
                 "model_group": None,
                 "model_sub_group": None,
                 "context_window": None,
@@ -433,6 +436,30 @@ class ModelAggregationService:
             return model_crd.spec.isCustomConfig or False
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to check if model is custom: %s", e)
+            return False
+
+    def _is_model_available_in_wework(self, model_data: Dict[str, Any]) -> bool:
+        """
+        Check if a model should be exposed to the wework desktop client.
+
+        Only models with isWeworkAvailable=True in their spec are returned
+        when client_origin is 'wework'. Missing or False values are treated
+        as not available.
+
+        Args:
+            model_data: Model CRD data dictionary
+
+        Returns:
+            True if the model is available in wework, False otherwise
+        """
+        if not isinstance(model_data, dict):
+            return False
+
+        try:
+            model_crd = Model.model_validate(model_data)
+            return bool(model_crd.spec.isWeworkAvailable)
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.warning("Failed to check wework availability: %s", e)
             return False
 
     def _build_codex_runtime_model(
@@ -612,6 +639,13 @@ class ModelAggregationService:
                 ):
                     continue
 
+                # Filter out models not enabled for wework
+                if (
+                    client_origin == CLIENT_ORIGIN_WEWORK
+                    and not self._is_model_available_in_wework(model_data)
+                ):
+                    continue
+
                 # Deduplicate by name
                 if resource.name in seen_names:
                     continue
@@ -668,6 +702,12 @@ class ModelAggregationService:
             if (
                 model_category_type
                 and public_model_category_type != model_category_type
+            ):
+                continue
+
+            # Filter out public models not enabled for wework
+            if client_origin == CLIENT_ORIGIN_WEWORK and not model_dict.get(
+                "is_wework_available", False
             ):
                 continue
 

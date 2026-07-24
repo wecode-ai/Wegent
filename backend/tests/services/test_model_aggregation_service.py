@@ -949,3 +949,183 @@ class TestModelAggregationService:
 
         assert shell_type == "PublicType"  # From public shell
         assert support_model == ["public-provider"]  # From public shell
+
+    def test_wework_filters_models_by_is_wework_available(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """Only models with isWeworkAvailable=True are returned to wework."""
+        public_available_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "public-wework-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": "public-wework-model"}
+                },
+                "isWeworkAvailable": True,
+            },
+            "status": {"state": "Available"},
+        }
+        public_unavailable_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "public-no-wework", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": "public-no-wework"}
+                }
+            },
+            "status": {"state": "Available"},
+        }
+        public_available = Kind(
+            user_id=0,
+            kind="Model",
+            name="public-wework-model",
+            namespace="default",
+            json=public_available_crd,
+            is_active=True,
+        )
+        public_unavailable = Kind(
+            user_id=0,
+            kind="Model",
+            name="public-no-wework",
+            namespace="default",
+            json=public_unavailable_crd,
+            is_active=True,
+        )
+
+        user_available = Kind(
+            user_id=test_user.id,
+            kind="Model",
+            name="user-wework-model",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Model",
+                "metadata": {
+                    "name": "user-wework-model",
+                    "namespace": "default",
+                },
+                "spec": {
+                    "modelConfig": {
+                        "env": {"model": "claude", "model_id": "user-wework-model"}
+                    },
+                    "isWeworkAvailable": True,
+                },
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+        user_unavailable = Kind(
+            user_id=test_user.id,
+            kind="Model",
+            name="user-no-wework",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Model",
+                "metadata": {"name": "user-no-wework", "namespace": "default"},
+                "spec": {
+                    "modelConfig": {
+                        "env": {"model": "claude", "model_id": "user-no-wework"}
+                    }
+                },
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+
+        test_db.add_all(
+            [public_available, public_unavailable, user_available, user_unavailable]
+        )
+        test_db.commit()
+
+        def fake_list_resources(user_id, kind, namespace):
+            if user_id == test_user.id and kind == "Model" and namespace == "default":
+                return [user_available, user_unavailable]
+            return []
+
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            fake_list_resources,
+        )
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="all",
+            model_category_type="llm",
+            client_origin="wework",
+        )
+        names = {model["name"] for model in models}
+
+        assert "public-wework-model" in names
+        assert "user-wework-model" in names
+        assert "public-no-wework" not in names
+        assert "user-no-wework" not in names
+
+    def test_frontend_lists_models_regardless_of_wework_flag(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """Non-wework clients should see models whether or not isWeworkAvailable is set."""
+        public_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "public-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {"env": {"model": "openai", "model_id": "public-model"}}
+            },
+            "status": {"state": "Available"},
+        }
+        public_model = Kind(
+            user_id=0,
+            kind="Model",
+            name="public-model",
+            namespace="default",
+            json=public_crd,
+            is_active=True,
+        )
+        user_model = Kind(
+            user_id=test_user.id,
+            kind="Model",
+            name="user-model",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Model",
+                "metadata": {"name": "user-model", "namespace": "default"},
+                "spec": {
+                    "modelConfig": {
+                        "env": {"model": "claude", "model_id": "user-model"}
+                    },
+                    "isWeworkAvailable": True,
+                },
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+
+        test_db.add_all([public_model, user_model])
+        test_db.commit()
+
+        def fake_list_resources(user_id, kind, namespace):
+            if user_id == test_user.id and kind == "Model" and namespace == "default":
+                return [user_model]
+            return []
+
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            fake_list_resources,
+        )
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="all",
+            model_category_type="llm",
+            client_origin="frontend",
+        )
+        names = {model["name"] for model in models}
+
+        assert "public-model" in names
+        assert "user-model" in names
