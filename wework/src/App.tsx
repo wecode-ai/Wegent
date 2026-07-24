@@ -489,7 +489,7 @@ function AppShell() {
 function WeworkDevInstanceBadge() {
   const info = getWeworkDevInstanceInfo()
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const [position, setPosition] = useState<CSSProperties>()
   const draggedRef = useRef(false)
   if (!info) return null
