@@ -111,7 +111,7 @@ interface MessageListProps {
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
-  onForkMessage?: (message: WorkbenchMessage) => void
+  onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
@@ -562,11 +562,7 @@ export const MessageList = memo(function MessageList({
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-                onFork={
-                  onForkMessage && (message.turnId || message.subtaskId)
-                    ? () => onForkMessage(message)
-                    : undefined
-                }
+                onFork={onForkMessage && message.turnId ? () => onForkMessage(message) : undefined}
               />
             )}
           </WindowedMessageArticle>
@@ -769,6 +765,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
+    previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
     previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
     previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
@@ -1553,10 +1550,11 @@ function MessageHoverActions({
   align: 'left' | 'right'
   visible: boolean
   onEdit?: () => void
-  onFork?: () => void
+  onFork?: () => Promise<void> | void
 }) {
   const { t } = useTranslation('chat')
   const [copied, setCopied] = useState(false)
+  const [forking, setForking] = useState(false)
   const resetCopiedAfterHideRef = useRef(false)
   const time = formatMessageTime(message.createdAt)
 
@@ -1662,10 +1660,23 @@ function MessageHoverActions({
       <button
         type="button"
         data-testid="fork-message-button"
-        onClick={onFork}
+        onClick={() => {
+          if (forking) return
+          setForking(true)
+          void (async () => {
+            try {
+              await onFork()
+            } catch {
+              // The workbench callback owns user-visible error reporting.
+            } finally {
+              setForking(false)
+            }
+          })()
+        }}
+        disabled={forking}
         title={t('continue_in_new_task')}
         aria-label={t('continue_in_new_task')}
-        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-secondary"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-secondary disabled:pointer-events-none disabled:opacity-50"
       >
         <GitFork data-testid="fork-message-icon" className="h-3.5 w-3.5" />
       </button>
@@ -1917,7 +1928,7 @@ function AssistantMessage({
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
-  onFork?: () => void
+  onFork?: () => Promise<void> | void
 }) {
   const { t } = useTranslation('chat')
   const isCancelled = isCancelledAssistantMessage(message)

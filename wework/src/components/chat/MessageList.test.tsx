@@ -4049,7 +4049,8 @@ describe('MessageList', () => {
   })
 
   test('continues a completed Codex turn in a new task', async () => {
-    const onForkMessage = vi.fn()
+    let resolveFork: (() => void) | undefined
+    const onForkMessage = vi.fn(() => new Promise<void>(resolve => (resolveFork = resolve)))
     const message = {
       id: 'assistant-turn-1',
       role: 'assistant' as const,
@@ -4065,6 +4066,13 @@ describe('MessageList', () => {
     expect(button).toHaveAttribute('aria-label', '在新任务中继续')
     await userEvent.click(button)
     expect(onForkMessage).toHaveBeenCalledWith(message)
+    expect(button).toBeDisabled()
+
+    await userEvent.click(button)
+    expect(onForkMessage).toHaveBeenCalledTimes(1)
+
+    resolveFork?.()
+    await waitFor(() => expect(button).not.toBeDisabled())
   })
 
   test('hides assistant hover actions while the response is streaming', () => {

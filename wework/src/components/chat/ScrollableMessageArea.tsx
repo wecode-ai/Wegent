@@ -77,7 +77,7 @@ interface ScrollableMessageAreaProps {
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
-  onForkMessage?: (message: WorkbenchMessage) => void
+  onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void

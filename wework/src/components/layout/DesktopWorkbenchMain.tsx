@@ -2248,14 +2248,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onEditLastUserMessage={paneSession.editLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
                 onForkMessage={message => {
-                  const forkTurnId = message.turnId || message.subtaskId
-                  if (!currentRuntimeTask || !forkTurnId) return
-                  void forkCurrentRuntimeTask(
+                  const workspacePath =
+                    currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
+                  if (!currentRuntimeTask || !message.turnId || !workspacePath) return
+                  return forkCurrentRuntimeTask(
                     {
                       deviceId: currentRuntimeTask.deviceId,
-                      workspacePath: currentRuntimeTask.workspacePath ?? '',
+                      workspacePath,
                     },
-                    { lastTurnId: forkTurnId }
+                    { lastTurnId: message.turnId }
                   )
                 }}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}

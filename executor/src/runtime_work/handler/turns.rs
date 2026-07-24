@@ -278,6 +278,9 @@ impl RuntimeWorkRpcHandler {
                 self.finish_local_task(local_task_id, Some(thread_id.clone()), status);
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, request);
+                let turn_id = self.local_task_link(local_task_id).and_then(|link| {
+                    tasks::runtime_turn_id_from_link(&link, &request.subtask_id.to_string())
+                });
                 match turn.outcome {
                     ExecutionOutcome::Completed { content } => emit_response_event(
                         &self.event_tx,
@@ -285,7 +288,7 @@ impl RuntimeWorkRpcHandler {
                         "response.completed",
                         local_task_id,
                         request,
-                        json!({"value": content}),
+                        json!({"value": content, "turnId": turn_id}),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
                         &self.event_tx,
@@ -295,6 +298,7 @@ impl RuntimeWorkRpcHandler {
                         request,
                         json!({
                             "value": "",
+                            "turnId": turn_id,
                             "stop_reason": stop_reason,
                             "silent_exit": true,
                             "silent_exit_reason": "waiting_for_user_input"

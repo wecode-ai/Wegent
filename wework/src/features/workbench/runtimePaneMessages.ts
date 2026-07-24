@@ -146,6 +146,12 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onMessageAction({
         type: 'assistant_done',
         subtaskId: identity.subtaskId,
+        turnId:
+          typeof payload.result.turnId === 'string'
+            ? payload.result.turnId
+            : typeof payload.result.turn_id === 'string'
+              ? payload.result.turn_id
+              : undefined,
         content: doneContent(payload.result),
         blocks,
         fileChanges,

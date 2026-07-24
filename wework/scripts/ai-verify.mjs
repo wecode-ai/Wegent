@@ -59,6 +59,14 @@ function parseArgs(argv) {
   return { command, options }
 }
 
+export function resolveStartupTimeout(timeout) {
+  const configuredTimeout = timeout === undefined ? startupTimeoutMs : Number(timeout)
+  if (!Number.isFinite(configuredTimeout) || configuredTimeout <= 0) {
+    throw new Error('--timeout must be a finite positive number')
+  }
+  return configuredTimeout
+}
+
 function json(response, status, value) {
   response.writeHead(status, {
     ...corsHeaders,
@@ -324,7 +332,7 @@ async function main() {
       { detached: true, stdio: 'ignore' }
     )
     child.unref()
-    const startupDeadline = Date.now() + (Number(options.timeout) || startupTimeoutMs)
+    const startupDeadline = Date.now() + resolveStartupTimeout(options.timeout)
     while (Date.now() < startupDeadline) {
       let session
       try {

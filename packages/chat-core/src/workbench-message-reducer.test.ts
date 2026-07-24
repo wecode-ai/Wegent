@@ -337,6 +337,7 @@ describe('reduceWorkbenchMessages', () => {
     const done = reduceWorkbenchMessages(withChunk, {
       type: 'assistant_done',
       subtaskId: '9',
+      turnId: 'turn-9',
       content: 'Hi'
     })
 
@@ -348,6 +349,7 @@ describe('reduceWorkbenchMessages', () => {
     })
     expect(done[1]).toMatchObject({
       role: 'assistant',
+      turnId: 'turn-9',
       content: 'Hi',
       status: 'done',
       blocks: [{ type: 'tool', toolName: 'bash', status: 'done' }]

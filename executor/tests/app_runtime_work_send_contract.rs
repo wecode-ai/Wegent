@@ -517,6 +517,91 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missing_turn() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-fork-turn-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-fork-turn-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-fork-turn-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "source-task-1",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("source task should be accepted");
+    assert_eq!(created["accepted"], true);
+    wait_for_thread_mapping(&handler, "source-task-1", "thread-1").await;
+    wait_until_task_idle(&handler, "source-task-1").await;
+
+    let forked = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.fork_at_turn",
+            "payload": {
+                "taskId": "source-task-1",
+                "lastTurnId": "turn-1"
+            }
+        }))
+        .await
+        .expect("completed turn should fork");
+    assert_eq!(forked["accepted"], true);
+    assert_eq!(forked["source"]["taskId"], "source-task-1");
+    assert_eq!(forked["target"]["taskId"], "thread-fork-1");
+
+    let listed = handler
+        .handle_runtime_rpc(json!({"method": "runtime.tasks.list", "payload": {}}))
+        .await
+        .expect("runtime task list should succeed");
+    let tasks = listed["workspaces"][0]["tasks"]
+        .as_array()
+        .expect("workspace tasks should be present");
+    assert_eq!(tasks.len(), 2);
+    assert!(tasks
+        .iter()
+        .all(|task| task["workspacePath"] == "/tmp/project"));
+
+    let calls = read_json_lines(&log_path);
+    let fork_call = calls
+        .iter()
+        .find(|call| call["method"] == "thread/fork" && call["params"]["lastTurnId"] == "turn-1")
+        .expect("turn-bounded thread/fork should be called");
+    assert_eq!(fork_call["params"]["threadId"], "thread-1");
+    assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
+
+    let missing = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.fork_at_turn",
+            "payload": {
+                "taskId": "source-task-1",
+                "lastTurnId": "missing-turn"
+            }
+        }))
+        .await
+        .expect("missing turn should return a structured failure");
+    assert_eq!(missing["accepted"], false);
+    assert!(missing["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("fork turn was not found")));
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2044,7 +2129,17 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/fork"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      case "$line" in
+        *'"lastTurnId":"missing-turn"'*)
+          printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32602,"message":"fork turn was not found"}}}}'
+          ;;
+        *'"lastTurnId":"turn-1"'*)
+          printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-fork-1"}}}}}}'
+          ;;
+        *)
+          printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+          ;;
+      esac
       ;;
     *'"method":"thread/inject_items"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
