@@ -102,6 +102,18 @@ When a runtime transcript page is loaded or refreshed, the server-provided `mess
 
 When loading an older page or filling a middle gap, indexed messages remain ordered by the server index, while local messages sharing an anchor keep their stable pane order. Deduplication uses only stable message ids and must not infer identity from content, role, or subtask.
 
+### Transcript Gap Loading
+
+The message list detects middle gaps from adjacent `messageIndex` values. A gap may automatically request its transcript range once when it first enters the viewport. If a model failure or another runtime condition means that the server has no record for that range, the gap remains visible after the request, but the same range must not be requested automatically again within that conversation. Users can still click the gap marker to retry manually. Automatic-attempt tracking resets by `conversationKey` when the conversation changes.
+
+This boundary prevents a permanently missing record from causing a “load completes → gap remains visible → load again” loop that repeatedly shows the loading state and disturbs the scroll position. Changes to gap loading must cover the case where the server request succeeds without resolving the gap.
+
+### Runtime Task Lists and Project Removal
+
+When the backend validates an executor `runtime.tasks.list` response, task status must cover the executor's complete list semantics: `active`, `running`, `done`, `cancelled`, `failed`, and `archived`. Accepting only project lifecycle states causes one completed task to discard the entire device workspace.
+
+When removing a typed local project, the caller may have only a workspace path rather than the internal project id stored in Codex global state. The executor must resolve that path through writable roots to the real project key before clearing the project, ordering, pin, appearance, and thread-assignment state. Matching the path only against typed project keys or ids is insufficient.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:

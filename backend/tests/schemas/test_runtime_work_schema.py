@@ -5,7 +5,44 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.runtime_work import RuntimeGuidanceRequest, RuntimeTaskAddress
+from app.schemas.runtime_work import (
+    LocalTaskSummary,
+    RuntimeGuidanceRequest,
+    RuntimeTaskAddress,
+)
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["active", "running", "done", "cancelled", "failed", "archived"],
+)
+def test_local_task_summary_accepts_executor_task_statuses(status: str) -> None:
+    task = LocalTaskSummary(
+        taskId="runtime-1",
+        workspacePath="/workspace",
+        title="Runtime task",
+        runtime="codex",
+        status=status,
+    )
+
+    assert task.status == status
+
+
+def test_local_task_summary_accepts_executor_millisecond_timestamps() -> None:
+    task = LocalTaskSummary.model_validate(
+        {
+            "local_task_id": "runtime-1",
+            "workspace_path": "/workspace",
+            "title": "Runtime task",
+            "runtime": "codex",
+            "status": "done",
+            "created_at": 1_784_883_054_283,
+            "updated_at": 1_784_883_057_796,
+        }
+    )
+
+    assert task.created_at == 1_784_883_054_283
+    assert task.updated_at == 1_784_883_057_796
 
 
 def test_runtime_guidance_accepts_image_attachment_without_text() -> None:

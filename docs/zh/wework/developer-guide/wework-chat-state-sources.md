@@ -100,6 +100,18 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 
 加载较早页面或补中间 gap 时，带 `messageIndex` 的消息仍按服务端序号排序；同一锚点之间的本地消息保持 pane 中已有的稳定顺序。消息去重只使用稳定 message id，不根据内容、角色或 subtask 猜测身份。
 
+### Transcript 缺口补载
+
+消息列表根据相邻 `messageIndex` 识别中间缺口。缺口首次进入可视区域时可以自动请求一次对应 transcript 范围；如果模型报错等原因导致服务端没有该段记录，请求返回后缺口会继续显示，但同一会话内不能再次自动请求同一个范围。用户仍可点击缺口标记手动重试。切换到其他会话时，自动请求记录按 `conversationKey` 重置。
+
+这条边界避免永久缺失的记录触发“加载完成 → 缺口仍可见 → 再次加载”的循环，从而反复显示加载状态并扰动滚动位置。新增或修改缺口加载逻辑时，必须覆盖服务端成功返回但缺口未消失的回归场景。
+
+### Runtime 任务列表与项目删除
+
+Backend 校验 executor 的 `runtime.tasks.list` 响应时，任务状态必须覆盖 executor 的完整列表语义：`active`、`running`、`done`、`cancelled`、`failed` 和 `archived`。不能只接受项目生命周期状态，否则一个已完成任务就会让整个设备工作区被丢弃。
+
+删除 typed local project 时，调用方可能只有 workspace path，没有 Codex 全局状态中的内部 project id。Executor 必须先通过 writable roots 将路径解析为真实 project key，再统一清理项目、排序、置顶、外观和线程归属；不能只按路径匹配 typed project 的 key/id。
+
 ## 引导消息顺序
 
 运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：
