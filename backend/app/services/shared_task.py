@@ -856,12 +856,6 @@ class SharedTaskService:
                             "mime_type": ctx.mime_type,
                         }
                     )
-                elif ctx.context_type == ContextType.KNOWLEDGE_BASE.value:
-                    ctx_dict.update(
-                        {
-                            "document_count": ctx.document_count,
-                        }
-                    )
 
                 public_contexts.append(ctx_dict)
 
