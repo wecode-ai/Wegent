@@ -5,7 +5,7 @@
 use super::*;
 
 #[tokio::test]
-async fn fork_rejects_each_running_signal_independently() {
+async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
     for (case, persisted_running, active_in_memory) in
         [("persisted", true, false), ("active", false, true)]
     {
@@ -17,6 +17,7 @@ async fn fork_rejects_each_running_signal_independently() {
             "/tmp/project".to_owned(),
             "Task".to_owned(),
         );
+        link.thread_id = Some("thread-1".to_owned());
         link.running = persisted_running;
         handler.upsert_local_task(link);
         if active_in_memory {
@@ -26,17 +27,14 @@ async fn fork_rejects_each_running_signal_independently() {
         let response = handler
             .fork_task_at_turn(json!({
                 "taskId": "task-1",
-                "lastTurnId": "turn-1",
+                "lastTurnId": "missing-turn",
             }))
             .await
-            .expect("running task fork should return a structured failure");
+            .expect("running task fork should continue to turn resolution");
 
         assert_eq!(response["accepted"], false, "{case}");
         assert_eq!(response["code"], "bad_request", "{case}");
-        assert_eq!(
-            response["error"], "runtime task is already running",
-            "{case}"
-        );
+        assert_eq!(response["error"], "fork turn was not found", "{case}");
 
         let _ = fs::remove_file(index_path);
     }

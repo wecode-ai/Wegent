@@ -19,7 +19,6 @@ import {
   File as FileIcon,
   FileText,
   Folder,
-  GitFork,
   LibraryBig,
   ListTodo,
   MessageSquare,
@@ -133,6 +132,28 @@ const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
 const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
+
+function ForkTurnIcon() {
+  return (
+    <svg
+      data-testid="fork-message-icon"
+      aria-hidden="true"
+      className="h-4 w-4"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 12h4c4 0 4-6 8-6h6" />
+      <path d="M7 12c4 0 4 6 8 6h6" />
+      <path d="m18 3 3 3-3 3" />
+      <path d="m18 15 3 3-3 3" />
+    </svg>
+  )
+}
+
 interface MessageTextSelection {
   text: string
   left: number
@@ -1590,7 +1611,7 @@ function MessageHoverActions({
         aria-label={t('continue_in_new_task')}
         className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-secondary disabled:pointer-events-none disabled:opacity-50"
       >
-        <GitFork data-testid="fork-message-icon" className="h-3.5 w-3.5" />
+        <ForkTurnIcon />
       </button>
       <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-base px-1.5 py-0.5 text-xs text-text-secondary opacity-0 shadow-sm transition-opacity group-hover/fork:opacity-100">
         {t('continue_in_new_task')}
