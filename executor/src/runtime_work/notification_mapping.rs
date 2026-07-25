@@ -37,7 +37,9 @@ pub(crate) enum TextChunkMapping {
         item_id: Option<String>,
         text: String,
     },
-    FinalCompleted,
+    FinalCompleted {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,7 +95,9 @@ pub(crate) fn map_text_chunk(
                         text,
                     }))
                 }
-                CompletedAssistantTextKind::Final => Ok(Some(TextChunkMapping::FinalCompleted)),
+                CompletedAssistantTextKind::Final(text) => {
+                    Ok(Some(TextChunkMapping::FinalCompleted { text }))
+                }
             }
         }
         _ => Ok(None),
@@ -261,7 +265,7 @@ fn env_bool(name: &str, default_value: bool) -> bool {
 
 enum CompletedAssistantTextKind {
     Process(String),
-    Final,
+    Final(String),
 }
 
 fn completed_assistant_text_kind(
@@ -278,7 +282,7 @@ fn completed_assistant_text_kind(
     if codex_phase_is_process(phase.as_deref()) {
         Some(CompletedAssistantTextKind::Process(text))
     } else {
-        Some(CompletedAssistantTextKind::Final)
+        Some(CompletedAssistantTextKind::Final(text))
     }
 }
 

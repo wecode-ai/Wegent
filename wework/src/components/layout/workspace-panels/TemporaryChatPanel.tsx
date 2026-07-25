@@ -228,6 +228,7 @@ export function TemporaryChatPanel({
           source,
           attachments: currentAttachments,
           onError: handleError,
+          onRuntimeTaskOptimisticOpen: setAddress,
         }))
 
       if (!targetAddress) return

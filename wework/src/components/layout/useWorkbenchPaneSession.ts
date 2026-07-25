@@ -439,6 +439,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
     const seededGoal = getRuntimePaneGoalSeed(runtimeTaskLoadTarget.address)
     if (seededGoal) {
+      lifecycleStore.goalStatusReceived(runtimeTaskLoadTarget.address, seededGoal.goal.status)
       setPendingGoalState(current =>
         current && isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
           ? current
@@ -457,7 +458,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           commitThreadGoal(loadedGoal)
           lifecycleStore.goalStatusReceived(
             runtimeTaskLoadTarget.address,
-            loadedGoal?.status ?? null
+            loadedGoal?.status ?? seededGoal?.goal.status ?? null
           )
           if (loadedGoal?.status === 'active') {
             void refreshWorkListsRef.current().catch(() => undefined)
@@ -537,7 +538,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       .then(transcript => {
         if (!cancelled) {
-          lifecycleStore.syncTranscript(address, transcript)
+          const preserveActiveTurn =
+            (lifecycleStore.getTask(address)?.derived.isRunning ?? false) &&
+            !transcriptSettlesLatestSeededTurn(transcript.messages, seededMessages)
+          lifecycleStore.syncTranscript(address, transcript, { preserveActiveTurn })
           const transcriptTaskRunning = lifecycleStore.getTask(address)?.derived.isRunning ?? false
           const nextMessages = reconcileRuntimeConversationMessages(
             transcript.messages,
@@ -637,7 +641,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             if (requestedGoalRevision !== goalRevisionRef.current) return
             const loadedGoal = response.accepted ? response.goal : null
             commitThreadGoal(loadedGoal)
-            lifecycleStore.goalStatusReceived(address, loadedGoal?.status ?? null)
+            const seededGoal = getRuntimePaneGoalSeed(address)
+            lifecycleStore.goalStatusReceived(
+              address,
+              loadedGoal?.status ?? seededGoal?.goal.status ?? null
+            )
             if (loadedGoal?.status === 'active') {
               void refreshWorkListsRef.current().catch(() => undefined)
             }
@@ -2744,6 +2752,26 @@ function hasUnsettledRuntimePaneState(messages: WorkbenchMessage[]): boolean {
         ['generating_arguments', 'pending', 'streaming'].includes(block.status)
       )
   )
+}
+
+function transcriptSettlesLatestSeededTurn(
+  transcriptMessages: WorkbenchMessage[],
+  seededMessages: WorkbenchMessage[]
+): boolean {
+  const latestSeededUser = [...seededMessages].reverse().find(message => message.role === 'user')
+  if (!latestSeededUser) return hasSettledAssistantMessage(transcriptMessages)
+
+  const latestMatchingUserIndex = findLastIndex(
+    transcriptMessages,
+    message =>
+      message.role === 'user' &&
+      (message.id === latestSeededUser.id || message.content === latestSeededUser.content)
+  )
+  if (latestMatchingUserIndex < 0) return false
+
+  return transcriptMessages
+    .slice(latestMatchingUserIndex + 1)
+    .some(message => message.role === 'assistant' && message.status !== 'streaming')
 }
 
 function markRuntimeSubagentsSettled(current: RuntimeSubagentStatus[]): RuntimeSubagentStatus[] {

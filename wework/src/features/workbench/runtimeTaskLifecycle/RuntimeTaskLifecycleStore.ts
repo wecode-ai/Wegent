@@ -15,6 +15,10 @@ import type {
 
 type Listener = () => void
 
+interface SyncTranscriptOptions {
+  preserveActiveTurn?: boolean
+}
+
 const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
   version: 0,
   tasks: new Map(),
@@ -110,19 +114,28 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'turn_settled' })
   }
 
-  syncTranscript(address: RuntimeTaskAddress, transcript: RuntimePaneTranscript): void {
+  syncTranscript(
+    address: RuntimeTaskAddress,
+    transcript: RuntimePaneTranscript,
+    options: SyncTranscriptOptions = {}
+  ): void {
     const hasStreamingAssistant = transcript.messages.some(
       message => message.role === 'assistant' && message.status === 'streaming'
     )
+    const ignoreStaleIdleTranscript =
+      transcript.running === false &&
+      options.preserveActiveTurn === true &&
+      (this.getTask(address)?.derived.isRunning ?? false)
+
     if (transcript.running === true) {
       this.executorStarted(address)
-    } else if (transcript.running === false) {
+    } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
     }
 
     if (hasStreamingAssistant && transcript.running !== false) {
       this.dispatch(address, { type: 'turn_recovered', streaming: true })
-    } else if (transcript.running === false) {
+    } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.turnSettled(address)
     }
   }

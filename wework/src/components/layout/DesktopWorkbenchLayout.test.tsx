@@ -27,7 +27,7 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
-import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import {
@@ -441,6 +441,8 @@ const startCodeServerSessionMock = vi.fn()
 const startDeviceTerminalSessionMock = vi.fn()
 const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
+const createTemporaryRuntimeTaskMock = vi.fn()
+const subscribeRuntimeTaskStreamMock = vi.fn(() => vi.fn())
 
 function createDefaultImNotificationSettings() {
   return {
@@ -600,6 +602,8 @@ describe('DesktopWorkbenchLayout', () => {
       startTerminalSession: startTerminalSessionMock,
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
+    createTemporaryRuntimeTaskMock.mockResolvedValue(false)
+    subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
   })
 
   const baseProps = {
@@ -1019,7 +1023,7 @@ describe('DesktopWorkbenchLayout', () => {
       openRuntimeTask: props.onOpenRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
       searchRuntimeWork: props.onSearchRuntimeWork ?? vi.fn().mockResolvedValue({ items: [] }),
       loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [] }),
-      subscribeRuntimeTaskStream: vi.fn(() => vi.fn()),
+      subscribeRuntimeTaskStream: subscribeRuntimeTaskStreamMock,
       renameRuntimeTask: vi.fn().mockResolvedValue(undefined),
       archiveRuntimeTask: vi.fn().mockResolvedValue(undefined),
       archiveProjectConversations: vi.fn().mockResolvedValue(undefined),
@@ -1085,6 +1089,7 @@ describe('DesktopWorkbenchLayout', () => {
       sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
       cancelRuntimePaneTask: props.onCancelRuntimePaneTask ?? vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
+      createTemporaryRuntimeTask: createTemporaryRuntimeTaskMock,
       retryFailedMessage: vi.fn().mockResolvedValue(true),
       pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
       loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
@@ -4547,6 +4552,40 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(2)
     expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
+  })
+
+  test('temporary chat subscribes before its runtime create request settles', async () => {
+    const createResult = createDeferred<RuntimeTaskAddress | false>()
+    const optimisticAddress: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      return createResult.promise
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalledWith(
+        optimisticAddress,
+        expect.any(Object)
+      )
+    )
+
+    await act(async () => {
+      createResult.resolve(optimisticAddress)
+      await createResult.promise
+    })
   })
 
   test('moves right workspace tabs into the titlebar in Tauri', async () => {

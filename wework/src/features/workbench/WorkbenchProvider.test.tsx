@@ -3555,6 +3555,11 @@ describe('WorkbenchProvider runtime tasks', () => {
       deferred<
         Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
       >()
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -3588,6 +3593,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
     })
 
     renderWorkbench(<ProjectSendProbe />, services)
@@ -3629,6 +3637,28 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
     const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: request.taskId,
+        subtaskId: 'goal-turn',
+        shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+      streamHandlers.onChatDone?.({
+        taskId: request.taskId,
+        subtaskId: 'goal-turn',
+        deviceId: 'device-1',
+        result: { value: 'initial turn settled before goal lookup' },
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('current-created-runtime-task-running')).toHaveTextContent(
+        'running'
+      )
+    )
+    expect(screen.getByTestId('pane-busy')).toHaveTextContent('busy')
+
     await act(async () => {
       createRuntimeTask.resolve({
         accepted: true,
