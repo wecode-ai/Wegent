@@ -1,5 +1,7 @@
 # Wework
 
+<!-- CI rebuild trigger. -->
+
 Wework is the Wegent desktop workbench for local-first AI coding and workplace workflows. It is built with Tauri v2, Vite, React, and TypeScript.
 
 ## Capabilities

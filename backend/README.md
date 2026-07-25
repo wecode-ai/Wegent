@@ -124,6 +124,6 @@ uvicorn app.main:app --reload
 ```
 
 ## API Documentation
-After starting the service, visit: http://localhost:8000/api/docs
 
+After starting the service, visit: http://localhost:8000/api/docs
 
