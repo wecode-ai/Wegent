@@ -90,7 +90,9 @@ sidebar_position: 31
 - **检查点持久化进 `messages_chain`，而不是单独的 blob**（Phase 1）
   压缩那一轮成为自包含检查点（保留的近期 user 消息 + summary）落进它自己的
   `messages_chain`，reload 从最新检查点开始。功能上接近 Codex 的
-  `replacement_history`，但复用现有持久化而非新增字段。详见 Phase 1 一节。
+  `replacement_history`，但复用现有持久化而非新增字段。Phase 2a 进一步通过
+  request-local checkpointer 读取权威 LangGraph state，让这份持久化不再依赖该轮
+  以何种方式结束。详见 Phase 1 与 Phase 2a 两节。
 - **不把 summary compact 变成长期记忆层**
   它是 request-time 治理手段，不是新的会话存储模型。
 - **不让单个 fallback 路径承载全部功能**
@@ -162,6 +164,57 @@ Phase 1 补齐了 Stage 2 遗留的两个缺口。
 - summary LLM 调用带 provider 超时 + `asyncio.wait_for` 兜底
 - 超长判定识别 HTTP 413 与非英文 marker；裸 400 不再直接当超长（避免重试风暴）
 
+## Phase 2a：终止路径无关的权威状态持久化
+
+Phase 1 让压缩那一轮成为自包含检查点，但持久化仍依赖 happy path：该轮的
+`messages_chain` 由 `_collected_state_messages` 序列化而来，而后者是在顶层
+`on_chain_end` 事件里、用“保留最长快照”门槛捕获的。两个后果：
+
+- 触发 `GraphRecursionError`（工具调用上限）时顶层 end 可能根本不触发，recovery
+  又用请求前的 `lc_messages` 重建 chain —— 于是一轮“既压缩又撞工具上限”只持久化了
+  recovery 回复，静默丢掉检查点，下次续聊回退到更早的检查点。
+- 压缩会让 state **变短**，“最长快照”门槛可能拒绝真正的压缩后权威状态。
+
+Phase 2a 让**最后的权威 LangGraph state** 成为唯一收口的唯一来源，覆盖所有终止路径。
+
+### request-local checkpointer + `aget_state`
+
+- 每次构建 agent 都挂一个 **request-local `InMemorySaver`**，每轮（以及每层截断重试）
+  用唯一 `thread_id` 且 **`durability="exit"`**。exit 只在图退出时（含异常退出）提交
+  一份 checkpoint，因此 `aget_state(config)` 能取到压缩后的权威状态（summary + 压缩后
+  已完成的 tool pair），内存约 ~1×，而不是每个 super-step 一份。已删除失效的
+  `ENABLE_CHECKPOINTING` 开关，checkpointer 不再可选。
+- `_finalize_turn_history` 是唯一的原子收口：sanitize tool pair → 用 turn 不变的
+  `original_input_ids`（见 `TurnExecutionContext`）过滤本轮新消息 → 序列化校验 →
+  同时设置 `_last_messages_chain`、`_last_live_state_messages`、
+  `_last_termination_reason`，三者不会漂移。
+- 所有终止路径都经它：正常结束、`completed_with_unexecuted_tool_calls`、工具上限
+  recovery、截断重试与重试耗尽、silent/deferred、非流式路径。旧的
+  `_collected_state_messages` / 长度门槛权威判定已移除。
+
+### recovery 与 retry 用当前状态，不用 `lc_messages`
+
+- **工具上限 recovery** 把当前权威状态（sanitize 后）喂给 recovery LLM，使其能看到本轮
+  已产生的工具结果；final state = `safe_state + [recovery 回复]`，内部指令不入库。
+- **截断重试** 用当前权威状态（sanitize 后）**新开一个 thread** 重建（向同一 thread 重交
+  并不会删掉被截断的 tool call —— `add_messages` 按 id 合并），并**继承根轮的
+  `original_input_ids`**。截断指令是**临时控制消息**（`ephemeral_control` 标记）：压缩器
+  不会把它当当前 user、不会保留进检查点、不会折进 summary，序列化器也会跳过它，因此它
+  绝不会泄漏进持久化历史，也不会挤掉真实用户消息。
+
+### 生命周期与可观测
+
+- 每层 `stream_tokens` 在自己的 `finally` 里删**自己那个** thread（`adelete_thread`），
+  失败会记日志而非静默吞掉，且在删除前测量 `checkpoints_in_saver`。每轮输出一条持久化
+  日志：`path`、`chain_msgs`、`has_summary_marker`、`post_compaction_tool_pairs`、
+  `checkpoints_in_saver`、`adelete_thread_ok`。
+- checkpointer 只是请求内读取权威状态的临时暂存，持久真源仍是
+  `subtask.result.messages_chain`；不引入独立 checkpoint blob，重建逻辑不变 —— finalizer
+  复用同一序列化器，recovery 路径的检查点与正常结束的检查点重建结果一致。
+
+不在 Phase 2a 范围（推迟）：让非 `COMPLETED` 终止（FAILED / CANCELLED）携带并持久化
+`messages_chain`，以及放宽检查点定位以识别它们。
+
 ## 实现落点
 
 下列模块是后续维护最值得先看的入口：
@@ -170,7 +223,10 @@ Phase 1 补齐了 Stage 2 遗留的两个缺口。
 |---|---|
 | `chat_shell/guard/context_guard.py` | 统一治理主入口，串 source pass、summary compact、emergency pass |
 | `chat_shell/guard/tool_output.py` | tool output 的 compact 表示和紧急重截断 |
-| `chat_shell/compression/summary_compactor.py` | summary compact 主逻辑、O(n) 裁剪、检查点保留标记 |
+| `chat_shell/compression/summary_compactor.py` | summary compact 主逻辑、O(n) 裁剪、检查点保留 + 临时控制消息标记 |
+| `chat_shell/compression/tool_sanitizer.py` | 共享 `sanitize_tool_pairs`，压缩 / recovery / finalizer 共用（Phase 2a） |
+| `chat_shell/agents/graph_builder.py` | request-local exit-durability checkpointer、`_finalize_turn_history`、各终止路径处理（Phase 2a） |
+| `chat_shell/agents/turn_context.py` | `TurnExecutionContext`：turn 不变的 `original_input_ids` + 每层 thread 所有权（Phase 2a） |
 | `chat_shell/history/loader.py` | 历史 reload；透传 `from_latest_compaction` |
 | `backend/app/services/chat/compaction_checkpoint.py` | 定位最新检查点 + 共享 resolve→scope→limit 管线（Phase 1） |
 | `chat_shell/compression/config.py` | 上下文窗口、reserved output、trigger/target limit 计算 |

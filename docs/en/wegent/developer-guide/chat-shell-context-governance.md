@@ -117,7 +117,10 @@ But Wegent keeps its own trade-offs:
   The compacted turn becomes a self-contained checkpoint (retained recent user
   messages + summary) inside its own `messages_chain`, and reload starts from the
   latest checkpoint. This is functionally close to Codex's `replacement_history`,
-  but reuses existing persistence instead of a new field. See the Phase 1 section.
+  but reuses existing persistence instead of a new field. Phase 2a then makes that
+  persistence independent of how the turn terminates by reading the authoritative
+  LangGraph state through a request-local checkpointer. See the Phase 1 and Phase
+  2a sections.
 - **Summary compact is not a long-term memory layer**
   It is a request-time governance tool.
 - **Fallback is not the main feature path**
@@ -214,6 +217,75 @@ turn:
 - context-length classification recognizes HTTP 413 and non-English markers; a
   bare 400 is not treated as overflow (avoids a retry storm)
 
+## Phase 2a: authoritative-state persistence across terminal paths
+
+Phase 1 made a compacted turn a self-contained checkpoint, but persistence still
+depended on the happy path. The turn's `messages_chain` was serialized from
+`_collected_state_messages`, captured from top-level `on_chain_end` events under a
+"keep the longest snapshot" gate. Two consequences:
+
+- On a `GraphRecursionError` (tool-call limit) the top-level end may never fire,
+  and the recovery rebuilt the chain from the pre-run `lc_messages` — so a turn
+  that both compacted **and** hit the tool limit persisted only the recovery
+  reply and silently dropped the checkpoint. The next continuation then fell back
+  to an older checkpoint.
+- Compaction *shrinks* the live state, so the "longest snapshot" gate could reject
+  the real post-compaction state.
+
+Phase 2a makes the **last authoritative LangGraph state** the single source for a
+single finalizer, on every terminal path.
+
+### Request-local checkpointer read via `aget_state`
+
+- Every agent build attaches a **request-local `InMemorySaver`**, and each turn
+  (and each truncation-retry level) runs on a unique `thread_id` with
+  **`durability="exit"`**. Exit durability commits exactly one checkpoint at graph
+  exit — including on exception exit — so `aget_state(config)` returns the
+  authoritative post-compaction state (summary + completed post-compaction tool
+  pairs) at ~1× memory instead of one snapshot per super-step. The dormant
+  `ENABLE_CHECKPOINTING` toggle was removed; the checkpointer is not optional.
+- `_finalize_turn_history` is the single atomic choke point: it sanitizes tool
+  pairs, filters to this turn's new messages by a turn-invariant
+  `original_input_ids` (see `TurnExecutionContext`), serializes/validates, and
+  sets `_last_messages_chain`, `_last_live_state_messages`, and
+  `_last_termination_reason` together so they cannot drift.
+- Every terminal path funnels through it: normal completion,
+  `completed_with_unexecuted_tool_calls`, tool-limit recovery, truncation retry
+  and retry-exhausted, silent/deferred exit, and the non-streaming path. The old
+  `_collected_state_messages` / length-gate authority is gone.
+
+### Recovery and retry read the current state, not `lc_messages`
+
+- **Tool-limit recovery** feeds the recovery LLM the current authoritative state
+  (sanitized), so it sees the tool results it already produced; the final state is
+  `safe_state + [recovery reply]`, and the internal tool-limit instruction is
+  excluded from what persists.
+- **Truncation retry** seeds a **fresh thread** with the sanitized authoritative
+  state (re-submitting to the same thread would not delete the truncated tool call
+  — `add_messages` merges by id) and **inherits the root `original_input_ids`**.
+  The truncation instruction is an **ephemeral control message**
+  (`ephemeral_control` marker): the compactor never treats it as the current user,
+  never retains it into the checkpoint, and never folds it into the summary, and
+  the serializer skips it — so it can never leak into persisted history or crowd
+  out the real user turn.
+
+### Lifecycle and observability
+
+- Each `stream_tokens` level deletes **its own** thread in a `finally`
+  (`adelete_thread`); failures are logged, not silently suppressed, and
+  `checkpoints_in_saver` is measured before the delete. A per-turn persistence log
+  records `path`, `chain_msgs`, `has_summary_marker`,
+  `post_compaction_tool_pairs`, `checkpoints_in_saver`, and `adelete_thread_ok`.
+- The checkpointer is a per-request scratchpad for reading authoritative state
+  within one turn; the durable store remains `subtask.result.messages_chain`. No
+  separate checkpoint blob is introduced, and reconstruction is unchanged — the
+  finalizer reuses the same serializer, so recovery-path checkpoints reload
+  identically to normal-completion ones.
+
+Not in Phase 2a (deferred): letting non-`COMPLETED` terminals (FAILED / CANCELLED)
+carry and persist `messages_chain`, and relaxing the checkpoint locator to
+recognize them.
+
 ## Implementation map
 
 These modules are the best entry points for future maintenance:
@@ -222,7 +294,10 @@ These modules are the best entry points for future maintenance:
 |---|---|
 | `chat_shell/guard/context_guard.py` | Unified governance entry point: source pass, summary compact, emergency pass |
 | `chat_shell/guard/tool_output.py` | Compact tool-output rendering and emergency re-truncation |
-| `chat_shell/compression/summary_compactor.py` | Summary compact core logic, O(n) trim, checkpoint-retain markers |
+| `chat_shell/compression/summary_compactor.py` | Summary compact core logic, O(n) trim, checkpoint-retain + ephemeral-control markers |
+| `chat_shell/compression/tool_sanitizer.py` | Shared `sanitize_tool_pairs` used by compaction, recovery, and the finalizer (Phase 2a) |
+| `chat_shell/agents/graph_builder.py` | Request-local exit-durability checkpointer, `_finalize_turn_history`, per-path terminal handling (Phase 2a) |
+| `chat_shell/agents/turn_context.py` | `TurnExecutionContext`: turn-invariant `original_input_ids` + per-level thread ownership (Phase 2a) |
 | `chat_shell/history/loader.py` | History reload; forwards `from_latest_compaction` |
 | `backend/app/services/chat/compaction_checkpoint.py` | Locate latest checkpoint + shared resolve→scope→limit pipeline (Phase 1) |
 | `chat_shell/compression/config.py` | Context window, reserved output, trigger / target limit calculation |
