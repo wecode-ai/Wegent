@@ -789,6 +789,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return element.textContent?.trim() ?? ''
     }
+    case 'submit': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const form = element instanceof HTMLFormElement ? element : element.closest('form')
+      if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
+      form.requestSubmit()
+      return ''
+    }
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
   }

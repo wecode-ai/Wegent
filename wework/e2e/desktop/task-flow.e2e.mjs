@@ -7463,14 +7463,14 @@ async function main() {
     )
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
-    await control.command('press', activeBrowserInputSelector, { key: 'Enter' })
+    await control.command('submit', activeBrowserInputSelector)
+    await control.command('click', bottomPanelToggleSelector)
     await waitForControlValue(
       control,
       activeBrowserInputSelector,
       retainedBrowserUrl,
       'The Wework built-in browser did not commit its URL before switching conversations'
     )
-    await control.command('click', bottomPanelToggleSelector)
     const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
       control,
       value => {
