@@ -518,7 +518,9 @@ export function useWorkbenchDataRefresh({
       ).then(runtimeWorkResult => {
         if (cancelled) return
         const runtimeWork =
-          runtimeWorkResult.status === 'fulfilled' ? runtimeWorkResult.value : EMPTY_RUNTIME_WORK
+          runtimeWorkResult.status === 'fulfilled'
+            ? filterRemovedRuntimeProjects(runtimeWorkResult.value)
+            : EMPTY_RUNTIME_WORK
         if (runtimeWorkResult.status === 'fulfilled') {
           localRuntimeWorkRef.current = runtimeWork
           dispatch({
@@ -557,6 +559,7 @@ export function useWorkbenchDataRefresh({
   }, [
     dispatch,
     executorClient,
+    filterRemovedRuntimeProjects,
     refreshCloudBackgroundData,
     selectVisibleRuntimeWork,
     services.teamApi,

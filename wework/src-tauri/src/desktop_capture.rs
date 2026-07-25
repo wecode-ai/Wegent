@@ -38,15 +38,22 @@ async fn capture_main_webview_impl(app: tauri::AppHandle) -> Result<String, Stri
 
 #[cfg(target_os = "macos")]
 fn restore_main_webview(webview: &tauri::WebviewWindow) -> Result<(), String> {
-    webview
-        .show()
-        .map_err(|error| format!("Failed to show main webview: {error}"))?;
-    webview
-        .unminimize()
-        .map_err(|error| format!("Failed to unminimize main webview: {error}"))?;
-    webview
-        .set_focus()
-        .map_err(|error| format!("Failed to focus main webview: {error}"))
+    let mut errors = Vec::new();
+    if let Err(error) = webview.show() {
+        errors.push(format!("Failed to show main webview: {error}"));
+    }
+    if let Err(error) = webview.unminimize() {
+        errors.push(format!("Failed to unminimize main webview: {error}"));
+    }
+    if let Err(error) = webview.set_focus() {
+        errors.push(format!("Failed to focus main webview: {error}"));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 #[cfg(target_os = "macos")]
