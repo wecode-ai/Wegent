@@ -1758,7 +1758,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onDeliver={
-        currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
           ? () => {
               if (activeDeliveryItem) {
                 setDeliveryDialogOpen(true)
@@ -1773,7 +1773,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
       }
       onManageTodo={
-        currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
           ? () => {
               setDeliverAfterBinding(false)
               setTodoBindingPickerOpen(true)
@@ -2246,6 +2246,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onOpenAssistantPlan={openAssistantPlan}
                 onEditLastUserMessage={paneSession.editLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
+                onForkMessage={message => {
+                  const workspacePath =
+                    currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
+                  if (!currentRuntimeTask || !message.turnId || !workspacePath) return
+                  return forkCurrentRuntimeTask(
+                    {
+                      deviceId: currentRuntimeTask.deviceId,
+                      workspacePath,
+                    },
+                    { lastTurnId: message.turnId }
+                  )
+                }}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                 onAddSelectionToConversation={addSelectionToConversation}

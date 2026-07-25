@@ -86,6 +86,8 @@ Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打
 
 列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。没有使用 Codex app-server `thread/turns/list` 做长会话分页，因为当前 Codex 实现仍会在每次请求时 replay 整个 rollout 文件；对 Wework 来说它和全量读取成本相同，却不能复用 executor 已经标准化好的 tool/message cache。打开时也不请求 `includeTurns: true`，因为大 transcript 会把完整 turns 通过 app-server 再序列化一次，反而增加 IPC 和前端压力。
 
+分页或按发言跳转可能让前端同时持有不连续的 transcript 区间。Wework 会在相邻消息索引之间显示缺失区间，并在该标记首次进入视口时自动请求一次；如果运行时仍无法补齐同一个区间，前端必须停止自动重试，只保留用户点击重试。缺失区间加载只更新当前标记的状态，不能接管发言导航的滚动状态、关闭浏览器滚动锚定或切换消息虚拟化模式，否则无法补齐的历史会形成请求与布局抖动循环。
+
 可用下面的手工 benchmark 复测本机 rollout：
 
 ```bash
@@ -115,7 +117,7 @@ executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex
 
 排查“回复文本已经完整，但侧栏和 composer 仍显示运行中”时，应按同一组 `deviceId + taskId + subtaskId` 串联正式版日志。Tauri 先记录收到并转发 `response.completed`、`response.failed` 或 `response.incomplete`；本地 chat stream 随后记录终止事件命中的订阅数量；pane 层记录终止事件是被接受，还是因为 task/device 不匹配而被丢弃；最后 Workbench Provider 记录 `runtime_task_settled` 已分发。日志只记录运行时身份、事件类型和 block 数量，不记录回复正文或凭据。缺少哪一段日志，就表示终止状态停在对应边界之前。
 
-每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。打包本地 app 的 `createLocalAppServices()` 是本机 Codex 模型名规范化的唯一边界：UI 可以展示 `codex-gpt-5.5`，但发送到 Codex app-server 前必须统一转换成真实模型 id `gpt-5.5`。新建任务和继续任务都必须复用同一套规范化逻辑。
+每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。本地 IPC 和远程 WebSocket 都只负责传输同一份 canonical 模型选择；本地设备调用远程模型、远程设备调用远程模型，都进入 executor backend 的同一套执行逻辑。新建任务和继续任务都必须复用同一套模型选择路径。
 
 如果当前 LocalTask 仍在回复，Wework 会把新的用户输入放入本地队列，而不是并发调用 `runtime.tasks.send`。用户可以取消队列中的消息；也可以在队列面板中选择“暂停当前回复并发送”，这会先调用：
 

@@ -1,4 +1,5 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { info as writeInfoLog } from '@tauri-apps/plugin-log'
 import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
@@ -16,11 +17,7 @@ import {
   mergeDeviceLists,
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
-import {
-  supportsCloudExecution,
-  withModelExecutionOverride,
-  type HybridModelSource,
-} from '@/features/cloud-connection/modelExecution'
+import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
 import type {
   ArchivedConversationItem,
   ArchivedConversationsListRequest,
@@ -34,6 +31,7 @@ import type {
   RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeLocalProjectUpsertRequest,
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
@@ -95,88 +93,61 @@ function stringField(record: Record<string, unknown>, key: string): string | und
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function annotateHybridModel(
-  model: UnifiedModel,
-  source: HybridModelSource,
-  uiName: string,
-  displayName: string,
-  modelLabel: string
-): UnifiedModel {
-  const config = recordValue(model.config)
-  const ui = recordValue(config.ui)
-  const codexKind = isRuntimeCodexModel(model) ? config.weworkModelKind : null
-  const codexFamily = isRuntimeCodexModel(model) ? ui.family : null
-  return withModelExecutionOverride(
-    {
-      ...model,
-      name: uiName,
-      displayName,
-      provider: source === 'local' ? 'local' : (model.provider ?? 'cloud'),
-      config: {
-        ...config,
-        ...(codexKind ? { weworkModelKind: codexKind } : {}),
-        ui: {
-          ...ui,
-          ...(codexFamily ? { family: codexFamily } : {}),
-          modelLabel,
-        },
-      },
-    },
-    {
-      source,
-      modelName: model.name,
-      modelType: model.type,
-      modelNamespace: model.namespace,
-      resourceUserId: model.resourceUserId,
-    }
-  )
-}
-
 function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.map(model => {
-    if (!isRuntimeCodexModel(model)) {
-      return withModelExecutionOverride(model, {
-        source: 'local',
-        modelName: model.name,
-        modelType: model.type,
-        modelNamespace: model.namespace,
-        resourceUserId: model.resourceUserId,
-      })
-    }
-
-    return annotateHybridModel(
-      model,
-      'local',
-      model.name,
-      model.displayName || model.modelId || model.name,
-      model.displayName || model.modelId || model.name
-    )
-  })
+  return models
 }
 
 function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.filter(supportsCloudExecution).map(model => {
-    if (!isRuntimeCodexModel(model)) {
-      return withModelExecutionOverride(
-        { ...model, name: `cloud:${model.type}:${model.name}` },
-        {
-          source: 'cloud',
-          modelName: model.name,
-          modelType: model.type,
-          modelNamespace: model.namespace,
-          resourceUserId: model.resourceUserId,
-        }
-      )
-    }
+  return models.filter(supportsCloudExecution)
+}
 
-    return annotateHybridModel(
-      model,
-      'cloud',
-      `cloud:${model.type}:${model.name}`,
-      model.displayName || model.modelId || model.name,
-      model.displayName || model.modelId || model.name
-    )
+function normalizedModelId(model: UnifiedModel): string {
+  return model.modelId?.trim().toLowerCase() || ''
+}
+
+function canonicalModelKey(model: UnifiedModel): string {
+  return [
+    model.type,
+    model.name.trim().toLowerCase(),
+    model.namespace?.trim().toLowerCase() ?? '',
+    model.resourceUserId ?? '',
+  ].join(':')
+}
+
+function mergeModelCatalogs(
+  localModels: UnifiedModel[],
+  cloudModels: UnifiedModel[]
+): UnifiedModel[] {
+  const localCodexModelIds = new Set(
+    localModels.filter(isRuntimeCodexModel).map(normalizedModelId).filter(Boolean)
+  )
+  const seenModelKeys = new Set(localModels.map(canonicalModelKey))
+  const uniqueCloudModels = cloudModels.filter(model => {
+    const key = canonicalModelKey(model)
+    if (seenModelKeys.has(key)) return false
+    if (
+      isRuntimeCodexModel(model) &&
+      normalizedModelId(model) &&
+      localCodexModelIds.has(normalizedModelId(model))
+    ) {
+      return false
+    }
+    seenModelKeys.add(key)
+    return true
   })
+  return [...localModels, ...uniqueCloudModels]
+}
+
+function modelIdentityForLog(model: UnifiedModel): Record<string, unknown> {
+  return {
+    name: model.name,
+    displayName: model.displayName ?? null,
+    type: model.type,
+    provider: model.provider ?? null,
+    modelId: model.modelId ?? null,
+    namespace: model.namespace ?? null,
+    resourceUserId: model.resourceUserId ?? null,
+  }
 }
 
 function removeCurrentAppCloudRuntimeWork(
@@ -352,6 +323,14 @@ export function createHybridWorkbenchServices(
     cloudModelsRequest = Promise.resolve()
       .then(() => cloudServices.modelApi.listModels())
       .then(response => {
+        const modelCatalogLog = {
+          count: response.data.length,
+          models: response.data.map(modelIdentityForLog),
+        }
+        console.info('[Wework] Cloud model catalog loaded', modelCatalogLog)
+        void writeInfoLog(
+          `[Wework] Cloud model catalog loaded ${JSON.stringify(modelCatalogLog)}`
+        ).catch(() => undefined)
         rememberedCloudModels = annotateCloudModels(response.data)
         cloudModelsLoaded = true
         notifyWorkbenchModelsChanged()
@@ -696,6 +675,9 @@ export function createHybridWorkbenchServices(
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest) {
       return runtimeApi(data.deviceId).openRuntimeWorkspace(data)
     },
+    upsertLocalRuntimeProject(data: RuntimeLocalProjectUpsertRequest) {
+      return runtimeApi(data.deviceId).upsertLocalRuntimeProject(data)
+    },
     renameRuntimeWorkspace(data: RuntimeWorkspaceRenameRequest) {
       return runtimeApi(data.deviceId).renameRuntimeWorkspace(data)
     },
@@ -915,7 +897,7 @@ export function createHybridWorkbenchServices(
         const localModels = await localServices.modelApi.listModels()
         loadCloudModelsInBackground()
         return {
-          data: [...annotateLocalModels(localModels.data), ...rememberedCloudModels],
+          data: mergeModelCatalogs(annotateLocalModels(localModels.data), rememberedCloudModels),
         }
       },
     },

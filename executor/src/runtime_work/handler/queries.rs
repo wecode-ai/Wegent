@@ -261,14 +261,18 @@ impl RuntimeWorkRpcHandler {
             transcript_messages(&thread, &self.device_id)
         };
         let mut messages = transcript_messages;
-        if local_link
-            .as_ref()
-            .is_some_and(|link| link.running || link.status.eq_ignore_ascii_case("failed"))
-        {
+        if local_link.as_ref().is_some_and(|link| link.running) {
             append_missing_cached_user_messages(
                 &mut messages,
                 local_link.as_ref().map(cached_messages).unwrap_or_default(),
             );
+        } else if local_link
+            .as_ref()
+            .is_some_and(|link| link.status.eq_ignore_ascii_case("failed"))
+        {
+            let cached = local_link.as_ref().map(cached_messages).unwrap_or_default();
+            append_missing_cached_user_messages(&mut messages, cached.clone());
+            append_missing_cached_failed_assistant_messages(&mut messages, cached);
         }
         let running = local_execution_running;
         let message_count = messages.len();

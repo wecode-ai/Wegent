@@ -6,9 +6,10 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
+import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
   getLocalRuntimeStateDeviceId,
@@ -62,7 +63,6 @@ import type {
 } from './workbenchContextTypes'
 import {
   getBlockedModelSelectionMessage,
-  getCurrentRuntimeTaskCompatibilityFamily,
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
@@ -79,7 +79,7 @@ import {
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
-  getSingleProjectDeviceWorkspaceId,
+  getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -381,11 +381,6 @@ export function WorkbenchProvider({
     }
     return getNewChatModelSelection(currentUser) ?? null
   }, [currentUser, state.currentRuntimeTask, state.runtimeWork])
-  const modelCompatibilityConfig = useMemo(() => null, [])
-  const modelCompatibilityFamily = useMemo(
-    () => getCurrentRuntimeTaskCompatibilityFamily(state.runtimeWork, state.currentRuntimeTask),
-    [state.currentRuntimeTask, state.runtimeWork]
-  )
   const defaultModelSelectionConfig = useCallback(
     (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
     []
@@ -418,14 +413,37 @@ export function WorkbenchProvider({
       error: message || getBlockedModelSelectionMessage('runtime_family_mismatch', model),
     })
   }, [])
+  const modelExecutionDeviceId = useMemo(() => {
+    if (state.currentRuntimeTask?.deviceId) return state.currentRuntimeTask.deviceId
+    const projectWorkspace = findProjectDeviceWorkspace(
+      state.runtimeWork,
+      activeProject?.id,
+      state.selectedDeviceWorkspaceId
+    )
+    return projectWorkspace?.deviceId ?? (!activeProject ? state.standaloneDeviceId : null)
+  }, [
+    activeProject,
+    state.currentRuntimeTask,
+    state.runtimeWork,
+    state.selectedDeviceWorkspaceId,
+    state.standaloneDeviceId,
+  ])
+  const modelExecutionDevice = findWorkbenchDevice(state.devices, modelExecutionDeviceId)
+  const hideConfiguredLocalModels = Boolean(
+    modelExecutionDevice && modelExecutionDevice.device_type !== 'local'
+  )
+  const filterModelForExecution = useCallback(
+    (model: UnifiedModel) =>
+      !hideConfiguredLocalModels || localModelIdFromModelName(model.name) === null,
+    [hideConfiguredLocalModels]
+  )
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
+    filterModel: filterModelForExecution,
     locked: false,
     scopeKey: projectChatScopeKey,
     persistSelection: !state.currentRuntimeTask,
     selectionConfig: modelSelectionConfig,
-    compatibilityConfig: modelCompatibilityConfig,
-    compatibilityFamily: modelCompatibilityFamily,
     defaultSelectionConfig: defaultModelSelectionConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
@@ -462,6 +480,8 @@ export function WorkbenchProvider({
   const {
     cloudWorkStatus,
     markRuntimeTasksArchived,
+    markRuntimeProjectRemoved,
+    clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,
@@ -556,6 +576,7 @@ export function WorkbenchProvider({
       composer: {
         scopeKey: projectChatScopeKey,
         standaloneChatKey: state.standaloneChatKey,
+        availableModelNames: modelSelection.models.map(model => model.name),
         currentInputLength: draftInput.length,
         scopedInputLengths: Object.fromEntries(
           Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
@@ -573,6 +594,7 @@ export function WorkbenchProvider({
     currentContextUsage,
     draftInput.length,
     draftInputByScope,
+    modelSelection.models,
     projectChatScopeKey,
     state,
   ])
@@ -677,12 +699,15 @@ export function WorkbenchProvider({
   )
 
   const openStandaloneWorkspace = useCallback(
-    async (deviceId: string, workspacePath: string, label?: string) => {
+    async (deviceId: string, workspacePath: string, label?: string, projectRoots?: string[]) => {
       projectSelectionStartedRef.current = true
       const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
       if (!requestDeviceId || !normalizedWorkspacePath) return
       const normalizedLabel = label?.trim()
+      const normalizedRoots = Array.from(
+        new Set((projectRoots ?? []).map(root => root.trim()).filter(Boolean))
+      )
 
       // CLI open uses the local-device alias. Resolve the real executor device id so
       // online checks, composer enablement, and new-chat buttons match listDevices.
@@ -706,6 +731,36 @@ export function WorkbenchProvider({
         }
       }
 
+      if (projectRoots && normalizedRoots.length > 0) {
+        const projectName =
+          normalizedLabel ||
+          normalizedWorkspacePath.split(/[\\/]/).filter(Boolean).at(-1) ||
+          'Project'
+        const response = await executorClient.runtime.upsertLocalRuntimeProject({
+          deviceId: requestDeviceId,
+          projectKey: crypto.randomUUID(),
+          name: projectName,
+          roots: normalizedRoots,
+          runtime: 'codex',
+        })
+        if (!response.accepted) {
+          throw new Error(response.error || 'Failed to register local project')
+        }
+        response.roots.forEach(workspacePath =>
+          clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
+        )
+        rememberExecutionDevice(response.deviceId)
+        await refreshWorkLists()
+        dispatch({
+          type: 'runtime_workspace_opened',
+          deviceId: response.deviceId,
+          workspacePath: response.roots[0],
+          label: response.name,
+        })
+        navigateTo('/')
+        return
+      }
+
       const response = await executorClient.runtime.openRuntimeWorkspace({
         deviceId: requestDeviceId,
         workspacePath: normalizedWorkspacePath,
@@ -724,6 +779,10 @@ export function WorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
+      clearRuntimeProjectRemoval({
+        deviceId: openedDeviceId,
+        workspacePath: openedWorkspacePath,
+      })
       writeLastProjectId(user.id, null)
       rememberExecutionDevice(openedDeviceId)
       dispatch({
@@ -734,7 +793,14 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [executorClient, rememberExecutionDevice, state.devices, user.id]
+    [
+      clearRuntimeProjectRemoval,
+      executorClient,
+      refreshWorkLists,
+      rememberExecutionDevice,
+      state.devices,
+      user.id,
+    ]
   )
 
   const startNewChat = useCallback(() => {
@@ -746,7 +812,7 @@ export function WorkbenchProvider({
       dispatch({
         type: 'project_workspace_selected',
         project,
-        deviceWorkspaceId: getSingleProjectDeviceWorkspaceId(state.runtimeWork, project.id),
+        deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
       })
       navigateTo('/')
       requestNewChatComposerFocus()
@@ -917,7 +983,7 @@ export function WorkbenchProvider({
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
-      const deviceWorkspaceId = getSingleProjectDeviceWorkspaceId(state.runtimeWork, projectId)
+      const deviceWorkspaceId = getDefaultProjectDeviceWorkspaceId(state.runtimeWork, projectId)
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (!project) return
       projectSelectionStartedRef.current = true
@@ -1007,6 +1073,8 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     refreshWorkLists,
+    markRuntimeProjectRemoved,
+    clearRuntimeProjectRemoval,
     rememberExecutionDevice,
   })
   const runtimeMessaging = useWorkbenchRuntimeMessaging({
@@ -1183,6 +1251,7 @@ export function WorkbenchProvider({
   const stableListGitRepositories = useStableEvent(projectActions.listGitRepositories)
   const stableListGitBranches = useStableEvent(projectActions.listGitBranches)
   const stableUpdateProjectName = useStableEvent(projectActions.updateProjectName)
+  const stableUpdateLocalRuntimeProject = useStableEvent(projectActions.updateLocalRuntimeProject)
   const stableRemoveProject = useStableEvent(projectActions.removeProject)
   const stableReorderRuntimeProjects = useStableEvent(projectActions.reorderRuntimeProjects)
   const stableSetRuntimeProjectPinned = useStableEvent(projectActions.setRuntimeProjectPinned)
@@ -1522,6 +1591,7 @@ export function WorkbenchProvider({
     listGitRepositories: projectActions.listGitRepositories,
     listGitBranches: projectActions.listGitBranches,
     updateProjectName: projectActions.updateProjectName,
+    updateLocalRuntimeProject: projectActions.updateLocalRuntimeProject,
     removeProject: projectActions.removeProject,
     reorderRuntimeProjects: projectActions.reorderRuntimeProjects,
     setRuntimeProjectPinned: projectActions.setRuntimeProjectPinned,
@@ -1609,6 +1679,7 @@ export function WorkbenchProvider({
       listGitRepositories: stableListGitRepositories,
       listGitBranches: stableListGitBranches,
       updateProjectName: stableUpdateProjectName,
+      updateLocalRuntimeProject: stableUpdateLocalRuntimeProject,
       removeProject: stableRemoveProject,
       reorderRuntimeProjects: stableReorderRuntimeProjects,
       setRuntimeProjectPinned: stableSetRuntimeProjectPinned,
@@ -1722,6 +1793,7 @@ export function WorkbenchProvider({
       stableSubscribeRuntimeTaskStream,
       stableUnsubscribeRuntimeTaskNotifications,
       stableUpdateGlobalImNotification,
+      stableUpdateLocalRuntimeProject,
       stableUpdateProjectName,
       stableUpgradeDevice,
       upgradingDevices,

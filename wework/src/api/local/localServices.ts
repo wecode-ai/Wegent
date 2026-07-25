@@ -21,6 +21,8 @@ import type {
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeInterruptAndSendRequest,
+  RuntimeLocalProjectUpsertRequest,
+  RuntimeLocalProjectUpsertResponse,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -762,6 +764,7 @@ function localRuntimeModelConfig(
       codex_catalog_model_id: DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
+      tool_profile: 'custom',
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,
@@ -1122,6 +1125,9 @@ interface BuildLocalRuntimeExecutionRequestInput {
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
   workspacePath?: string | null
+  runtimeProjectKey?: string
+  runtimeProjectName?: string
+  runtimeWorkspaceRoots?: string[]
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
@@ -1212,6 +1218,11 @@ function buildLocalRuntimeExecutionRequest(
           workspace_source: input.workspaceSource,
           project_workspace_path: input.workspacePath,
         }
+      : {}),
+    ...(input.runtimeProjectKey ? { runtime_project_key: input.runtimeProjectKey } : {}),
+    ...(input.runtimeProjectName ? { runtime_project_name: input.runtimeProjectName } : {}),
+    ...(input.runtimeWorkspaceRoots?.length
+      ? { runtime_workspace_roots: input.runtimeWorkspaceRoots }
       : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
@@ -1354,6 +1365,9 @@ async function createLocalRuntimeTaskPayload(
       attachments: normalizedData.attachments,
       localDeviceId,
       workspacePath: runtimeWorkspace.workspacePath,
+      runtimeProjectKey: normalizedData.runtimeProjectKey,
+      runtimeProjectName: normalizedData.runtimeProjectName,
+      runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,
@@ -1636,7 +1650,7 @@ function adaptRuntimeWorkListResponse(
       continue
     }
     const deviceWorkspace: RuntimeDeviceWorkspace = {
-      id: null,
+      id: stableLocalId(`${workspaceDeviceId}\0${workspacePath}`),
       projectId: null,
       deviceId: workspaceDeviceId,
       deviceName: remoteHostId ?? 'Local Executor',
@@ -1933,6 +1947,11 @@ export function createRuntimeWorkApiFromIpc(
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.open', data)
     },
+    upsertLocalRuntimeProject(
+      data: RuntimeLocalProjectUpsertRequest
+    ): Promise<RuntimeLocalProjectUpsertResponse> {
+      return requestWithLocalDevice('runtime.projects.upsert_local', data)
+    },
     renameRuntimeWorkspace(
       data: RuntimeWorkspaceRenameRequest
     ): Promise<RuntimeWorkspaceOpenResponse> {
@@ -2101,6 +2120,12 @@ export function createRuntimeWorkApiFromIpc(
       }
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
+      if (data.lastTurnId) {
+        return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
+          ...data,
+          taskId: data.source.taskId,
+        })
+      }
       return requestWithLocalDevice('runtime.tasks.import_fork', data)
     },
   }

@@ -1330,16 +1330,8 @@ describe('ChatInput', () => {
     }
     const cloudModel: UnifiedModel = {
       ...model,
-      name: 'cloud:user:cloud-gpt-5.5',
+      name: 'cloud-gpt-5.5',
       displayName: '云端:gpt-5.5',
-      config: {
-        ...model.config,
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'cloud-gpt-5.5',
-          modelType: 'user',
-        },
-      },
     }
     const setSelectedModel = vi.fn()
     render(
@@ -1414,8 +1406,8 @@ describe('ChatInput', () => {
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
-    expect(modelOption.querySelectorAll('span')).toHaveLength(1)
-    expect(screen.getByTestId('model-option-cloud:user:cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
+    expect(modelOption.querySelectorAll('span')).toHaveLength(2)
+    expect(screen.getByTestId('model-option-cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
     expect(
       screen
         .getByTestId('model-control-menu-model')
