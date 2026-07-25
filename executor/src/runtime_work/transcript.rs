@@ -1379,10 +1379,11 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
 }
 
 fn command_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> Value {
+    let call_id = tool_call_id(item);
     let mut block = json!({
-        "id": item_id(item, "tool"),
+        "id": call_id,
         "type": "tool",
-        "tool_use_id": item_id(item, "tool"),
+        "tool_use_id": call_id,
         "tool_name": "bash",
         "tool_input": command_input(item),
         "status": tool_status(item),

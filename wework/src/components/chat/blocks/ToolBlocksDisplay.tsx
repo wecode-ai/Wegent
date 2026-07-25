@@ -57,6 +57,7 @@ type ProcessingDisplayItem =
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
+  fileEditDurationBlocks?: ProcessingBlock[]
   isStreaming: boolean
   // Wall-clock epoch ms when the turn started (the assistant turn's
   // created_at). Used as the duration anchor so the elapsed time survives a
@@ -81,6 +82,7 @@ interface ToolBlocksDisplayProps {
 
 export function ToolBlocksDisplay({
   blocks,
+  fileEditDurationBlocks,
   isStreaming,
   startedAt,
   forceExpanded = false,
@@ -178,7 +180,10 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
-  const fileEditDurations = useMemo(() => getFileEditDurations(blocks), [blocks])
+  const fileEditDurations = useMemo(
+    () => getFileEditDurations(fileEditDurationBlocks ?? blocks),
+    [blocks, fileEditDurationBlocks]
+  )
   const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
   const hasRequestUserInput = displayItems.some(item => item.type === 'request_user_input')
   const hasActiveContextCompaction = blocks.some(
@@ -621,16 +626,18 @@ function LiveProcessingPreviewRow({
 }
 
 function getFileEditDurations(blocks: ProcessingBlock[]): ReadonlyMap<string, FileEditDuration> {
-  const edits = blocks.flatMap(block => {
+  type FileEditActivity = FileEditDuration & {
+    path: string
+    isRunning: boolean
+  }
+  const edits = blocks.flatMap<FileEditActivity>(block => {
     if (block.type !== 'tool' || !isFileEditToolName(block.toolName)) return []
-    const completedAt = block.completedAt
-    if (completedAt === undefined) {
-      return []
-    }
     return getFileInputPaths(block).map(path => ({
+      id: block.id,
       path: normalizeActivityPath(path),
       startedAt: block.createdAt,
-      completedAt,
+      completedAt: block.completedAt,
+      isRunning: block.status !== 'done' && block.status !== 'error',
     }))
   })
   const durations = new Map<string, FileEditDuration>()
@@ -646,9 +653,23 @@ function getFileEditDurations(blocks: ProcessingBlock[]): ReadonlyMap<string, Fi
           filePath.endsWith(`/${edit.path}`)
       )
       if (matches.length === 0) return
+      const runningTool = matches
+        .filter(match => match.isRunning)
+        .sort((left, right) => right.startedAt - left.startedAt)[0]
+      const latestCompletedTool = matches
+        .filter(match => match.completedAt !== undefined)
+        .sort(
+          (left, right) =>
+            (right.completedAt ?? right.startedAt) - (left.completedAt ?? left.startedAt)
+        )[0]
+      const durationMatch = runningTool ?? latestCompletedTool
+      if (!durationMatch) return
       durations.set(file.path, {
-        startedAt: Math.min(...matches.map(match => match.startedAt)),
-        completedAt: Math.max(...matches.map(match => match.completedAt)),
+        id: durationMatch.id,
+        startedAt: durationMatch.startedAt,
+        ...(!durationMatch.isRunning && durationMatch.completedAt !== undefined
+          ? { completedAt: durationMatch.completedAt }
+          : {}),
       })
     })
   })

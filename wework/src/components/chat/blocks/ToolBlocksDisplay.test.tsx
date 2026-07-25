@@ -424,8 +424,8 @@ describe('ToolBlocksDisplay', () => {
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
     expect(screen.getByText('编辑 env')).toBeInTheDocument()
-    expect(screen.getByText('+2')).toBeInTheDocument()
-    expect(screen.getByText('-1')).toBeInTheDocument()
+    expect(screen.getByTestId('file-change-line-stats')).toHaveTextContent('+2')
+    expect(screen.getByTestId('file-change-line-stats')).toHaveTextContent('-1')
 
     fireEvent.click(screen.getByRole('button', { name: /编辑 env/ }))
 
@@ -672,6 +672,168 @@ describe('ToolBlocksDisplay', () => {
 
     expect(screen.getByText('编辑 final.ts')).toBeInTheDocument()
     expect(screen.queryByText('正在编辑 streaming.ts')).not.toBeInTheDocument()
+  })
+
+  test('keeps each streaming file duration anchored and animates line deltas across chunks', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-24T00:00:00.000Z'))
+    const animationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        return window.setTimeout(() => callback(performance.now()), 16)
+      })
+
+    const startedAt = Date.now()
+    const streamingSummaryBlock: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      status: 'streaming',
+      createdAt: startedAt,
+    }
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[streamingSummaryBlock]} isStreaming={true} forceExpanded />
+    )
+
+    act(() => vi.advanceTimersByTime(1500))
+
+    rerender(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            ...streamingSummaryBlock,
+            createdAt: Date.now(),
+            fileChanges: {
+              ...streamingSummaryBlock.fileChanges,
+              additions: 25,
+              deletions: 11,
+              files: streamingSummaryBlock.fileChanges.files.map(file => ({
+                ...file,
+                additions: 25,
+                deletions: 11,
+              })),
+            },
+          },
+        ]}
+        isStreaming={true}
+        forceExpanded
+      />
+    )
+    act(() => vi.advanceTimersByTime(20))
+
+    expect(screen.getByText('1.5s')).toBeInTheDocument()
+    expect(screen.getByText(/正在编辑/)).toHaveClass('tool-activity-shimmer')
+    expect(screen.getByTestId('file-change-line-stats')).toHaveTextContent('+25')
+    expect(document.querySelector('.file-change-rolling-value.is-rolling')).not.toBeNull()
+    expect(document.querySelector('.file-change-stat-block')).not.toBeNull()
+    animationFrame.mockRestore()
+  })
+
+  test('uses the first chunk time when consecutive file change chunks are merged', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-24T00:00:02.000Z'))
+
+    const firstChunk: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      id: 'file-changes-first',
+      status: 'streaming',
+      createdAt: Date.now() - 2000,
+    }
+    const latestChunk: ProcessingBlock = {
+      ...firstChunk,
+      id: 'file-changes-latest',
+      createdAt: Date.now(),
+      fileChanges: {
+        ...firstChunk.fileChanges,
+        additions: 2,
+      },
+    }
+
+    render(
+      <ToolBlocksDisplay blocks={[firstChunk, latestChunk]} isStreaming={true} forceExpanded />
+    )
+
+    expect(screen.getByText('2.0s')).toBeInTheDocument()
+  })
+
+  test('uses the latest matching edit tool for a repeated file path', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-24T00:00:10.000Z'))
+
+    const oldEdit: ProcessingBlock = {
+      id: 'old-edit',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: { input: '*** Update File: src/example.ts' },
+      status: 'done',
+      createdAt: Date.now() - 9000,
+      completedAt: Date.now() - 8000,
+    }
+    const currentEdit: ProcessingBlock = {
+      ...oldEdit,
+      id: 'current-edit',
+      status: 'streaming',
+      createdAt: Date.now() - 1000,
+      completedAt: undefined,
+    }
+    const streamingFileChanges: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      status: 'streaming',
+      createdAt: Date.now() - 800,
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[oldEdit, currentEdit, streamingFileChanges]}
+        isStreaming={true}
+        forceExpanded
+      />
+    )
+
+    expect(screen.getByText('1.0s')).toBeInTheDocument()
+    expect(screen.queryByText('9.0s')).not.toBeInTheDocument()
+  })
+
+  test('uses edit timing from the full message across narrative segment boundaries', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-24T00:00:10.000Z'))
+
+    const completedEdit: ProcessingBlock = {
+      id: 'completed-edit',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: { input: '*** Update File: scripts/env' },
+      status: 'done',
+      createdAt: Date.now() - 4000,
+      completedAt: Date.now() - 1500,
+    }
+    const interleavedText: ProcessingBlock = {
+      id: 'process-text',
+      subtaskId: 1,
+      type: 'text',
+      content: '继续处理文件。',
+      status: 'done',
+      createdAt: Date.now() - 2000,
+    }
+    const streamingFileChanges: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      status: 'streaming',
+      createdAt: Date.now() - 500,
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[streamingFileChanges]}
+        fileEditDurationBlocks={[completedEdit, interleavedText, streamingFileChanges]}
+        isStreaming={true}
+        forceExpanded
+      />
+    )
+
+    expect(screen.getByText('2.5s')).toBeInTheDocument()
+    act(() => vi.advanceTimersByTime(3000))
+    expect(screen.getByText('2.5s')).toBeInTheDocument()
+    expect(screen.queryByText('7.0s')).not.toBeInTheDocument()
   })
 
   test('renders completed edit tools as flat concrete rows', () => {

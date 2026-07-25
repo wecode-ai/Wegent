@@ -148,7 +148,8 @@ function mergeConsecutiveFileChanges(blocks: FileChangesBlock[]): FileChangesBlo
 
   return {
     ...latest,
-    id: `file-changes-${first.id}-${latest.id}`,
+    id: `file-changes-${first.id}`,
+    createdAt: Math.min(...blocks.map(block => block.createdAt)),
     fileChanges: {
       ...latest.fileChanges,
       artifact_id: summaries.map(summary => summary.artifact_id).join(':'),

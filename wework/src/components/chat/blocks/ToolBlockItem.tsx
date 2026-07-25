@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { terminalOutputToText } from '@/lib/terminal-text'
@@ -104,7 +105,6 @@ export function ToolBlockItem({
       <ProcessFileChangesBlockItem
         block={block}
         shimmer={shimmer}
-        duration={duration}
         fileEditDurations={fileEditDurations}
         onExpandedChange={onExpandedChange}
       />
@@ -236,13 +236,11 @@ function PlanBlockItem({
 function ProcessFileChangesBlockItem({
   block,
   shimmer,
-  duration,
   fileEditDurations,
   onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
   shimmer: boolean
-  duration: string
   fileEditDurations?: ReadonlyMap<string, FileEditDuration>
   onExpandedChange?: (expanded: boolean) => void
 }) {
@@ -265,7 +263,6 @@ function ProcessFileChangesBlockItem({
     >
       <div className="flex min-w-0 flex-col">
         {summary.files.map(file => {
-          const fileDuration = formatFileEditDuration(fileEditDurations?.get(file.path)) ?? duration
           const previewLines = fileDiffPreviewLines(file, summary)
           const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
           return (
@@ -286,10 +283,7 @@ function ProcessFileChangesBlockItem({
                   {fileChangeRowLabel(file, t, isRunning)}
                 </span>
                 {!file.binary ? (
-                  <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium">
-                    <span className="text-green-600">+{file.additions}</span>
-                    <span className="text-red-500">-{file.deletions}</span>
-                  </span>
+                  <FileChangeLineStats file={file} isRunning={isRunning} streamId={block.id} />
                 ) : null}
                 {previewLines.length > 0 ? (
                   <ChevronDown
@@ -299,9 +293,13 @@ function ProcessFileChangesBlockItem({
                     strokeWidth={2}
                   />
                 ) : null}
-                <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">
-                  {fileDuration}
-                </span>
+                <FileEditDurationText
+                  key={fileEditDurations?.get(file.path)?.id ?? block.id}
+                  duration={fileEditDurations?.get(file.path)}
+                  fallbackStartedAt={block.createdAt}
+                  fallbackCompletedAt={block.completedAt}
+                  isRunning={isRunning}
+                />
               </button>
               {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
             </div>
@@ -313,17 +311,220 @@ function ProcessFileChangesBlockItem({
 }
 
 export interface FileEditDuration {
+  id: string
   startedAt: number
-  completedAt: number
+  completedAt?: number
 }
 
-function formatFileEditDuration(duration: FileEditDuration | undefined): string | undefined {
-  if (!duration) return undefined
-  return `${(Math.max(0, duration.completedAt - duration.startedAt) / 1000).toFixed(1)}s`
+type FileChangeStatBlock = {
+  id: string
+  additions: number
+  deletions: number
+}
+
+type FileChangeStatBlockStyle = CSSProperties & {
+  '--file-change-stat-addition-height': string
+  '--file-change-stat-deletion-height': string
+  '--file-change-stat-blocks-width': string
+  '--file-change-stat-x': string
+  '--file-change-stat-alpha': string
+}
+
+function FileChangeLineStats({
+  file,
+  isRunning,
+  streamId,
+}: {
+  file: TurnFileChangeItem
+  isRunning: boolean
+  streamId: string
+}) {
+  const [statBlocks, setStatBlocks] = useState<FileChangeStatBlock[]>([])
+  const previousRef = useRef({
+    streamId,
+    additions: file.additions,
+    deletions: file.deletions,
+  })
+  const visibleStatBlocks =
+    isRunning && statBlocks.length > 0
+      ? statBlocks
+      : buildStaticFileChangeStatBlocks(file, streamId)
+
+  useEffect(() => {
+    const previous = previousRef.current
+    if (previous.streamId !== streamId) {
+      previousRef.current = {
+        streamId,
+        additions: file.additions,
+        deletions: file.deletions,
+      }
+      setStatBlocks([])
+      return
+    }
+
+    const addedDelta = Math.max(0, file.additions - previous.additions)
+    const deletedDelta = Math.max(0, file.deletions - previous.deletions)
+    previousRef.current = {
+      streamId,
+      additions: file.additions,
+      deletions: file.deletions,
+    }
+
+    if (!isRunning || (addedDelta === 0 && deletedDelta === 0)) return
+
+    const now = Date.now()
+    setStatBlocks(current =>
+      [
+        ...current,
+        {
+          id: `${streamId}:${now}:${addedDelta}:${deletedDelta}`,
+          additions: addedDelta,
+          deletions: deletedDelta,
+        },
+      ].slice(-6)
+    )
+  }, [file.additions, file.deletions, isRunning, streamId])
+
+  return (
+    <span
+      className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums"
+      data-testid="file-change-line-stats"
+    >
+      <span className="inline-flex items-center text-green-600">
+        +
+        <AnimatedChangeNumber
+          key={`${streamId}:additions`}
+          value={file.additions}
+          deltaPrefix="+"
+        />
+      </span>
+      <span className="inline-flex items-center text-red-500">
+        -
+        <AnimatedChangeNumber
+          key={`${streamId}:deletions`}
+          value={file.deletions}
+          deltaPrefix="-"
+        />
+      </span>
+      {visibleStatBlocks.length > 0 ? <FileChangeStatBlocks blocks={visibleStatBlocks} /> : null}
+    </span>
+  )
+}
+
+function buildStaticFileChangeStatBlocks(
+  file: TurnFileChangeItem,
+  streamId: string
+): FileChangeStatBlock[] {
+  if (file.additions === 0 && file.deletions === 0) return []
+  return [
+    {
+      id: `${streamId}:${file.path}:${file.additions}:${file.deletions}`,
+      additions: file.additions,
+      deletions: file.deletions,
+    },
+  ]
+}
+
+function AnimatedChangeNumber({ value, deltaPrefix }: { value: number; deltaPrefix: '+' | '-' }) {
+  const previousValueRef = useRef(value)
+  const [delta, setDelta] = useState(0)
+  const [animationId, setAnimationId] = useState(0)
+
+  useEffect(() => {
+    if (previousValueRef.current === value) return
+    const deltaValue = Math.abs(value - previousValueRef.current)
+    previousValueRef.current = value
+    setDelta(0)
+    const frame = requestAnimationFrame(() => {
+      setDelta(deltaValue)
+      setAnimationId(current => current + 1)
+    })
+    const timeout = window.setTimeout(() => setDelta(0), 560)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
+  }, [value])
+
+  return (
+    <span className="file-change-delta-number">
+      <span className="file-change-rolling-viewport">
+        <span
+          key={`${value}-${animationId}`}
+          className={`file-change-rolling-value ${delta > 0 ? 'is-rolling' : ''}`}
+        >
+          {value}
+        </span>
+      </span>
+      {delta > 0 ? (
+        <span key={`${deltaPrefix}${delta}-${value}`} className="file-change-delta-badge">
+          {deltaPrefix}
+          {delta}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function FileChangeStatBlocks({ blocks }: { blocks: FileChangeStatBlock[] }) {
+  const width = Math.max(6, (blocks.length - 1) * 7 + 6)
+
+  return (
+    <span
+      className="file-change-stat-blocks"
+      aria-hidden="true"
+      style={{ '--file-change-stat-blocks-width': `${width}px` } as FileChangeStatBlockStyle}
+    >
+      {blocks.map((block, index) => {
+        const age = blocks.length - index - 1
+        const additionHeight = block.additions > 0 ? Math.min(10, 3 + block.additions * 1.6) : 0
+        const deletionHeight = block.deletions > 0 ? Math.min(10, 3 + block.deletions * 1.6) : 0
+        return (
+          <span
+            key={block.id}
+            className="file-change-stat-block"
+            style={
+              {
+                '--file-change-stat-addition-height': `${additionHeight}px`,
+                '--file-change-stat-deletion-height': `${deletionHeight}px`,
+                '--file-change-stat-x': `${index * 7}px`,
+                '--file-change-stat-alpha': `${Math.max(0.28, 0.96 - age * 0.11)}`,
+              } as FileChangeStatBlockStyle
+            }
+          >
+            {block.additions > 0 ? <span className="file-change-stat-segment is-addition" /> : null}
+            {block.deletions > 0 ? <span className="file-change-stat-segment is-deletion" /> : null}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+function FileEditDurationText({
+  duration,
+  fallbackStartedAt,
+  fallbackCompletedAt,
+  isRunning,
+}: {
+  duration: FileEditDuration | undefined
+  fallbackStartedAt: number
+  fallbackCompletedAt: number | undefined
+  isRunning: boolean
+}) {
+  const durationIsRunning = duration ? duration.completedAt === undefined : isRunning
+  const text = useToolDuration(
+    duration?.startedAt ?? fallbackStartedAt,
+    duration?.completedAt ?? fallbackCompletedAt,
+    durationIsRunning
+  )
+
+  return <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">{text}</span>
 }
 
 function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, isRunning: boolean) {
   const [now, setNow] = useState(() => Date.now())
+  const [anchoredStartedAt] = useState(startedAt)
   const wasRunning = useRef(isRunning)
   const [completedAt, setCompletedAt] = useState<number | null>(null)
 
@@ -338,9 +539,9 @@ function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, i
     wasRunning.current = isRunning
   }, [isRunning])
 
-  const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? startedAt)
+  const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? anchoredStartedAt)
   if (!isRunning && completedAt === null && fallbackEndAt === undefined) return ''
-  return `${(Math.max(0, endedAt - startedAt) / 1000).toFixed(1)}s`
+  return `${(Math.max(0, endedAt - anchoredStartedAt) / 1000).toFixed(1)}s`
 }
 
 function fileChangeRowLabel(
