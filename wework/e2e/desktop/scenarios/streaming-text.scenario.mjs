@@ -7,8 +7,24 @@ const ACTIVE_WORKBENCH_SELECTOR =
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT: keep the partial response active until released.'
 const MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_PARTIAL'
-const PARTIAL_TEXT = `${MARKER}: response remains active while final checks continue.`
-const COMPLETION_TEXT = `${PARTIAL_TEXT} COMPLETE`
+const VIEWPORT_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_VIEWPORT_ANCHOR'
+const APPEND_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_APPENDED'
+const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
+  if (index === 11) {
+    return `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
+  }
+  return `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
+})
+const APPENDED_PARAGRAPHS = Array.from({ length: 14 }, (_, index) =>
+  index === 13
+    ? `${APPEND_MARKER}: later streamed content is now visible in the response.`
+    : `Later streaming paragraph ${index + 1}: this content arrives after the user pauses automatic following.`
+)
+const PARTIAL_TEXT = `${MARKER}: response remains active while final checks continue.\n\n${INITIAL_PARAGRAPHS.join('\n\n')}`
+const APPENDED_TEXT = `\n\n${APPENDED_PARAGRAPHS.join('\n\n')}`
+const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}\n\nCOMPLETE`
+const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
+const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] p[data-scroll-anchor]:nth-of-type(13)`
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -83,6 +99,29 @@ function streamingEvents(id) {
   }
 }
 
+function textDeltaEvents(itemId, text, initialOffset = 0) {
+  let offset = initialOffset
+  return (text.match(/[\s\S]{1,48}/g) ?? []).map(delta => {
+    const event = {
+      type: 'response.output_text.delta',
+      item_id: itemId,
+      output_index: 0,
+      content_index: 0,
+      delta,
+      offset,
+    }
+    offset += [...delta].length
+    return event
+  })
+}
+
+async function writeSseEvents(response, events) {
+  for (const event of events) {
+    response.write(sse([event]))
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
 async function readJson(request) {
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
@@ -102,10 +141,20 @@ function requestContainsPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(PROMPT)
 }
 
+async function getSingleElementMetrics(control, selector, description) {
+  const metrics = JSON.parse(await control.command('getElementMetrics', selector))
+  assert.equal(metrics.length, 1, `${description} matched ${metrics.length} elements`)
+  return metrics[0]
+}
+
 export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
+  let releaseAppend
   let releaseResponse
   let resolveRequest
   let targetRequest
+  const appendRelease = new Promise(resolve => {
+    releaseAppend = resolve
+  })
   const responseRelease = new Promise(resolve => {
     releaseResponse = resolve
   })
@@ -139,17 +188,11 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       })
       response.flushHeaders()
       response.write(sse(stream.start))
-      response.write(
-        sse([
-          {
-            type: 'response.output_text.delta',
-            item_id: stream.itemId,
-            output_index: 0,
-            content_index: 0,
-            delta: PARTIAL_TEXT,
-            offset: 0,
-          },
-        ])
+      await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
+      await appendRelease
+      await writeSseEvents(
+        response,
+        textDeltaEvents(stream.itemId, APPENDED_TEXT, PARTIAL_TEXT.length)
       )
       await responseRelease
       response.end(sse(stream.finish))
@@ -192,6 +235,55 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       )
       await capture(control, resultDir, 'streaming-text-01-thinking-below-partial-response.png')
 
+      assert.equal(
+        await control.command('getText', VIEWPORT_ANCHOR_SELECTOR),
+        `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`,
+        'The viewport anchor paragraph was not rendered at the expected position'
+      )
+      await control.command('scrollIntoViewAsUser', VIEWPORT_ANCHOR_SELECTOR)
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      const scrollerBeforeAppend = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The streaming conversation scroller before later content'
+      )
+      const anchorBeforeAppend = await getSingleElementMetrics(
+        control,
+        VIEWPORT_ANCHOR_SELECTOR,
+        'The viewport anchor before later content'
+      )
+      await capture(control, resultDir, 'streaming-text-02-user-scrolled-up.png')
+
+      releaseAppend()
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+        { text: APPEND_MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
+      const scrollerAfterAppend = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The streaming conversation scroller after later content'
+      )
+      const anchorAfterAppend = await getSingleElementMetrics(
+        control,
+        VIEWPORT_ANCHOR_SELECTOR,
+        'The viewport anchor after later content'
+      )
+      assert.ok(
+        Math.abs(anchorAfterAppend.top - anchorBeforeAppend.top) <= 8,
+        `The user-selected streaming text moved from ${anchorBeforeAppend.top}px to ${anchorAfterAppend.top}px while later content arrived`
+      )
+      assert.ok(
+        Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
+        `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
+      )
+      await capture(control, resultDir, 'streaming-text-03-anchor-stable-after-append.png')
+
       releaseResponse()
       await control.command(
         'waitFor',
@@ -213,7 +305,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         !completedSnapshot.testIds.includes('pause-response-button'),
         'The pause button remained after completion'
       )
-      await capture(control, resultDir, 'streaming-text-02-response-completed.png')
+      await capture(control, resultDir, 'streaming-text-04-response-completed.png')
     },
 
     diagnostics() {

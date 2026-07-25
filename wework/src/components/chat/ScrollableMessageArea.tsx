@@ -26,9 +26,16 @@ import {
 const BOTTOM_THRESHOLD = 48
 const SCROLLED_TO_BOTTOM_THRESHOLD = 8
 const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
+const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
 interface RuntimeTranscriptGap {
   start: number
   end: number
+}
+
+interface UserViewportAnchor {
+  messageId: string
+  anchorIndex: number
+  offsetFromScrollerTop: number
 }
 
 interface ScrollableMessageAreaProps {
@@ -232,6 +239,7 @@ function ScrollableMessagePaneContent({
   const restoringScrollKeyRef = useRef<string | null>(null)
   const followingBottomKeyRef = useRef<string | null>(null)
   const userScrollPausedAutoFollowRef = useRef(false)
+  const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
@@ -413,6 +421,7 @@ function ScrollableMessagePaneContent({
       isAtBottomRef.current = isAtBottom
       if (isScrolledToBottom) {
         userScrollPausedAutoFollowRef.current = false
+        userViewportAnchorRef.current = null
       } else if (options.forceSave) {
         userScrollPausedAutoFollowRef.current = true
       }
@@ -452,6 +461,7 @@ function ScrollableMessagePaneContent({
       }
       isAtBottomRef.current = true
       userScrollPausedAutoFollowRef.current = false
+      userViewportAnchorRef.current = null
       setShowScrollButton(false)
     },
     [saveCurrentScrollPosition]
@@ -559,6 +569,10 @@ function ScrollableMessagePaneContent({
     previousLastMessageIdRef.current = lastMessage?.id ?? null
     previousMessageCountRef.current = messages.length
 
+    if (conversationChanged) {
+      userViewportAnchorRef.current = null
+    }
+
     if (messages.length === 0) {
       return
     }
@@ -620,6 +634,28 @@ function ScrollableMessagePaneContent({
     }
   }, [scrollStateFrameSignature, updateScrollState])
 
+  const captureUserViewportAnchor = useCallback(() => {
+    const scroller = activeScrollRefRef.current.current
+    const content = contentRef.current
+    if (!scroller || !content) return
+    userViewportAnchorRef.current = createUserViewportAnchor(scroller, content)
+  }, [])
+
+  const restoreUserViewportAnchor = useCallback(() => {
+    const scroller = activeScrollRefRef.current.current
+    const content = contentRef.current
+    const anchor = userViewportAnchorRef.current
+    if (!scroller || !content || !anchor) return
+
+    const anchorElement = findUserViewportAnchor(content, anchor)
+    if (!anchorElement) return
+    const offsetFromScrollerTop =
+      anchorElement.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+    const offsetDelta = offsetFromScrollerTop - anchor.offsetFromScrollerTop
+    if (Math.abs(offsetDelta) < 0.5) return
+    scroller.scrollTop += offsetDelta
+  }, [])
+
   useEffect(() => {
     const content = contentRef.current
     const footer = stickyFooterRef.current
@@ -649,8 +685,8 @@ function ScrollableMessagePaneContent({
         return
       }
 
-      if (userScrollPausedAutoFollowRef.current && currentScrollKey) {
-        restoreSavedScrollPosition(currentScrollKey)
+      if (userScrollPausedAutoFollowRef.current) {
+        restoreUserViewportAnchor()
         return
       }
 
@@ -669,6 +705,7 @@ function ScrollableMessagePaneContent({
     autoScrollSuspended,
     isTurnNavigationAutoScrollSuspended,
     restoreSavedScrollPosition,
+    restoreUserViewportAnchor,
     scrollToBottom,
     setScrollToBottom,
     stickyFooter,
@@ -678,13 +715,15 @@ function ScrollableMessagePaneContent({
 
   const handleScrollToBottom = () => {
     userScrollPausedAutoFollowRef.current = false
+    userViewportAnchorRef.current = null
     scrollToBottom('smooth', { saveSnapshot: true })
   }
 
   const pauseAutoFollowForUserScroll = useCallback(() => {
     userScrollPausedAutoFollowRef.current = true
     clearScheduledScrolls()
-  }, [clearScheduledScrolls])
+    captureUserViewportAnchor()
+  }, [captureUserViewportAnchor, clearScheduledScrolls])
 
   const handleScroll = useCallback(() => {
     if (restoringScrollKeyRef.current === currentScrollKey) {
@@ -693,7 +732,10 @@ function ScrollableMessagePaneContent({
     }
     restoringScrollKeyRef.current = null
     updateScrollState({ forceSave: true })
-  }, [currentScrollKey, updateScrollState])
+    if (userScrollPausedAutoFollowRef.current) {
+      captureUserViewportAnchor()
+    }
+  }, [captureUserViewportAnchor, currentScrollKey, updateScrollState])
 
   useEffect(() => {
     const externalScroller = externalScrollRef?.current
@@ -871,6 +913,47 @@ function getInitialDistanceFromBottomPx(key: string | null): number {
   if (key === null) return 0
   const distance = getConversationScrollSnapshot(key)?.distanceFromBottomPx
   return typeof distance === 'number' && Number.isFinite(distance) ? Math.max(0, distance) : 0
+}
+
+function createUserViewportAnchor(
+  scroller: HTMLElement,
+  content: HTMLElement
+): UserViewportAnchor | null {
+  const scrollerRect = scroller.getBoundingClientRect()
+  const visibleAnchor = Array.from(
+    content.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR)
+  ).find(anchor => {
+    const rect = anchor.getBoundingClientRect()
+    return rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom
+  })
+  if (!visibleAnchor) return null
+
+  const message = visibleAnchor.closest<HTMLElement>('[data-message-id]')
+  const messageId = message?.dataset.messageId
+  if (!message || !messageId) return null
+  const anchors = Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))
+  const anchorIndex = anchors.indexOf(visibleAnchor)
+  if (anchorIndex < 0) return null
+
+  return {
+    messageId,
+    anchorIndex,
+    offsetFromScrollerTop: visibleAnchor.getBoundingClientRect().top - scrollerRect.top,
+  }
+}
+
+function findUserViewportAnchor(
+  content: HTMLElement,
+  anchor: UserViewportAnchor
+): HTMLElement | null {
+  const message = Array.from(content.querySelectorAll<HTMLElement>('[data-message-id]')).find(
+    candidate => candidate.dataset.messageId === anchor.messageId
+  )
+  if (!message) return null
+  return (
+    Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))[anchor.anchorIndex] ??
+    null
+  )
 }
 
 function createScrollSnapshot(
