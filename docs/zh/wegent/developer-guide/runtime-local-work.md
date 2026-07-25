@@ -249,6 +249,7 @@ Project 场景使用运行时 workspace 引用：
 
 复制运行时任务时，Wework 只在当前任务所属 Project 内选择目标工作区：
 
+- 从消息操作复制到新任务时，Wework 会把所选已完成回合的 `lastTurnId` 传给 executor。executor 可以在源任务正在执行后续回合时调用 Codex `thread/fork`；fork 的历史边界由 `lastTurnId` 决定，不得停止、取消或修改源任务当前正在运行的回合。
 - 已经绑定到该 Project 的其他 Device Workspace 可以直接作为目标。
 - 没有绑定到该 Project 的在线设备，需要先走和项目创建/编辑一致的设备目录准备流程：选择设备目录，并选择该目录在 Project 下的类型是 `worktree` 还是普通 `workspace`。
 - Backend 调用 `POST /api/runtime-work/device-workspaces/prepare` 写入 Device Workspace 映射后，再继续执行任务复制。

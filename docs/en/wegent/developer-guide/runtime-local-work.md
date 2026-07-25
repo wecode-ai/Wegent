@@ -249,6 +249,7 @@ Empty projects are runtime-owned as well. After Wework creates or selects a dire
 
 When Wework forks a runtime task, it only offers target workspaces that belong to the source task's Project:
 
+- When a message action forks into a new task, Wework passes the selected completed turn as `lastTurnId` to the executor. The executor may call Codex `thread/fork` while the source task is running a later turn; `lastTurnId` defines the history boundary, and the fork must not stop, cancel, or mutate the source task's active turn.
 - Other Device Workspaces already bound to that Project can be used directly.
 - An online device that is not yet bound to that Project must first use the same device-directory preparation flow as project creation and editing: choose a directory on the device, then choose whether that Project path is a `worktree` or a regular `workspace`.
 - Backend writes the Device Workspace mapping through `POST /api/runtime-work/device-workspaces/prepare` before continuing the fork.
