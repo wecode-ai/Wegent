@@ -658,6 +658,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector)
+    case 'getElementCount':
+      return String(findDesktopControlElements(command.selector).length)
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
     case 'getStyle': {

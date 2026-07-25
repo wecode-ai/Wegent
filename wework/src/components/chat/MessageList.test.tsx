@@ -370,8 +370,19 @@ describe('MessageList', () => {
     }
   })
 
-  test('renders every oversized streaming Markdown section without nested windowing', () => {
+  test('windows oversized streaming Markdown before mounting every chunk', () => {
     tauriCoreMock.isTauri = vi.fn(() => true)
+    class IntersectionObserverMock {
+      constructor() {}
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '800px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
     const content = Array.from(
       { length: 60 },
       (_, index) => `### Streaming section ${index + 1}\n\n${'content '.repeat(40)}\n`
@@ -391,10 +402,11 @@ describe('MessageList', () => {
       />
     )
 
-    expect(container.querySelector('[data-markdown-window-chunk]')).toBeNull()
-    expect(screen.getByText('Streaming section 1')).toBeInTheDocument()
-    expect(screen.getByText('Streaming section 30')).toBeInTheDocument()
-    expect(screen.getByText('Streaming section 60')).toBeInTheDocument()
+    const chunks = Array.from(container.querySelectorAll('[data-markdown-window-chunk]'))
+    expect(chunks.length).toBeGreaterThan(2)
+    expect(chunks[0]).not.toBeEmptyDOMElement()
+    expect(chunks.at(-1)).not.toBeEmptyDOMElement()
+    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
   })
 
   test('keeps message row containment during a plain text click', () => {

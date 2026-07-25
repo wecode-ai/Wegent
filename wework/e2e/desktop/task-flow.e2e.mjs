@@ -1806,11 +1806,15 @@ async function verifyBackgroundTaskWindowLifecycle({
       timeoutMs: UI_TIMEOUT_MS,
     }
   )
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes(freshTaskRowTestId),
-    'The archived task remained mounted in the sidebar'
-  )
+  const archivedTaskSelector = `[data-testid="${freshTaskRowTestId}"]`
+  const archiveRowRemovalStartedAt = Date.now()
+  let archivedTaskRowCount = 1
+  while (Date.now() - archiveRowRemovalStartedAt < UI_TIMEOUT_MS) {
+    archivedTaskRowCount = Number(await control.command('getElementCount', archivedTaskSelector))
+    if (archivedTaskRowCount === 0) break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(archivedTaskRowCount, 0, 'The archived task remained mounted in the sidebar')
   const archiveEvictionStartedAt = Date.now()
   let cacheAfterArchive = cacheBeforeArchive
   while (Date.now() - archiveEvictionStartedAt < UI_TIMEOUT_MS) {
@@ -1826,7 +1830,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
   assert.ok(
     cacheAfterArchive.scrollSnapshotEntries <= cacheBeforeArchive.scrollSnapshotEntries &&
-      cacheAfterArchive.virtualHeightEntries <= cacheBeforeArchive.virtualHeightEntries,
+      cacheAfterArchive.virtualMeasurementEntries <= cacheBeforeArchive.virtualMeasurementEntries,
     'Archiving increased retained conversation view state'
   )
   await writeFile(
@@ -4710,15 +4714,6 @@ async function verifyConnectedModelsOnLocalExecution({
     timeoutMs: UI_TIMEOUT_MS,
   })
   await confirmLocalProjectName(control, 'workspace')
-  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-    timeoutMs: UI_TIMEOUT_MS,
-  })
-  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-    value: 'workspace',
-  })
-  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
-    timeoutMs: UI_TIMEOUT_MS,
-  })
   await control.command('waitFor', composerSelector, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5442,7 +5437,6 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await confirmLocalProjectName(control, 'workspace')
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -5555,7 +5549,6 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await confirmLocalProjectName(control, 'workspace')
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })

@@ -1,100 +1,112 @@
-import { act, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MessageList } from './MessageList'
 import {
   clearRuntimeConversationCacheForTests,
-  getConversationVirtualHeights,
+  getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
 import '@/i18n'
 
-interface ResizeObserverRecord {
-  callback: ResizeObserverCallback
-  targets: Set<Element>
-}
-
-const resizeObserverRecords: ResizeObserverRecord[] = []
+const { useVirtualizerMock } = vi.hoisted(() => ({
+  useVirtualizerMock: vi.fn(),
+}))
 
 vi.mock('@/lib/runtime-environment', () => ({
   isTauriRuntime: () => true,
 }))
 
+vi.mock('@tanstack/react-virtual', () => ({
+  defaultRangeExtractor: (range: { startIndex: number; endIndex: number }) =>
+    Array.from(
+      { length: range.endIndex - range.startIndex + 1 },
+      (_, index) => range.startIndex + index
+    ),
+  useVirtualizer: (options: {
+    count: number
+    getItemKey: (index: number) => string | number
+    rangeExtractor: (range: {
+      startIndex: number
+      endIndex: number
+      overscan: number
+      count: number
+    }) => number[]
+  }) => {
+    useVirtualizerMock(options)
+    const visibleIndexes = options.rangeExtractor({
+      startIndex: Math.max(0, options.count - 2),
+      endIndex: options.count - 1,
+      overscan: 2,
+      count: options.count,
+    })
+    return {
+      getDistanceFromEnd: () => 0,
+      getTotalSize: () => 10_000,
+      getVirtualItems: () =>
+        visibleIndexes.map(index => ({
+          index,
+          key: options.getItemKey(index),
+          start: index * 120,
+        })),
+      measureElement: vi.fn(),
+      takeSnapshot: () => [
+        { index: 0, key: options.getItemKey(0), start: 32, end: 132, size: 100, lane: 0 },
+      ],
+    }
+  },
+}))
+
 describe('MessageList Tauri virtualization', () => {
-  beforeEach(() => {
-    resizeObserverRecords.length = 0
-    vi.stubGlobal(
-      'ResizeObserver',
-      class ResizeObserverMock {
-        private readonly record: ResizeObserverRecord
-
-        constructor(callback: ResizeObserverCallback) {
-          this.record = { callback, targets: new Set() }
-          resizeObserverRecords.push(this.record)
-        }
-
-        observe(target: Element) {
-          this.record.targets.add(target)
-        }
-
-        unobserve(target: Element) {
-          this.record.targets.delete(target)
-        }
-
-        disconnect() {
-          this.record.targets.clear()
-        }
-      }
-    )
-  })
-
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
+    useVirtualizerMock.mockClear()
     vi.unstubAllGlobals()
   })
 
-  test('uses the unified virtual layout and renders every short-conversation message', () => {
-    const scrollElement = createScrollElement(1_000)
+  test('uses the unified virtual layout for short conversations', () => {
     const intersectionObserver = vi.fn()
     vi.stubGlobal('IntersectionObserver', intersectionObserver)
 
     render(
       <MessageList
         messages={buildMessages(5, 'short')}
-        scrollElementRef={{ current: scrollElement }}
+        scrollElementRef={{ current: createScrollElement(1_000) }}
       />
     )
 
     expect(screen.getAllByTestId('message-user')).toHaveLength(5)
-    expect(screen.getByText('short message 0')).toBeInTheDocument()
-    expect(screen.getByText('short message 4')).toBeInTheDocument()
     expect(screen.getByText('short message 0').closest('[data-index]')).toHaveStyle({
       position: 'absolute',
     })
+    expect(useVirtualizerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchorTo: 'end',
+        count: 5,
+        enabled: true,
+        overscan: 2,
+      })
+    )
     expect(intersectionObserver).not.toHaveBeenCalled()
   })
 
-  test('calculates the initial visible window from the bottom with overscan', () => {
-    const scrollElement = createScrollElement(200)
-
+  test('keeps only the end-anchored overscan range mounted for long conversations', () => {
     render(
       <MessageList
         messages={buildMessages(100, 'long')}
-        scrollElementRef={{ current: scrollElement }}
+        scrollElementRef={{ current: createScrollElement(200) }}
       />
     )
 
     expect(screen.getByText('long message 99')).toBeInTheDocument()
     expect(screen.getByText('long message 98')).toBeInTheDocument()
     expect(screen.queryByText('long message 0')).not.toBeInTheDocument()
-    expect(screen.getAllByTestId('message-user').length).toBeLessThan(10)
+    expect(screen.getAllByTestId('message-user')).toHaveLength(2)
   })
 
-  test('keeps a forced navigation target mounted outside the visible window', () => {
-    const scrollElement = createScrollElement(200)
-
+  test('keeps a forced navigation target in the virtual range', () => {
     render(
       <MessageList
         messages={buildMessages(100, 'navigation')}
-        scrollElementRef={{ current: scrollElement }}
+        scrollElementRef={{ current: createScrollElement(200) }}
         forceVirtualMessageId="user-80"
       />
     )
@@ -103,38 +115,30 @@ describe('MessageList Tauri virtualization', () => {
     expect(screen.getByText('navigation message 99')).toBeInTheDocument()
   })
 
-  test('measures rendered rows with ResizeObserver and caches their heights', () => {
-    const scrollElement = createScrollElement(200)
-    const { unmount } = render(
-      <MessageList
-        conversationKey="measured-conversation"
-        messages={buildMessages(20, 'measured')}
-        scrollElementRef={{ current: scrollElement }}
-      />
-    )
-    const row = screen.getByText('measured message 19').closest('[data-index]')!
-    const rowObserver = resizeObserverRecords.find(record => record.targets.has(row))
-    expect(rowObserver).toBeDefined()
+  test('restores and persists the TanStack measurement snapshot', () => {
+    const messages = buildMessages(20, 'measured')
+    const props = {
+      conversationKey: 'measured-conversation',
+      messages,
+      scrollElementRef: { current: createScrollElement(200) },
+    }
+    const firstRender = render(<MessageList {...props} />)
+    firstRender.unmount()
 
-    act(() => {
-      rowObserver?.callback(
-        [
-          {
-            target: row,
-            borderBoxSize: [{ blockSize: 144, inlineSize: 600 }],
-            contentBoxSize: [],
-            contentRect: { height: 144 },
-            devicePixelContentBoxSize: [],
-          } as unknown as ResizeObserverEntry,
+    expect(getConversationVirtualMeasurements('measured-conversation')).toEqual([
+      expect.objectContaining({ key: 'user-0', size: 100, start: 32 }),
+    ])
+
+    useVirtualizerMock.mockClear()
+    render(<MessageList {...props} />)
+
+    expect(useVirtualizerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialMeasurementsCache: [
+          expect.objectContaining({ key: 'user-0', size: 100, start: 32 }),
         ],
-        {} as ResizeObserver
-      )
-    })
-    unmount()
-
-    expect(getConversationVirtualHeights('measured-conversation')).toMatchObject({
-      'user-19': 144,
-    })
+      })
+    )
   })
 })
 
@@ -154,22 +158,9 @@ function createScrollElement(clientHeight: number): HTMLDivElement {
     configurable: true,
     value: clientHeight,
   })
-  Object.defineProperty(scrollElement, 'scrollTop', {
+  Object.defineProperty(scrollElement, 'clientWidth', {
     configurable: true,
-    value: 0,
-    writable: true,
+    value: 800,
   })
-  scrollElement.getBoundingClientRect = () =>
-    ({
-      bottom: clientHeight,
-      height: clientHeight,
-      left: 0,
-      right: 800,
-      top: 0,
-      width: 800,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    }) satisfies DOMRect
   return scrollElement
 }

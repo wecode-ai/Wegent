@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
+import { MessageTurnNavigation } from './MessageTurnNavigation'
 
 function mockRect(element: Element, top: number, bottom: number) {
   element.getBoundingClientRect = vi.fn(
@@ -845,6 +846,145 @@ describe('ScrollableMessageArea', () => {
     flushScheduledTimers()
 
     expect(screen.getByTestId('message-turn-navigation')).toBeInTheDocument()
+  })
+
+  test('forces a loaded virtualized navigation target to mount before scrolling', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+    const onLoadTurnNavigationItem = vi.fn()
+    const onNavigationScrollTargetChange = vi.fn()
+
+    render(
+      <>
+        <div ref={scrollRef}>
+          <div ref={contentRef} />
+        </div>
+        <MessageTurnNavigation
+          messages={[
+            {
+              id: 'virtualized-user-1',
+              role: 'user',
+              content: 'Virtualized target',
+              status: 'done',
+              createdAt: '2026-07-25T00:00:00.000Z',
+              runtimeMessageIndex: 0,
+            },
+            {
+              id: 'virtualized-user-2',
+              role: 'user',
+              content: 'Mounted sibling turn',
+              status: 'done',
+              createdAt: '2026-07-25T00:00:01.000Z',
+              runtimeMessageIndex: 2,
+            },
+          ]}
+          turnNavigation={[
+            {
+              id: 'runtime-virtualized-user-1',
+              turnIndex: 0,
+              messageIndex: 0,
+              cursor: 'offset:0',
+              promptPreview: 'Virtualized target',
+              responsePreview: '',
+            },
+            {
+              id: 'runtime-virtualized-user-2',
+              turnIndex: 1,
+              messageIndex: 2,
+              cursor: 'offset:2',
+              promptPreview: 'Mounted sibling turn',
+              responsePreview: '',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+          onLoadTurnNavigationItem={onLoadTurnNavigationItem}
+          onNavigationScrollTargetChange={onNavigationScrollTargetChange}
+        />
+      </>
+    )
+
+    const scroller = scrollRef.current!
+    const content = contentRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 300, configurable: true })
+    Object.defineProperty(content, 'scrollHeight', { value: 1_000, configurable: true })
+    mockRect(scroller, 0, 300)
+    mockRect(content, 0, 1_000)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+    fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[0])
+
+    expect(onNavigationScrollTargetChange).toHaveBeenCalledWith('virtualized-user-1')
+    expect(onLoadTurnNavigationItem).not.toHaveBeenCalled()
+  })
+
+  test('merges newly loaded user turns into stale runtime navigation metadata', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+    const messages = [
+      {
+        id: 'stale-navigation-user-1',
+        role: 'user' as const,
+        content: 'First loaded turn',
+        status: 'done' as const,
+        createdAt: '2026-07-25T00:00:00.000Z',
+        runtimeMessageIndex: 0,
+      },
+      {
+        id: 'stale-navigation-user-2',
+        role: 'user' as const,
+        content: 'Newly loaded turn',
+        status: 'done' as const,
+        createdAt: '2026-07-25T00:00:01.000Z',
+        runtimeMessageIndex: 0,
+      },
+    ]
+
+    render(
+      <div ref={scrollRef}>
+        <div ref={contentRef}>
+          {messages.map(message => (
+            <div key={message.id} data-message-id={message.id}>
+              {message.content}
+            </div>
+          ))}
+        </div>
+        <MessageTurnNavigation
+          messages={messages}
+          turnNavigation={[
+            {
+              id: 'runtime-stale-navigation-user-1',
+              turnIndex: 0,
+              messageIndex: 0,
+              cursor: 'offset:0',
+              promptPreview: 'First loaded turn',
+              responsePreview: '',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+        />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1_000, configurable: true })
+    mockRect(scroller, 0, 300)
+    messages.forEach((message, index) => {
+      mockRect(
+        document.querySelector(`[data-message-id="${message.id}"]`)!,
+        100 + index * 500,
+        160 + index * 500
+      )
+    })
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
   test('keeps message navigation marker spacing fixed when the rail overflows', () => {
