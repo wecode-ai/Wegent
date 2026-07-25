@@ -24,6 +24,7 @@ pub(super) struct CodexRunState {
     agent_message_phases: CodexAgentMessagePhaseTracker,
     root_thread_id: Option<String>,
     goal_status: Option<String>,
+    goal_status_observed: bool,
 }
 
 impl CodexRunState {
@@ -33,6 +34,16 @@ impl CodexRunState {
 
     pub(super) fn set_goal_status(&mut self, status: impl Into<String>) {
         self.goal_status = Some(status.into().to_ascii_lowercase());
+        self.goal_status_observed = true;
+    }
+
+    pub(super) fn clear_goal_status(&mut self) {
+        self.goal_status = None;
+        self.goal_status_observed = true;
+    }
+
+    pub(super) fn goal_status_snapshot(&self) -> (bool, Option<String>) {
+        (self.goal_status_observed, self.goal_status.clone())
     }
 
     pub(super) fn goal_is_active(&self) -> bool {
@@ -74,7 +85,7 @@ impl CodexRunState {
                 None
             }
             Some("thread/goal/cleared") => {
-                self.goal_status = None;
+                self.clear_goal_status();
                 None
             }
             Some("item/started") => {

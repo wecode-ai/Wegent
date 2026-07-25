@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>项目空间</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<!-- ============ Sidebar ============ -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="logo">W</div>
+    <span>项目空间</span>
+  </div>
+
+  <a class="nav-item active" href="projects.html">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    项目空间
+  </a>
+  <a class="nav-item" href="my-work.html">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>
+    我的工作
+  </a>
+  <div class="nav-item">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    搜索
+    <span class="kbd-hint">⌘K</span>
+  </div>
+
+  <div class="sidebar-section">
+    <span>项目空间</span>
+    <span class="add-btn" data-open="new-project">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </span>
+  </div>
+  <a class="project-item" href="index.html">
+    <span class="dot"></span>
+    看板项目
+    <span class="count">6</span>
+  </a>
+  <a class="project-item" href="index.html">
+    <span class="dot" style="background:#f59e0b"></span>
+    Wegent V4
+    <span class="count">12</span>
+  </a>
+  <a class="project-item" href="index.html">
+    <span class="dot" style="background:#10b981"></span>
+    知识库改版
+    <span class="count">4</span>
+  </a>
+
+  <div class="sidebar-footer">
+    <div class="avatar">L</div>
+    <div class="user-meta">
+      <div class="name">local</div>
+      <div class="email">local@wework.local</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ Main ============ -->
+<div class="main">
+  <div class="main-scroll">
+    <div class="page-narrow">
+      <div class="page-header">
+        <div class="ph-text">
+          <h1>项目空间</h1>
+          <div class="sub">多人和 AI 在各自本地工作区协作,共享任务、文件与交付。</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn-primary" data-open="new-project">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            新建项目空间
+          </button>
+        </div>
+      </div>
+
+      <div class="table">
+        <div class="trow thead cols-projects">
+          <span>项目</span><span>任务</span><span>更新时间</span><span>成员</span>
+        </div>
+        <a class="trow cols-projects" href="index.html">
+          <span class="name-cell"><span class="dot" style="background:#6366f1"></span>看板项目</span>
+          <span class="cell-muted">6</span>
+          <span class="cell-muted">07-24</span>
+          <span class="member-avatars">
+            <div class="avatar">L</div>
+            <div class="avatar" style="background:linear-gradient(135deg,#34d399,#10b981)">陈</div>
+            <div class="avatar" style="background:linear-gradient(135deg,#fbbf24,#f59e0b)">林</div>
+            <span class="count-text">3 人</span>
+          </span>
+        </a>
+        <a class="trow cols-projects" href="index.html">
+          <span class="name-cell"><span class="dot" style="background:#f59e0b"></span>Wegent V4</span>
+          <span class="cell-muted">12</span>
+          <span class="cell-muted">07-23</span>
+          <span class="member-avatars">
+            <div class="avatar">L</div>
+            <div class="avatar" style="background:linear-gradient(135deg,#34d399,#10b981)">陈</div>
+            <span class="count-text">5 人</span>
+          </span>
+        </a>
+        <a class="trow cols-projects" href="index.html">
+          <span class="name-cell"><span class="dot" style="background:#10b981"></span>知识库改版</span>
+          <span class="cell-muted">4</span>
+          <span class="cell-muted">07-21</span>
+          <span class="member-avatars">
+            <div class="avatar">L</div>
+            <span class="count-text">2 人</span>
+          </span>
+        </a>
+        <a class="trow cols-projects" href="index.html">
+          <span class="name-cell"><span class="dot" style="background:#8b5cf6"></span>移动端适配</span>
+          <span class="cell-muted">9</span>
+          <span class="cell-muted">07-18</span>
+          <span class="member-avatars">
+            <div class="avatar">L</div>
+            <div class="avatar" style="background:linear-gradient(135deg,#fbbf24,#f59e0b)">林</div>
+            <span class="count-text">4 人</span>
+          </span>
+        </a>
+      </div>
+
+      <div class="page-foot-note">项目空间只包含共享协作数据;本地目录、Git 与未关联会话仍留在成员设备上。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Overlay: new project dialog ============ -->
+<div class="overlay" id="overlay-new-project">
+  <div class="dialog">
+    <div class="dialog-header">
+      <h2>新建项目空间</h2>
+      <button class="icon-btn" data-close title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="dialog-body">
+      <div class="dialog-desc">项目空间包含共享任务、文件与交付;成员可以关联各自不同的本地工作区。</div>
+      <div class="field">
+        <label>项目名称</label>
+        <input class="input" type="text" placeholder="例如:Wegent V4">
+        <div class="field-hint">项目标识将在创建时自动生成。</div>
+      </div>
+      <div class="field">
+        <label>项目说明</label>
+        <textarea class="textarea" placeholder="这个项目要做什么,交付物是什么…"></textarea>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn-secondary" data-close>取消</button>
+      <button class="btn-primary">创建项目</button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

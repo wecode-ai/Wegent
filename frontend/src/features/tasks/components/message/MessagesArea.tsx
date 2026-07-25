@@ -39,7 +39,6 @@ import TaskShareModal from '../share/TaskShareModal'
 import ExportSelectModal, {
   type SelectableMessage,
   type SelectableAttachment,
-  type SelectableKnowledgeBase,
   type ExportFormat,
 } from '../share/ExportSelectModal'
 import { taskApis } from '@/apis/tasks'
@@ -634,10 +633,8 @@ function MessagesArea({
             content = content.substring(6)
           }
 
-          // Extract attachments and knowledge bases from contexts (new unified context system)
-          // or fall back to legacy attachments field
+          // Only attachments are exportable. Knowledge base contexts are runtime metadata.
           let attachments: SelectableAttachment[] | undefined
-          let knowledgeBases: SelectableKnowledgeBase[] | undefined
 
           if (msg.contexts && msg.contexts.length > 0) {
             // Filter attachment-like contexts and convert to SelectableAttachment format
@@ -648,16 +645,6 @@ function MessagesArea({
                 filename: ctx.source_url ? `${ctx.name} (${ctx.source_url})` : ctx.name,
                 file_size: ctx.file_size || 0,
                 file_extension: ctx.file_extension || '',
-              }))
-            }
-
-            // Filter knowledge base type contexts and convert to SelectableKnowledgeBase format
-            const kbContexts = msg.contexts.filter(ctx => ctx.context_type === 'knowledge_base')
-            if (kbContexts.length > 0) {
-              knowledgeBases = kbContexts.map(ctx => ({
-                id: ctx.id,
-                name: ctx.name,
-                document_count: ctx.document_count ?? undefined,
               }))
             }
           } else if (msg.attachments && msg.attachments.length > 0) {
@@ -680,8 +667,6 @@ function MessagesArea({
             userName: msg.senderUserName || selectedTaskDetail?.user?.user_name,
             teamName: selectedTaskDetail?.team?.name,
             attachments: attachments && attachments.length > 0 ? attachments : undefined,
-            knowledgeBases:
-              knowledgeBases && knowledgeBases.length > 0 ? knowledgeBases : undefined,
           }
         })
 

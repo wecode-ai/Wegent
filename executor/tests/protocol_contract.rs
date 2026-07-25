@@ -99,6 +99,33 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
 }
 
 #[test]
+fn openai_request_conversion_excludes_parsed_runtime_metadata_from_extra() {
+    let request = OpenAIResponsesRequest::from_value(json!({
+        "input": "inspect both roots",
+        "metadata": {
+            "runtime_workspace_roots": ["/workspace/web", "/workspace/api"],
+            "runtimeProjectKey": "product",
+            "runtime_project_name": "Product",
+            "custom_runtime_field": "preserved"
+        }
+    }))
+    .unwrap();
+
+    let execution = request.to_execution_request();
+
+    assert_eq!(
+        execution.runtime_workspace_roots,
+        vec!["/workspace/web", "/workspace/api"]
+    );
+    assert_eq!(execution.runtime_project_key.as_deref(), Some("product"));
+    assert_eq!(execution.runtime_project_name.as_deref(), Some("Product"));
+    assert_eq!(
+        execution.extra,
+        serde_json::Map::from_iter([("custom_runtime_field".to_owned(), json!("preserved"))])
+    );
+}
+
+#[test]
 fn validation_tasks_route_to_image_validator() {
     let request = OpenAIResponsesRequest::from_value(json!({
         "input": "validate image",

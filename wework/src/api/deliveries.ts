@@ -49,6 +49,7 @@ export interface CloudLoopItem {
   status: 'inbox' | 'pending' | 'in_progress' | 'in_review' | 'completed'
   priority: 'none' | 'low' | 'medium' | 'high' | 'urgent'
   due_at: string | null
+  tags: string[]
   sort_order: number
   current_delivery_id: string | null
   version: number
@@ -76,6 +77,7 @@ export interface CloudProject {
   description: string
   created_by_user_id: number
   status: string
+  tags: string[]
   version: number
   created_at: string
   updated_at: string
@@ -178,6 +180,17 @@ export function createDeliveryApi(client: HttpClient) {
     }): Promise<CloudProject> {
       return client.post('/v1/cloud-projects', data)
     },
+    updateCloudProject(
+      projectId: CloudProjectIdInput,
+      data: {
+        name?: string
+        description?: string
+        tags?: string[]
+        version: number
+      }
+    ): Promise<CloudProject> {
+      return client.patch(`/v1/cloud-projects/${projectId}`, data)
+    },
     listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
       return client.get('/v1/cloud-work-items/my-work')
     },
@@ -204,6 +217,7 @@ export function createDeliveryApi(client: HttpClient) {
         priority?: CloudLoopItem['priority']
         due_at?: string
         parent_id?: string | null
+        tags?: string[]
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
@@ -220,12 +234,23 @@ export function createDeliveryApi(client: HttpClient) {
           | 'parent_id'
           | 'assignee_user_id'
           | 'due_at'
+          | 'tags'
         >
       > & {
         version: number
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
+    },
+    reorderLoopItems(
+      projectId: CloudProjectIdInput,
+      data: {
+        parent_id: string | null
+        status: CloudLoopItem['status']
+        item_ids: string[]
+      }
+    ): Promise<{ items: CloudLoopItem[] }> {
+      return client.post(`/v1/cloud-projects/${projectId}/loop-items/reorder`, data)
     },
     listLoopItemAttachments(itemId: string): Promise<CloudLoopItemAttachment[]> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/attachments`)

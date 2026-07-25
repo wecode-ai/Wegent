@@ -17,6 +17,7 @@ from app.core.security import create_access_token, get_password_hash
 from app.models.cloud_project import CloudProject
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.task import TaskResource
 from app.models.user import User
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import DeliveryStorageUnavailableError
@@ -171,6 +172,70 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
     )
     assert cycle.status_code == 422
     assert cycle.json()["detail"] == "TODO hierarchy cannot contain a cycle"
+
+
+def test_loop_item_reorder_orders_one_lane(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    headers = _auth(test_token)
+
+    def create(title: str, status: str = "inbox") -> dict[str, Any]:
+        response = test_client.post(
+            f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+            headers=headers,
+            json={"title": title, "status": status},
+        )
+        assert response.status_code == 201
+        return response.json()
+
+    first = create("First")
+    second = create("Second")
+    other_lane = create("Other lane", status="pending")
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items/reorder",
+        headers=headers,
+        json={
+            "parent_id": None,
+            "status": "inbox",
+            "item_ids": [second["id"], first["id"]],
+        },
+    )
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [
+        second["id"],
+        first["id"],
+    ]
+    assert [item["sort_order"] for item in response.json()["items"]] == [0, 1]
+
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items", headers=headers
+    ).json()["items"]
+    inbox_ids = [item["id"] for item in listed if item["status"] == "inbox"]
+    assert inbox_ids == [second["id"], first["id"]]
+    # The other lane keeps its own ordering state.
+    assert (
+        next(item for item in listed if item["id"] == other_lane["id"])["sort_order"]
+        == 0
+    )
+
+    # Moving a TODO to another lane resets its manual position to the top.
+    moved = test_client.patch(
+        f"/api/v1/loop-items/{second['id']}",
+        headers=headers,
+        json={"version": second["version"], "status": "pending"},
+    )
+    assert moved.status_code == 200
+    assert moved.json()["sort_order"] == 0
+
+    missing = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items/reorder",
+        headers=headers,
+        json={"parent_id": None, "status": "inbox", "item_ids": ["MISS-1"]},
+    )
+    assert missing.status_code == 422
 
 
 def test_loop_item_parent_must_be_in_same_project(
@@ -347,6 +412,44 @@ def test_binding_task_advances_unstarted_todo_to_in_progress(
     ).json()
     assert item["status"] == "in_progress"
     assert item["version"] == created["version"] + 1
+
+
+def test_binding_subscription_backend_task_uses_task_store(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    backend_task = TaskResource(
+        user_id=test_user.id,
+        kind="Task",
+        name=f"delivery-subscription-{uuid.uuid4()}",
+        namespace="default",
+        json={},
+        is_active=TaskResource.STATE_SUBSCRIPTION,
+    )
+    test_db.add(backend_task)
+    test_db.commit()
+    test_db.refresh(backend_task)
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Bind subscription task"},
+    ).json()
+
+    response = test_client.post(
+        f"/api/v1/loop-items/{created['id']}/tasks",
+        headers=_auth(test_token),
+        json={
+            "deviceId": "local-device",
+            "taskId": "subscription-task",
+            "backendTaskId": backend_task.id,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["backend_task_id"] == backend_task.id
 
 
 @pytest.mark.parametrize("initial_status", ["in_progress", "in_review", "completed"])

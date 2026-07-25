@@ -24,6 +24,18 @@ Wework builds proxy model config directly from the configured cloud URL and logi
 4. The backend validates the login token and model access, then resolves the Model CRD by `user_id + namespace + name`.
 5. The backend loads the real provider configuration, replaces the request model with the provider `model_id`, and streams the request and response.
 
+### Protocol and Endpoint Resolution
+
+The proxy gateway supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. The Model CRD's `protocol`, `apiFormat`, and `wire_api` select the upstream wire protocol. Conflicting or ambiguous configuration returns an explicit backend error instead of silently falling back to another protocol.
+
+The provider `base_url` may be a service root, a versioned API base, or a complete protocol endpoint. The gateway merges endpoint path segments and removes overlap. For example:
+
+- `https://api.anthropic.com` with Anthropic Messages resolves to `/v1/messages`.
+- `https://proxy.example.com/v1` with Anthropic Messages still resolves to `/v1/messages`, never `/v1/v1/messages`.
+- URLs already ending in `/responses`, `/chat/completions`, or `/v1/messages` do not receive a duplicate endpoint.
+
+When a task runs on a cloud or remote device, the model selector hides custom models configured only on the current desktop. Local custom models can only use the local executor; built-in Codex models and cloud Model CRDs can use either local or cloud execution.
+
 ## Security Benefits
 
 - The Wework desktop client and local executor never receive the real provider `api_key`.

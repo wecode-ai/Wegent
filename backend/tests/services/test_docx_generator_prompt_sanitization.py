@@ -74,6 +74,29 @@ class TestDocxGeneratorPromptSanitization:
         full_text = "\n".join(p.text for p in doc.paragraphs)
         assert "What is the capital of France?" in full_text
 
+    def test_knowledge_base_context_not_written_to_document(self):
+        """Knowledge base runtime metadata must not appear in DOCX exports."""
+        knowledge_base = MagicMock()
+        knowledge_base.context_type = "knowledge_base"
+        knowledge_base.name = "Private Knowledge Base"
+        knowledge_base.type_data = {"document_count": 12}
+
+        doc = Document()
+        task, user = _make_task_and_user()
+        subtask = _make_user_subtask(
+            "Answer from available knowledge", [knowledge_base]
+        )
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = user
+
+        _add_message(doc, subtask, task, user, db)
+
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        assert "Answer from available knowledge" in full_text
+        assert "Private Knowledge Base" not in full_text
+        assert "[KB]" not in full_text
+
     def test_system_reminder_stripped_from_docx_output(self):
         """<system-reminder> block in JSON array prompt must NOT appear in DOCX."""
         raw_prompt = json.dumps(

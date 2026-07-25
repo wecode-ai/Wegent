@@ -384,8 +384,13 @@ class TestToolWrapperExecutor:
             reset_mcp_context(token)
 
         parsed = json.loads(result)
-        assert "error" in parsed
-        assert "Something went wrong" in parsed["error"]
+        assert parsed["error"] == {
+            "code": "MCP_TOOL_EXECUTION_FAILED",
+            "message": "Something went wrong",
+            "server": "knowledge",
+            "tool": "test_tool",
+            "retryable": False,
+        }
 
     @pytest.mark.asyncio
     async def test_wrapper_runs_sync_tool_in_executor(self):

@@ -25,7 +25,6 @@ import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtime
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
 const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
-
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
   defaultTeam: null,
@@ -34,7 +33,6 @@ export const initialWorkbenchState: WorkbenchState = {
   runtimeWork: null,
   currentProject: null,
   currentRuntimeTask: null,
-  activeRuntimeTasks: [],
   standaloneChatKey: 0,
   selectedDeviceWorkspaceId: null,
   pendingProjectWorkspaceProjectId: null,
@@ -124,8 +122,6 @@ export type WorkbenchAction =
       address: RuntimeTaskAddress
     }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
-  | { type: 'runtime_task_started'; address: RuntimeTaskAddress }
-  | { type: 'runtime_task_settled'; address: RuntimeTaskAddress }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
 
@@ -572,52 +568,6 @@ function removeOptimisticRuntimeTask(
   }
 }
 
-function sameRuntimeTaskActivity(left: RuntimeTaskAddress, right: RuntimeTaskAddress): boolean {
-  if (left.deviceId !== right.deviceId || left.taskId !== right.taskId) return false
-  if (!left.workspacePath || !right.workspacePath) return true
-  return left.workspacePath === right.workspacePath
-}
-
-function upsertActiveRuntimeTask(
-  current: RuntimeTaskAddress[],
-  address: RuntimeTaskAddress
-): RuntimeTaskAddress[] {
-  return [
-    ...current.filter(activeAddress => !sameRuntimeTaskActivity(activeAddress, address)),
-    address,
-  ]
-}
-
-function updateRuntimeTaskRunning(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress,
-  running: boolean
-): RuntimeWorkListResponse | null {
-  if (!runtimeWork) return null
-
-  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
-    ...workspace,
-    tasks: workspace.tasks.map(task => {
-      const taskAddress: RuntimeTaskAddress = {
-        deviceId: workspace.deviceId,
-        taskId: task.taskId,
-        workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-      }
-      if (!sameRuntimeTaskActivity(taskAddress, address) || task.running === running) return task
-      return { ...task, running }
-    }),
-  })
-
-  return {
-    ...runtimeWork,
-    projects: runtimeWork.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
-    })),
-    chats: runtimeWork.chats.map(updateWorkspace),
-  }
-}
-
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   taskId: string,
@@ -764,6 +714,11 @@ function upsertOpenedRuntimeWorkspace(
   }
   const normalizedDeviceId = deviceId.trim()
   const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspacePath)
+  if (
+    findRuntimeProjectByWorkspace(currentRuntimeWork, normalizedDeviceId, normalizedWorkspacePath)
+  ) {
+    return currentRuntimeWork
+  }
   const projectLabel = runtimeWorkspaceLabel(normalizedWorkspacePath, label)
   const nextWorkspace = runtimeWorkspaceFromOpenedWorkspace(
     normalizedDeviceId,
@@ -930,10 +885,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     }
     case 'lists_refreshed': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
-      const runtimeWork =
+      const mergedRuntimeWork =
         action.runtimeWork === undefined
           ? state.runtimeWork
           : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
+      const runtimeWork = mergedRuntimeWork
       const refreshedState = {
         ...state,
         projects: action.projects,
@@ -986,7 +942,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
     }
     case 'runtime_work_refreshed': {
-      const runtimeWork = mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
+      const mergedRuntimeWork = mergeRuntimeWorkPreservingTaskOrder(
+        state.runtimeWork,
+        action.runtimeWork
+      )
+      const runtimeWork = mergedRuntimeWork
       debugRuntimeSidebarState('reducer-runtime-work-refreshed', {
         incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork),
         previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
@@ -1095,13 +1055,19 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         action.deviceId,
         action.workspacePath
       )
+      const selectedWorkspace = runtimeProject?.deviceWorkspaces.find(
+        workspace =>
+          workspace.deviceId === action.deviceId.trim() &&
+          normalizeRuntimeWorkspacePath(workspace.workspacePath) ===
+            normalizeRuntimeWorkspacePath(action.workspacePath)
+      )
       return {
         ...state,
         runtimeWork,
         currentProject: runtimeProject
           ? runtimeProjectToProject(runtimeProject)
           : state.currentProject,
-        selectedDeviceWorkspaceId: null,
+        selectedDeviceWorkspaceId: selectedWorkspace?.id ?? null,
         pendingProjectWorkspaceProjectId: null,
         standaloneDeviceId: action.deviceId,
         standaloneWorkspacePath: normalizeRuntimeWorkspacePath(action.workspacePath),
@@ -1204,20 +1170,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         runtimeWork: state.runtimeWork
           ? removeRuntimeTasks(state.runtimeWork, action.addresses)
           : null,
-      }
-    case 'runtime_task_started':
-      return {
-        ...state,
-        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, true),
-        activeRuntimeTasks: upsertActiveRuntimeTask(state.activeRuntimeTasks, action.address),
-      }
-    case 'runtime_task_settled':
-      return {
-        ...state,
-        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, false),
-        activeRuntimeTasks: state.activeRuntimeTasks.filter(
-          address => !sameRuntimeTaskActivity(address, action.address)
-        ),
       }
     case 'current_task_cleared':
       return {

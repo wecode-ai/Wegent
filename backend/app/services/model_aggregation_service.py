@@ -462,41 +462,6 @@ class ModelAggregationService:
             logger.warning("Failed to check wework availability: %s", e)
             return False
 
-    def _build_codex_runtime_model(
-        self,
-        db: Session,
-        current_user: User,
-        shell_type: Optional[str],
-        actual_shell_type: str,
-        support_model: List[str],
-        scope: str,
-        model_category_type: Optional[str],
-        client_origin: Optional[str],
-    ) -> Optional[UnifiedModel]:
-        """Build the Wework-only runtime Codex model when user auth is enabled."""
-        if client_origin != CLIENT_ORIGIN_WEWORK:
-            return None
-        if scope == "group":
-            return None
-        if (
-            model_category_type
-            and model_category_type != CODEX_RUNTIME_MODEL_CATEGORY_TYPE
-        ):
-            return None
-        if not is_codex_runtime_model_enabled(db, current_user):
-            return None
-
-        config = build_codex_runtime_model_config()
-        if shell_type and not self._is_model_compatible_with_shell(
-            CODEX_RUNTIME_MODEL_PROVIDER,
-            actual_shell_type,
-            support_model,
-            config,
-        ):
-            return None
-
-        return self._create_codex_runtime_model()
-
     def _create_codex_runtime_model(self) -> UnifiedModel:
         """Create the runtime-only Codex model representation."""
         return UnifiedModel(
@@ -748,19 +713,6 @@ class ModelAggregationService:
             result.append(unified)
             if model_name not in seen_names:
                 seen_names[model_name] = ModelType.PUBLIC
-
-        runtime_model = self._build_codex_runtime_model(
-            db=db,
-            current_user=current_user,
-            shell_type=shell_type,
-            actual_shell_type=actual_shell_type,
-            support_model=support_model,
-            scope=scope,
-            model_category_type=model_category_type,
-            client_origin=client_origin,
-        )
-        if runtime_model:
-            result.append(runtime_model)
 
         # Sort by name
         result.sort(key=lambda x: x.name)

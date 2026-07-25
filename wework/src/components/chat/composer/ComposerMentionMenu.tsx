@@ -20,8 +20,9 @@ export type MentionMenuRow =
   | { kind: 'files-action' }
   | { kind: 'goal-action' }
   | { kind: 'plan-action' }
-  | { kind: 'cloud-action'; candidate: ComposerMentionCandidate }
   | { kind: 'cloud-back-action' }
+  | { kind: 'cloud-space-direct-action' }
+  | { kind: 'cloud-projects-action' }
 
 interface ComposerMentionMenuProps {
   menuRef: RefObject<HTMLDivElement | null>
@@ -29,7 +30,7 @@ interface ComposerMentionMenuProps {
   selectedIndex: number
   className: string
   mentionMode: boolean
-  cloudScope: boolean
+  projectSpaceScope?: boolean
   loading: boolean
   error: boolean
   canBrowseFiles: boolean
@@ -44,7 +45,7 @@ export function ComposerMentionMenu({
   selectedIndex,
   className,
   mentionMode,
-  cloudScope,
+  projectSpaceScope = false,
   loading,
   error,
   canBrowseFiles,
@@ -65,8 +66,8 @@ export function ComposerMentionMenu({
       ].join(' ')}
     >
       <div className="px-2 pb-1 pt-0.5 text-xs font-normal leading-4 text-text-muted">
-        {cloudScope
-          ? t('workbench.mention_cloud_space', '云空间')
+        {projectSpaceScope
+          ? t('workbench.mention_cloud_project_space', '项目空间')
           : mentionMode
             ? t('workbench.mention_add', '添加')
             : t('workbench.local_skills', '技能')}
@@ -100,57 +101,67 @@ export function ComposerMentionMenu({
       ) : (
         rows.map((row, index) => {
           const candidate = row.kind === 'candidate' ? row.candidate : null
-          const cloudAction = row.kind === 'cloud-action' ? row.candidate : null
           const pathItem = row.kind === 'path' ? row.item : null
           const enabled = candidate
             ? candidate.enabled
             : row.kind !== 'files-action' || canBrowseFiles
-          const Icon = cloudAction
-            ? Cloud
-            : pathItem
-              ? pathItem.matchType === 'directory'
-                ? Folder
-                : File
-              : row.kind === 'files-action'
-                ? Paperclip
-                : row.kind === 'goal-action'
-                  ? Target
-                  : row.kind === 'plan-action'
-                    ? ClipboardList
-                    : candidate?.kind === 'cloud'
-                      ? Cloud
-                      : row.kind === 'cloud-back-action'
-                        ? ArrowLeft
-                        : Package
+          const Icon = pathItem
+            ? pathItem.matchType === 'directory'
+              ? Folder
+              : File
+            : row.kind === 'files-action'
+              ? Paperclip
+              : row.kind === 'goal-action'
+                ? Target
+                : row.kind === 'plan-action'
+                  ? ClipboardList
+                  : row.kind === 'cloud-space-direct-action' ||
+                      row.kind === 'cloud-projects-action' ||
+                      candidate?.kind === 'cloud'
+                    ? Cloud
+                    : row.kind === 'cloud-back-action'
+                      ? ArrowLeft
+                      : Package
           const title = candidate
             ? candidate.title
-            : cloudAction
-              ? cloudAction.title
-              : pathItem
-                ? pathItem.fileName
-                : row.kind === 'files-action'
-                  ? t('workbench.mention_files_and_folders', '文件和文件夹')
-                  : row.kind === 'goal-action'
-                    ? t('workbench.goal_chip', '目标')
-                    : row.kind === 'cloud-back-action'
-                      ? t('workbench.mention_cloud_back', '返回')
-                      : t('workbench.plan_mode', '计划模式')
+            : pathItem
+              ? pathItem.fileName
+              : row.kind === 'files-action'
+                ? t('workbench.mention_files_and_folders', '文件和文件夹')
+                : row.kind === 'goal-action'
+                  ? t('workbench.goal_chip', '目标')
+                  : row.kind === 'cloud-back-action'
+                    ? t('workbench.mention_cloud_back', '返回')
+                    : row.kind === 'cloud-space-direct-action'
+                      ? t('workbench.mention_cloud_project_space', '项目空间')
+                      : row.kind === 'cloud-projects-action'
+                        ? t('workbench.mention_cloud_project_space_list', '项目空间列表')
+                        : t('workbench.plan_mode', '计划模式')
           const description =
             candidate?.description ??
-            cloudAction?.description ??
-            (pathItem ? parentComposerPath(pathItem.path) : undefined)
+            (row.kind === 'cloud-space-direct-action'
+              ? t(
+                  'workbench.mention_cloud_project_space_description',
+                  '@ 我的云空间能力,用自然语言做任何有权限的操作'
+                )
+              : row.kind === 'cloud-projects-action'
+                ? t(
+                    'workbench.mention_cloud_project_space_list_description',
+                    '列出所有可访问的云项目空间'
+                  )
+                : pathItem
+                  ? parentComposerPath(pathItem.path)
+                  : undefined)
           return (
             <button
-              key={candidate?.key ?? cloudAction?.key ?? `${row.kind}:${pathItem?.path ?? ''}`}
+              key={candidate?.key ?? `${row.kind}:${pathItem?.path ?? ''}`}
               type="button"
               data-testid={
                 candidate
                   ? `${candidate.kind === 'app' ? 'local-app' : candidate.kind === 'cloud' ? 'cloud-reference' : 'local-skill'}-option-${candidate.testId}`
-                  : cloudAction
-                    ? 'mention-cloud-space'
-                    : pathItem
-                      ? `workspace-mention-option-${index}`
-                      : `mention-${row.kind}`
+                  : pathItem
+                    ? `workspace-mention-option-${index}`
+                    : `mention-${row.kind}`
               }
               aria-selected={index === selectedIndex}
               role="option"
@@ -169,13 +180,21 @@ export function ComposerMentionMenu({
                 <span className="shrink-0 truncate text-sm font-normal leading-5 text-text-primary">
                   {title}
                 </span>
+                {candidate?.kind === 'cloud' && candidate.statusLabel && (
+                  <span
+                    data-testid={`cloud-reference-status-${candidate.testId}`}
+                    className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-normal leading-4 text-text-muted"
+                  >
+                    {candidate.statusLabel}
+                  </span>
+                )}
                 {description && (
                   <span className="min-w-0 truncate text-sm font-normal leading-5 text-text-muted">
                     {description}
                   </span>
                 )}
               </span>
-              {candidate && !(cloudScope && candidate.kind === 'cloud') && (
+              {candidate && !(projectSpaceScope && candidate.kind === 'cloud') && (
                 <span
                   data-testid={`local-skill-source-${candidate.testId}`}
                   className="shrink-0 text-xs leading-5 text-text-muted"
@@ -183,7 +202,9 @@ export function ComposerMentionMenu({
                   {candidate.metaLabel}
                 </span>
               )}
-              {cloudAction && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />}
+              {row.kind === 'cloud-projects-action' && (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+              )}
             </button>
           )
         })

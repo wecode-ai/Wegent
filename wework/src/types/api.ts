@@ -288,7 +288,12 @@ export interface NormalizedRuntimeMessage {
   messageIndex?: number | null
   message_index?: number | null
   subtaskId?: string | number | null
+  turnId?: string | null
+  turn_id?: string | null
   status?: string | null
+  error?: string | null
+  errorType?: string | null
+  error_type?: string | null
   createdAt?: string | null
   completedAt?: string | number | null
   completed_at?: string | number | null
@@ -697,6 +702,24 @@ export interface RuntimeWorkspaceOpenRequest {
   label?: string | null
 }
 
+export interface RuntimeLocalProjectUpsertRequest {
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+}
+
+export interface RuntimeLocalProjectUpsertResponse {
+  accepted: boolean
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+  error?: string | null
+}
+
 export interface RuntimeWorkspaceRenameRequest {
   deviceId: string
   projectKey?: string | null
@@ -1018,6 +1041,9 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  runtimeProjectKey?: string
+  runtimeProjectName?: string
+  runtimeWorkspaceRoots?: string[]
   taskId?: string
   teamId: number
   runtime: RuntimeName
@@ -1058,6 +1084,8 @@ export interface RuntimeTaskForkTarget {
 export interface RuntimeTaskForkRequest {
   source: RuntimeTaskAddress
   target: RuntimeTaskForkTarget
+  lastTurnId?: string
+  title?: string
 }
 
 export interface RuntimeTaskForkResponse {

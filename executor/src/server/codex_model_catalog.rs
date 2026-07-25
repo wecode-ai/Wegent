@@ -279,7 +279,7 @@ fn kimi_k27_model_entry() -> Value {
 }
 
 fn gpt_56_sol_model_entry() -> Value {
-    let mut entry = model_entry(GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"));
+    let mut entry = picker_model_entry(GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"), 1);
     entry["description"] = Value::String("GPT 5.6 Sol profile for agentic coding".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
@@ -287,7 +287,7 @@ fn gpt_56_sol_model_entry() -> Value {
 }
 
 fn gpt_56_terra_model_entry() -> Value {
-    let mut entry = model_entry(GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"));
+    let mut entry = picker_model_entry(GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"), 2);
     entry["description"] = Value::String("GPT 5.6 Terra profile for agentic coding".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
@@ -295,7 +295,7 @@ fn gpt_56_terra_model_entry() -> Value {
 }
 
 fn gpt_56_luna_model_entry() -> Value {
-    let mut entry = model_entry(GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"));
+    let mut entry = picker_model_entry(GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"), 3);
     entry["description"] = Value::String("GPT 5.6 Luna profile for agentic coding".to_owned());
     entry["context_window"] = Value::Number(272_000.into());
     entry["max_context_window"] = Value::Number(272_000.into());
@@ -524,6 +524,18 @@ fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&st
     entry
 }
 
+fn picker_model_entry(
+    slug: &str,
+    display_name: &str,
+    apply_patch_tool_type: Option<&str>,
+    priority: i64,
+) -> Value {
+    let mut entry = model_entry(slug, display_name, apply_patch_tool_type);
+    entry["visibility"] = Value::String("list".to_owned());
+    entry["priority"] = Value::Number(priority.into());
+    entry
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,6 +575,40 @@ mod tests {
             .expect("wework gpt-5.6-sol entry");
         assert_eq!(sol["apply_patch_tool_type"], "freeform");
         assert_eq!(sol["supports_parallel_tool_calls"], false);
+        assert_eq!(sol["visibility"], "none");
+    }
+
+    #[test]
+    fn catalog_lists_official_gpt_56_models_without_exposing_internal_profiles() {
+        let catalog = catalog();
+        let models = catalog["models"].as_array().expect("models array");
+
+        for (slug, priority) in [
+            (GPT_56_SOL_MODEL, 1),
+            (GPT_56_TERRA_MODEL, 2),
+            (GPT_56_LUNA_MODEL, 3),
+        ] {
+            let model = models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing official model {slug}"));
+            assert_eq!(model["visibility"], "list");
+            assert_eq!(model["priority"], priority);
+        }
+
+        for slug in [
+            KIMI_K3_MODEL,
+            KIMI_K27_MODEL,
+            WEWORK_GPT_56_SOL_MODEL,
+            WEWORK_GPT_56_TERRA_MODEL,
+            WEWORK_GPT_56_LUNA_MODEL,
+        ] {
+            let model = models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing internal profile {slug}"));
+            assert_eq!(model["visibility"], "none");
+        }
     }
 
     #[test]

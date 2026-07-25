@@ -46,6 +46,11 @@ interface UseWorkbenchProjectActionsOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   refreshWorkLists: () => Promise<void>
+  markRuntimeProjectRemoved: (
+    projectId: number,
+    workspace?: { deviceId: string; workspacePath: string }
+  ) => void
+  clearRuntimeProjectRemoval: (workspace: { deviceId: string; workspacePath: string }) => void
   rememberExecutionDevice: (deviceId: string) => void
 }
 
@@ -56,6 +61,8 @@ export function useWorkbenchProjectActions({
   executorClient,
   services,
   refreshWorkLists,
+  markRuntimeProjectRemoved,
+  clearRuntimeProjectRemoval,
   rememberExecutionDevice,
 }: UseWorkbenchProjectActionsOptions) {
   const createProject = useCallback(
@@ -173,6 +180,25 @@ export function useWorkbenchProjectActions({
     [dispatch, executorClient, refreshWorkLists, services.projectApi, state.runtimeWork]
   )
 
+  const updateLocalRuntimeProject = useCallback(
+    async (data: { deviceId: string; projectKey: string; name: string; roots: string[] }) => {
+      const response = await executorClient.runtime.upsertLocalRuntimeProject({
+        ...data,
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        const message = response.error || 'Failed to update local project'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      response.roots.forEach(workspacePath =>
+        clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
+      )
+      await refreshWorkLists()
+    },
+    [clearRuntimeProjectRemoval, dispatch, executorClient, refreshWorkLists]
+  )
+
   const removeListedRuntimeProject = useCallback(
     async (projectId: number) => {
       const runtimeWorkspace = findProjectMetadataDeviceWorkspace(
@@ -216,6 +242,10 @@ export function useWorkbenchProjectActions({
       const clearsStandaloneWorkspace =
         standaloneDeviceId === runtimeWorkspace.deviceId.trim() &&
         standaloneWorkspacePath === normalizeRuntimeWorkspacePath(runtimeWorkspace.workspacePath)
+      markRuntimeProjectRemoved(projectId, {
+        deviceId: runtimeWorkspace.deviceId,
+        workspacePath: runtimeWorkspace.workspacePath,
+      })
       await refreshWorkLists()
       dispatch({ type: 'runtime_project_removed', projectId })
       if (clearsStandaloneWorkspace) {
@@ -231,6 +261,7 @@ export function useWorkbenchProjectActions({
     [
       dispatch,
       executorClient,
+      markRuntimeProjectRemoved,
       refreshWorkLists,
       state.runtimeWork,
       state.standaloneDeviceId,
@@ -267,6 +298,10 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
+      markRuntimeProjectRemoved(projectId, {
+        deviceId: standaloneDeviceId,
+        workspacePath: standaloneWorkspacePath,
+      })
       await refreshWorkLists()
       dispatch({
         type: 'project_cleared',
@@ -279,6 +314,7 @@ export function useWorkbenchProjectActions({
     [
       dispatch,
       executorClient,
+      markRuntimeProjectRemoved,
       refreshWorkLists,
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,
@@ -442,6 +478,7 @@ export function useWorkbenchProjectActions({
     listGitRepositories,
     listGitBranches,
     updateProjectName,
+    updateLocalRuntimeProject,
     removeProject,
     reorderRuntimeProjects,
     setRuntimeProjectPinned,
