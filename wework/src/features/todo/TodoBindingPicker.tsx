@@ -139,18 +139,18 @@ export function TodoBindingPicker({
   }
 
   return (
-    <div className="fixed inset-0 z-system flex items-center justify-center bg-black/30 p-6">
-      <section className="w-[480px] max-w-full overflow-hidden rounded-xl border border-border bg-background shadow-lg">
-        <header className="flex h-11 items-center border-b border-border px-4">
-          <Link2 className="mr-2 h-4 w-4 text-text-secondary" />
-          <h2 className="text-sm font-semibold">关联项目空间</h2>
+    <div className="fixed inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm">
+      <section className="w-[480px] max-w-full overflow-hidden rounded-2xl bg-background shadow-2xl">
+        <header className="flex items-center gap-2 px-5 pt-4">
+          <Link2 className="h-4 w-4 text-text-secondary" />
+          <h2 className="text-base font-semibold">关联项目空间</h2>
           <button
             type="button"
             data-testid="todo-binding-close"
             onClick={onClose}
-            className="ml-auto h-7 w-7 rounded-md hover:bg-hover"
+            className="-mr-1 ml-auto flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
           >
-            <X className="mx-auto h-4 w-4" />
+            <X className="h-4 w-4" />
           </button>
         </header>
         {creating ? (
@@ -159,7 +159,7 @@ export function TodoBindingPicker({
               data-testid="todo-binding-project"
               value={projectId ?? ''}
               onChange={event => setProjectId(event.target.value)}
-              className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm"
+              className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted"
             >
               {projects.map(project => (
                 <option key={project.id} value={project.id}>
@@ -173,7 +173,7 @@ export function TodoBindingPicker({
               value={title}
               onChange={event => setTitle(event.target.value)}
               placeholder="任务标题"
-              className="h-9 w-full rounded-md border border-border px-3 text-sm outline-none focus:border-focus"
+              className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted"
             />
           </div>
         ) : (
@@ -184,7 +184,7 @@ export function TodoBindingPicker({
                 data-testid="todo-binding-project"
                 value={projectId ?? ''}
                 onChange={event => setProjectId(event.target.value)}
-                className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-muted"
               >
                 {projects.map(project => (
                   <option key={project.id} value={project.id}>
@@ -197,19 +197,19 @@ export function TodoBindingPicker({
                 data-testid="todo-binding-project-only"
                 disabled={!selectedProject || saving}
                 onClick={() => void bindProject()}
-                className="h-8 rounded-md border border-border px-3 text-xs hover:bg-hover disabled:opacity-50"
+                className="h-9 rounded-lg bg-text-primary px-3 text-xs font-medium text-background disabled:opacity-50"
               >
                 仅关联项目
               </button>
             </div>
             <div className="relative border-b border-border p-3">
-              <Search className="absolute left-6 top-5 h-4 w-4 text-text-muted" />
+              <Search className="absolute left-6 top-[22px] h-4 w-4 text-text-muted" />
               <input
                 data-testid="todo-binding-search"
                 value={query}
                 onChange={event => setQuery(event.target.value)}
                 placeholder="搜索我的任务"
-                className="h-8 w-full rounded-md bg-muted/50 pl-9 pr-3 text-sm outline-none"
+                className="h-9 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-text-muted"
               />
             </div>
             <div className="max-h-72 overflow-y-auto p-2">
@@ -220,7 +220,7 @@ export function TodoBindingPicker({
                   data-testid={`todo-binding-item-${item.id}`}
                   disabled={saving || currentItem?.id === item.id}
                   onClick={() => void bind(item)}
-                  className="flex h-11 w-full items-center rounded-md px-3 text-left hover:bg-hover disabled:opacity-50"
+                  className="flex h-11 w-full items-center rounded-lg px-3 text-left hover:bg-hover disabled:opacity-50"
                 >
                   <ListTodo className="mr-2 h-4 w-4 shrink-0 text-text-muted" />
                   <span className="w-20 shrink-0 font-mono text-xs text-text-muted">{item.id}</span>
@@ -238,7 +238,7 @@ export function TodoBindingPicker({
               data-testid="todo-binding-unbind"
               disabled={saving}
               onClick={() => void clearBinding()}
-              className="h-8 rounded-md px-3 text-xs text-text-secondary hover:bg-hover"
+              className="h-8 rounded-lg px-3 text-xs text-text-secondary hover:bg-hover"
             >
               {runtimeTask ? '解除关联' : '清除选择'}
             </button>
@@ -246,7 +246,11 @@ export function TodoBindingPicker({
           <span className="flex-1" />
           {creating ? (
             <>
-              <button type="button" onClick={() => setCreating(false)} className="h-8 px-3 text-xs">
+              <button
+                type="button"
+                onClick={() => setCreating(false)}
+                className="h-8 rounded-lg px-3 text-xs text-text-secondary hover:bg-hover"
+              >
                 返回
               </button>
               <button
@@ -254,7 +258,7 @@ export function TodoBindingPicker({
                 data-testid="todo-binding-create-confirm"
                 disabled={!projectId || !title.trim() || saving}
                 onClick={() => void createAndBind()}
-                className="h-8 rounded-md bg-text-primary px-3 text-xs font-medium text-background disabled:opacity-50"
+                className="h-8 rounded-lg bg-text-primary px-3 text-xs font-medium text-background disabled:opacity-50"
               >
                 创建并关联
               </button>
@@ -264,7 +268,7 @@ export function TodoBindingPicker({
               type="button"
               data-testid="todo-binding-create"
               onClick={() => setCreating(true)}
-              className="flex h-8 items-center gap-1 rounded-md px-3 text-xs hover:bg-hover"
+              className="flex h-8 items-center gap-1 rounded-lg px-3 text-xs text-text-secondary hover:bg-hover"
             >
               <Plus className="h-3.5 w-3.5" /> 快速新建
             </button>

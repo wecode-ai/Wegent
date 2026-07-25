@@ -764,6 +764,7 @@ function localRuntimeModelConfig(
       codex_catalog_model_id: DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
+      tool_profile: 'custom',
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,
@@ -1125,6 +1126,9 @@ interface BuildLocalRuntimeExecutionRequestInput {
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
   workspacePath?: string | null
+  runtimeProjectKey?: string
+  runtimeProjectName?: string
+  runtimeWorkspaceRoots?: string[]
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
@@ -1138,6 +1142,22 @@ function messageWithApplicationContext(
   context?: RuntimeTaskCreateRequest['additionalContext']
 ): string {
   const entries = Object.entries(context ?? {}).filter(([, entry]) => entry.kind === 'application')
+  if (message.includes('cloud://projects') && !context?.projectSpaceCapability) {
+    entries.push([
+      'projectSpaceCapability',
+      {
+        kind: 'application',
+        value: [
+          'The user activated the Wegent project-space capability.',
+          'Use the wegent_delivery MCP server for project-space operations.',
+          'wegent_delivery is a server id, not a callable tool.',
+          'Use list_cloud_projects to list projects and create_cloud_project to create one.',
+          'Use resolve_cloud_reference to resolve cloud:// references.',
+          'MCP resources describe addressable data; do not use list_mcp_resources to discover tools.',
+        ].join('\n'),
+      },
+    ])
+  }
   if (entries.length === 0) return message
   const contextText = entries.map(([name, entry]) => `[${name}]\n${entry.value}`).join('\n\n')
   return `<application_context>\n${contextText}\n</application_context>\n\n${message}`
@@ -1191,7 +1211,7 @@ function buildLocalRuntimeExecutionRequest(
     mcp_servers: input.cloudModelGateway?.mcpUrl
       ? [
           {
-            name: 'wegent-delivery',
+            name: 'wegent_delivery',
             type: 'streamable-http',
             url: input.cloudModelGateway.mcpUrl,
             headers: {
@@ -1215,6 +1235,11 @@ function buildLocalRuntimeExecutionRequest(
           workspace_source: input.workspaceSource,
           project_workspace_path: input.workspacePath,
         }
+      : {}),
+    ...(input.runtimeProjectKey ? { runtime_project_key: input.runtimeProjectKey } : {}),
+    ...(input.runtimeProjectName ? { runtime_project_name: input.runtimeProjectName } : {}),
+    ...(input.runtimeWorkspaceRoots?.length
+      ? { runtime_workspace_roots: input.runtimeWorkspaceRoots }
       : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
@@ -1357,6 +1382,9 @@ async function createLocalRuntimeTaskPayload(
       attachments: normalizedData.attachments,
       localDeviceId,
       workspacePath: runtimeWorkspace.workspacePath,
+      runtimeProjectKey: normalizedData.runtimeProjectKey,
+      runtimeProjectName: normalizedData.runtimeProjectName,
+      runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,
@@ -2109,6 +2137,12 @@ export function createRuntimeWorkApiFromIpc(
       }
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
+      if (data.lastTurnId) {
+        return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
+          ...data,
+          taskId: data.source.taskId,
+        })
+      }
       return requestWithLocalDevice('runtime.tasks.import_fork', data)
     },
   }

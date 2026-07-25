@@ -46,6 +46,34 @@ describe('workbench project chat hooks', () => {
     )
   })
 
+  test('filters configured local models for non-local execution without hiding Codex', async () => {
+    const localModel: UnifiedModel = {
+      name: 'local-model:desktop-e2e-responses',
+      type: 'runtime',
+    }
+    const codexModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+    }
+    const cloudModel: UnifiedModel = {
+      name: 'cloud-model',
+      type: 'public',
+    }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [localModel, codexModel, cloudModel] }),
+    }
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        filterModel: model => !model.name.startsWith('local-model:'),
+      })
+    )
+
+    await waitFor(() => expect(result.current.models).toEqual([codexModel, cloudModel]))
+  })
+
   test('reloads models after local model settings change', async () => {
     const codexModel: UnifiedModel = {
       name: 'codex-runtime',

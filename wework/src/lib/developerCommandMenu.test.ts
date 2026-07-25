@@ -240,13 +240,12 @@ function createDebugSnapshot() {
         workspacePath: '/tmp/workspace',
         taskId: 'task-1',
       },
-      currentRuntimeTaskRunning: true,
+      lifecycleCurrentTaskRunning: true,
       runningState: {
         hasCurrentRuntimeTask: true,
         activeTaskKnown: true,
         activeTaskRunning: true,
         activeTaskStatus: 'running',
-        providerRunning: true,
       },
       activeTask: {
         taskId: 'task-1',

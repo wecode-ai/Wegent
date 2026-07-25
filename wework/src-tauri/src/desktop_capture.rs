@@ -19,10 +19,41 @@ async fn capture_main_webview_impl(app: tauri::AppHandle) -> Result<String, Stri
         })
         .map_err(|error| format!("Failed to access main webview: {error}"))?;
 
-    receiver
+    let snapshot_result = receiver
         .recv()
         .await
-        .ok_or_else(|| "Main webview snapshot was cancelled".to_string())?
+        .ok_or_else(|| "Main webview snapshot was cancelled".to_string())
+        .and_then(|result| result);
+    let restore_result = restore_main_webview(&webview);
+
+    match (snapshot_result, restore_result) {
+        (Ok(snapshot), Ok(())) => Ok(snapshot),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(capture_error), Err(restore_error)) => Err(format!(
+            "{capture_error}; failed to restore main webview: {restore_error}"
+        )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn restore_main_webview(webview: &tauri::WebviewWindow) -> Result<(), String> {
+    let mut errors = Vec::new();
+    if let Err(error) = webview.show() {
+        errors.push(format!("Failed to show main webview: {error}"));
+    }
+    if let Err(error) = webview.unminimize() {
+        errors.push(format!("Failed to unminimize main webview: {error}"));
+    }
+    if let Err(error) = webview.set_focus() {
+        errors.push(format!("Failed to focus main webview: {error}"));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 #[cfg(target_os = "macos")]

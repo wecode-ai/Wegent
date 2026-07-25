@@ -68,8 +68,9 @@ describe('desktop process lifecycle', () => {
         '-e',
         [
           "const { spawn } = require('node:child_process')",
-          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
-          'console.log(child.pid)',
+          "const childScript = \"process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)\"",
+          "const child = spawn(process.execPath, ['-e', childScript], { stdio: ['ignore', 'pipe', 'ignore'] })",
+          "child.stdout.once('data', () => console.log(child.pid))",
           'setInterval(() => {}, 1000)',
         ].join(';'),
       ],

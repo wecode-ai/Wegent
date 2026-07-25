@@ -117,6 +117,12 @@ class CloudProjectService:
             db, project_id, user_id, BaseRole.Maintainer
         ).project
         updates = values.model_dump(exclude={"version"}, exclude_none=True)
+        if "tags" in values.model_fields_set and values.tags is not None:
+            # The project tag registry lives inside the metadata JSON column;
+            # merge so other metadata keys survive the update.
+            metadata = dict(project.metadata_json or {})
+            metadata["tags"] = updates.pop("tags")
+            updates["metadata_json"] = metadata
         updated = (
             db.query(CloudProject)
             .filter(

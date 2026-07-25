@@ -10,6 +10,10 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import {
+  getRuntimeTaskLifecycleKey,
+  type RuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import {
   getRuntimeTaskReminderItemKey,
   type RuntimeTaskReminderState,
 } from '@/features/workbench/runtimeTaskReminders'
@@ -59,6 +63,7 @@ export const EMPTY_TRAY_MENU_TASK_GROUPS: TrayMenuTaskGroups = {
 
 export interface TrayMenuTaskGroupOptions {
   reminders?: Pick<RuntimeTaskReminderState, 'unreadTaskKeys' | 'unreadCount' | 'hasRunningTasks'>
+  lifecycle?: RuntimeTaskLifecycleStoreSnapshot
   showUnread?: boolean
   showRunning?: boolean
 }
@@ -151,7 +156,13 @@ export function buildTrayMenuTaskGroups(
 ): TrayMenuTaskGroups {
   const { reminders, showUnread = true, showRunning = true } = options
   const items = collectRuntimeTaskItems(runtimeWork)
-  const activeTasks = items.filter(({ task }) => task.running)
+  const activeTasks = options.lifecycle
+    ? items.filter(({ workspace, task }) =>
+        options.lifecycle?.runningTaskKeys.has(
+          getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+        )
+      )
+    : []
   const running = showRunning ? activeTasks : []
   const unread =
     showUnread && reminders

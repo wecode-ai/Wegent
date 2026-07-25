@@ -55,6 +55,7 @@ function services(): WorkbenchServices {
         ...values,
         version: item.version + 1,
       })),
+      reorderLoopItems: vi.fn(async () => ({ items: [item] })),
       listLoopItems: vi.fn(async () => ({ items: [item] })),
       listDeliveries: vi.fn(async () => ({ items: [] })),
       listLoopItemAttachments: vi.fn(async () => []),
@@ -226,6 +227,7 @@ describe('CloudTodoWorkspace', () => {
         priority: 'none',
         status: 'inbox',
         parent_id: 'WEG-1',
+        tags: [],
       })
     )
   })
@@ -263,6 +265,7 @@ describe('CloudTodoWorkspace', () => {
         parent_id: 'WEG-2',
         assignee_user_id: null,
         due_at: null,
+        tags: [],
       })
     )
   })
@@ -284,7 +287,7 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() => expect(screen.getAllByText('Wegent V4').length).toBeGreaterThan(0))
     await userEvent.click(screen.getAllByText('Wegent V4')[0])
     const projectHeader = screen.getByTestId('cloud-project-header')
-    expect(projectHeader).toHaveClass('h-[38px]', 'shrink-0')
+    expect(projectHeader).toHaveClass('h-[52px]', 'shrink-0')
     expect(projectHeader.querySelector('[data-tauri-drag-region]')).toBeInTheDocument()
     expect(screen.getAllByTestId('macos-titlebar-drag-region')).toHaveLength(2)
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
@@ -445,9 +448,9 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(await screen.findByTestId('cloud-project-settings'))
+    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-modal-close'))
+    await userEvent.click(screen.getByTestId('cloud-project-board-view'))
 
     await userEvent.click(screen.getByTestId('cloud-search-toggle'))
     await userEvent.type(screen.getByTestId('cloud-search-input'), 'missing')
@@ -503,6 +506,7 @@ describe('CloudTodoWorkspace', () => {
         priority: 'none',
         status: 'inbox',
         parent_id: 'WEG-2',
+        tags: [],
       })
     )
   })
@@ -534,6 +538,7 @@ describe('CloudTodoWorkspace', () => {
         status: 'in_progress',
         assignee_user_id: null,
         due_at: null,
+        tags: [],
       })
     )
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)
@@ -610,6 +615,7 @@ describe('CloudTodoWorkspace', () => {
         description: '',
         priority: 'none',
         status: 'inbox',
+        tags: [],
       })
     )
   })
@@ -645,6 +651,7 @@ describe('CloudTodoWorkspace', () => {
         description: '',
         priority: 'none',
         status: 'pending',
+        tags: [],
       })
     )
   })
@@ -663,20 +670,46 @@ describe('CloudTodoWorkspace', () => {
     for (const state of ['inbox', 'pending', 'in_progress', 'in_review', 'completed']) {
       expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).toHaveClass(
         'overflow-y-auto',
-        'overscroll-contain',
+        'overscroll-y-contain',
         'px-2',
         'pt-2'
       )
       expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).not.toHaveClass('p-2')
-      expect(screen.getByTestId(`cloud-todo-column-bottom-add-${state}`)).toBeVisible()
-      expect(screen.getByTestId(`cloud-todo-column-bottom-add-${state}`)).toHaveClass(
-        'sticky',
-        'bottom-0'
+      const bottomAdd = screen.getByTestId(`cloud-todo-column-bottom-add-${state}`)
+      expect(bottomAdd).toBeVisible()
+      // The footer add button stays pinned below the scrollable card list
+      // instead of scrolling away or overlapping cards.
+      expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).not.toContainElement(
+        bottomAdd
       )
+      expect(bottomAdd).not.toHaveClass('sticky', 'bottom-0')
     }
 
     await userEvent.click(screen.getByTestId('cloud-todo-column-bottom-add-completed'))
     expect(screen.getByTestId('cloud-todo-create-status')).toHaveValue('completed')
+  })
+
+  it('opens the detail drawer from my work without switching to the board', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listMyWork = vi.fn(async () => ({
+      items: [{ ...item, project_key: 'WEG', project_name: 'Wegent V4', has_active_task: false }],
+    }))
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-my-work'))
+    await userEvent.click(await screen.findByTestId('my-work-group-action-WEG-1'))
+
+    // The drawer opens in place and the my-work view stays mounted.
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeVisible()
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Implement cloud MCP')
+    expect(screen.getByTestId('my-work-group-action-WEG-1')).toBeVisible()
+    expect(screen.queryByTestId('cloud-todo-board-breadcrumb')).toBeNull()
   })
 
   it('uses pointer dragging for TODO cards without starting a native system drag', async () => {

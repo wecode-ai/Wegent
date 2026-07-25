@@ -122,6 +122,7 @@ class LoopNode(Base):
     )
     completed_at = Column(DateTime, nullable=True)
     delivered_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
 
     __mapper_args__ = {"polymorphic_on": resource_type, "polymorphic_identity": "node"}
     __table_args__ = (
@@ -135,6 +136,17 @@ class LoopNode(Base):
 class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
 
+    @property
+    def tags(self) -> list[str]:
+        """Project-level tag registry stored inside the metadata JSON column."""
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return []
+        tags = metadata.get("tags")
+        if not isinstance(tags, list):
+            return []
+        return [str(tag) for tag in tags]
+
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("status", "active")
         kwargs.setdefault("next_item_number", 1)
@@ -143,6 +155,17 @@ class CloudProject(LoopNode):
 
 class LoopItem(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "task"}
+
+    @property
+    def tags(self) -> list[str]:
+        """Item tags stored inside the metadata JSON column."""
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return []
+        tags = metadata.get("tags")
+        if not isinstance(tags, list):
+            return []
+        return [str(tag) for tag in tags]
 
 
 class CloudProjectLocalBinding(LoopNode):
@@ -233,6 +256,7 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "metadata_json": {},
     "completed_at": _MYSQL_UNSET_DATETIME,
     "delivered_at": _MYSQL_UNSET_DATETIME,
+    "deleted_at": _MYSQL_UNSET_DATETIME,
 }
 
 
@@ -254,6 +278,11 @@ def adapt_loop_node_values_for_dialect(
 def loop_datetime_is_unset(column: object) -> object:
     """Match unset datetimes in both nullable and sentinel schemas."""
     return or_(column.is_(None), column == _MYSQL_UNSET_DATETIME)
+
+
+def loop_datetime_value_is_unset(value: datetime | None) -> bool:
+    """Match an unset datetime value in both nullable and sentinel schemas."""
+    return value is None or value == _MYSQL_UNSET_DATETIME
 
 
 @event.listens_for(LoopNode, "before_insert", propagate=True)

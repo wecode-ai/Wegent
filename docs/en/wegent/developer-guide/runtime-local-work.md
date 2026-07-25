@@ -193,6 +193,8 @@ When the executor discovers a user message from a native Codex session, it write
 
 Native Codex tasks have one additional rule: transcript refreshes trust only Codex's own session transcript. `runtimeHandle.messages` from a fork package or the executor JSON index is only an import-time snapshot and must not be used as a fallback for native Codex transcripts; otherwise Wework can show stale messages or lose follow-up turns after refresh. Non-SDK native tasks may still use the executor JSON index as their local transcript source.
 
+One Codex user turn can contain an attachment wrapper, application context, and a user-message event at the same time. The executor must first extract the user-visible request text, then use it to merge duplicate messages from that turn while retaining `clientMessageId` and attachment metadata. Turn-navigation IDs prefer `clientMessageId`; previews for loaded turns must be derived from the same visible text and must not expose runtime-injected content such as `# Files mentioned by the user` or `<application_context>`.
+
 Assistant messages in a runtime transcript may include a `fileChanges` summary. The Rust executor Codex app-server path uses app-server notifications as the source for turn events. If diff notifications are connected later, `runtime.tasks.create`, `runtime.tasks.send`, and `runtime.tasks.transcript` must normalize them onto the message as `fileChanges`. This lets the frontend show the file changes card under the current assistant message without waiting for the next list refresh.
 
 Historical transcripts consistently use `subtaskId` to identify an assistant message's subtask, but Backend-forwarded cloud task IDs are numbers while local executor turn IDs are strings. Wework must normalize both value types to strings at the restoration mapping boundary because tool-call blocks and file-change blocks depend on that identity and must not disappear because of its transport type.
@@ -249,6 +251,7 @@ Empty projects are runtime-owned as well. After Wework creates or selects a dire
 
 When Wework forks a runtime task, it only offers target workspaces that belong to the source task's Project:
 
+- When a message action forks into a new task, Wework passes the selected completed turn as `lastTurnId` to the executor. The executor may call Codex `thread/fork` while the source task is running a later turn; `lastTurnId` defines the history boundary, and the fork must not stop, cancel, or mutate the source task's active turn.
 - Other Device Workspaces already bound to that Project can be used directly.
 - An online device that is not yet bound to that Project must first use the same device-directory preparation flow as project creation and editing: choose a directory on the device, then choose whether that Project path is a `worktree` or a regular `workspace`.
 - Backend writes the Device Workspace mapping through `POST /api/runtime-work/device-workspaces/prepare` before continuing the fork.

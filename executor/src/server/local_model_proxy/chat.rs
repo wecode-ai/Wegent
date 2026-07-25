@@ -834,6 +834,7 @@ fn rewrite_responses_sse_block(
     let data = data_lines.join("\n");
     let data = data.trim();
     let mut value = serde_json::from_str::<Value>(data).ok()?;
+    let ids_normalized = normalize_responses_stream_ids(&mut value);
 
     let rewritten = match event_name.as_deref() {
         Some("response.output_item.added") => {
@@ -928,7 +929,47 @@ fn rewrite_responses_sse_block(
         _ => None,
     };
 
-    rewritten.or_else(|| Some(block.to_owned()))
+    rewritten
+        .or_else(|| {
+            ids_normalized
+                .then(|| rewrite_event_data(block, &value))
+                .flatten()
+        })
+        .or_else(|| Some(block.to_owned()))
+}
+
+fn normalize_responses_stream_ids(value: &mut Value) -> bool {
+    let mut normalized = normalize_id_field(value, "item_id");
+    normalized |= normalize_id_field(value, "call_id");
+
+    if let Some(item) = value.get_mut("item") {
+        normalized |= normalize_responses_item_ids(item);
+    }
+    if let Some(output) = value
+        .pointer_mut("/response/output")
+        .and_then(Value::as_array_mut)
+    {
+        for item in output {
+            normalized |= normalize_responses_item_ids(item);
+        }
+    }
+    normalized
+}
+
+fn normalize_responses_item_ids(item: &mut Value) -> bool {
+    normalize_id_field(item, "id") | normalize_id_field(item, "call_id")
+}
+
+fn normalize_id_field(value: &mut Value, field: &str) -> bool {
+    let Some(id) = value.get(field).and_then(Value::as_str) else {
+        return false;
+    };
+    let normalized = super::normalized_responses_api_id(id);
+    if normalized != id {
+        value[field] = Value::String(normalized);
+        return true;
+    }
+    false
 }
 
 fn format_sse_event(event: &str, data: &Value) -> String {
@@ -1243,7 +1284,7 @@ impl<S> ChatStreamState<S> {
         let (needs_start, call_id, complete_name) = {
             let state = self.calls.entry(index).or_default();
             if !id.is_empty() {
-                state.call_id = id.to_owned();
+                state.call_id = super::normalized_responses_api_id(id);
             }
             if !name.is_empty() {
                 state.name = name.to_owned();
@@ -1723,6 +1764,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn normalizes_provider_tool_call_ids_in_responses_streams() {
+        let chunks = vec![Ok::<_, std::io::Error>(Bytes::from(concat!(
+            "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"tool_calls\":[{",
+            "\"index\":0,\"id\":\"functions.exec_command:0\",\"function\":{",
+            "\"name\":\"exec_command\",\"arguments\":\"{\"}}]},",
+            "\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"tool_calls\":[{",
+            "\"index\":0,\"id\":\"functions.exec_command:0\",\"function\":{",
+            "\"name\":\"exec_command\",\"arguments\":\"}\"}}]},",
+            "\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        )))];
+
+        let output =
+            chat_sse_to_responses(futures_util::stream::iter(chunks), ToolContext::default())
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(Result::unwrap)
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .collect::<String>();
+        let call_id = super::super::normalized_responses_api_id("functions.exec_command:0");
+        let item_id = format!("fc_{}", call_id.trim_start_matches("call_"));
+
+        assert!(output.contains(&format!("\"call_id\":\"{call_id}\"")));
+        assert!(output.contains(&format!("\"id\":\"{item_id}\"")));
+        assert!(!output.contains("functions.exec_command:0"));
+    }
+
+    #[tokio::test]
     async fn normalizes_wrapped_apply_patch_function_arguments() {
         let chunks = vec![Ok::<_, std::io::Error>(Bytes::from(
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"apply_patch\",\"arguments\":\"{\\\"patch\\\":\\\"```diff\\\\n*** Update File: a.txt\\\\n@@\\\\n-old\\\\n+new\\\\n```\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
@@ -2109,6 +2180,31 @@ mod tests {
         .into_iter()
         .map(|item| String::from_utf8_lossy(&item.expect("stream item")).into_owned())
         .collect()
+    }
+
+    #[tokio::test]
+    async fn normalizes_provider_ids_in_responses_streams() {
+        let output = convert_responses_stream(
+            concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_functions.exec_command:0\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"functions.exec_command:0\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n",
+                "event: response.function_call_arguments.delta\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_functions.exec_command:0\",\"output_index\":0,\"delta\":\"{}\"}\n\n",
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_functions.exec_command:0\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"functions.exec_command:0\",\"name\":\"exec_command\",\"arguments\":\"{}\"}}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_functions.exec_command:0\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"functions.exec_command:0\",\"name\":\"exec_command\",\"arguments\":\"{}\"}]}}\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        let call_id = super::super::normalized_responses_api_id("functions.exec_command:0");
+        let item_id = super::super::normalized_responses_api_id("fc_functions.exec_command:0");
+
+        assert!(output.contains(&format!("\"call_id\":\"{call_id}\"")));
+        assert!(output.contains(&format!("\"item_id\":\"{item_id}\"")));
+        assert!(output.contains(&format!("\"id\":\"{item_id}\"")));
+        assert!(!output.contains("functions.exec_command:0"));
     }
 
     #[tokio::test]

@@ -104,7 +104,7 @@ fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
         }
 
         turns.push(json!({
-            "id": string_field(message, "id").unwrap_or_else(|| format!("message-{message_index}")),
+            "id": transcript_navigation_message_id(message, message_index),
             "turnIndex": turns.len(),
             "messageIndex": message_index,
             "cursor": format!("offset:{message_index}"),
@@ -117,8 +117,20 @@ fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
     turns
 }
 
+fn transcript_navigation_message_id(message: &Value, message_index: usize) -> String {
+    string_field(message, "clientMessageId")
+        .or_else(|| string_field(message, "client_message_id"))
+        .or_else(|| string_field(message, "id"))
+        .unwrap_or_else(|| format!("message-{message_index}"))
+}
+
 fn transcript_message_preview(message: &Value) -> String {
-    truncate_navigation_preview(&string_field(message, "content").unwrap_or_default())
+    let content = string_field(message, "content").unwrap_or_default();
+    let visible_content = string_field(message, "role")
+        .filter(|role| role.eq_ignore_ascii_case("user"))
+        .map(|_| normalized_user_request_content(&content))
+        .unwrap_or(content);
+    truncate_navigation_preview(&visible_content)
 }
 
 fn truncate_navigation_preview(content: &str) -> String {
@@ -155,21 +167,46 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
 }
 
 fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_messages: Vec<Value>) {
-    let mut provider_user_message_counts = HashMap::<String, usize>::new();
-    for message in messages.iter() {
-        if let Some(signature) = cached_user_message_signature(message) {
-            *provider_user_message_counts.entry(signature).or_default() += 1;
-        }
-    }
+    let mut matched_provider_indexes = HashSet::new();
 
     for message in cached_messages {
         let Some(signature) = cached_user_message_signature(&message) else {
             continue;
         };
-        let remaining = provider_user_message_counts.entry(signature).or_default();
-        if *remaining > 0 {
-            *remaining -= 1;
-        } else {
+        let matching_index = messages.iter().enumerate().find_map(|(index, provider_message)| {
+            (!matched_provider_indexes.contains(&index)
+                && cached_user_message_signature(provider_message).as_ref() == Some(&signature))
+            .then_some(index)
+        });
+        if let Some(index) = matching_index {
+            matched_provider_indexes.insert(index);
+            merge_missing_user_message_metadata(&mut messages[index], &message);
+            continue;
+        }
+        messages.push(message);
+    }
+}
+
+fn append_missing_cached_failed_assistant_messages(
+    messages: &mut Vec<Value>,
+    cached_messages: Vec<Value>,
+) {
+    let mut message_ids = messages
+        .iter()
+        .filter_map(|message| string_field(message, "id"))
+        .collect::<HashSet<_>>();
+    for message in cached_messages {
+        let is_failed_assistant = string_field(&message, "role")
+            .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+            && string_field(&message, "status")
+                .is_some_and(|status| status.eq_ignore_ascii_case("failed"));
+        if !is_failed_assistant {
+            continue;
+        }
+        let Some(message_id) = string_field(&message, "id") else {
+            continue;
+        };
+        if message_ids.insert(message_id) {
             messages.push(message);
         }
     }
@@ -179,6 +216,8 @@ fn cached_user_message_signature(message: &Value) -> Option<String> {
     string_field(message, "role")
         .filter(|role| role.eq_ignore_ascii_case("user"))
         .and_then(|_| string_field(message, "content"))
+        .map(|content| normalized_user_request_content(&content))
+        .filter(|content| !content.is_empty())
 }
 
 fn cached_user_message(
