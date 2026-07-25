@@ -712,3 +712,77 @@ async def test_truncation_retry_then_compaction_end_to_end(monkeypatch):
 
     # 6. Both the parent turn and the retry thread were torn down.
     assert len(set(deleted)) == 2
+
+
+@pytest.mark.asyncio
+async def test_nonstreaming_returns_post_compaction_state_and_frees_thread():
+    """The non-streaming path (``_collect_final_state_from_events``) does not build
+    a ``messages_chain``, but it must still return the *post-compaction*
+    LangGraph final state and free its own thread. This pins the contract that
+    the docs describe (non-streaming returns final state, no finalizer)."""
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    class _FinishModel(BaseChatModel):
+        @property
+        def _llm_type(self) -> str:
+            return "finish"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            return ChatResult(
+                generations=[ChatGeneration(message=AIMessage(content="final ok"))]
+            )
+
+    class _CompactOnFirst:
+        """Compacts before the only model call: drop all history for a summary."""
+
+        def __init__(self) -> None:
+            self.done = False
+
+        def __call__(self, state):
+            if self.done:
+                return {}
+            self.done = True
+            msgs = state["messages"]
+            summary = HumanMessage(
+                content="[COMPACT SUMMARY] earlier",
+                additional_kwargs={SUMMARY_FLAG: True, "compacted": True},
+                id="s-1",
+            )
+            removals = [RemoveMessage(id=m.id) for m in msgs if m.id]
+            return {"messages": [*removals, summary]}
+
+    builder = LangGraphAgentBuilder(llm=_FinishModel())
+    builder.pre_model_hook = _CompactOnFirst()
+
+    # Build once so we can spy on the request-local checkpointer teardown.
+    builder._build_agent()
+    saver = builder._checkpointer
+    deleted: list[str] = []
+    orig_delete = saver.adelete_thread
+
+    async def _spy_delete(thread_id):
+        deleted.append(thread_id)
+        return await orig_delete(thread_id)
+
+    saver.adelete_thread = _spy_delete
+
+    final_state, _events = await builder._collect_final_state_from_events(
+        messages=[{"role": "user", "content": "analyze data"}],
+        config=None,
+        cancel_event=None,
+        collect_all_events=False,
+    )
+
+    msgs = final_state["messages"]
+    # The returned state is the post-compaction authoritative state...
+    assert any(m.additional_kwargs.get(SUMMARY_FLAG) for m in msgs)
+    assert msgs[-1].content == "final ok"
+    # ...with the pre-compaction user input actually replaced, not appended.
+    assert all(getattr(m, "content", "") != "analyze data" for m in msgs)
+    # The non-streaming path builds no messages_chain (no finalizer runs).
+    assert not builder._last_messages_chain
+    # Its own thread was torn down.
+    assert len(deleted) == 1

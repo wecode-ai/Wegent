@@ -188,9 +188,14 @@ Phase 2a 让**最后的权威 LangGraph state** 成为唯一收口的唯一来�
   `original_input_ids`（见 `TurnExecutionContext`）过滤本轮新消息 → 序列化校验 →
   同时设置 `_last_messages_chain`、`_last_live_state_messages`、
   `_last_termination_reason`，三者不会漂移。
-- 所有终止路径都经它：正常结束、`completed_with_unexecuted_tool_calls`、工具上限
-  recovery、截断重试与重试耗尽、silent/deferred、非流式路径。旧的
+- 所有**流式**终止路径都经它：正常结束、`completed_with_unexecuted_tool_calls`、
+  工具上限 recovery、截断重试与重试耗尽、silent/deferred。旧的
   `_collected_state_messages` / 长度门槛权威判定已移除。
+- **非流式**路径（`_collect_final_state_from_events`）**不**构建 `messages_chain`：
+  它返回 LangGraph 最终 state（其调用方只消费 content/tool-results，`messages_chain`
+  仅在流式路径落库）。它仍复用 request-local checkpointer、exit durability、
+  recovery-from-current-state 与每轮 thread 释放，只是因为不产出持久化历史而没有
+  finalizer。
 
 ### recovery 与 retry 用当前状态，不用 `lc_messages`
 

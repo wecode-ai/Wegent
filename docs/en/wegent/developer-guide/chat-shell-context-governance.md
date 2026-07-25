@@ -249,10 +249,16 @@ single finalizer, on every terminal path.
   `original_input_ids` (see `TurnExecutionContext`), serializes/validates, and
   sets `_last_messages_chain`, `_last_live_state_messages`, and
   `_last_termination_reason` together so they cannot drift.
-- Every terminal path funnels through it: normal completion,
+- Every **streaming** terminal path funnels through it: normal completion,
   `completed_with_unexecuted_tool_calls`, tool-limit recovery, truncation retry
-  and retry-exhausted, silent/deferred exit, and the non-streaming path. The old
+  and retry-exhausted, and silent/deferred exit. The old
   `_collected_state_messages` / length-gate authority is gone.
+- The **non-streaming** path (`_collect_final_state_from_events`) does **not**
+  build a `messages_chain`: it returns the LangGraph final state (its callers
+  consume only content/tool-results, and `messages_chain` is persisted on the
+  streaming path alone). It still shares the request-local checkpointer, exit
+  durability, recovery-from-current-state, and per-turn thread teardown; it just
+  has no finalizer because it produces no persisted history.
 
 ### Recovery and retry read the current state, not `lc_messages`
 

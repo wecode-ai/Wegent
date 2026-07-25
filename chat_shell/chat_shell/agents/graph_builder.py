@@ -1251,14 +1251,6 @@ class LangGraphAgentBuilder:
 
         return ToolNode(all_tools, awrap_tool_call=awrap_tool_call)
 
-    @trace_sync(
-        span_name="agent_builder.build_agent",
-        tracer_name="chat_shell.agents",
-        extract_attributes=lambda self, *args, **kwargs: {
-            "agent.tools_count": len(self.tools),
-            "agent.max_iterations": self.max_iterations,
-        },
-    )
     def _attempt_guidance_hook(self, state: dict[str, Any]) -> dict[str, Any]:
         """Inject attempt-scoped control guidance into the model input only.
 
@@ -1276,6 +1268,14 @@ class LangGraphAgentBuilder:
         base = state.get("llm_input_messages") or state.get("messages") or []
         return {"llm_input_messages": [*base, *guidance]}
 
+    @trace_sync(
+        span_name="agent_builder.build_agent",
+        tracer_name="chat_shell.agents",
+        extract_attributes=lambda self, *args, **kwargs: {
+            "agent.tools_count": len(self.tools),
+            "agent.max_iterations": self.max_iterations,
+        },
+    )
     def _build_agent(self):
         """Build the LangGraph ReAct agent lazily."""
         if self._agent is not None:
