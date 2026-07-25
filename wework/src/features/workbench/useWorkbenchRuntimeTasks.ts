@@ -42,6 +42,7 @@ import type {
   ArchiveRuntimeConversationsResult,
 } from './workbenchContextTypes'
 import { evictRuntimeConversation } from './runtimeConversationCache'
+import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 
 interface UseWorkbenchRuntimeTasksOptions {
   user: User
@@ -49,6 +50,7 @@ interface UseWorkbenchRuntimeTasksOptions {
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
   services: WorkbenchServices
+  lifecycleStore: RuntimeTaskLifecycleStore
   markRuntimeTasksArchived: (addresses: RuntimeTaskAddress[]) => void
   refreshWorkLists: () => Promise<void>
 }
@@ -61,6 +63,7 @@ export function useWorkbenchRuntimeTasks({
   dispatch,
   executorClient,
   services,
+  lifecycleStore,
   markRuntimeTasksArchived,
   refreshWorkLists,
 }: UseWorkbenchRuntimeTasksOptions) {
@@ -139,7 +142,7 @@ export function useWorkbenchRuntimeTasks({
             messages: runtimeMessagesToWorkbenchMessages(
               Array.isArray(transcript.messages) ? transcript.messages : []
             ),
-            running: transcript.running === true,
+            running: typeof transcript.running === 'boolean' ? transcript.running : undefined,
             contextUsage: transcript.contextUsage ?? null,
             turnNavigation: Array.isArray(transcript.turnNavigation)
               ? transcript.turnNavigation
@@ -253,6 +256,7 @@ export function useWorkbenchRuntimeTasks({
       )
       if (archivedAddresses.length > 0) {
         archivedAddresses.forEach(evictRuntimeConversation)
+        archivedAddresses.forEach(address => lifecycleStore.remove(address))
         markRuntimeTasksArchived(archivedAddresses)
         await removeArchivedWorktrees(
           findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
@@ -274,6 +278,7 @@ export function useWorkbenchRuntimeTasks({
       clearCurrentRuntimeTaskIfArchived,
       dispatch,
       executorClient,
+      lifecycleStore,
       markRuntimeTasksArchived,
       refreshWorkLists,
       removeArchivedWorktrees,

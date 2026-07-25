@@ -4088,6 +4088,25 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
+  test('shows thinking between active Goal turns after the previous assistant message settles', () => {
+    render(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '本轮完成，准备继续',
+            status: 'done',
+            createdAt: '2026-05-25T18:45:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+  })
+
   test('keeps the retry card visible while waiting for the retried response', () => {
     render(
       <MessageList

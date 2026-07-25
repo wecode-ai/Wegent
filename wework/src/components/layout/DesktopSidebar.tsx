@@ -38,6 +38,11 @@ import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDi
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import {
+  getRuntimeTaskLifecycleKey,
+  useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
@@ -1503,6 +1508,7 @@ function RuntimeTaskRow({
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
+  const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
   const threadId = getRuntimeTaskThreadId(task)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
@@ -1694,7 +1700,7 @@ function RuntimeTaskRow({
                   `runtime-local-task-notify-icon-${task.taskId}`
                 )}
               <span className="flex h-[30px] w-[30px] items-center justify-center">
-                {task.running ? (
+                {taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
                     role="status"
@@ -1949,6 +1955,7 @@ function ProjectItem({
   ) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
+  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const runtimeWorkspaces = runtimeProjectWork?.deviceWorkspaces
   const allRuntimeTaskItems = useMemo(
     () => getRuntimeSidebarTaskItems(runtimeWorkspaces ?? []),
@@ -2068,7 +2075,11 @@ function ProjectItem({
         source: shortenSidebarHomePath(path),
       })
   )
-  const projectActiveTaskCount = allRuntimeTaskItems.filter(({ task }) => task.running).length
+  const projectActiveTaskCount = allRuntimeTaskItems.filter(({ workspace, task }) =>
+    lifecycleSnapshot.runningTaskKeys.has(
+      getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+    )
+  ).length
   const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ task }) =>
     isRuntimeTaskWaiting(task)
   ).length

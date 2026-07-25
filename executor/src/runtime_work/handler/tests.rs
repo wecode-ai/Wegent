@@ -68,6 +68,44 @@ fn finishing_an_active_goal_keeps_the_task_idle() {
 }
 
 #[test]
+fn turn_result_persists_observed_goal_status_before_settling_task() {
+    let index_path = temp_runtime_work_index_path("finish-observed-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.goal_status = Some("active".to_owned());
+    handler.upsert_local_task(link);
+    handler.mark_active_local_task("task-1");
+
+    handler.handle_turn_result(
+        "task-1",
+        &ExecutionRequest::default(),
+        Ok(crate::agents::CodexAppServerTurn {
+            thread_id: "thread-1".to_owned(),
+            outcome: ExecutionOutcome::Completed {
+                content: "done".to_owned(),
+            },
+            goal_status: Some("complete".to_owned()),
+            goal_status_observed: true,
+        }),
+    );
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.status, "done");
+    assert!(!task.running);
+    assert_eq!(task.goal_status.as_deref(), Some("complete"));
+    assert!(!handler.is_active_local_task("task-1"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn failed_codex_turn_persists_assistant_error_in_runtime_handle() {
     let index_path = temp_runtime_work_index_path("persist-failed-assistant");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -281,6 +319,8 @@ fn completed_responses_include_the_persisted_runtime_turn_id() {
             Ok(crate::agents::CodexAppServerTurn {
                 thread_id: format!("thread-{case}"),
                 outcome,
+                goal_status: None,
+                goal_status_observed: false,
             }),
         );
 
@@ -746,22 +786,24 @@ fn task_list_running_state_comes_from_executor_memory() {
         "status": {"type": "active"},
         "turns": [{"status": "inProgress"}]
     });
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "task-1".to_owned(),
+        thread_id: Some("thread-1".to_owned()),
+        workspace_path: "/tmp/project".to_owned(),
+        goal_status: Some("active".to_owned()),
+        ..RuntimeTaskLink::default()
+    });
 
     let idle_link = handler
         .link_from_thread(&thread)
         .expect("active Codex thread should produce a task link");
 
     assert!(!idle_link.running);
+    assert_eq!(idle_link.goal_status.as_deref(), Some("active"));
     assert_eq!(idle_link.status, "active");
     assert_eq!(idle_link.thread_status, "idle");
     assert_eq!(idle_link.turn_status.as_deref(), Some("completed"));
 
-    handler.upsert_local_task(RuntimeTaskLink {
-        local_task_id: "task-1".to_owned(),
-        thread_id: Some("thread-1".to_owned()),
-        workspace_path: "/tmp/project".to_owned(),
-        ..RuntimeTaskLink::default()
-    });
     handler.mark_active_local_task("task-1");
 
     let running_link = handler

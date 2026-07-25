@@ -70,7 +70,6 @@ export function MessageTurnNavigation({
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const markersRef = useRef<MessageTurnMarker[]>([])
-  const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
   const navigationScrollTimersRef = useRef<number[]>([])
   const messagesRef = useRef(messages)
@@ -223,22 +222,12 @@ export function MessageTurnNavigation({
 
   const scheduleCalculateMarkers = useCallback(
     (reason: string) => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current)
-        timerRef.current = null
-      }
+      if (timerRef.current !== null) return
 
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null
-        timerRef.current = window.setTimeout(() => {
-          timerRef.current = null
-          calculateMarkers(reason)
-        }, 0)
-      })
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null
+        calculateMarkers(reason)
+      }, 0)
     },
     [calculateMarkers]
   )
@@ -299,10 +288,6 @@ export function MessageTurnNavigation({
       window.removeEventListener('resize', handleResize)
       mutationObserver.disconnect()
       resizeObserver?.disconnect()
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current)
         timerRef.current = null

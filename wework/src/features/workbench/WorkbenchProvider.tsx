@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { stripAppBasePath } from '@/config/runtime'
@@ -66,7 +74,11 @@ import {
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
-import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+  useRuntimeTaskLifecycleStoreSnapshot,
+} from './runtimeTaskLifecycle'
 import { applyRuntimeConversationAction } from './runtimeConversationCache'
 import {
   applyModelContextWindowOverride,
@@ -189,6 +201,8 @@ export function WorkbenchProvider({
   const executorClient = useMemo(() => {
     return createExecutorClientForWorkbenchServices(resolvedServices)
   }, [resolvedServices])
+  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user.id), [user.id])
+  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(lifecycleStore)
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   const remoteProjectSyncSignatureRef = useRef('')
   const projectActivationSignatureRef = useRef('')
@@ -206,15 +220,16 @@ export function WorkbenchProvider({
   const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
-  const authoritativeRuntimeTaskRunning = useMemo(
-    () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
-    [state.currentRuntimeTask, state.runtimeWork]
-  )
-  const currentRuntimeTaskRunning = authoritativeRuntimeTaskRunning
+  useLayoutEffect(() => {
+    lifecycleStore.syncRuntimeWork(state.runtimeWork)
+  }, [lifecycleStore, state.runtimeWork])
+  useLayoutEffect(() => {
+    lifecycleStore.setCurrentTask(state.currentRuntimeTask)
+  }, [lifecycleStore, state.currentRuntimeTask])
   const runtimeTaskReminders = useRuntimeTaskReminders({
-    userId: user.id,
     runtimeWork: state.runtimeWork,
-    currentRuntimeTask: state.currentRuntimeTask,
+    lifecycleStore,
+    lifecycleSnapshot,
   })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[getRuntimeTaskRouteKey(state.currentRuntimeTask)]
@@ -571,7 +586,7 @@ export function WorkbenchProvider({
   useEffect(() => {
     updateWorkbenchDebugSnapshot({
       state,
-      currentRuntimeTaskRunning,
+      lifecycle: lifecycleSnapshot,
       cloudWorkStatus,
       composer: {
         scopeKey: projectChatScopeKey,
@@ -590,9 +605,9 @@ export function WorkbenchProvider({
   }, [
     attachmentSelection.attachments.length,
     cloudWorkStatus,
-    currentRuntimeTaskRunning,
     currentContextUsage,
     draftInput.length,
+    lifecycleSnapshot,
     draftInputByScope,
     modelSelection.models,
     projectChatScopeKey,
@@ -1005,6 +1020,7 @@ export function WorkbenchProvider({
     dispatch,
     executorClient,
     services: resolvedServices,
+    lifecycleStore,
     markRuntimeTasksArchived,
     refreshWorkLists,
   })
@@ -1083,7 +1099,7 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     runtimeTasks,
-    authoritativeRuntimeTaskRunning,
+    lifecycleStore,
     projectExecutionMode,
     projectWorktreeBranch,
     isOptionsLocked,
@@ -1099,17 +1115,7 @@ export function WorkbenchProvider({
     (error: string | null) => dispatch({ type: 'error_set', error }),
     [dispatch]
   )
-  const markRuntimeTaskStarted = useCallback(
-    (address: RuntimeTaskAddress) => dispatch({ type: 'runtime_task_started', address }),
-    [dispatch]
-  )
-  const markRuntimeTaskSettled = useCallback(
-    (address: RuntimeTaskAddress) => dispatch({ type: 'runtime_task_settled', address }),
-    [dispatch]
-  )
   const stableSetWorkbenchError = useStableEvent(setWorkbenchError)
-  const stableMarkRuntimeTaskStarted = useStableEvent(markRuntimeTaskStarted)
-  const stableMarkRuntimeTaskSettled = useStableEvent(markRuntimeTaskSettled)
   const stableSetProjectWorktreeBranch = useStableEvent(setProjectWorktreeBranch)
   const stableSelectProjectWorkspace = useStableEvent(selectProjectWorkspace)
   const stableSelectStandaloneDevice = useStableEvent(selectStandaloneDevice)
@@ -1187,37 +1193,52 @@ export function WorkbenchProvider({
             taskId: address.taskId,
             workspacePath: address.workspacePath ?? null,
           })
-          dispatch({ type: 'runtime_task_settled', address })
+          lifecycleStore.turnSettled(address)
           handlers.onAssistantSettled?.()
+        },
+        onAssistantStart: () => {
+          lifecycleStore.turnStarted(address)
+          handlers.onAssistantStart?.()
         },
       })
   )
 
   const nextBackgroundRunningTasks = getBackgroundRunningRuntimeTasks(
     state.runtimeWork,
-    state.currentRuntimeTask
+    state.currentRuntimeTask,
+    lifecycleSnapshot
   )
   const backgroundRunningTaskRoutes = nextBackgroundRunningTasks
     .map(address => `${address.deviceId}:${address.taskId}`)
     .join('|')
   const getLatestBackgroundRunningTasks = useStableEvent(() =>
-    getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask)
+    getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask, lifecycleSnapshot)
   )
   const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
+  const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
   useEffect(() => {
     const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
       subscribeBackgroundRuntimeTaskStream(address, {
         onMessageAction: action => applyRuntimeConversationAction(address, action),
-        onAssistantStart: () => markRuntimeTaskStarted(address),
-        onAssistantSettled: () => markRuntimeTaskSettled(address),
+        onAssistantStart: () => lifecycleStore.turnStarted(address),
+        onAssistantSettled: () => lifecycleStore.turnSettled(address),
+        onRefreshWorkLists: () => {
+          void stableRefreshWorkLists().catch(error => {
+            console.warn('[Wework] Background runtime work list refresh failed', {
+              deviceId: address.deviceId,
+              taskId: address.taskId,
+              error,
+            })
+          })
+        },
       })
     )
     return () => unsubscribers.forEach(unsubscribe => unsubscribe())
   }, [
     backgroundRunningTaskRoutes,
     getLatestBackgroundRunningTasks,
-    markRuntimeTaskSettled,
-    markRuntimeTaskStarted,
+    lifecycleStore,
+    stableRefreshWorkLists,
     subscribeBackgroundRuntimeTaskStream,
   ])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
@@ -1240,7 +1261,6 @@ export function WorkbenchProvider({
     unsubscribeRuntimeTaskNotifications
   )
   const stableRememberExecutionDevice = useStableEvent(rememberExecutionDevice)
-  const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
   const stableRefreshDevices = useStableEvent(refreshDevices)
   const stableGetRemoteDeviceStartupCommand = useStableEvent(getRemoteDeviceStartupCommand)
   const stableUpgradeDevice = useStableEvent(upgradeDevice)
@@ -1540,7 +1560,6 @@ export function WorkbenchProvider({
     state,
     isStartupReady,
     workspaceFileApi,
-    currentRuntimeTaskRunning,
     runtimeTaskReminders,
     cloudWorkStatus,
     upgradingDevices,
@@ -1561,7 +1580,7 @@ export function WorkbenchProvider({
     openRuntimeTask: runtimeTasks.openRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
-    subscribeRuntimeTaskStream: runtimeTasks.subscribeRuntimeTaskStream,
+    subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
     renameRuntimeTask: runtimeTasks.renameRuntimeTask,
     archiveRuntimeTask: runtimeTasks.archiveRuntimeTask,
     archiveProjectConversations: runtimeTasks.archiveProjectConversations,
@@ -1571,8 +1590,6 @@ export function WorkbenchProvider({
     getRuntimeGoal: runtimeTasks.getRuntimeGoal,
     setRuntimeGoal: runtimeTasks.setRuntimeGoal,
     clearRuntimeGoal: runtimeTasks.clearRuntimeGoal,
-    markRuntimeTaskStarted,
-    markRuntimeTaskSettled,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
     getImNotificationSettings,
@@ -1659,8 +1676,6 @@ export function WorkbenchProvider({
       getRuntimeGoal: stableGetRuntimeGoal,
       setRuntimeGoal: stableSetRuntimeGoal,
       clearRuntimeGoal: stableClearRuntimeGoal,
-      markRuntimeTaskStarted: stableMarkRuntimeTaskStarted,
-      markRuntimeTaskSettled: stableMarkRuntimeTaskSettled,
       listImPrivateSessions: stableListImPrivateSessions,
       bindRuntimeTaskToImSessions: stableBindRuntimeTaskToImSessions,
       getImNotificationSettings: stableGetImNotificationSettings,
@@ -1754,8 +1769,6 @@ export function WorkbenchProvider({
       stableLoadEnvironmentInfo,
       stableLoadRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
-      stableMarkRuntimeTaskStarted,
-      stableMarkRuntimeTaskSettled,
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,
       stablePauseCurrentResponse,
@@ -1802,18 +1815,20 @@ export function WorkbenchProvider({
   )
 
   return (
-    <WorkbenchContext.Provider value={value}>
-      <WorkbenchPaneContext.Provider value={paneValue}>
-        <RuntimeTaskCloseGuard runtimeWork={state.runtimeWork} />
-        <LocalExecutorCloudBridge
-          apiBaseUrl={cloudConnection.apiBaseUrl}
-          backendUrl={cloudConnection.backendUrl}
-          isConnected={cloudConnection.isConnected}
-          token={cloudConnection.token}
-        />
-        {children}
-      </WorkbenchPaneContext.Provider>
-    </WorkbenchContext.Provider>
+    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+      <WorkbenchContext.Provider value={value}>
+        <WorkbenchPaneContext.Provider value={paneValue}>
+          <RuntimeTaskCloseGuard />
+          <LocalExecutorCloudBridge
+            apiBaseUrl={cloudConnection.apiBaseUrl}
+            backendUrl={cloudConnection.backendUrl}
+            isConnected={cloudConnection.isConnected}
+            token={cloudConnection.token}
+          />
+          {children}
+        </WorkbenchPaneContext.Provider>
+      </WorkbenchContext.Provider>
+    </RuntimeTaskLifecycleProvider>
   )
 }
 
@@ -1832,7 +1847,8 @@ function getProjectChatScopeKey({
 
 function getBackgroundRunningRuntimeTasks(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  currentRuntimeTask: RuntimeTaskAddress | null
+  currentRuntimeTask: RuntimeTaskAddress | null,
+  lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']>
 ): RuntimeTaskAddress[] {
   if (!runtimeWork) return []
 
@@ -1843,7 +1859,8 @@ function getBackgroundRunningRuntimeTasks(
   ]
   for (const workspace of workspaces) {
     for (const task of workspace.tasks) {
-      if (task.running !== true) continue
+      const key = `${workspace.deviceId}\0${task.taskId}`
+      if (!lifecycleSnapshot.runningTaskKeys.has(key)) continue
       if (
         currentRuntimeTask?.deviceId === workspace.deviceId &&
         currentRuntimeTask.taskId === task.taskId
