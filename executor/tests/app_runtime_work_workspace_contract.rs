@@ -1521,6 +1521,9 @@ while IFS= read -r line; do
     *'"method":"thread/archive"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"success":true}}}}'
       ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
   esac
 done
 "#,

@@ -1016,6 +1016,27 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
 }
 
 #[test]
+fn codex_runtime_workspace_roots_are_applied_to_thread_and_turn_requests() {
+    let request = ExecutionRequest {
+        project_workspace_path: Some("/workspace/web".to_owned()),
+        runtime_workspace_roots: vec!["/workspace/web".to_owned(), "/workspace/api".to_owned()],
+        ..ExecutionRequest::default()
+    };
+    let launch_config = CodexLaunchConfig::default();
+    let thread_start = thread_start_params(&request, &launch_config);
+    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+    let turn_start = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+
+    for params in [thread_start, thread_resume, thread_fork, turn_start] {
+        assert_eq!(
+            params["runtimeWorkspaceRoots"],
+            json!(["/workspace/web", "/workspace/api"])
+        );
+    }
+}
+
+#[test]
 fn codex_permission_profile_validation_rejects_effective_downgrade() {
     let response = json!({
         "activePermissionProfile": {"id": ":workspace"},
