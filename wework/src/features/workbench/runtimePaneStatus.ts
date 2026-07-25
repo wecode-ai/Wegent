@@ -1,11 +1,13 @@
 import type { RuntimeTaskSummary, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
+import { isRuntimeTaskRunning } from './runtimeTaskStatus'
 
 export type RuntimePaneSendPhase = 'idle' | 'submitting' | 'awaiting_assistant'
 
 export interface RuntimePaneTaskExecution {
   known: boolean
+  turnRunning: boolean
   running: boolean
   continuable: boolean
   status: string | null
@@ -30,13 +32,20 @@ export function getRuntimePaneTaskExecution(
 ): RuntimePaneTaskExecution {
   const task = findRuntimeTask(runtimeWork, address)
   if (!task) {
-    return { known: false, running: false, continuable: false, status: null }
+    return {
+      known: false,
+      turnRunning: false,
+      running: false,
+      continuable: false,
+      status: null,
+    }
   }
 
-  const running = typeof task.running === 'boolean' ? task.running : null
+  const turnRunning = typeof task.running === 'boolean' ? task.running : null
   return {
-    known: running !== null,
-    running: running === true,
+    known: turnRunning !== null,
+    turnRunning: turnRunning === true,
+    running: isRuntimeTaskRunning(task),
     continuable: task.continuable !== false,
     status: normalizeTaskStatus(task),
   }
@@ -52,7 +61,7 @@ export function hasRunningRuntimeTask(
     ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
   ]
     .flatMap(workspace => workspace.tasks)
-    .some(task => task.running === true)
+    .some(isRuntimeTaskRunning)
 }
 
 export function deriveRuntimePaneStatus({
@@ -66,7 +75,8 @@ export function deriveRuntimePaneStatus({
   currentRuntimeTask: RuntimeTaskAddress | null
   taskExecution: RuntimePaneTaskExecution
 }): RuntimePaneStatus {
-  const messageStreamingCanDriveExecution = !taskExecution.known || taskExecution.running
+  const messageStreamingCanDriveExecution =
+    taskExecution.turnRunning || (!taskExecution.known && !taskExecution.running)
   const activeAssistantMessage = messageStreamingCanDriveExecution
     ? (findActiveAssistantMessage(messages) ?? null)
     : null
@@ -77,6 +87,8 @@ export function deriveRuntimePaneStatus({
   const isBusy = isSubmitting || isResponseActive || taskExecution.running
   const isWaitingForAssistantMessage =
     !isAssistantStreaming && isLastMessageWaitingForAssistant(messages)
+  const isWaitingBetweenGoalTurns =
+    !isAssistantStreaming && taskExecution.running && !taskExecution.turnRunning
 
   return {
     sendPhase,
@@ -88,8 +100,9 @@ export function deriveRuntimePaneStatus({
     isResponseActive,
     isBusy,
     isWaitingForAssistantIndicator:
-      (isSubmitting || isAwaitingAssistant || taskExecution.running) &&
-      isWaitingForAssistantMessage,
+      ((isSubmitting || isAwaitingAssistant || taskExecution.turnRunning) &&
+        isWaitingForAssistantMessage) ||
+      isWaitingBetweenGoalTurns,
     canSendQueuedMessage: Boolean(currentRuntimeTask) && taskExecution.continuable && !isBusy,
   }
 }

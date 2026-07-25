@@ -9,6 +9,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import { isRuntimeTaskRunning } from '@/features/workbench/runtimeTaskStatus'
 import {
   getRuntimeTaskReminderItemKey,
   type RuntimeTaskReminderState,
@@ -151,7 +152,7 @@ export function buildTrayMenuTaskGroups(
 ): TrayMenuTaskGroups {
   const { reminders, showUnread = true, showRunning = true } = options
   const items = collectRuntimeTaskItems(runtimeWork)
-  const activeTasks = items.filter(({ task }) => task.running)
+  const activeTasks = items.filter(({ task }) => isRuntimeTaskRunning(task))
   const running = showRunning ? activeTasks : []
   const unread =
     showUnread && reminders

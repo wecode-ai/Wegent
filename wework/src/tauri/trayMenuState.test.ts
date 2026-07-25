@@ -179,13 +179,20 @@ describe('buildTrayMenuTaskGroups', () => {
                   updatedAt: '2026-01-05T00:00:00Z',
                   running: true,
                 }),
+                task({
+                  taskId: 'goal-gap',
+                  title: 'Goal between turns',
+                  updatedAt: '2026-01-06T00:00:00Z',
+                  running: false,
+                  goalStatus: 'active',
+                }),
               ],
             }),
           ],
-          totalTasks: 2,
+          totalTasks: 3,
         },
       ],
-      totalTasks: 2,
+      totalTasks: 3,
     })
 
     const groups = buildTrayMenuTaskGroups(work, {
@@ -200,8 +207,8 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.unreadCount).toBe(1)
     expect(groups.hasRunningTasks).toBe(true)
     expect(groups.showRunningStatus).toBe(true)
-    expect(groups.runningCount).toBe(1)
-    expect(groups.activeTaskIds).toEqual(['running'])
+    expect(groups.runningCount).toBe(2)
+    expect(groups.activeTaskIds).toEqual(['goal-gap', 'running'])
   })
 
   test('hides unread and running task groups when tray status switches are off', () => {

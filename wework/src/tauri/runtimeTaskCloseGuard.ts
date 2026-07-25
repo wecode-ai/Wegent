@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { isRuntimeTaskRunning } from '@/features/workbench/runtimeTaskStatus'
 import type { RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 
 type ConfirmClose = () => boolean
@@ -7,7 +8,7 @@ type ConfirmClose = () => boolean
 export const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT = 'wework-close-to-tray-hint-requested'
 
 function workspaceHasRunningTask(workspace: RuntimeDeviceWorkspace): boolean {
-  return workspace.tasks.some(task => task.running === true)
+  return workspace.tasks.some(isRuntimeTaskRunning)
 }
 
 export function hasRunningRuntimeTasks(

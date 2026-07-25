@@ -2417,28 +2417,33 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
       !snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_IDLE_PROMPT),
-    'The automatic Goal continuation did not preserve a consistent running state',
+    'The between-turn Goal gap did not preserve the sidebar, composer, message, and unread state',
     UI_TIMEOUT_MS
   )
-  const continuingDebugSnapshot = JSON.parse(
+  const betweenTurnsDebugSnapshot = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
   )
   assert.equal(
-    continuingDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    betweenTurnsDebugSnapshot.workbench?.currentRuntimeTaskRunning,
     true,
-    'The automatic Goal continuation stopped being authoritative runtime work'
+    'The active Goal stopped being visibly running between turns'
   )
   assert.equal(
-    continuingDebugSnapshot.pane?.goal?.status,
+    betweenTurnsDebugSnapshot.pane?.goal?.status,
     'active',
-    'The Goal stopped being active during its automatic continuation'
+    'The Goal stopped being active between turns'
   )
   assert.equal(
-    continuingDebugSnapshot.pane?.status?.isBusy,
+    betweenTurnsDebugSnapshot.pane?.status?.taskExecution?.running,
     true,
-    'The automatic Goal continuation released the composer running state'
+    'The active Goal lost its unified running state between turns'
   )
-  await captureVerificationScreenshot(control, 'goal-idle-02-continuing.png')
+  assert.equal(
+    betweenTurnsDebugSnapshot.pane?.status?.isBusy,
+    true,
+    'The active Goal released the composer between turns'
+  )
+  await captureVerificationScreenshot(control, 'goal-idle-02-between-turns.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)

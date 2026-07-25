@@ -19,9 +19,9 @@ sidebar_position: 18
 | 状态                          | 唯一信源                                                                                           | 派生值/使用方                                                                                          | 维护规则                                                                                                                                                                        |
 | ----------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 消息内容与消息状态            | `useWorkbenchPaneSession.messages`                                                                 | `MessageList`、导出、文件变更、request user input                                                      | 只能通过 transcript reset 或 `reduceWorkbenchMessages` 更新                                                                                                                     |
-| assistant 是否正在输出        | `paneSession.status.isAssistantStreaming`                                                          | 桌面/移动 composer 的暂停按钮、关闭任务提示                                                            | 由 `messages` 中最后一个 `assistant + streaming` 消息派生，布局层不能自行扫描                                                                                                   |
+| assistant 是否正在输出        | `paneSession.status.isAssistantStreaming`                                                          | 消息流式展示、调试状态                                                                                 | 由 `messages` 中最后一个 `assistant + streaming` 消息派生，布局层不能自行扫描                                                                                                   |
 | 本地发送阶段                  | `sendPhase: idle/submitting/awaiting_assistant`                                                    | `status.isSubmitting`、`status.isWaitingForAssistantIndicator`、兼容字段 `sending/waitingForAssistant` | API 调用中为 `submitting`，请求被 runtime 接受后为 `awaiting_assistant`，收到 start/done/error 或 transcript 已结算后回到 `idle`                                                |
-| 当前 runtime 执行快照         | `getRuntimePaneTaskExecution(state.runtimeWork, address)`                                          | `status.taskExecution`、队列推进、`currentRuntimeTaskRunning`                                          | 只能从 `RuntimeWorkListResponse.localTasks[].running/status` 读取                                                                                                               |
+| 当前 runtime 运行快照         | `getRuntimePaneTaskExecution(state.runtimeWork, address)`                                          | `status.taskExecution`、队列推进、`currentRuntimeTaskRunning`、composer 暂停按钮                       | `turnRunning` 只表示当前 turn 正在执行；展示运行态 `running` 统一由 `turnRunning` 和任务的 active Goal 状态合成                                                                 |
 | pane 是否忙碌                 | `paneSession.status.isBusy`                                                                        | 当前 pane 队列是否可推进                                                                               | 由 `isSubmitting`、`isAwaitingAssistant`、`isAssistantStreaming`、`taskExecution.running` 合成                                                                                  |
 | 队列消息                      | `queuedMessages`                                                                                   | `ConversationQueuePanel`、自动发送下一条 follow-up                                                     | 只在 pane session 内增删改；推进条件必须使用 `status.canSendQueuedMessage`                                                                                                      |
 | 引导消息                      | `queuedMessages` + `messages` 中的本地 user message                                                | `ConversationQueuePanel`、`MessageList`                                                                | 发送引导时先把队列消息标记为 sending，再立即在当前 streaming assistant 位置插入本地 user message；不能等引导 RPC 返回后再插入                                                   |
@@ -78,17 +78,17 @@ turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal �
 
 左侧运行标记、输入框状态、消息状态和未读提醒表达的是不同事实，不能共用一个模糊的“活跃”布尔值：
 
-| 状态       | 判定                                                 | UI 约束                                                                          |
-| ---------- | ---------------------------------------------------- | -------------------------------------------------------------------------------- |
-| 正在执行   | `task.running === true`                              | 左侧显示运行 spinner；当前 pane 的 composer 显示暂停能力；消息区可显示“正在思考” |
-| 仍在持续   | 正在执行，或 `task.goalStatus === 'active'`          | 只用于跨刷新追踪任务尚未真正结束；不直接显示 spinner、“正在思考”或暂停按钮       |
-| 已结束未读 | 任务从“仍在持续”转换为“不再持续”，且不是当前打开任务 | 左侧显示蓝色未读点，并可触发一次完成通知                                         |
+| 状态       | 判定                                                       | UI 约束                                                                        |
+| ---------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 运行中     | `task.running === true`，或 `task.goalStatus === 'active'` | 左侧显示运行 spinner；当前 pane 的 composer 显示暂停能力；消息区显示“正在思考” |
+| 单轮输出中 | `task.running === true` 且存在 streaming assistant 消息    | 只用于流式消息生命周期，不得成为侧栏、composer 或未读状态的另一套运行判定      |
+| 已结束未读 | 任务从“运行中”转换为“不再运行”，且不是当前打开任务         | 左侧显示蓝色未读点，并可触发一次完成通知                                       |
 
-Active Goal 在两个自动续跑 turn 之间可能短暂出现 `running: false`。此时任务仍属于“持续”状态，所以不得产生蓝点或完成通知；但执行层 UI 必须如实反映暂歇：左侧不显示运行 spinner，composer 不显示暂停按钮，消息区不显示“正在思考”。下一次 `running: true` 到达后再恢复这些执行提示。
+Active Goal 在两个自动续跑 turn 之间可能短暂出现 `running: false`。只要 `goalStatus` 仍为 `active`，任务在产品语义上就仍是运行中：左侧继续显示 spinner，composer 继续显示暂停按钮，消息区继续显示“正在思考”，并且不得产生蓝点或完成通知。前一轮残留的 streaming 消息不能因此复活；间隙中的“正在思考”由 Goal 的持续运行态单独派生。
 
 任务终止事件应立即把本地任务标记为 `running: false`，并刷新 work list。若并发刷新返回了更早的 `running: true` 快照，reducer 必须保留本地已结算状态，直到同一任务收到新的启动事件，不能让旧响应把 spinner、暂停按钮或“正在思考”重新点亮。同一任务的执行身份由 `deviceId + taskId` 决定；`workspacePath` 是可能在创建、刷新和 transcript 恢复间变化的路由元数据，不能参与运行状态身份判断。
 
-未读记录只保存“持续到结束”的边沿，不根据 `status` 文本猜测终止态。当前任务、仍在执行的任务和 active Goal 任务都必须从可见未读集合排除；打开任务会清除其未读状态。
+未读记录只保存“运行到结束”的边沿，不根据 `status` 文本猜测终止态。当前任务和所有运行中任务都必须从可见未读集合排除；打开任务会清除其未读状态。
 
 ## Composer 模式提示
 

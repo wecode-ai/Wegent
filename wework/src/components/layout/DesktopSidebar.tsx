@@ -38,6 +38,7 @@ import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDi
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { isRuntimeTaskRunning } from '@/features/workbench/runtimeTaskStatus'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
@@ -1694,7 +1695,7 @@ function RuntimeTaskRow({
                   `runtime-local-task-notify-icon-${task.taskId}`
                 )}
               <span className="flex h-[30px] w-[30px] items-center justify-center">
-                {task.running ? (
+                {isRuntimeTaskRunning(task) ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
                     role="status"
@@ -2068,7 +2069,9 @@ function ProjectItem({
         source: shortenSidebarHomePath(path),
       })
   )
-  const projectActiveTaskCount = allRuntimeTaskItems.filter(({ task }) => task.running).length
+  const projectActiveTaskCount = allRuntimeTaskItems.filter(({ task }) =>
+    isRuntimeTaskRunning(task)
+  ).length
   const projectWaitingTaskCount = allRuntimeTaskItems.filter(({ task }) =>
     isRuntimeTaskWaiting(task)
   ).length

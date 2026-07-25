@@ -99,7 +99,13 @@ function createPaneStatus({
   return {
     sendPhase: isSubmitting ? 'submitting' : isAwaitingAssistant ? 'awaiting_assistant' : 'idle',
     activeAssistantMessage,
-    taskExecution: { known: taskRunning, running: taskRunning, continuable: true, status: null },
+    taskExecution: {
+      known: taskRunning,
+      turnRunning: taskRunning,
+      running: taskRunning,
+      continuable: true,
+      status: null,
+    },
     isSubmitting,
     isAwaitingAssistant,
     isAssistantStreaming,

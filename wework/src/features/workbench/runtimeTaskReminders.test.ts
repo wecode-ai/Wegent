@@ -99,8 +99,7 @@ describe('runtimeTaskReminders', () => {
       currentRuntimeTask: null,
     })
 
-    expect(snapshot.runningTaskKeys.has(key)).toBe(false)
-    expect(snapshot.ongoingTaskKeys.has(key)).toBe(true)
+    expect(snapshot.runningTaskKeys.has(key)).toBe(true)
     expect(snapshot.settledUnreadItems).toEqual([])
   })
 
@@ -116,7 +115,7 @@ describe('runtimeTaskReminders', () => {
         currentRuntimeTask: null,
       })
 
-      expect(snapshot.ongoingTaskKeys.has(key)).toBe(false)
+      expect(snapshot.runningTaskKeys.has(key)).toBe(false)
       expect(snapshot.settledUnreadItems.map(item => item.key)).toEqual([key])
     }
   )
@@ -180,7 +179,7 @@ describe('runtimeTaskReminders', () => {
     const nextUnreadTaskKeys = reconcileRuntimeTaskUnreadKeys({
       previousUnreadTaskKeys: new Set(['stale-task-key', visibleKey, runningKey]),
       visibleTaskKeys: snapshot.taskKeys,
-      ongoingTaskKeys: snapshot.ongoingTaskKeys,
+      runningTaskKeys: snapshot.runningTaskKeys,
       currentTaskKey: snapshot.currentTaskKey,
       settledUnreadItems: snapshot.settledUnreadItems,
     })
@@ -205,7 +204,7 @@ describe('runtimeTaskReminders', () => {
     const nextUnreadTaskKeys = reconcileRuntimeTaskUnreadKeys({
       previousUnreadTaskKeys: new Set([key]),
       visibleTaskKeys: snapshot.taskKeys,
-      ongoingTaskKeys: snapshot.ongoingTaskKeys,
+      runningTaskKeys: snapshot.runningTaskKeys,
       currentTaskKey: snapshot.currentTaskKey,
       settledUnreadItems: snapshot.settledUnreadItems,
     })
