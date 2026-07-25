@@ -2,15 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import {
-  access,
-  appendFile,
-  mkdir,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { access, appendFile, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -198,6 +190,11 @@ const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
 const PASTED_ZIP_FILENAME = 'pasted-feedback.zip'
 const PASTED_ZIP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_ZIP_COMPLETE'
 const PASTED_ZIP_BASE64 = Buffer.from('PK\x03\x04WEWORK_E2E_ZIP').toString('base64')
+const TOOL_BLOCK_ORDER_TASK_ID = 'wework-e2e-tool-block-order'
+const TOOL_BLOCK_ORDER_TASK_TITLE = 'Tool block chronological order'
+const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
+const EARLIER_TOOL_BLOCK_ID = 'wework-e2e-tool-earlier'
+const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
@@ -227,6 +224,7 @@ const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
+const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -861,6 +859,136 @@ async function ensureTaskRowVisible(control, taskRowTestId) {
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
+}
+
+async function seedToolBlockOrderTask(executorHome, workspacePath) {
+  const indexPath = join(executorHome, 'runtime-work', 'index.json')
+  await mkdir(dirname(indexPath), { recursive: true })
+  const runtimeIndex = await readFile(indexPath, 'utf8')
+    .then(content => JSON.parse(content))
+    .catch(error => {
+      if (error?.code !== 'ENOENT') throw error
+      return {
+        version: 1,
+        tasks: {},
+        workspaces: {},
+        deleted_archived_task_ids: {},
+      }
+    })
+  const messageCreatedAt = Date.now()
+  const earlierCreatedAt = messageCreatedAt + 1_000
+  const laterCreatedAt = messageCreatedAt + 2_000
+
+  runtimeIndex.tasks ??= {}
+  runtimeIndex.tasks[TOOL_BLOCK_ORDER_TASK_ID] = {
+    local_task_id: TOOL_BLOCK_ORDER_TASK_ID,
+    thread_id: null,
+    workspace_path: workspacePath,
+    title: TOOL_BLOCK_ORDER_TASK_TITLE,
+    runtime: 'claude_code',
+    status: 'done',
+    running: false,
+    continuable: true,
+    thread_status: 'idle',
+    turn_status: 'completed',
+    created_at: messageCreatedAt,
+    updated_at: laterCreatedAt,
+    completed_at: laterCreatedAt,
+    runtime_handle: {
+      messages: [
+        {
+          id: 'assistant-tool-block-order',
+          role: 'assistant',
+          subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
+          turnId: TOOL_BLOCK_ORDER_TASK_ID,
+          content: TOOL_BLOCK_ORDER_COMPLETION_TEXT,
+          status: 'done',
+          createdAt: new Date(messageCreatedAt).toISOString(),
+          blocks: [
+            {
+              id: LATER_TOOL_BLOCK_ID,
+              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
+              type: 'tool',
+              toolName: 'exec_command',
+              toolInput: { cmd: 'printf later-created-tool' },
+              toolOutput: 'later-created-tool',
+              status: 'done',
+              createdAt: laterCreatedAt,
+              completedAt: laterCreatedAt + 100,
+            },
+            {
+              id: EARLIER_TOOL_BLOCK_ID,
+              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
+              type: 'tool',
+              toolName: 'exec_command',
+              toolInput: { cmd: 'printf earlier-created-tool' },
+              toolOutput: 'earlier-created-tool',
+              status: 'done',
+              createdAt: earlierCreatedAt,
+              completedAt: earlierCreatedAt + 100,
+            },
+          ],
+        },
+      ],
+    },
+    parent: null,
+    ephemeral: false,
+    runtime_project_key: null,
+    runtime_workspace_roots: [],
+  }
+
+  await writeFile(indexPath, `${JSON.stringify(runtimeIndex, null, 2)}\n`, 'utf8')
+}
+
+async function verifyToolBlockChronologicalOrder({
+  control,
+  executorHome,
+  restartDesktopApp,
+  workspacePath,
+}) {
+  await seedToolBlockOrderTask(executorHome, workspacePath)
+  await restartDesktopApp()
+
+  const taskRowTestId = `runtime-local-task-row-${TOOL_BLOCK_ORDER_TASK_ID}`
+  await ensureTaskRowVisible(control, taskRowTestId)
+  await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+    text: TOOL_BLOCK_ORDER_TASK_TITLE,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: TOOL_BLOCK_ORDER_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="final-processing-toggle"]')
+  await control.command('click', '[data-testid="processing-summary-toggle"]')
+
+  const earlierSelector = `[data-processing-block-id="${EARLIER_TOOL_BLOCK_ID}"]`
+  const laterSelector = `[data-processing-block-id="${LATER_TOOL_BLOCK_ID}"]`
+  await control.command('waitFor', earlierSelector, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', laterSelector, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const [earlierMetrics] = JSON.parse(await control.command('getElementMetrics', earlierSelector))
+  const [laterMetrics] = JSON.parse(await control.command('getElementMetrics', laterSelector))
+  assert.ok(
+    earlierMetrics.top < laterMetrics.top,
+    `The later-created tool appeared above the earlier tool (${laterMetrics.top} <= ${earlierMetrics.top})`
+  )
+  await captureVerificationScreenshot(
+    control,
+    'tool-block-order-01-chronological.png',
+    '[data-testid="message-assistant"]'
+  )
 }
 
 async function waitForBlankConversation(control, composerSelector) {
@@ -6155,6 +6283,18 @@ async function main() {
     await captureVerificationScreenshot(control, '00-canonical-model-catalog.png')
     await control.command('press', 'body', { key: 'Escape' })
 
+    if (TOOL_BLOCK_ORDER_ONLY) {
+      phase = 'tool-block-chronological-order'
+      await verifyToolBlockChronologicalOrder({
+        control,
+        executorHome,
+        restartDesktopApp,
+        workspacePath,
+      })
+      console.log(`Wework desktop tool-block-order E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (RETRY_ONLY) {
       phase = 'retry-failure-restoration'
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -7374,6 +7514,14 @@ async function main() {
 
     phase = 'pasted-zip-attachment'
     await verifyPastedZipAttachment({ composerSelector, control })
+
+    phase = 'tool-block-chronological-order'
+    await verifyToolBlockChronologicalOrder({
+      control,
+      executorHome,
+      restartDesktopApp,
+      workspacePath,
+    })
 
     await writeFile(
       join(resultDir, 'model-requests.json'),

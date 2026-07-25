@@ -28,6 +28,10 @@ When the composer has only one model group, the model selector displays all mode
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
 
+## Review the processing timeline
+
+The **Processed** section in an AI response displays tool calls from top to bottom by their actual creation time. Even when executor events arrive out of order, commands, file operations, and other tools created earlier remain above later activity so the timeline reflects the real execution sequence.
+
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
 
 To branch from a completed AI response, move the pointer to its message actions and choose **Continue in new task**. The new task keeps the conversation context through that response and uses the same workspace. The source task and later messages remain unchanged. The action is hidden for streaming, cancelled, or unmappable Codex turns.

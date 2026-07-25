@@ -417,6 +417,102 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('orders tool blocks by creation time when create events arrive out of order', () => {
+    const withLaterTool = reduceWorkbenchMessages([], {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call-later',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'second' },
+        status: 'pending',
+        createdAt: 1770000002000
+      }
+    })
+    const withEarlierTool = reduceWorkbenchMessages(withLaterTool, {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call-earlier',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'first' },
+        status: 'pending',
+        createdAt: 1770000001000
+      }
+    })
+
+    expect(withEarlierTool[0].blocks?.map((block) => block.id)).toEqual([
+      'call-earlier',
+      'call-later'
+    ])
+  })
+
+  test('keeps tool arrival order when creation times are equal', () => {
+    const withFirstTool = reduceWorkbenchMessages([], {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call-first',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        status: 'pending',
+        createdAt: 1770000001000
+      }
+    })
+    const withSecondTool = reduceWorkbenchMessages(withFirstTool, {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call-second',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        status: 'pending',
+        createdAt: 1770000001000
+      }
+    })
+
+    expect(withSecondTool[0].blocks?.map((block) => block.id)).toEqual([
+      'call-first',
+      'call-second'
+    ])
+  })
+
+  test('orders completed response blocks by creation time', () => {
+    const done = reduceWorkbenchMessages([], {
+      type: 'assistant_done',
+      subtaskId: '9',
+      blocks: [
+        {
+          id: 'call-later',
+          subtaskId: '9',
+          type: 'tool',
+          toolName: 'bash',
+          status: 'done',
+          createdAt: 1770000002000
+        },
+        {
+          id: 'call-earlier',
+          subtaskId: '9',
+          type: 'tool',
+          toolName: 'bash',
+          status: 'done',
+          createdAt: 1770000001000
+        }
+      ]
+    })
+
+    expect(done[0].blocks?.map((block) => block.id)).toEqual([
+      'call-earlier',
+      'call-later'
+    ])
+  })
+
   test('moves streamed content into a text block before a tool block', () => {
     const state = reduceWorkbenchMessages(
       reduceWorkbenchMessages([], {
