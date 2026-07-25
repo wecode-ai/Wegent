@@ -63,6 +63,12 @@ After every task completes, fails, or is interrupted, Wework immediately release
 
 To keep Wework from controlling sleep, disable this option under **Settings → General**. Disabling it immediately releases any current sleep inhibition. If it is enabled again while a task is still running, Wework resumes preventing idle sleep.
 
+## Interface Recovery After Locking the Screen
+
+On macOS, when the Wework main window remains unfocused for more than one minute, such as during an extended screen lock, Wework checks whether the WebView has resumed rendering when the window regains focus. A healthy interface is left unchanged. If the WebView still cannot acknowledge rendered frames within five seconds, Wework automatically recreates the main window while preserving its position, size, maximized state, and fullscreen state.
+
+Automatic recreation affects only the interface process. It does not stop the Wework application process or local task executor, so running tasks continue. The recreated window restores the current task from persisted state, but unsent input that existed only in interface memory may not be preserved.
+
 ## Appshots
 
 On macOS desktop, **Settings → Integrations → Appshots** shows the Appshots status and sound preference. The default shortcut is `⌘⇧2`. When pressed, Wework captures the frontmost application window and uses macOS Accessibility to read text exposed by that window, which can include text outside the visible scroll area. It then adds both the PNG and text context to the current composer attachments.
