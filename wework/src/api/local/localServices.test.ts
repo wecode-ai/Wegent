@@ -1305,7 +1305,7 @@ describe('createLocalAppServices', () => {
     )
     expect(payload.executionRequest.mcp_servers).toEqual([
       {
-        name: 'wegent-delivery',
+        name: 'wegent_delivery',
         type: 'streamable-http',
         url: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
         headers: { Authorization: 'Bearer cloud-login-token' },
@@ -1379,7 +1379,7 @@ describe('createLocalAppServices', () => {
     const additionalContext = {
       cloudCollaboration: {
         kind: 'application' as const,
-        value: 'Current TODO: WEG-1. Use the wegent-delivery MCP tools when needed.',
+        value: 'Current TODO: WEG-1. Use the wegent_delivery MCP tools when needed.',
       },
     }
 
@@ -1412,6 +1412,31 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.prompt).toContain('这个 TODO 里有啥？')
     expect(sendPayload.message).toBe('这个云项目是解决什么问题？')
     expect(sendPayload.executionRequest.prompt).toContain('Current TODO: WEG-1')
+  })
+
+  test('activates project-space capabilities for a generic cloud reference', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-project-space',
+      runtime: 'codex',
+      message: '[$项目空间](cloud://projects) 帮我创建一个新项目',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    const prompt = payload.executionRequest.prompt as string
+    expect(prompt).toContain('[projectSpaceCapability]')
+    expect(prompt).toContain('wegent_delivery is a server id, not a callable tool')
+    expect(prompt).toContain('create_cloud_project')
+    expect(prompt).toContain('do not use list_mcp_resources to discover tools')
   })
 
   test('adds configured local proxy to local runtime execution requests', async () => {

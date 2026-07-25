@@ -703,6 +703,10 @@ fn persistent_codex_app_server_launch_config(
     launch_config.config_overrides.extend([
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
+        // MCP tools are deferred behind tool_search by the bundled Codex. The
+        // search tool must be enabled at persistent app-server startup; enabling
+        // it per thread is too late because feature registration is process-wide.
+        "features.tool_search=true".to_owned(),
     ]);
     launch_config
         .config_overrides

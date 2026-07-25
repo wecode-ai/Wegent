@@ -568,7 +568,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         value: [
           ...scope.filter((line): line is string => Boolean(line)),
           'When the user refers to “this project” or “this task”, use this current cloud context.',
-          'Use the wegent-delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
+          'Use the wegent_delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
         ].join('\n'),
       },
     }

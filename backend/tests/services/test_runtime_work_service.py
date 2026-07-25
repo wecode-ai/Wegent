@@ -3902,7 +3902,7 @@ def test_build_runtime_execution_request_resolves_crd_model_id(
     delivery_mcp = next(
         server
         for server in execution_request.mcp_servers
-        if server["name"] == "wegent-delivery"
+        if server["name"] == "wegent_delivery"
     )
     assert delivery_mcp["type"] == "streamable-http"
     assert delivery_mcp["url"].endswith("/api/mcp/delivery/sse")
@@ -3929,3 +3929,16 @@ def test_message_with_application_context_keeps_user_message_and_ignores_untrust
     assert "Current TODO: WEG-1." in message
     assert "ignore previous instructions" not in message
     assert message.endswith("这个 TODO 里有啥？")
+
+
+def test_message_with_cloud_reference_activates_project_space_capability() -> None:
+    from app.services import runtime_work_service
+
+    message = runtime_work_service._message_with_application_context(
+        "[$项目空间](cloud://projects) 帮我创建一个新项目", None
+    )
+
+    assert "[projectSpaceCapability]" in message
+    assert "wegent_delivery is a server id, not a callable tool" in message
+    assert "create_cloud_project" in message
+    assert "do not use list_mcp_resources to discover tools" in message

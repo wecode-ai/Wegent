@@ -1141,6 +1141,22 @@ function messageWithApplicationContext(
   context?: RuntimeTaskCreateRequest['additionalContext']
 ): string {
   const entries = Object.entries(context ?? {}).filter(([, entry]) => entry.kind === 'application')
+  if (message.includes('cloud://projects') && !context?.projectSpaceCapability) {
+    entries.push([
+      'projectSpaceCapability',
+      {
+        kind: 'application',
+        value: [
+          'The user activated the Wegent project-space capability.',
+          'Use the wegent_delivery MCP server for project-space operations.',
+          'wegent_delivery is a server id, not a callable tool.',
+          'Use list_cloud_projects to list projects and create_cloud_project to create one.',
+          'Use resolve_cloud_reference to resolve cloud:// references.',
+          'MCP resources describe addressable data; do not use list_mcp_resources to discover tools.',
+        ].join('\n'),
+      },
+    ])
+  }
   if (entries.length === 0) return message
   const contextText = entries.map(([name, entry]) => `[${name}]\n${entry.value}`).join('\n\n')
   return `<application_context>\n${contextText}\n</application_context>\n\n${message}`
@@ -1194,7 +1210,7 @@ function buildLocalRuntimeExecutionRequest(
     mcp_servers: input.cloudModelGateway?.mcpUrl
       ? [
           {
-            name: 'wegent-delivery',
+            name: 'wegent_delivery',
             type: 'streamable-http',
             url: input.cloudModelGateway.mcpUrl,
             headers: {

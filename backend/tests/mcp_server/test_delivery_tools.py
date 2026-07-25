@@ -63,6 +63,34 @@ def test_delivery_tools_receive_authenticated_request_context() -> None:
     assert delivery_spec.allow_user_token is True
 
 
+def test_delivery_resources_match_cloud_reference_protocol() -> None:
+    from app.mcp_server.server import (
+        delivery_mcp_server,
+        ensure_delivery_tools_registered,
+    )
+
+    ensure_delivery_tools_registered()
+
+    resources = delivery_mcp_server._resource_manager.list_resources()
+    templates = delivery_mcp_server._resource_manager.list_templates()
+    assert {str(resource.uri) for resource in resources} == {"cloud://projects"}
+    assert {template.uri_template for template in templates} == {
+        "cloud://projects/{project_id}",
+        "cloud://projects/{project_id}/{resource_type}/{resource_id}",
+    }
+
+
+def test_delivery_metadata_declares_versioned_project_space_capabilities() -> None:
+    from app.mcp_server.server import _DELIVERY_MCP_SPEC, _build_root_metadata
+
+    metadata = _build_root_metadata(_DELIVERY_MCP_SPEC)
+
+    assert metadata["service"] == "wegent_delivery"
+    assert metadata["protocol"] == "wegent.project-space"
+    assert metadata["protocolVersion"] == 1
+    assert metadata["capabilities"]["projects.create"] is True
+
+
 def test_regular_user_token_can_authenticate_for_user_scoped_mcp(monkeypatch) -> None:
     token = create_access_token(data={"sub": "alice"})
     monkeypatch.setattr(
