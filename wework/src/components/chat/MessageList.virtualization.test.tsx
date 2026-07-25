@@ -1,6 +1,10 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { MessageList } from './MessageList'
+import {
+  clearRuntimeConversationCacheForTests,
+  getConversationVirtualMeasurements,
+} from '@/features/workbench/runtimeConversationCache'
 import '@/i18n'
 
 const { useVirtualizerMock } = vi.hoisted(() => ({
@@ -17,83 +21,115 @@ vi.mock('@tanstack/react-virtual', () => ({
       { length: range.endIndex - range.startIndex + 1 },
       (_, index) => range.startIndex + index
     ),
-  useVirtualizer: (options: { count: number }) => {
+  useVirtualizer: (options: {
+    count: number
+    getItemKey: (index: number) => string | number
+    rangeExtractor: (range: {
+      startIndex: number
+      endIndex: number
+      overscan: number
+      count: number
+    }) => number[]
+  }) => {
     useVirtualizerMock(options)
+    const visibleIndexes = options.rangeExtractor({
+      startIndex: Math.max(0, options.count - 2),
+      endIndex: options.count - 1,
+      overscan: 2,
+      count: options.count,
+    })
     return {
+      getDistanceFromEnd: () => 0,
       getTotalSize: () => 10_000,
       getVirtualItems: () =>
-        [
-          { index: 0, key: 'user-0', start: 0 },
-          { index: 1, key: 'user-1', start: 120 },
-        ].slice(0, options.count),
+        visibleIndexes.map(index => ({
+          index,
+          key: options.getItemKey(index),
+          start: index * 120,
+        })),
       measureElement: vi.fn(),
-      takeSnapshot: () => [{ index: 0, key: 'user-0', start: 32, end: 132, size: 100, lane: 0 }],
+      takeSnapshot: () => [
+        { index: 0, key: options.getItemKey(0), start: 32, end: 132, size: 100, lane: 0 },
+      ],
     }
   },
 }))
 
 describe('MessageList Tauri virtualization', () => {
-  test('keeps short conversations in normal document flow', () => {
-    const scrollElement = document.createElement('div')
-
-    render(
-      <MessageList
-        messages={Array.from({ length: 3 }, (_, index) => ({
-          id: `short-user-${index}`,
-          role: 'user' as const,
-          content: `short message ${index}`,
-          status: 'done' as const,
-          createdAt: '2026-07-24T00:00:00Z',
-        }))}
-        scrollElementRef={{ current: scrollElement }}
-      />
-    )
-
-    expect(screen.getAllByTestId('message-user')).toHaveLength(3)
-    expect(
-      screen.getByText('short message 0').closest('[data-message-id]')?.parentElement
-    ).not.toHaveStyle({ position: 'absolute' })
+  afterEach(() => {
+    clearRuntimeConversationCacheForTests()
+    useVirtualizerMock.mockClear()
+    vi.unstubAllGlobals()
   })
 
-  test('keeps messages outside the virtual range out of the DOM', () => {
-    const scrollElement = document.createElement('div')
+  test('uses the unified virtual layout for short conversations', () => {
+    const intersectionObserver = vi.fn()
+    vi.stubGlobal('IntersectionObserver', intersectionObserver)
 
     render(
       <MessageList
-        messages={Array.from({ length: 100 }, (_, index) => ({
-          id: `user-${index}`,
-          role: 'user' as const,
-          content: `message ${index}`,
-          status: 'done' as const,
-          createdAt: '2026-07-24T00:00:00Z',
-        }))}
-        scrollElementRef={{ current: scrollElement }}
+        messages={buildMessages(5, 'short')}
+        scrollElementRef={{ current: createScrollElement(1_000) }}
       />
     )
 
+    expect(screen.getAllByTestId('message-user')).toHaveLength(5)
+    expect(screen.getByText('short message 0').closest('[data-index]')).toHaveStyle({
+      position: 'absolute',
+    })
+    expect(useVirtualizerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchorTo: 'end',
+        count: 5,
+        enabled: true,
+        overscan: 2,
+      })
+    )
+    expect(intersectionObserver).not.toHaveBeenCalled()
+  })
+
+  test('keeps only the end-anchored overscan range mounted for long conversations', () => {
+    render(
+      <MessageList
+        messages={buildMessages(100, 'long')}
+        scrollElementRef={{ current: createScrollElement(200) }}
+      />
+    )
+
+    expect(screen.getByText('long message 99')).toBeInTheDocument()
+    expect(screen.getByText('long message 98')).toBeInTheDocument()
+    expect(screen.queryByText('long message 0')).not.toBeInTheDocument()
     expect(screen.getAllByTestId('message-user')).toHaveLength(2)
-    expect(screen.getByText('message 0')).toBeInTheDocument()
-    expect(screen.getByText('message 1')).toBeInTheDocument()
-    expect(screen.queryByText('message 99')).not.toBeInTheDocument()
   })
 
-  test('restores measured message geometry after the conversation remounts', () => {
-    const messages = Array.from({ length: 100 }, (_, index) => ({
-      id: `user-${index}`,
-      role: 'user' as const,
-      content: index === 0 ? 'restored message' : `message ${index}`,
-      status: 'done' as const,
-      createdAt: '2026-07-24T00:00:00Z',
-    }))
+  test('keeps a forced navigation target in the virtual range', () => {
+    render(
+      <MessageList
+        messages={buildMessages(100, 'navigation')}
+        scrollElementRef={{ current: createScrollElement(200) }}
+        forceVirtualMessageId="user-80"
+      />
+    )
+
+    expect(screen.getByText('navigation message 80')).toBeInTheDocument()
+    expect(screen.getByText('navigation message 99')).toBeInTheDocument()
+  })
+
+  test('restores and persists the TanStack measurement snapshot', () => {
+    const messages = buildMessages(20, 'measured')
     const props = {
+      conversationKey: 'measured-conversation',
       messages,
-      conversationKey: 'conversation-with-measurements',
-      scrollElementRef: { current: document.createElement('div') },
+      scrollElementRef: { current: createScrollElement(200) },
     }
     const firstRender = render(<MessageList {...props} />)
     firstRender.unmount()
-    useVirtualizerMock.mockClear()
 
+    expect(getConversationVirtualMeasurements('measured-conversation')).toEqual([
+      expect.objectContaining({ key: 'user-0', size: 100, start: 32 }),
+    ])
+
+    useVirtualizerMock.mockClear()
     render(<MessageList {...props} />)
 
     expect(useVirtualizerMock).toHaveBeenCalledWith(
@@ -104,34 +140,27 @@ describe('MessageList Tauri virtualization', () => {
       })
     )
   })
-
-  test('keeps a navigation target in the virtual range while it settles', () => {
-    const messages = Array.from({ length: 100 }, (_, index) => ({
-      id: `user-${index}`,
-      role: 'user' as const,
-      content: `message ${index}`,
-      status: 'done' as const,
-      createdAt: '2026-07-24T00:00:00Z',
-    }))
-
-    render(
-      <MessageList
-        messages={messages}
-        scrollElementRef={{ current: document.createElement('div') }}
-        forceVirtualMessageId="user-80"
-      />
-    )
-
-    const options = useVirtualizerMock.mock.lastCall?.[0] as {
-      rangeExtractor: (range: {
-        startIndex: number
-        endIndex: number
-        overscan: number
-        count: number
-      }) => number[]
-    }
-    expect(options.rangeExtractor({ startIndex: 0, endIndex: 2, overscan: 2, count: 100 })).toEqual(
-      [0, 1, 2, 80]
-    )
-  })
 })
+
+function buildMessages(count: number, prefix: string) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `user-${index}`,
+    role: 'user' as const,
+    content: `${prefix} message ${index}`,
+    status: 'done' as const,
+    createdAt: '2026-07-24T00:00:00Z',
+  }))
+}
+
+function createScrollElement(clientHeight: number): HTMLDivElement {
+  const scrollElement = document.createElement('div')
+  Object.defineProperty(scrollElement, 'clientHeight', {
+    configurable: true,
+    value: clientHeight,
+  })
+  Object.defineProperty(scrollElement, 'clientWidth', {
+    configurable: true,
+    value: 800,
+  })
+  return scrollElement
+}

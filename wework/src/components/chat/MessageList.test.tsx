@@ -304,7 +304,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
-  test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {
+  test('uses browser-native content visibility without message window placeholders', () => {
     render(
       <MessageList
         messages={[
@@ -328,12 +328,10 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('message-user').className).toContain('[content-visibility:auto]')
     expect(screen.getByTestId('message-assistant').className).toContain('[content-visibility:auto]')
-    expect(
-      screen.getByTestId('message-user').style.getPropertyValue('contain-intrinsic-size')
-    ).toContain('0 ')
-    expect(
-      screen.getByTestId('message-assistant').style.getPropertyValue('contain-intrinsic-size')
-    ).toContain('0 ')
+    expect(screen.getByTestId('message-user')).toHaveTextContent('hello')
+    expect(screen.getByTestId('message-assistant')).toHaveTextContent('world')
+    expect(screen.getByTestId('message-user').style.containIntrinsicSize).toBe('')
+    expect(screen.getByTestId('message-assistant').style.containIntrinsicSize).toBe('')
   })
 
   test('does not use message row content visibility in the Tauri app', () => {
@@ -370,48 +368,6 @@ describe('MessageList', () => {
     } finally {
       getSelectionSpy.mockRestore()
     }
-  })
-
-  test('unmounts distant Tauri message contents and restores them near the viewport', async () => {
-    tauriCoreMock.isTauri = vi.fn(() => true)
-    const callbacks: IntersectionObserverCallback[] = []
-    class IntersectionObserverMock {
-      constructor(callback: IntersectionObserverCallback) {
-        callbacks.push(callback)
-      }
-      observe = vi.fn()
-      disconnect = vi.fn()
-      unobserve = vi.fn()
-      takeRecords = vi.fn(() => [])
-      root = null
-      rootMargin = '1200px 0px'
-      thresholds = [0]
-    }
-    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
-
-    render(
-      <MessageList
-        messages={Array.from({ length: 6 }, (_, index) => ({
-          id: `assistant-windowed-${index}`,
-          role: 'assistant' as const,
-          content: `message ${index}`,
-          status: 'done' as const,
-          createdAt: `2026-06-11T10:00:0${index}Z`,
-        }))}
-      />
-    )
-
-    const articles = screen.getAllByTestId('message-assistant')
-    expect(articles[0]).toBeEmptyDOMElement()
-    expect(articles[1]).toBeEmptyDOMElement()
-    expect(articles[2]).toHaveTextContent('message 2')
-    expect(callbacks).toHaveLength(2)
-
-    await act(async () => {
-      callbacks[0]([{ isIntersecting: true } as IntersectionObserverEntry], {} as never)
-    })
-
-    expect(articles[0]).toHaveTextContent('message 0')
   })
 
   test('windows oversized streaming Markdown before mounting every chunk', () => {
@@ -485,7 +441,7 @@ describe('MessageList', () => {
       fireEvent.pointerUp(document)
 
       expect(article.className).toContain('[content-visibility:auto]')
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+      expect(article.style.containIntrinsicSize).toBe('')
       expect(article.style.contentVisibility).toBe('')
     } finally {
       getSelectionSpy.mockRestore()
@@ -662,69 +618,11 @@ describe('MessageList', () => {
 
       await waitFor(() => {
         expect(article.className).toContain('[content-visibility:auto]')
-        expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+        expect(article.style.containIntrinsicSize).toBe('')
       })
     } finally {
       getSelectionSpy.mockRestore()
       requestAnimationFrameSpy.mockRestore()
-    }
-  })
-
-  test('coalesces intrinsic size recalculation during message list resize', async () => {
-    vi.useFakeTimers()
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    const originalResizeObserver = globalThis.ResizeObserver
-
-    class ResizeObserverMock {
-      constructor(callback: ResizeObserverCallback) {
-        resizeCallbacks.push(callback)
-      }
-
-      observe = vi.fn()
-      disconnect = vi.fn()
-    }
-
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
-
-    try {
-      render(
-        <MessageList
-          messages={[
-            {
-              id: 'assistant-resize',
-              role: 'assistant',
-              content: 'x'.repeat(2000),
-              status: 'done',
-              createdAt: '2026-06-11T10:00:01Z',
-            },
-          ]}
-        />
-      )
-
-      const article = screen.getByTestId('message-assistant')
-      const list = article.parentElement as HTMLElement
-      const initialIntrinsicSize = article.style.getPropertyValue('contain-intrinsic-size')
-      Object.defineProperty(list, 'clientWidth', {
-        configurable: true,
-        value: 640,
-      })
-
-      act(() => {
-        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-        vi.advanceTimersByTime(119)
-      })
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe(initialIntrinsicSize)
-
-      act(() => {
-        vi.advanceTimersByTime(1)
-      })
-
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).not.toBe(
-        initialIntrinsicSize
-      )
-    } finally {
-      vi.useRealTimers()
-      vi.stubGlobal('ResizeObserver', originalResizeObserver)
     }
   })
 
@@ -4046,6 +3944,33 @@ describe('MessageList', () => {
     await userEvent.click(copyButton)
 
     expect(writeText).toHaveBeenCalledWith('好的，以下是作文内容。')
+  })
+
+  test('continues a completed Codex turn in a new task', async () => {
+    let resolveFork: (() => void) | undefined
+    const onForkMessage = vi.fn(() => new Promise<void>(resolve => (resolveFork = resolve)))
+    const message = {
+      id: 'assistant-turn-1',
+      role: 'assistant' as const,
+      content: '已完成当前修改。',
+      status: 'done' as const,
+      turnId: 'turn-1',
+      createdAt: '2026-05-25T18:38:00.000+08:00',
+    }
+
+    render(<MessageList messages={[message]} onForkMessage={onForkMessage} />)
+
+    const button = screen.getByTestId('fork-message-button')
+    expect(button).toHaveAttribute('aria-label', '在新任务中继续')
+    await userEvent.click(button)
+    expect(onForkMessage).toHaveBeenCalledWith(message)
+    expect(button).toBeDisabled()
+
+    await userEvent.click(button)
+    expect(onForkMessage).toHaveBeenCalledTimes(1)
+
+    resolveFork?.()
+    await waitFor(() => expect(button).not.toBeDisabled())
   })
 
   test('hides assistant hover actions while the response is streaming', () => {

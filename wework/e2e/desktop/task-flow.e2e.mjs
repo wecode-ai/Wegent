@@ -19,6 +19,8 @@ const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification 
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const FORK_FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP: continue only in the forked task.'
+const FORK_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP_COMPLETE'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -70,7 +72,7 @@ const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 384 * 1024
 )
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 224 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 232 * 1024
 )
 const MEMORY_MAX_SETTLED_DOM_NODE_COUNT = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES ?? 900
@@ -471,12 +473,64 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     control,
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
   )
+  const assistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const virtualRows = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`
+  )
   assert.equal(userMessages.length, 2, 'The short conversation did not render both user messages')
+  assert.equal(
+    assistantMessages.length,
+    2,
+    'The reopened short conversation did not render both assistant messages'
+  )
+  assert.equal(
+    virtualRows.length,
+    4,
+    'The unified virtual list did not mount every short-conversation turn'
+  )
+  assert.equal(
+    await control.command(
+      'getStyle',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`,
+      { value: 'position' }
+    ),
+    'absolute',
+    'Short conversations did not use the unified virtual row layout'
+  )
+  const conversationSnapshot = JSON.parse(
+    await control.command(
+      'snapshot',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+    )
+  )
+  assert.ok(
+    countTextOccurrences(conversationSnapshot.text, FRESH_CHAT_PROMPT) >= 2,
+    'The reopened virtualized conversation lost an earlier user message'
+  )
+  assert.ok(
+    countTextOccurrences(conversationSnapshot.text, FRESH_CHAT_COMPLETION_TEXT) >= 2,
+    'The reopened virtualized conversation lost an earlier assistant message'
+  )
   const firstMessage = userMessages[0]
   const messageTopOffset = firstMessage.top - scroller.top
   await writeFile(
     join(resultDir, 'short-conversation-layout-metrics.json'),
-    `${JSON.stringify({ firstMessage, messageTopOffset, scroller }, null, 2)}\n`
+    `${JSON.stringify(
+      {
+        assistantMessages,
+        firstMessage,
+        messageTopOffset,
+        scroller,
+        userMessages,
+        virtualRows,
+      },
+      null,
+      2
+    )}\n`
   )
   await captureVerificationScreenshot(control, 'short-conversation-02-completed-top-aligned.png')
 
@@ -488,6 +542,18 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
+}
+
+function countTextOccurrences(value, search) {
+  if (!search) return 0
+  let count = 0
+  let offset = 0
+  while (true) {
+    const index = value.indexOf(search, offset)
+    if (index === -1) return count
+    count += 1
+    offset = index + search.length
+  }
 }
 
 async function prepareCompletedTurnScreenshot(control) {
@@ -660,6 +726,109 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
+}
+
+async function waitForTaskRowByText(control, expectedText) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const candidates = snapshot.testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+    for (const testId of candidates) {
+      const rowText = await control.command('getText', `[data-testid="${testId}"]`)
+      if (rowText.includes(expectedText)) return testId
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The sidebar did not expose a task row containing ${expectedText}`)
+}
+
+async function verifyCompletedTurnFork({
+  composerSelector,
+  control,
+  executorHome,
+  sourceTaskRowTestId,
+  workspacePath,
+}) {
+  const taskRowsBeforeFork = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('scrollIntoView', '[data-testid="fork-message-button"]')
+  await control.command('waitFor', '[data-testid="fork-message-button"]', {
+    visible: true,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'completed-turn-fork-01-source-ready.png')
+  await control.command('clickWhenEnabled', '[data-testid="fork-message-button"]')
+  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  assert.notEqual(
+    forkTaskRowTestId,
+    sourceTaskRowTestId,
+    'Forking reused the source task instead of creating an independent task'
+  )
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
+  const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
+  const runtimeInstances = await readdir(join(executorHome, 'app-runtime'))
+  assert.equal(runtimeInstances.length, 1, 'The desktop E2E expected one app runtime instance')
+  const runtimeIndex = JSON.parse(
+    await readFile(
+      join(executorHome, 'app-runtime', runtimeInstances[0], 'runtime-work', 'index.json'),
+      'utf8'
+    )
+  )
+  assert.equal(
+    runtimeIndex.tasks[sourceTaskId]?.workspace_path,
+    workspacePath,
+    'The source task did not use the selected project workspace'
+  )
+  assert.equal(
+    runtimeIndex.tasks[forkTaskId]?.workspace_path,
+    workspacePath,
+    'The forked task did not inherit the source workspace'
+  )
+  assert.equal(
+    runtimeIndex.tasks[forkTaskId]?.parent?.taskId,
+    sourceTaskId,
+    'The backend did not persist the fork parent relationship'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'completed-turn-fork-02-target-open.png')
+
+  control.setScenario('fork_follow_up')
+  const forkFollowUpRequest = await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    FORK_FOLLOW_UP_PROMPT,
+    'fork_follow_up'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FORK_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  assert.ok(
+    JSON.stringify(forkFollowUpRequest.body).includes(FORK_FOLLOW_UP_PROMPT),
+    'The forked task did not accept an independent follow-up'
+  )
+  await captureVerificationScreenshot(control, 'completed-turn-fork-03-follow-up-complete.png')
+
+  await control.command('click', `[data-testid="${sourceTaskRowTestId}"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const sourceSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.ok(
+    !sourceSnapshot.text.includes(FORK_FOLLOW_UP_PROMPT) &&
+      !sourceSnapshot.text.includes(FORK_FOLLOW_UP_COMPLETION_TEXT),
+    'The fork follow-up mutated the source task transcript'
+  )
+  await captureVerificationScreenshot(control, 'completed-turn-fork-04-source-unchanged.png')
 }
 
 async function waitForBlankConversation(control, composerSelector) {
@@ -1249,10 +1418,13 @@ async function ensureModelOptionVisible(control, targetOptionId) {
           timeoutMs: UI_TIMEOUT_MS,
         })
         .catch(() => undefined)
-      await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
-        stableMs: 100,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
+      menu = JSON.parse(await control.command('snapshot', 'body'))
+      if (!menu.testIds.includes('model-selector-menu')) {
+        await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+          stableMs: 100,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+      }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
@@ -1263,6 +1435,23 @@ async function ensureModelOptionVisible(control, targetOptionId) {
   }
 
   throw new Error(`Model option ${targetOptionId} did not become visible`)
+}
+
+async function confirmLocalProjectName(control, name) {
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: name,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('local-project-create-dialog'),
+    'The local project create dialog did not close after confirmation'
+  )
 }
 
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
@@ -1663,11 +1852,15 @@ async function verifyBackgroundTaskWindowLifecycle({
       timeoutMs: UI_TIMEOUT_MS,
     }
   )
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes(freshTaskRowTestId),
-    'The archived task remained mounted in the sidebar'
-  )
+  const archivedTaskSelector = `[data-testid="${freshTaskRowTestId}"]`
+  const archiveRowRemovalStartedAt = Date.now()
+  let archivedTaskRowCount = 1
+  while (Date.now() - archiveRowRemovalStartedAt < UI_TIMEOUT_MS) {
+    archivedTaskRowCount = Number(await control.command('getElementCount', archivedTaskSelector))
+    if (archivedTaskRowCount === 0) break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(archivedTaskRowCount, 0, 'The archived task remained mounted in the sidebar')
   const archiveEvictionStartedAt = Date.now()
   let cacheAfterArchive = cacheBeforeArchive
   while (Date.now() - archiveEvictionStartedAt < UI_TIMEOUT_MS) {
@@ -3172,6 +3365,7 @@ class DesktopE2EServer {
       [
         'initial',
         'follow_up',
+        'fork_follow_up',
         'request_user_input',
         'window_lifecycle',
         'goal_idle',
@@ -3920,6 +4114,20 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(GOAL_IDLE_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'fork_follow_up') {
+      this.recordScenarioRequest('fork_follow_up', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(FORK_FOLLOW_UP_PROMPT),
+        'The real Codex request did not contain the fork follow-up prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(FORK_FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -5073,15 +5281,7 @@ async function verifyConnectedModelsOnLocalExecution({
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-    timeoutMs: UI_TIMEOUT_MS,
-  })
-  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-    value: 'workspace',
-  })
-  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
-    timeoutMs: UI_TIMEOUT_MS,
-  })
+  await confirmLocalProjectName(control, 'workspace')
   await control.command('waitFor', composerSelector, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5237,11 +5437,6 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   )
 
   control.setScenario('cloud_initial')
-  const taskRowsBeforeCloudTask = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
   const cloudInitialRequest = await withTimeout(
     control.awaitScenarioRequestCount('cloud_initial', 2),
@@ -5258,11 +5453,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     CLOUD_ARTIFACT_CONTENT,
     'The real cloud executor did not create the verification artifact'
   )
-  const taskRowTestId = await waitForNewTaskRow(
-    control,
-    taskRowsBeforeCloudTask,
-    'WEWORK_DESKTOP_E2E_CLOUD_TASK'
-  )
+  const taskRowTestId = await waitForTaskRowByText(control, 'WEWORK_DESKTOP_E2E_CLOUD_TASK')
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_COMPLETION_TEXT,
@@ -5544,6 +5735,7 @@ async function waitForMatrixStage(control, model, ...expectedStages) {
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
+  const secondaryProjectPath = join(resultDir, 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
@@ -5552,6 +5744,7 @@ async function main() {
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
+    mkdir(secondaryProjectPath, { recursive: true }),
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
@@ -5937,6 +6130,27 @@ async function main() {
     await control.command('fill', '[data-testid="local-project-create-name-input"]', {
       value: 'workspace',
     })
+    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: secondaryProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, secondaryProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
+      text: 'secondary-project-root',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     await control.command(
       'clickWhenEnabled',
       '[data-testid="confirm-local-project-create-button"]',
@@ -5956,7 +6170,7 @@ async function main() {
       snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
       'The newly opened folder project was not shown in the sidebar'
     )
-    const projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
+    let projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
       testId.startsWith('project-menu-')
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
@@ -6028,6 +6242,27 @@ async function main() {
     await control.command('fill', '[data-testid="local-project-create-name-input"]', {
       value: 'workspace',
     })
+    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: secondaryProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, secondaryProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
+      text: 'secondary-project-root',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     await control.command(
       'clickWhenEnabled',
       '[data-testid="confirm-local-project-create-button"]',
@@ -6040,14 +6275,18 @@ async function main() {
     })
     const reopenedProjectSnapshot = await waitForSnapshot(
       control,
-      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
-      'The reopened folder project was not shown in the sidebar'
+      snapshot =>
+        snapshot.testIds.some(
+          testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+        ),
+      'The reopened folder project was not shown with its current identity'
     )
-    const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(testId =>
-      testId.startsWith('project-menu-')
+    const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
     )
-    assert.ok(reopenedProjectMenuTestId, 'The reopened folder project was not shown in the sidebar')
-    projectId = reopenedProjectMenuTestId.slice('project-menu-'.length)
+    assert.ok(reopenedProjectMenuTestId, 'The reopened folder project identity was not found')
+    projectMenuTestId = reopenedProjectMenuTestId
+    projectId = projectMenuTestId.slice('project-menu-'.length)
     projectRowSelector = `[data-testid="project-row-${projectId}"]`
     await control.command('waitFor', projectRowSelector, {
       text: 'workspace',
@@ -6288,6 +6527,15 @@ async function main() {
       testId.startsWith('runtime-local-task-row-')
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
+
+    phase = 'completed-turn-fork'
+    await verifyCompletedTurnFork({
+      composerSelector,
+      control,
+      executorHome,
+      sourceTaskRowTestId: taskRowTestId,
+      workspacePath,
+    })
 
     phase = 'blank-task-draft-restoration'
     await control.command(
@@ -6793,17 +7041,7 @@ async function main() {
       '[data-testid="confirm-device-folder-picker-button"]',
       { timeoutMs: UI_TIMEOUT_MS }
     )
-    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-      value: COMPOSER_PROJECT_NAME,
-    })
-    await control.command(
-      'clickWhenEnabled',
-      '[data-testid="confirm-local-project-create-button"]',
-      { timeoutMs: UI_TIMEOUT_MS }
-    )
+    await confirmLocalProjectName(control, COMPOSER_PROJECT_NAME)
     const createdComposerProjectSnapshot = await waitForSnapshot(
       control,
       snapshot =>

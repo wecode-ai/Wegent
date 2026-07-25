@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -19,8 +19,6 @@ const MARKER_ROW_GAP_PX = 20 / 9
 const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
 const NAVIGATION_VIEWPORT_PADDING_PX = 48
 const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [80, 160, 320, 640, 1000, 1600]
-const MARKER_LAYOUT_SETTLE_DELAYS_MS = [100, 300, 1000]
-const MIN_TURNS_WITHOUT_MEASURED_OVERFLOW = 4
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
@@ -72,10 +70,11 @@ export function MessageTurnNavigation({
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const markersRef = useRef<MessageTurnMarker[]>([])
+  const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
-  const layoutSettleTimersRef = useRef<number[]>([])
-  const layoutRetryPendingRef = useRef(false)
   const navigationScrollTimersRef = useRef<number[]>([])
+  const messagesRef = useRef(messages)
+  const turnNavigationRef = useRef(turnNavigation)
 
   const clearNavigationScrollTimers = useCallback(() => {
     navigationScrollTimersRef.current.forEach(timer => window.clearTimeout(timer))
@@ -142,11 +141,13 @@ export function MessageTurnNavigation({
     [clearNavigationScrollTimers, contentRef, onNavigationScrollTargetChange]
   )
 
-  const userTurns = useMemo(() => {
-    return turnNavigation && turnNavigation.length > 0
-      ? mergeUserTurnsWithNavigation(turnNavigation, messages)
-      : buildUserTurns(messages)
-  }, [messages, turnNavigation])
+  const nextUserTurns = buildUserTurnsForNavigation(messages, turnNavigation)
+  const userTurnsSignature = getUserTurnsSignature(nextUserTurns)
+
+  useLayoutEffect(() => {
+    messagesRef.current = messages
+    turnNavigationRef.current = turnNavigation
+  }, [messages, turnNavigation, userTurnsSignature])
 
   const updateActiveMarker = useCallback(
     (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
@@ -184,21 +185,12 @@ export function MessageTurnNavigation({
     (reason: string) => {
       const scroller = scrollRef.current
       const content = contentRef.current
-      if (!scroller || !content || userTurns.length === 0) {
+      const userTurns = buildUserTurnsForNavigation(messagesRef.current, turnNavigationRef.current)
+      if (!scroller || !content || userTurns.length < 2) {
         markersRef.current = []
         setMarkers([])
         setActiveMarkerId(null)
-        return false
-      }
-
-      if (
-        scroller.scrollHeight <= scroller.clientHeight + 8 &&
-        userTurns.length < MIN_TURNS_WITHOUT_MEASURED_OVERFLOW
-      ) {
-        markersRef.current = []
-        setMarkers([])
-        setActiveMarkerId(null)
-        return true
+        return
       }
 
       const scrollerRect = scroller.getBoundingClientRect()
@@ -225,37 +217,35 @@ export function MessageTurnNavigation({
       markersRef.current = nextMarkers
       setMarkers(nextMarkers)
       updateActiveMarker(nextMarkers, reason)
-      return false
     },
-    [contentRef, scrollRef, updateActiveMarker, userTurns]
+    [contentRef, scrollRef, updateActiveMarker]
   )
 
   const scheduleCalculateMarkers = useCallback(
     (reason: string) => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current)
         timerRef.current = null
       }
-      layoutSettleTimersRef.current.forEach(timer => window.clearTimeout(timer))
-      layoutSettleTimersRef.current = []
 
-      timerRef.current = window.setTimeout(() => {
-        timerRef.current = null
-        layoutRetryPendingRef.current = calculateMarkers(reason)
-        layoutSettleTimersRef.current = MARKER_LAYOUT_SETTLE_DELAYS_MS.map(delay =>
-          window.setTimeout(() => {
-            if (!layoutRetryPendingRef.current) return
-            layoutRetryPendingRef.current = calculateMarkers(`${reason}-settled-${delay}`)
-          }, delay)
-        )
-      }, 0)
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null
+        timerRef.current = window.setTimeout(() => {
+          timerRef.current = null
+          calculateMarkers(reason)
+        }, 0)
+      })
     },
     [calculateMarkers]
   )
 
   useEffect(() => {
     scheduleCalculateMarkers('messages-effect')
-  }, [scheduleCalculateMarkers])
+  }, [scheduleCalculateMarkers, userTurnsSignature])
 
   useLayoutEffect(() => {
     if (!pendingScrollTarget) return
@@ -290,25 +280,33 @@ export function MessageTurnNavigation({
     window.addEventListener('resize', handleResize)
 
     const mutationObserver = new MutationObserver(() => scheduleCalculateMarkers('mutation'))
-    mutationObserver.observe(content, { childList: true })
+    mutationObserver.observe(content, {
+      attributes: true,
+      attributeFilter: ['style'],
+      childList: true,
+      subtree: true,
+    })
 
     const resizeObserver =
       typeof ResizeObserver === 'undefined'
         ? null
         : new ResizeObserver(() => scheduleCalculateMarkers('resize-observer'))
     resizeObserver?.observe(content)
+    resizeObserver?.observe(scroller)
 
     return () => {
       scroller.removeEventListener('scroll', handleScroll)
       window.removeEventListener('resize', handleResize)
       mutationObserver.disconnect()
       resizeObserver?.disconnect()
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current)
         timerRef.current = null
       }
-      layoutSettleTimersRef.current.forEach(timer => window.clearTimeout(timer))
-      layoutSettleTimersRef.current = []
     }
   }, [contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarker])
 
@@ -351,6 +349,21 @@ export function MessageTurnNavigation({
         return
       }
 
+      const loadedMessageId = findLoadedNavigationMessageId(messages, {
+        navigationId: marker.id,
+        messageIndex: marker.messageIndex,
+      })
+      if (loadedMessageId) {
+        setPendingScrollTarget({
+          navigationId: marker.id,
+          messageIndex: marker.messageIndex,
+        })
+        setLoadingMarkerId(marker.id)
+        onNavigationLoadStateChange?.(true)
+        onNavigationScrollTargetChange?.(loadedMessageId)
+        return
+      }
+
       if (!marker.cursor || !onLoadTurnNavigationItem) {
         return
       }
@@ -375,8 +388,10 @@ export function MessageTurnNavigation({
     [
       activeMarkerId,
       contentRef,
+      messages,
       onLoadTurnNavigationItem,
       onNavigationLoadStateChange,
+      onNavigationScrollTargetChange,
       scrollRef,
       scrollToMessageId,
     ]
@@ -493,6 +508,21 @@ export function MessageTurnNavigation({
   return portalTarget ? createPortal(navigation, portalTarget) : navigation
 }
 
+function buildUserTurnsForNavigation(
+  messages: WorkbenchMessage[],
+  navigation?: RuntimeTurnNavigationItem[]
+): UserTurn[] {
+  const messageTurns = buildUserTurns(messages)
+  if (!navigation || navigation.length === 0) return messageTurns
+
+  const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
+  return navigationTurns.length >= messageTurns.length ? navigationTurns : messageTurns
+}
+
+function getUserTurnsSignature(turns: UserTurn[]) {
+  return JSON.stringify(turns)
+}
+
 function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
   const turns: UserTurn[] = []
   const pendingResponsePreviewTurnIndexes: number[] = []
@@ -511,10 +541,13 @@ function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
     turns.push({
       id: message.id,
       turnIndex: turns.length,
-      messageIndex: index,
+      messageIndex:
+        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
       promptPreview: getUserPromptPreview(message),
       responsePreview: '',
-      cursor: `offset:${index}`,
+      cursor: `offset:${
+        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index
+      }`,
       loaded: true,
     })
     pendingResponsePreviewTurnIndexes.push(turns.length - 1)
@@ -527,6 +560,7 @@ function buildUserTurnsFromNavigation(
   navigation: RuntimeTurnNavigationItem[],
   messages: WorkbenchMessage[]
 ): UserTurn[] {
+  const loadedTurns = buildUserTurns(messages)
   const loadedMessagesByIndex = new Map(
     messages
       .filter(
@@ -537,7 +571,7 @@ function buildUserTurnsFromNavigation(
   )
   const loadedMessagesById = new Map(messages.map(message => [message.id, message]))
 
-  return navigation.map((item, index) => {
+  const navigationTurns = navigation.map((item, index) => {
     const loadedMessage =
       loadedMessagesByIndex.get(item.messageIndex) ?? loadedMessagesById.get(item.id)
     return {
@@ -550,25 +584,11 @@ function buildUserTurnsFromNavigation(
       loaded: Boolean(loadedMessage),
     }
   })
-}
+  const navigationMessageIds = new Set(navigationTurns.map(turn => turn.id))
 
-function mergeUserTurnsWithNavigation(
-  navigation: RuntimeTurnNavigationItem[],
-  messages: WorkbenchMessage[]
-): UserTurn[] {
-  const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
-  const navigationIds = new Set(navigationTurns.map(turn => turn.id))
-  const liveTurns = buildUserTurns(messages).filter(turn => !navigationIds.has(turn.id))
-  const nextTurnIndex =
-    navigationTurns.reduce((maximum, turn) => Math.max(maximum, turn.turnIndex), -1) + 1
-
-  return [
-    ...navigationTurns,
-    ...liveTurns.map((turn, index) => ({
-      ...turn,
-      turnIndex: nextTurnIndex + index,
-    })),
-  ]
+  return [...navigationTurns, ...loadedTurns.filter(turn => !navigationMessageIds.has(turn.id))]
+    .sort((left, right) => left.messageIndex - right.messageIndex)
+    .map((turn, turnIndex) => ({ ...turn, turnIndex }))
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {

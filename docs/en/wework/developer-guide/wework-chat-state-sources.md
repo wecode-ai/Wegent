@@ -44,6 +44,42 @@ This document records the state sources for the Wework chat path. The goal is to
 7. `chat:done`, `chat:error`, and cancellation events settle the assistant message through the reducer and refresh the work list.
 8. If runtime work and message state disagree, do not settle it with fallback logic; fix the missing stream event, transcript data, or reducer action.
 
+## Local Multi-Root Projects and Task Ownership
+
+A local Codex project may contain an ordered list of workspace roots. The first
+entry is the primary root used by the composer's default workspace and the
+execution request `cwd`. The complete deduplicated root list is project-level
+execution context and must not be reduced to the current workspace.
+
+Multi-root context follows this primary path:
+
+1. Wework reads the runtime project's `roots`. It derives roots from
+   `deviceWorkspaces` only when that field is absent, then sends
+   `runtimeProjectKey`, `runtimeProjectName`, and `runtimeWorkspaceRoots` when
+   creating a task or sending a message.
+2. Local services write those fields into execution request metadata.
+3. The executor persists the project key and roots in `RuntimeTaskLink`, then
+   passes `runtimeWorkspaceRoots` to Codex `thread/start`, `thread/fork`,
+   `thread/resume`, and `turn/start`.
+4. If a follow-up request omits project metadata, the executor restores it from
+   the existing `RuntimeTaskLink`, so the same thread and a reopened
+   conversation keep the same project scope.
+5. Codex global thread assignment uses the explicit project key before path
+   matching, preventing one multi-root project from splitting into several
+   sidebar projects.
+
+The latest local `runtimeWork` snapshot is authoritative for local task
+presentation. An asynchronous cloud refresh must merge with the latest local
+snapshot when the refresh completes; it must not overwrite a newly created
+task with state captured before the request began. **New chat** clears only the
+current chat pane. It does not archive or delete the previous task, which must
+remain under its project and be reopenable. The environment popover must list
+and copy every project root, not only the primary root.
+
+These rules apply only to local Codex projects. Remote and cloud tasks retain
+their existing single-workspace selection semantics; local multi-root support
+must not implicitly broaden a remote execution scope.
+
 ### Web Search Tool Blocks
 
 A Codex web search may not include its query action in `item/started`; the final `action` can arrive only in `item/completed`. The executor must update the same block id, settle its status as `done`, and write the final `action` into `tool_input`. Otherwise Wework keeps showing a running web search whose expanded details are empty. Live events and historical transcripts must produce the same `web_search` tool block shape.

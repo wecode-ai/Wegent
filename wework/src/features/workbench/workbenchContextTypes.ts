@@ -200,7 +200,10 @@ export interface WorkbenchContextValue {
     addresses: RuntimeTaskAddress[],
     options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
-  forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
+  forkCurrentRuntimeTask: (
+    target: RuntimeTaskForkTarget,
+    options?: { lastTurnId?: string; title?: string }
+  ) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
