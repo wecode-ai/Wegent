@@ -13,7 +13,7 @@ import {
 } from './toolBlockKinds'
 
 export type ProcessingDisplayRow =
-  | { type: 'block'; id: string; block: ProcessingBlock }
+  | { type: 'block'; id: string; block: ProcessingBlock; sourceBlockIds: string[] }
   | { type: 'activity_group'; id: string; blocks: ToolBlock[]; label: string }
 
 export type ToolActivityKind =
@@ -88,7 +88,12 @@ export function buildProcessingDisplayRows(
       consecutiveFileChanges.length === 1
         ? consecutiveFileChanges[0]
         : mergeConsecutiveFileChanges(consecutiveFileChanges)
-    rows.push({ type: 'block', id: block.id, block })
+    rows.push({
+      type: 'block',
+      id: block.id,
+      block,
+      sourceBlockIds: consecutiveFileChanges.map(sourceBlock => sourceBlock.id),
+    })
     consecutiveFileChanges = []
   }
 
@@ -96,7 +101,7 @@ export function buildProcessingDisplayRows(
     if (block.type === 'tool' && isContextCompactionToolName(block.toolName)) {
       flushCompletedTools()
       flushFileChanges()
-      rows.push({ type: 'block', id: block.id, block })
+      rows.push({ type: 'block', id: block.id, block, sourceBlockIds: [block.id] })
       continue
     }
 
@@ -122,7 +127,7 @@ export function buildProcessingDisplayRows(
 
     flushCompletedTools()
     flushFileChanges()
-    rows.push({ type: 'block', id: block.id, block })
+    rows.push({ type: 'block', id: block.id, block, sourceBlockIds: [block.id] })
   }
 
   flushCompletedTools()

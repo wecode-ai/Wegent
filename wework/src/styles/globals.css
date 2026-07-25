@@ -464,6 +464,8 @@ button:disabled {
 
   .file-change-delta-number {
     position: relative;
+    z-index: 1;
+    isolation: isolate;
     display: inline-flex;
     min-width: 1.2em;
     align-items: center;
@@ -491,8 +493,9 @@ button:disabled {
 
   .file-change-delta-badge {
     position: absolute;
+    z-index: 1;
     inset-inline-start: 100%;
-    inset-block-start: -0.8em;
+    inset-block-start: -0.5em;
     margin-inline-start: 2px;
     color: currentColor;
     font-size: var(--text-xs);
@@ -531,7 +534,7 @@ button:disabled {
 
     100% {
       opacity: 0;
-      transform: translateY(-8px) scale(1);
+      transform: translateY(-5px) scale(1);
     }
   }
 

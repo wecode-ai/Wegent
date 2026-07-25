@@ -1,6 +1,6 @@
 import i18n from '@/i18n'
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
 import type { ProcessingBlock } from '@/types/workbench'
@@ -791,6 +791,92 @@ describe('ToolBlocksDisplay', () => {
 
     expect(screen.getByText('1.0s')).toBeInTheDocument()
     expect(screen.queryByText('9.0s')).not.toBeInTheDocument()
+  })
+
+  test('keeps an earlier edit completed when the same file is edited again after a command', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-25T00:00:10.000Z'))
+
+    const firstEdit: ProcessingBlock = {
+      id: 'first-edit',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: { input: '*** Update File: src/example.ts' },
+      status: 'done',
+      createdAt: Date.now() - 9000,
+      completedAt: Date.now() - 8000,
+    }
+    const firstFileChanges: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      id: 'first-file-changes',
+      createdAt: Date.now() - 7900,
+      fileChanges: {
+        ...completedFileChangesBlock.fileChanges,
+        artifact_id: 'first-artifact',
+        files: [
+          {
+            path: 'src/example.ts',
+            change_type: 'modified',
+            additions: 2,
+            deletions: 1,
+            binary: false,
+          },
+        ],
+      },
+    }
+    const command: ProcessingBlock = {
+      ...completedCommandBlock,
+      id: 'interleaved-command',
+      createdAt: Date.now() - 5000,
+      completedAt: Date.now() - 4000,
+    }
+    const secondEdit: ProcessingBlock = {
+      ...firstEdit,
+      id: 'second-edit',
+      status: 'streaming',
+      createdAt: Date.now() - 1000,
+      completedAt: undefined,
+    }
+    const secondFileChanges: ProcessingBlock = {
+      ...firstFileChanges,
+      id: 'second-file-changes',
+      status: 'streaming',
+      createdAt: Date.now() - 800,
+      fileChanges: {
+        ...firstFileChanges.fileChanges,
+        artifact_id: 'second-artifact',
+        additions: 4,
+        deletions: 0,
+        files: [
+          {
+            path: 'src/example.ts',
+            change_type: 'modified',
+            additions: 4,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[firstEdit, firstFileChanges, command, secondEdit, secondFileChanges]}
+        isStreaming={true}
+        forceExpanded
+      />
+    )
+
+    const fileChangeRows = screen.getAllByTestId('process-file-changes-block')
+    expect(fileChangeRows).toHaveLength(2)
+    expect(within(fileChangeRows[0]).getByText('1.0s')).toBeInTheDocument()
+    expect(within(fileChangeRows[1]).getByText('1.0s')).toBeInTheDocument()
+
+    act(() => vi.advanceTimersByTime(2000))
+
+    expect(within(fileChangeRows[0]).getByText('1.0s')).toBeInTheDocument()
+    expect(within(fileChangeRows[1]).getByText('3.0s')).toBeInTheDocument()
   })
 
   test('uses edit timing from the full message across narrative segment boundaries', () => {

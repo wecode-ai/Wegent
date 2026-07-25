@@ -39,7 +39,7 @@ interface ToolBlockItemProps {
   shimmer?: boolean
   durationStartedAt?: number
   durationEndAt?: number
-  fileEditDurations?: ReadonlyMap<string, FileEditDuration>
+  fileEditDurations?: FileEditDurationsByBlock
   forceExpanded?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
@@ -241,7 +241,7 @@ function ProcessFileChangesBlockItem({
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
   shimmer: boolean
-  fileEditDurations?: ReadonlyMap<string, FileEditDuration>
+  fileEditDurations?: FileEditDurationsByBlock
   onExpandedChange?: (expanded: boolean) => void
 }) {
   const { t } = useTranslation('chat')
@@ -265,6 +265,7 @@ function ProcessFileChangesBlockItem({
         {summary.files.map(file => {
           const previewLines = fileDiffPreviewLines(file, summary)
           const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
+          const editDuration = fileEditDurations?.get(block.id)?.get(file.path)
           return (
             <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
               <button
@@ -274,7 +275,7 @@ function ProcessFileChangesBlockItem({
                 onClick={() =>
                   setExpandedFilePath(current => (current === file.path ? null : file.path))
                 }
-                className="group flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
+                className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
                 <span
@@ -294,8 +295,8 @@ function ProcessFileChangesBlockItem({
                   />
                 ) : null}
                 <FileEditDurationText
-                  key={fileEditDurations?.get(file.path)?.id ?? block.id}
-                  duration={fileEditDurations?.get(file.path)}
+                  key={editDuration?.id ?? block.id}
+                  duration={editDuration}
                   fallbackStartedAt={block.createdAt}
                   fallbackCompletedAt={block.completedAt}
                   isRunning={isRunning}
@@ -315,6 +316,8 @@ export interface FileEditDuration {
   startedAt: number
   completedAt?: number
 }
+
+export type FileEditDurationsByBlock = ReadonlyMap<string, ReadonlyMap<string, FileEditDuration>>
 
 type FileChangeStatBlock = {
   id: string
