@@ -1416,6 +1416,11 @@ async function confirmLocalProjectName(control, name) {
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('local-project-create-dialog'),
+    'The local project create dialog did not close after confirmation'
+  )
 }
 
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
