@@ -937,12 +937,19 @@ async function verifyCompletedTurnFork({
 
 async function ensureTaskRowVisible(control, taskRowTestId) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const snapshot = await waitForSnapshot(
+      control,
+      value =>
+        value.testIds.includes(taskRowTestId) ||
+        value.testIds.some(testId => testId.startsWith('project-runtime-tasks-expand-')),
+      `Unable to find task row ${taskRowTestId} or a project task expansion control`,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
     if (snapshot.testIds.includes(taskRowTestId)) return
     const expandTasksButton = snapshot.testIds.find(testId =>
       testId.startsWith('project-runtime-tasks-expand-')
     )
-    assert.ok(expandTasksButton, `Unable to reveal task row ${taskRowTestId}`)
+    assert.ok(expandTasksButton)
     await control.command('click', `[data-testid="${expandTasksButton}"]`)
   }
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
