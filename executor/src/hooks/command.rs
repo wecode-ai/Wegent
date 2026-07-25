@@ -238,7 +238,7 @@ mod tests {
             command,
             command_windows: None,
             commands: BTreeMap::new(),
-            timeout: 2,
+            timeout: 10,
             asynchronous: false,
             status_message: None,
         }

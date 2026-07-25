@@ -11,7 +11,6 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 
-const MODEL_EXECUTION_CONFIG_KEY = 'weworkExecution'
 export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
 export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUserId'
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
@@ -33,16 +32,6 @@ function getRawStringConfigValue(
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function getObjectConfigValue(
-  config: Record<string, unknown> | null | undefined,
-  key: string
-): Record<string, unknown> | null {
-  const value = config?.[key]
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
-}
-
 function getBooleanConfigValue(
   config: Record<string, unknown> | null | undefined,
   key: string
@@ -57,20 +46,11 @@ function modelKind(model: UnifiedModel): string {
   )
 }
 
-function modelExecutionSource(model: UnifiedModel): string {
-  const override = getObjectConfigValue(model.config, MODEL_EXECUTION_CONFIG_KEY)
-  const source = override?.source
-  return typeof source === 'string' ? source : ''
-}
-
 function isLocalModel(model: UnifiedModel): boolean {
-  return modelExecutionSource(model) === 'local' || model.provider === 'local'
+  return model.provider === 'local'
 }
 
 function isCloudModel(model: UnifiedModel): boolean {
-  const source = modelExecutionSource(model)
-  if (source === 'cloud') return true
-  if (source === 'local') return false
   return model.provider !== 'local'
 }
 

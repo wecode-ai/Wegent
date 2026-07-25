@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -73,6 +73,8 @@ export function MessageTurnNavigation({
   const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
   const navigationScrollTimersRef = useRef<number[]>([])
+  const messagesRef = useRef(messages)
+  const turnNavigationRef = useRef(turnNavigation)
 
   const clearNavigationScrollTimers = useCallback(() => {
     navigationScrollTimersRef.current.forEach(timer => window.clearTimeout(timer))
@@ -139,11 +141,13 @@ export function MessageTurnNavigation({
     [clearNavigationScrollTimers, contentRef, onNavigationScrollTargetChange]
   )
 
-  const userTurns = useMemo(() => {
-    return turnNavigation && turnNavigation.length > 0
-      ? buildUserTurnsFromNavigation(turnNavigation, messages)
-      : buildUserTurns(messages)
-  }, [messages, turnNavigation])
+  const nextUserTurns = buildUserTurnsForNavigation(messages, turnNavigation)
+  const userTurnsSignature = getUserTurnsSignature(nextUserTurns)
+
+  useLayoutEffect(() => {
+    messagesRef.current = messages
+    turnNavigationRef.current = turnNavigation
+  }, [messages, turnNavigation, userTurnsSignature])
 
   const updateActiveMarker = useCallback(
     (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
@@ -181,14 +185,8 @@ export function MessageTurnNavigation({
     (reason: string) => {
       const scroller = scrollRef.current
       const content = contentRef.current
-      if (!scroller || !content || userTurns.length === 0) {
-        markersRef.current = []
-        setMarkers([])
-        setActiveMarkerId(null)
-        return
-      }
-
-      if (scroller.scrollHeight <= scroller.clientHeight + 8) {
+      const userTurns = buildUserTurnsForNavigation(messagesRef.current, turnNavigationRef.current)
+      if (!scroller || !content || userTurns.length < 2) {
         markersRef.current = []
         setMarkers([])
         setActiveMarkerId(null)
@@ -220,7 +218,7 @@ export function MessageTurnNavigation({
       setMarkers(nextMarkers)
       updateActiveMarker(nextMarkers, reason)
     },
-    [contentRef, scrollRef, updateActiveMarker, userTurns]
+    [contentRef, scrollRef, updateActiveMarker]
   )
 
   const scheduleCalculateMarkers = useCallback(
@@ -247,7 +245,7 @@ export function MessageTurnNavigation({
 
   useEffect(() => {
     scheduleCalculateMarkers('messages-effect')
-  }, [scheduleCalculateMarkers])
+  }, [scheduleCalculateMarkers, userTurnsSignature])
 
   useLayoutEffect(() => {
     if (!pendingScrollTarget) return
@@ -282,13 +280,19 @@ export function MessageTurnNavigation({
     window.addEventListener('resize', handleResize)
 
     const mutationObserver = new MutationObserver(() => scheduleCalculateMarkers('mutation'))
-    mutationObserver.observe(content, { childList: true })
+    mutationObserver.observe(content, {
+      attributes: true,
+      attributeFilter: ['style'],
+      childList: true,
+      subtree: true,
+    })
 
     const resizeObserver =
       typeof ResizeObserver === 'undefined'
         ? null
         : new ResizeObserver(() => scheduleCalculateMarkers('resize-observer'))
     resizeObserver?.observe(content)
+    resizeObserver?.observe(scroller)
 
     return () => {
       scroller.removeEventListener('scroll', handleScroll)
@@ -345,6 +349,21 @@ export function MessageTurnNavigation({
         return
       }
 
+      const loadedMessageId = findLoadedNavigationMessageId(messages, {
+        navigationId: marker.id,
+        messageIndex: marker.messageIndex,
+      })
+      if (loadedMessageId) {
+        setPendingScrollTarget({
+          navigationId: marker.id,
+          messageIndex: marker.messageIndex,
+        })
+        setLoadingMarkerId(marker.id)
+        onNavigationLoadStateChange?.(true)
+        onNavigationScrollTargetChange?.(loadedMessageId)
+        return
+      }
+
       if (!marker.cursor || !onLoadTurnNavigationItem) {
         return
       }
@@ -369,8 +388,10 @@ export function MessageTurnNavigation({
     [
       activeMarkerId,
       contentRef,
+      messages,
       onLoadTurnNavigationItem,
       onNavigationLoadStateChange,
+      onNavigationScrollTargetChange,
       scrollRef,
       scrollToMessageId,
     ]
@@ -487,6 +508,21 @@ export function MessageTurnNavigation({
   return portalTarget ? createPortal(navigation, portalTarget) : navigation
 }
 
+function buildUserTurnsForNavigation(
+  messages: WorkbenchMessage[],
+  navigation?: RuntimeTurnNavigationItem[]
+): UserTurn[] {
+  const messageTurns = buildUserTurns(messages)
+  if (!navigation || navigation.length === 0) return messageTurns
+
+  const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
+  return navigationTurns.length >= messageTurns.length ? navigationTurns : messageTurns
+}
+
+function getUserTurnsSignature(turns: UserTurn[]) {
+  return JSON.stringify(turns)
+}
+
 function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
   const turns: UserTurn[] = []
   const pendingResponsePreviewTurnIndexes: number[] = []
@@ -505,10 +541,13 @@ function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
     turns.push({
       id: message.id,
       turnIndex: turns.length,
-      messageIndex: index,
+      messageIndex:
+        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
       promptPreview: getUserPromptPreview(message),
       responsePreview: '',
-      cursor: `offset:${index}`,
+      cursor: `offset:${
+        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index
+      }`,
       loaded: true,
     })
     pendingResponsePreviewTurnIndexes.push(turns.length - 1)
@@ -521,6 +560,7 @@ function buildUserTurnsFromNavigation(
   navigation: RuntimeTurnNavigationItem[],
   messages: WorkbenchMessage[]
 ): UserTurn[] {
+  const loadedTurns = buildUserTurns(messages)
   const loadedMessagesByIndex = new Map(
     messages
       .filter(
@@ -531,7 +571,7 @@ function buildUserTurnsFromNavigation(
   )
   const loadedMessagesById = new Map(messages.map(message => [message.id, message]))
 
-  return navigation.map((item, index) => {
+  const navigationTurns = navigation.map((item, index) => {
     const loadedMessage =
       loadedMessagesByIndex.get(item.messageIndex) ?? loadedMessagesById.get(item.id)
     return {
@@ -544,6 +584,11 @@ function buildUserTurnsFromNavigation(
       loaded: Boolean(loadedMessage),
     }
   })
+  const navigationMessageIds = new Set(navigationTurns.map(turn => turn.id))
+
+  return [...navigationTurns, ...loadedTurns.filter(turn => !navigationMessageIds.has(turn.id))]
+    .sort((left, right) => left.messageIndex - right.messageIndex)
+    .map((turn, turnIndex) => ({ ...turn, turnIndex }))
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {

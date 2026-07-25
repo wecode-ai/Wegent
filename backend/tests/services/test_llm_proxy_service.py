@@ -12,6 +12,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.services.chat.trigger.unified import _build_codex_runtime_model_config
 from app.services.llm_proxy_service import (
+    _join_upstream_url,
     proxy_llm_responses,
     resolve_llm_proxy_model_config,
 )
@@ -60,6 +61,44 @@ def _model_kind(
         },
         is_active=True,
     )
+
+
+@pytest.mark.parametrize(
+    ("base_url", "endpoint_path", "expected"),
+    [
+        (
+            "https://api.anthropic.com",
+            "/v1/messages",
+            "https://api.anthropic.com/v1/messages",
+        ),
+        (
+            "https://api.anthropic.com/v1",
+            "/v1/messages",
+            "https://api.anthropic.com/v1/messages",
+        ),
+        (
+            "https://proxy.example.com/v1/messages",
+            "/v1/messages",
+            "https://proxy.example.com/v1/messages",
+        ),
+        (
+            "https://proxy.example.com/openai/v1",
+            "/responses",
+            "https://proxy.example.com/openai/v1/responses",
+        ),
+        (
+            "https://proxy.example.com/v1/chat/completions",
+            "/chat/completions",
+            "https://proxy.example.com/v1/chat/completions",
+        ),
+    ],
+)
+def test_join_upstream_url_appends_endpoint_once(
+    base_url: str,
+    endpoint_path: str,
+    expected: str,
+):
+    assert _join_upstream_url(base_url, endpoint_path) == expected
 
 
 @pytest.fixture
@@ -546,6 +585,55 @@ async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
     assert sent_request.headers["x-api-key"] == "sk-anthropic-key"
     assert sent_request.headers["anthropic-version"] == "2023-06-01"
     assert "Authorization" not in sent_request.headers
+
+
+async def test_proxy_llm_responses_does_not_duplicate_anthropic_version_path(
+    test_db, test_user: User
+):
+    model = _model_kind(
+        test_user.id,
+        name="anthropic-versioned-base-model",
+        protocol="claude",
+        api_key="sk-anthropic-key",
+        base_url="https://api.anthropic.com/v1",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"anthropic-versioned-base-model","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    upstream_response_mock = MagicMock()
+    upstream_response_mock.status_code = 200
+    upstream_response_mock.headers = {"content-type": "text/event-stream"}
+
+    async def fake_aiter_raw():
+        yield b"data: ok\n\n"
+
+    upstream_response_mock.aiter_raw = fake_aiter_raw
+    client_mock = AsyncMock()
+    client_mock.send = AsyncMock(return_value=upstream_response_mock)
+    client_mock.aclose = AsyncMock()
+
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient",
+        return_value=client_mock,
+    ):
+        response = await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert response.status_code == 200
+    sent_request = client_mock.send.call_args[0][0]
+    assert str(sent_request.url) == "https://api.anthropic.com/v1/messages"
 
 
 async def test_proxy_llm_responses_forwards_responses_to_provider(

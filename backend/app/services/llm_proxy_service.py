@@ -7,6 +7,7 @@
 import json
 import logging
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import HTTPException, Request, status
@@ -129,6 +130,28 @@ def _resolve_upstream_target(
             "'claude'/'anthropic-messages' for Anthropic Messages."
         ),
     )
+
+
+def _join_upstream_url(base_url: str, endpoint_path: str) -> str:
+    """Append an endpoint path without duplicating existing path segments."""
+    parsed = urlsplit(base_url.strip())
+    base_segments = [segment for segment in parsed.path.split("/") if segment]
+    endpoint_segments = [
+        segment for segment in endpoint_path.strip().split("/") if segment
+    ]
+
+    max_overlap = min(len(base_segments), len(endpoint_segments))
+    overlap = next(
+        (
+            size
+            for size in range(max_overlap, 0, -1)
+            if base_segments[-size:] == endpoint_segments[:size]
+        ),
+        0,
+    )
+    path_segments = [*base_segments, *endpoint_segments[overlap:]]
+    path = f"/{'/'.join(path_segments)}" if path_segments else ""
+    return urlunsplit(parsed._replace(path=path))
 
 
 def _is_protected_upstream_header(name: str) -> bool:
@@ -337,7 +360,7 @@ async def proxy_llm_responses(
     body_json["model"] = provider_model_id
     body_bytes = json.dumps(body_json).encode("utf-8")
     upstream_path, auth_headers = _resolve_upstream_target(model_name, model_config)
-    upstream_url = f"{provider_base_url.rstrip('/')}{upstream_path}"
+    upstream_url = _join_upstream_url(provider_base_url, upstream_path)
 
     configured_headers = (
         {str(key): str(value) for key, value in default_headers.items()}

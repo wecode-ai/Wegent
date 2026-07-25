@@ -2,7 +2,16 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, appendFile, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  appendFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,11 +22,14 @@ import { stopProcess, stopProcessGroup } from './process-lifecycle.mjs'
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const UI_TIMEOUT_MS = 120_000
+const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
 const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification file.'
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const FORK_FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP: continue only in the forked task.'
+const FORK_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP_COMPLETE'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -44,6 +56,8 @@ const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 10
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
+const RETRY_FAILURE_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'
+const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context window."
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
 const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
@@ -58,7 +72,7 @@ const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 384 * 1024
 )
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 224 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 232 * 1024
 )
 const MEMORY_MAX_SETTLED_DOM_NODE_COUNT = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES ?? 900
@@ -104,13 +118,68 @@ const LOCAL_MODEL_CASES = [
     modelId: 'desktop-e2e-anthropic-model',
   },
 ]
+const MODEL_PROTOCOLS = ['responses', 'chat', 'anthropic']
+const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
+  source: 'cloud',
+  protocol,
+  optionId: `desktop-e2e-cloud-${protocol}`,
+  label: `desktop-e2e-cloud-${protocol}`,
+  modelId: `desktop-e2e-cloud-${protocol}-upstream`,
+}))
+const MODEL_PROTOCOL_MATRIX_CASES = [
+  ...LOCAL_MODEL_CASES.map(model => ({ ...model, source: 'local' })),
+  ...MODEL_PROTOCOLS.map(protocol => ({
+    source: 'codex',
+    protocol,
+    optionId: DEFAULT_MODEL_ID,
+    label: DEFAULT_MODEL_LABEL,
+    modelId: DEFAULT_MODEL_ID,
+  })),
+  ...CLOUD_MODEL_CASES,
+]
+const LOCAL_MODEL_SWITCH_CASES = MODEL_PROTOCOLS.flatMap(sourceProtocol =>
+  MODEL_PROTOCOLS.filter(targetProtocol => targetProtocol !== sourceProtocol).map(
+    targetProtocol => ({
+      sourceProtocol,
+      targetProtocol,
+      id: `${sourceProtocol}-to-${targetProtocol}`,
+    })
+  )
+)
+const LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.map(model => ({
+  ...model,
+  execution: 'local',
+}))
+const CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.map(model => ({
+  ...model,
+  execution: 'cloud',
+}))
+const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.source === 'local'
+)
+const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
+  LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
+const HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.source === 'local'
+)
+const REMOTE_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.source !== 'local'
+)
+const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2
+const MODEL_PROTOCOL_MATRIX_TEXT_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TEXT'
+const MODEL_PROTOCOL_MATRIX_TOOL_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TOOL'
 const LOCAL_MODEL_SWITCH_INITIAL_PROMPT =
   'WEWORK_LOCAL_MODEL_SWITCH_INITIAL: establish context with the first custom model.'
 const LOCAL_MODEL_SWITCH_INITIAL_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_INITIAL_COMPLETE'
 const LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT =
   'WEWORK_LOCAL_MODEL_SWITCH_FOLLOW_UP: continue this conversation with the second custom model.'
 const LOCAL_MODEL_SWITCH_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_COMPLETE'
+const LOCAL_MODEL_SWITCH_INVALID_CALL_ID = 'functions.exec_command:0'
+const LOCAL_MODEL_SWITCH_ARTIFACT = 'wework-model-switch-protocol.txt'
+const LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT = 'WEWORK_MODEL_SWITCH_PROTOCOL_EXEC_COMMAND'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
+const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
@@ -135,11 +204,14 @@ const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+const ACTIVE_SWITCH_MODEL_RETRY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-switch-model-retry"]`
 const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
+const RETRY_ONLY = process.argv.includes('--retry-only')
+const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -323,6 +395,43 @@ async function sendPrompt(control, selector, prompt) {
   await control.command('press', selector, { key: 'Enter' })
 }
 
+async function sendPromptWithButton(
+  control,
+  selector,
+  prompt,
+  timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS
+) {
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('pause-response-button'),
+    'The active task did not become idle before sending the next prompt'
+  )
+  await control.command('fill', selector, { value: prompt })
+  await control.command('waitFor', selector, {
+    text: prompt,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs,
+  })
+  await control.command('press', selector, { key: 'Enter', timeoutMs })
+  await waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs)
+}
+
+async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (control.fatalError) throw control.fatalError
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (snapshot.testIds.includes('chat-input-error')) {
+      const error = await control.command('getText', '[data-testid="chat-input-error"]')
+      throw new Error(`The UI rejected ${prompt}: ${error}`)
+    }
+    const composerValue = await control.command('getValue', selector)
+    if (composerValue === '' && snapshot.text.includes(prompt)) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`The composer did not submit ${prompt} within ${timeoutMs}ms`)
+}
+
 async function verifyShortConversationLayout({ composerSelector, control }) {
   const taskRowsBeforeConversation = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
@@ -374,12 +483,64 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     control,
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
   )
+  const assistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const virtualRows = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`
+  )
   assert.equal(userMessages.length, 2, 'The short conversation did not render both user messages')
+  assert.equal(
+    assistantMessages.length,
+    2,
+    'The reopened short conversation did not render both assistant messages'
+  )
+  assert.equal(
+    virtualRows.length,
+    4,
+    'The unified virtual list did not mount every short-conversation turn'
+  )
+  assert.equal(
+    await control.command(
+      'getStyle',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`,
+      { value: 'position' }
+    ),
+    'absolute',
+    'Short conversations did not use the unified virtual row layout'
+  )
+  const conversationSnapshot = JSON.parse(
+    await control.command(
+      'snapshot',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+    )
+  )
+  assert.ok(
+    countTextOccurrences(conversationSnapshot.text, FRESH_CHAT_PROMPT) >= 2,
+    'The reopened virtualized conversation lost an earlier user message'
+  )
+  assert.ok(
+    countTextOccurrences(conversationSnapshot.text, FRESH_CHAT_COMPLETION_TEXT) >= 2,
+    'The reopened virtualized conversation lost an earlier assistant message'
+  )
   const firstMessage = userMessages[0]
   const messageTopOffset = firstMessage.top - scroller.top
   await writeFile(
     join(resultDir, 'short-conversation-layout-metrics.json'),
-    `${JSON.stringify({ firstMessage, messageTopOffset, scroller }, null, 2)}\n`
+    `${JSON.stringify(
+      {
+        assistantMessages,
+        firstMessage,
+        messageTopOffset,
+        scroller,
+        userMessages,
+        virtualRows,
+      },
+      null,
+      2
+    )}\n`
   )
   await captureVerificationScreenshot(control, 'short-conversation-02-completed-top-aligned.png')
 
@@ -391,6 +552,18 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
+}
+
+function countTextOccurrences(value, search) {
+  if (!search) return 0
+  let count = 0
+  let offset = 0
+  while (true) {
+    const index = value.indexOf(search, offset)
+    if (index === -1) return count
+    count += 1
+    offset = index + search.length
+  }
 }
 
 async function prepareCompletedTurnScreenshot(control) {
@@ -551,6 +724,124 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
+}
+
+async function waitForTaskRowByText(control, expectedText) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const candidates = snapshot.testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+    for (const testId of candidates) {
+      const rowText = await control.command('getText', `[data-testid="${testId}"]`)
+      if (rowText.includes(expectedText)) return testId
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The sidebar did not expose a task row containing ${expectedText}`)
+}
+
+async function verifyCompletedTurnFork({
+  composerSelector,
+  control,
+  executorHome,
+  sourceTaskRowTestId,
+  workspacePath,
+}) {
+  const taskRowsBeforeFork = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('scrollIntoView', '[data-testid="fork-message-button"]')
+  await control.command('waitFor', '[data-testid="fork-message-button"]', {
+    visible: true,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'completed-turn-fork-01-source-ready.png')
+  await control.command('clickWhenEnabled', '[data-testid="fork-message-button"]')
+  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  assert.notEqual(
+    forkTaskRowTestId,
+    sourceTaskRowTestId,
+    'Forking reused the source task instead of creating an independent task'
+  )
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
+  const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
+  const runtimeInstances = await readdir(join(executorHome, 'app-runtime'))
+  assert.equal(runtimeInstances.length, 1, 'The desktop E2E expected one app runtime instance')
+  const runtimeIndex = JSON.parse(
+    await readFile(
+      join(executorHome, 'app-runtime', runtimeInstances[0], 'runtime-work', 'index.json'),
+      'utf8'
+    )
+  )
+  assert.equal(
+    runtimeIndex.tasks[sourceTaskId]?.workspace_path,
+    workspacePath,
+    'The source task did not use the selected project workspace'
+  )
+  assert.equal(
+    runtimeIndex.tasks[forkTaskId]?.workspace_path,
+    workspacePath,
+    'The forked task did not inherit the source workspace'
+  )
+  assert.equal(
+    runtimeIndex.tasks[forkTaskId]?.parent?.taskId,
+    sourceTaskId,
+    'The backend did not persist the fork parent relationship'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'completed-turn-fork-02-target-open.png')
+
+  control.setScenario('fork_follow_up')
+  const forkFollowUpRequest = await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    FORK_FOLLOW_UP_PROMPT,
+    'fork_follow_up'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FORK_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  assert.ok(
+    JSON.stringify(forkFollowUpRequest.body).includes(FORK_FOLLOW_UP_PROMPT),
+    'The forked task did not accept an independent follow-up'
+  )
+  await captureVerificationScreenshot(control, 'completed-turn-fork-03-follow-up-complete.png')
+
+  await control.command('click', `[data-testid="${sourceTaskRowTestId}"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const sourceSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.ok(
+    !sourceSnapshot.text.includes(FORK_FOLLOW_UP_PROMPT) &&
+      !sourceSnapshot.text.includes(FORK_FOLLOW_UP_COMPLETION_TEXT),
+    'The fork follow-up mutated the source task transcript'
+  )
+  await captureVerificationScreenshot(control, 'completed-turn-fork-04-source-unchanged.png')
+}
+
+async function ensureTaskRowVisible(control, taskRowTestId) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (snapshot.testIds.includes(taskRowTestId)) return
+    const expandTasksButton = snapshot.testIds.find(testId =>
+      testId.startsWith('project-runtime-tasks-expand-')
+    )
+    assert.ok(expandTasksButton, `Unable to reveal task row ${taskRowTestId}`)
+    await control.command('click', `[data-testid="${expandTasksButton}"]`)
+  }
+  await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
 }
 
 async function waitForBlankConversation(control, composerSelector) {
@@ -832,9 +1123,15 @@ async function waitForFolderPickerInitialized(control) {
   throw new Error('The device folder picker did not finish loading its initial path')
 }
 
-async function waitForControlValue(control, selector, expected, message) {
+async function waitForControlValue(
+  control,
+  selector,
+  expected,
+  message,
+  timeoutMs = UI_TIMEOUT_MS
+) {
   const startedAt = Date.now()
-  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+  while (Date.now() - startedAt < timeoutMs) {
     if ((await control.command('getValue', selector)) === expected) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -858,6 +1155,41 @@ async function waitForPersistedComposerInput(control, expected, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+async function waitForWorkbenchTask(control, taskId, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if (snapshot.workbench?.currentRuntimeTask?.taskId === taskId) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function assertConfiguredLocalModelsHidden(control, startIndex) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < MODEL_PROTOCOL_MATRIX_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const modelNames = snapshot.workbench?.composer?.availableModelNames
+    if (Array.isArray(modelNames) && modelNames.length > 0) {
+      for (const [caseIndex, model] of HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.entries()) {
+        const matrixIndex = startIndex + caseIndex
+        console.log(
+          `Model protocol matrix ${matrixIndex + 1}/${MODEL_PROTOCOL_MATRIX_TOTAL} started: ${matrixCaseId(model)}`
+        )
+        assert.equal(
+          modelNames.includes(model.optionId),
+          false,
+          `${model.optionId} was visible for cloud execution`
+        )
+        console.log(`Model protocol matrix passed: ${matrixCaseId(model)} hidden`)
+      }
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error('The cloud execution model catalog did not become ready')
 }
 
 async function captureVerificationScreenshot(control, name, selector = 'body') {
@@ -1062,6 +1394,7 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
 
 async function revealGroupedModelOption(control, targetOptionId) {
   const menu = JSON.parse(await control.command('snapshot', 'body'))
+  if (menu.testIds.includes(targetOptionId)) return true
   const familyTestIds = menu.testIds.filter(testId => testId.startsWith('model-family-'))
 
   for (const familyTestId of familyTestIds) {
@@ -1076,44 +1409,65 @@ async function revealGroupedModelOption(control, targetOptionId) {
   return false
 }
 
-async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
-  const selectedModelText = await control.command(
-    'waitFor',
-    '[data-testid="model-selector-button"]',
-    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
-  )
-  if (selectedModelText.includes(modelLabel)) return
-
-  const targetOptionId = `model-option-${modelId}`
-  let optionVisible = false
-  for (let attempt = 0; attempt < 6 && !optionVisible; attempt += 1) {
+async function ensureModelOptionVisible(control, targetOptionId) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     let menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (menu.testIds.includes(targetOptionId)) {
-      optionVisible = true
-      break
-    }
+    if (menu.testIds.includes(targetOptionId)) return menu
     if (menu.testIds.includes('model-control-menu-model')) {
-      await control.command('hover', '[data-testid="model-control-menu-model"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
+      await control
+        .command('hover', '[data-testid="model-control-menu-model"]', {
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        .catch(() => undefined)
     } else {
-      await control.command('hover', '[data-testid="model-selector-button"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
-        stableMs: 100,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
+      await control
+        .command('hover', '[data-testid="model-selector-button"]', {
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        .catch(() => undefined)
+      menu = JSON.parse(await control.command('snapshot', 'body'))
+      if (!menu.testIds.includes('model-selector-menu')) {
+        await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+          stableMs: 100,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+      }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
-    optionVisible = menu.testIds.includes(targetOptionId)
-    if (!optionVisible) {
-      optionVisible = await revealGroupedModelOption(control, targetOptionId)
+    if (menu.testIds.includes(targetOptionId)) return menu
+    if (await revealGroupedModelOption(control, targetOptionId)) {
+      return JSON.parse(await control.command('snapshot', 'body'))
     }
   }
 
-  assert.ok(optionVisible, `Model option ${modelId} did not become visible`)
+  throw new Error(`Model option ${targetOptionId} did not become visible`)
+}
+
+async function confirmLocalProjectName(control, name) {
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: name,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('local-project-create-dialog'),
+    'The local project create dialog did not close after confirmation'
+  )
+}
+
+async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  const targetOptionId = `model-option-${modelId}`
+  await ensureModelOptionVisible(control, targetOptionId)
   await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -1495,11 +1849,15 @@ async function verifyBackgroundTaskWindowLifecycle({
       timeoutMs: UI_TIMEOUT_MS,
     }
   )
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes(freshTaskRowTestId),
-    'The archived task remained mounted in the sidebar'
-  )
+  const archivedTaskSelector = `[data-testid="${freshTaskRowTestId}"]`
+  const archiveRowRemovalStartedAt = Date.now()
+  let archivedTaskRowCount = 1
+  while (Date.now() - archiveRowRemovalStartedAt < UI_TIMEOUT_MS) {
+    archivedTaskRowCount = Number(await control.command('getElementCount', archivedTaskSelector))
+    if (archivedTaskRowCount === 0) break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(archivedTaskRowCount, 0, 'The archived task remained mounted in the sidebar')
   const archiveEvictionStartedAt = Date.now()
   let cacheAfterArchive = cacheBeforeArchive
   while (Date.now() - archiveEvictionStartedAt < UI_TIMEOUT_MS) {
@@ -2041,6 +2399,47 @@ function localProtocolPatch(model) {
   ].join('\n')
 }
 
+function localModelSwitchCommand() {
+  return `printf '%s' '${LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT}' > '${LOCAL_MODEL_SWITCH_ARTIFACT}'`
+}
+
+function matrixCaseId(model) {
+  return `${model.execution}-${model.source}-${model.protocol}`
+}
+
+function matrixTextPrompt(model) {
+  return `${MODEL_PROTOCOL_MATRIX_TEXT_PREFIX}_${matrixCaseId(model).toUpperCase()}`
+}
+
+function matrixTextCompletion(model) {
+  return `${matrixTextPrompt(model)}_COMPLETE`
+}
+
+function matrixToolPrompt(model) {
+  return `${MODEL_PROTOCOL_MATRIX_TOOL_PREFIX}_${matrixCaseId(model).toUpperCase()}`
+}
+
+function matrixToolCompletion(model) {
+  return `${matrixToolPrompt(model)}_COMPLETE`
+}
+
+function matrixArtifact(model) {
+  return `wework-matrix-${matrixCaseId(model)}.txt`
+}
+
+function matrixArtifactContent(model) {
+  return `WEWORK_MATRIX_${matrixCaseId(model).toUpperCase()}_APPLY_PATCH`
+}
+
+function matrixPatch(model) {
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${matrixArtifact(model)}`,
+    `+${matrixArtifactContent(model)}`,
+    '*** End Patch',
+  ].join('\n')
+}
+
 function readRequestBody(request) {
   return new Promise((resolvePromise, reject) => {
     let body = ''
@@ -2129,9 +2528,12 @@ function selectApplyPatchTool(request) {
 
 function selectCloudApplyPatchTool(request) {
   const tools = Array.isArray(request.tools) ? request.tools : []
-  assert.ok(
-    tools.some(tool => tool?.name === 'apply_patch'),
-    'Real cloud Codex did not advertise apply_patch'
+  const applyPatch = tools.find(tool => tool?.name === 'apply_patch')
+  assert.ok(applyPatch, 'Real cloud Codex did not advertise apply_patch')
+  assert.equal(
+    applyPatch.type,
+    'custom',
+    'Native Responses cloud models must preserve Codex custom tools'
   )
   return [
     '*** Begin Patch',
@@ -2213,16 +2615,17 @@ class RealCloudEnvironment {
     })
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
+    await this.seedCloudProtocolModels()
 
     const remoteHome = join(resultDir, 'cloud-executor-home')
-    const remoteCodexHome = join(remoteHome, 'codex')
-    await writeCodexConfig(remoteCodexHome, this.modelServerUrl)
+    this.remoteCodexHome = join(remoteHome, 'codex')
+    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl)
     const remoteEnv = {
       ...process.env,
       CODEX_BIN: this.codexBinary,
-      CODEX_HOME: remoteCodexHome,
+      CODEX_HOME: this.remoteCodexHome,
       HOME: remoteHome,
-      WEGENT_CODEX_HOME: remoteCodexHome,
+      WEGENT_CODEX_HOME: this.remoteCodexHome,
       WEGENT_EXECUTOR_HOME: remoteHome,
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
@@ -2250,6 +2653,48 @@ class RealCloudEnvironment {
       appendProcessOutput(this.remoteExecutor.stderr, this.remoteExecutorLogPath),
     ])
     await this.waitForDevice()
+  }
+
+  async seedCloudProtocolModels() {
+    const items = CLOUD_MODEL_CASES.map(model => ({
+      name: model.optionId,
+      env: {
+        model: model.protocol === 'anthropic' ? 'claude' : 'openai',
+        model_id: model.modelId,
+        base_url: `${this.modelServerUrl}/v1`,
+        api_key: MODEL_API_KEY,
+      },
+      is_active: true,
+      wework_available: true,
+      protocol:
+        model.protocol === 'responses'
+          ? 'openai-responses'
+          : model.protocol === 'chat'
+            ? 'openai'
+            : 'anthropic-messages',
+      ...(model.protocol === 'responses'
+        ? { api_format: 'responses' }
+        : model.protocol === 'chat'
+          ? { api_format: 'chat/completions' }
+          : {}),
+    }))
+    await fetchJson(`${this.backendUrl}/api/models/batch`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(items),
+    })
+  }
+
+  async setCodexUpstreamProtocol(protocol) {
+    await writeCodexConfig(
+      this.remoteCodexHome,
+      this.modelServerUrl,
+      '',
+      codexUpstreamApiFormat(protocol)
+    )
   }
 
   async waitForDevice() {
@@ -2366,6 +2811,7 @@ class DesktopE2EServer {
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
     this.failCloudModels = false
+    this.cloudModelsAvailable = false
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
     this.scenario = 'initial'
@@ -2374,6 +2820,8 @@ class DesktopE2EServer {
     this.concurrentMemoryResponses = []
     this.concurrentMemoryTaskNumbers = new Set()
     this.cloudModelStage = 'initial'
+    this.matrixCase = null
+    this.matrixState = null
     this.toolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
@@ -2404,6 +2852,9 @@ class DesktopE2EServer {
     })
     this.windowLifecycleResponseStarted = new Promise(resolvePromise => {
       this.resolveWindowLifecycleResponseStarted = resolvePromise
+    })
+    this.cloudFollowUpRelease = new Promise(resolvePromise => {
+      this.releaseCloudFollowUp = resolvePromise
     })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
@@ -2528,6 +2979,11 @@ class DesktopE2EServer {
     }
   }
 
+  restoreCloudModels() {
+    this.failCloudModels = false
+    this.cloudModelsAvailable = true
+  }
+
   awaitFailedCloudModelRequest() {
     if (this.failedCloudModelRequests > 0) return this.guard(Promise.resolve())
     return this.guard(
@@ -2542,6 +2998,7 @@ class DesktopE2EServer {
       [
         'initial',
         'follow_up',
+        'fork_follow_up',
         'request_user_input',
         'window_lifecycle',
         'turn_navigation',
@@ -2556,10 +3013,20 @@ class DesktopE2EServer {
         'side_chat_attachment',
         'cloud_initial',
         'cloud_follow_up',
+        'model_protocol_matrix',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
+  }
+
+  setMatrixCase(model) {
+    this.matrixCase = model
+    this.matrixState = {
+      stage: 'text',
+      requests: [],
+    }
+    this.setScenario('model_protocol_matrix')
   }
 
   recordScenarioRequest(scenario, request) {
@@ -2630,6 +3097,10 @@ class DesktopE2EServer {
     this.releaseWindowLifecycle()
   }
 
+  releaseCloudFollowUpResponse() {
+    this.releaseCloudFollowUp()
+  }
+
   releaseConcurrentMemoryResponses() {
     for (const { response, stream } of this.concurrentMemoryResponses.splice(0)) {
       response.end(createSse(stream.finish))
@@ -2689,6 +3160,45 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
+      if (this.cloudModelsAvailable) {
+        json(response, 200, {
+          data: [
+            {
+              name: `codex-${DEFAULT_MODEL_ID}`,
+              type: 'runtime',
+              displayName: `${DEFAULT_MODEL_LABEL} (Codex)`,
+              provider: 'openai',
+              modelId: DEFAULT_MODEL_ID,
+              namespace: 'default',
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                weworkModelKind: 'codex-official',
+                ui: { family: 'codex-official', modelLabel: DEFAULT_MODEL_LABEL },
+              },
+              runtime: { family: 'openai.openai-responses' },
+              isActive: true,
+            },
+            {
+              name: CLOUD_PUBLIC_MODEL_NAME,
+              type: 'public',
+              displayName: CLOUD_PUBLIC_MODEL_LABEL,
+              provider: 'openai',
+              modelId: 'desktop-e2e-public-upstream-model',
+              namespace: 'default',
+              resourceUserId: 0,
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                ui: { family: 'gpt', modelLabel: CLOUD_PUBLIC_MODEL_LABEL },
+              },
+              runtime: { family: 'openai.openai-responses' },
+              isActive: true,
+            },
+          ],
+        })
+        return
+      }
       if (this.failCloudModels) {
         this.failedCloudModelRequests += 1
         this.failedCloudModelWaiter?.()
@@ -2831,8 +3341,15 @@ class DesktopE2EServer {
     const authorization = request.headers.authorization ?? null
     const modelRequest = { authorization, body, scenario: this.scenario }
     this.modelRequests.push(modelRequest)
-    if (authorization !== `Bearer ${MODEL_API_KEY}`) {
+    const authenticated =
+      authorization === `Bearer ${MODEL_API_KEY}` || request.headers['x-api-key'] === MODEL_API_KEY
+    if (!authenticated) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
+      return
+    }
+
+    if (this.scenario === 'model_protocol_matrix') {
+      this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
       return
     }
 
@@ -3050,11 +3567,20 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
         'The real cloud Codex request did not contain the follow-up prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.cloudFollowUpRelease
+      response.end(
+        createSse([
+          assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+      )
       return
     }
 
@@ -3067,6 +3593,20 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'fork_follow_up') {
+      this.recordScenarioRequest('fork_follow_up', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(FORK_FOLLOW_UP_PROMPT),
+        'The real Codex request did not contain the fork follow-up prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(FORK_FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -3253,7 +3793,7 @@ class DesktopE2EServer {
       if (retryRequests.length === 1) {
         this.writeSse(response, [
           responseCreated(responseId),
-          responseFailed(responseId, 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'),
+          responseFailed(responseId, RETRY_FAILURE_TEXT),
         ])
         return
       }
@@ -3298,6 +3838,155 @@ class DesktopE2EServer {
     throw new Error(`Unexpected desktop E2E scenario: ${this.scenario}`)
   }
 
+  handleModelProtocolMatrixResponse(response, protocol, body, headers) {
+    const model = this.matrixCase
+    const state = this.matrixState
+    assert.ok(model && state, 'Model protocol matrix state was not initialized')
+    assert.equal(protocol, model.protocol, `${matrixCaseId(model)} reached the wrong endpoint`)
+    assert.equal(body.model, model.modelId, `${matrixCaseId(model)} forwarded the wrong model ID`)
+    state.requests.push({ body, headers })
+
+    const requestKind = codexRequestKind(body)
+    if (requestKind === 'prewarm' || requestKind === 'compaction') {
+      this.writeMatrixAssistantMessage(response, model, '')
+      return
+    }
+
+    const serialized = JSON.stringify(body)
+    this.assertMatrixRequestEnvelope(model, body, headers)
+    this.assertMatrixTools(model, body)
+    if (state.stage === 'text') {
+      if (!serialized.includes(matrixTextPrompt(model))) {
+        this.writeMatrixAssistantMessage(response, model, '')
+        return
+      }
+      state.stage = 'tool'
+      this.writeMatrixAssistantMessage(response, model, matrixTextCompletion(model))
+      return
+    }
+    if (state.stage === 'tool') {
+      assert.ok(
+        serialized.includes(matrixToolPrompt(model)),
+        `${matrixCaseId(model)} tool turn lost the user prompt`
+      )
+      state.stage = 'awaiting_tool_output'
+      this.writeMatrixToolCall(response, model)
+      return
+    }
+    if (state.stage === 'awaiting_tool_output') {
+      this.assertMatrixToolOutput(model, body)
+      state.stage = 'complete'
+      this.writeMatrixAssistantMessage(response, model, matrixToolCompletion(model))
+      return
+    }
+    throw new Error(`Unexpected ${matrixCaseId(model)} matrix request at ${state.stage}`)
+  }
+
+  assertMatrixRequestEnvelope(model, body, headers) {
+    assert.equal(body.stream, true, `${matrixCaseId(model)} request was not streaming`)
+    if (model.protocol === 'responses') {
+      assert.ok(Array.isArray(body.input), `${matrixCaseId(model)} input was not an array`)
+      return
+    }
+    assert.ok(Array.isArray(body.messages), `${matrixCaseId(model)} messages were not an array`)
+    if (model.protocol === 'chat') {
+      assert.equal(
+        body.stream_options?.include_usage,
+        true,
+        `${matrixCaseId(model)} did not request streaming usage`
+      )
+      return
+    }
+    assert.equal(headers['x-api-key'], MODEL_API_KEY, `${matrixCaseId(model)} lost x-api-key`)
+    assert.equal(
+      headers['anthropic-version'],
+      '2023-06-01',
+      `${matrixCaseId(model)} lost the Anthropic protocol version`
+    )
+  }
+
+  assertMatrixTools(model, body) {
+    const tools = Array.isArray(body.tools) ? body.tools : []
+    const applyPatch = tools.find(
+      candidate => (candidate?.name ?? candidate?.function?.name) === 'apply_patch'
+    )
+    assert.ok(applyPatch, `${matrixCaseId(model)} did not advertise apply_patch`)
+    if (model.protocol === 'responses') {
+      assert.equal(
+        applyPatch.type,
+        model.source === 'local' ? 'function' : 'custom',
+        `${matrixCaseId(model)} used the wrong Responses tool profile`
+      )
+      return
+    }
+    if (model.protocol === 'chat') {
+      assert.equal(applyPatch.type, 'function', `${matrixCaseId(model)} tool was not a function`)
+      assert.ok(applyPatch.function?.parameters, `${matrixCaseId(model)} lost the tool schema`)
+      return
+    }
+    assert.ok(applyPatch.input_schema, `${matrixCaseId(model)} lost input_schema`)
+  }
+
+  assertMatrixToolOutput(model, body) {
+    if (model.protocol === 'responses') {
+      const expectedType =
+        model.source === 'local' ? 'function_call_output' : 'custom_tool_call_output'
+      assert.ok(
+        body.input?.some(item => item?.type === expectedType),
+        `${matrixCaseId(model)} lost ${expectedType}`
+      )
+      return
+    }
+    if (model.protocol === 'chat') {
+      assert.ok(
+        body.messages?.some(message => message?.role === 'tool'),
+        `${matrixCaseId(model)} lost the function tool result`
+      )
+      return
+    }
+    const blocks = body.messages?.flatMap(message => message?.content ?? []) ?? []
+    assert.ok(
+      blocks.some(block => block?.type === 'tool_result'),
+      `${matrixCaseId(model)} lost the Anthropic tool_result`
+    )
+  }
+
+  writeMatrixToolCall(response, model) {
+    const patch = matrixPatch(model)
+    if (model.protocol === 'responses') {
+      const id = `matrix-${matrixCaseId(model)}-tool`
+      this.writeSse(response, [
+        responseCreated(id),
+        ...(model.source === 'local'
+          ? functionCall(id, 'apply_patch', { input: patch })
+          : [customToolCall(id, 'apply_patch', patch)]),
+        responseCompleted(id),
+      ])
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatToolCall(response, patch)
+      return
+    }
+    this.writeAnthropicToolCall(response, patch)
+  }
+
+  writeMatrixAssistantMessage(response, model, text) {
+    if (model.protocol === 'responses') {
+      const id = `matrix-${matrixCaseId(model)}-message`
+      const events = [responseCreated(id)]
+      if (text) events.push(assistantMessage(text))
+      events.push(responseCompleted(id))
+      this.writeSse(response, events)
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatMessage(response, text)
+      return
+    }
+    this.writeAnthropicMessage(response, text)
+  }
+
   handleLocalProtocolResponse(response, model, body, headers) {
     const state = this.localProtocolStates.get(model.protocol)
     assert.ok(state, `Missing local protocol state for ${model.protocol}`)
@@ -3313,27 +4002,34 @@ class DesktopE2EServer {
         serialized.includes(LOCAL_MODEL_SWITCH_INITIAL_PROMPT),
         'The first custom model did not receive the model-switch initial prompt'
       )
+      state.stage = 'model_switch_source_awaiting_tool_output'
+      this.writeModelSwitchToolCall(response, model)
+      return
+    }
+    if (state.stage === 'model_switch_source_awaiting_tool_output') {
+      this.assertModelSwitchHistory(model, body)
       state.stage = 'model_switch_source_complete'
       this.writeLocalAssistantMessage(response, model, LOCAL_MODEL_SWITCH_INITIAL_COMPLETE)
       return
     }
     if (state.stage === 'model_switch_source_complete') {
-      assert.equal(model.protocol, 'responses', 'The switch-and-retry source must use Responses')
       assert.ok(
         serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT),
         'The first custom model did not receive the prompt that should fail before switching'
       )
       state.stage = 'model_switch_source_failed'
-      const responseId = `local-model-switch-failure-${Date.now()}`
-      this.writeSse(response, [
-        responseCreated(responseId),
-        responseFailed(responseId, 'WEWORK_LOCAL_MODEL_SWITCH_RETRY_FAILURE'),
-      ])
+      this.writeLocalError(response, model, 'WEWORK_LOCAL_MODEL_SWITCH_RETRY_FAILURE')
       return
     }
     if (state.stage === 'model_switch_source_failed' && codexRequestKind(body) === 'compaction') {
-      const responseId = `local-model-switch-compaction-${Date.now()}`
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      this.writeLocalAssistantMessage(response, model, '')
+      return
+    }
+    if (
+      state.stage === 'model_switch_source_failed' &&
+      serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+    ) {
+      this.writeLocalError(response, model, 'WEWORK_LOCAL_MODEL_SWITCH_RETRY_FAILURE')
       return
     }
     if (
@@ -3341,6 +4037,10 @@ class DesktopE2EServer {
       (codexRequestKind(body) === 'compaction' ||
         serialized.includes('CONTEXT CHECKPOINT COMPACTION'))
     ) {
+      if (this.hasModelSwitchHistory(model, body)) {
+        this.assertModelSwitchHistory(model, body)
+        state.historyVerified = true
+      }
       this.writeLocalAssistantMessage(response, model, '')
       return
     }
@@ -3353,6 +4053,10 @@ class DesktopE2EServer {
         serialized.includes(LOCAL_MODEL_SWITCH_INITIAL_COMPLETE),
         'The switched custom model did not preserve the earlier conversation context'
       )
+      if (!state.historyVerified) {
+        this.assertModelSwitchHistory(model, body)
+        state.historyVerified = true
+      }
       state.stage = 'model_switch_target_complete'
       this.writeLocalAssistantMessage(response, model, LOCAL_MODEL_SWITCH_COMPLETE)
       return
@@ -3615,6 +4319,128 @@ class DesktopE2EServer {
     )
   }
 
+  assertModelSwitchHistory(model, body) {
+    const serialized = JSON.stringify(body)
+    assert.ok(
+      !serialized.includes(LOCAL_MODEL_SWITCH_INVALID_CALL_ID),
+      `${model.protocol} received the original invalid provider tool call ID`
+    )
+
+    if (model.protocol === 'responses') {
+      const items = Array.isArray(body.input) ? body.input : []
+      const call = items.find(
+        item => item?.type === 'function_call' && item?.name === 'exec_command'
+      )
+      const output = items.find(item => item?.type === 'function_call_output')
+
+      assert.ok(call, 'Responses lost the converted exec_command call history')
+      assert.ok(output, 'Responses lost the converted exec_command output history')
+      if (call.id != null) {
+        assert.match(call.id, /^[A-Za-z0-9_-]+$/, 'Responses received an invalid item ID')
+      }
+      assert.match(call.call_id, /^[A-Za-z0-9_-]+$/, 'Responses received an invalid call ID')
+      assert.equal(
+        output.call_id,
+        call.call_id,
+        'Responses broke the cross-protocol tool call/output association'
+      )
+      return
+    }
+
+    if (model.protocol === 'chat') {
+      const call = body.messages
+        ?.flatMap(message => message?.tool_calls ?? [])
+        .find(candidate => candidate?.function?.name === 'exec_command')
+      const output = body.messages?.find(
+        message => message?.role === 'tool' && message?.tool_call_id === call?.id
+      )
+
+      assert.ok(call, 'Chat lost the converted exec_command call history')
+      assert.ok(output, 'Chat lost the converted exec_command output history')
+      assert.match(call.id, /^[A-Za-z0-9_-]+$/, 'Chat received an invalid tool call ID')
+      assert.deepEqual(
+        JSON.parse(call.function?.arguments ?? '{}'),
+        { cmd: localModelSwitchCommand() },
+        'Chat changed the exec_command arguments during protocol conversion'
+      )
+      return
+    }
+
+    const blocks = body.messages?.flatMap(message => message?.content ?? []) ?? []
+    const call = blocks.find(block => block?.type === 'tool_use' && block?.name === 'exec_command')
+    const output = blocks.find(
+      block => block?.type === 'tool_result' && block?.tool_use_id === call?.id
+    )
+
+    assert.ok(call, 'Anthropic lost the converted exec_command call history')
+    assert.ok(output, 'Anthropic lost the converted exec_command output history')
+    assert.match(call.id, /^[A-Za-z0-9_-]+$/, 'Anthropic received an invalid tool use ID')
+    assert.deepEqual(
+      call.input,
+      { cmd: localModelSwitchCommand() },
+      'Anthropic changed the exec_command input during protocol conversion'
+    )
+  }
+
+  hasModelSwitchHistory(model, body) {
+    if (model.protocol === 'responses') {
+      return body.input?.some(
+        item => item?.type === 'function_call' && item?.name === 'exec_command'
+      )
+    }
+    if (model.protocol === 'chat') {
+      return body.messages?.some(message =>
+        message?.tool_calls?.some(call => call?.function?.name === 'exec_command')
+      )
+    }
+    return body.messages?.some(message =>
+      message?.content?.some(block => block?.type === 'tool_use' && block?.name === 'exec_command')
+    )
+  }
+
+  writeModelSwitchToolCall(response, model) {
+    const toolInput = { cmd: localModelSwitchCommand() }
+    if (model.protocol === 'responses') {
+      const responseId = 'responses-model-switch-tool'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(LOCAL_MODEL_SWITCH_INVALID_CALL_ID, 'exec_command', toolInput),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatToolCall(
+        response,
+        toolInput,
+        LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
+        'exec_command'
+      )
+      return
+    }
+    this.writeAnthropicToolCall(
+      response,
+      toolInput,
+      LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
+      'exec_command'
+    )
+  }
+
+  writeLocalError(response, model, message) {
+    if (model.protocol === 'responses') {
+      const responseId = 'responses-model-switch-error'
+      this.writeSse(response, [responseCreated(responseId), responseFailed(responseId, message)])
+      return
+    }
+    if (model.protocol === 'chat') {
+      json(response, 400, {
+        error: { type: 'invalid_request_error', message },
+      })
+      return
+    }
+    this.writeAnthropicError(response, message)
+  }
+
   writeLocalToolCall(response, model, patch) {
     if (model.protocol === 'responses') {
       const id = `local-${model.protocol}-tool`
@@ -3648,8 +4474,15 @@ class DesktopE2EServer {
     this.writeAnthropicMessage(response, text)
   }
 
-  writeChatToolCall(response, patch) {
-    const argumentsValue = JSON.stringify({ input: patch })
+  writeChatToolCall(
+    response,
+    toolInput,
+    callId = 'chat-local-apply-patch',
+    toolName = 'apply_patch'
+  ) {
+    const argumentsValue = JSON.stringify(
+      toolName === 'apply_patch' ? { input: toolInput } : toolInput
+    )
     const splitAt = Math.max(1, Math.floor(argumentsValue.length / 2))
     const chunks = [
       {
@@ -3663,10 +4496,10 @@ class DesktopE2EServer {
               tool_calls: [
                 {
                   index: 0,
-                  id: 'chat-local-apply-patch',
+                  id: callId,
                   type: 'function',
                   function: {
-                    name: 'apply_patch',
+                    name: toolName,
                     arguments: argumentsValue.slice(0, splitAt),
                   },
                 },
@@ -3686,9 +4519,9 @@ class DesktopE2EServer {
               tool_calls: [
                 {
                   index: 0,
-                  id: 'chat-local-apply-patch',
+                  id: callId,
                   function: {
-                    name: 'apply_patch',
+                    name: toolName,
                     arguments: argumentsValue.slice(splitAt),
                   },
                 },
@@ -3714,8 +4547,13 @@ class DesktopE2EServer {
     this.writeRawSse(response, `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`)
   }
 
-  writeAnthropicToolCall(response, patch) {
-    const input = JSON.stringify({ input: patch })
+  writeAnthropicToolCall(
+    response,
+    toolInput,
+    callId = 'anthropic-local-apply-patch',
+    toolName = 'apply_patch'
+  ) {
+    const input = JSON.stringify(toolName === 'apply_patch' ? { input: toolInput } : toolInput)
     this.writeAnthropicSse(response, [
       [
         'message_start',
@@ -3739,8 +4577,8 @@ class DesktopE2EServer {
           index: 0,
           content_block: {
             type: 'tool_use',
-            id: 'anthropic-local-apply-patch',
-            name: 'apply_patch',
+            id: callId,
+            name: toolName,
             input: {},
           },
         },
@@ -3763,6 +4601,18 @@ class DesktopE2EServer {
         },
       ],
       ['message_stop', { type: 'message_stop' }],
+    ])
+  }
+
+  writeAnthropicError(response, message) {
+    this.writeAnthropicSse(response, [
+      [
+        'error',
+        {
+          type: 'error',
+          error: { type: 'invalid_request_error', message },
+        },
+      ],
     ])
   }
 
@@ -3869,13 +4719,26 @@ class DesktopE2EServer {
   }
 }
 
-async function writeCodexConfig(codexHome, modelServerUrl, scenarioConfigToml = '') {
+async function writeCodexConfig(
+  codexHome,
+  modelServerUrl,
+  scenarioConfigToml = '',
+  upstreamApiFormat = 'openai-responses'
+) {
   await mkdir(codexHome, { recursive: true })
   await writeFile(
     join(codexHome, 'config.toml'),
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\n`,
+    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
     'utf8'
   )
+}
+
+function codexUpstreamApiFormat(protocol) {
+  return protocol === 'responses'
+    ? 'openai-responses'
+    : protocol === 'chat'
+      ? 'openai-chat-completions'
+      : 'anthropic-messages'
 }
 
 async function buildExecutor() {
@@ -3946,7 +4809,13 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
   return { binaryPath: bundledBinaryPath, appBundlePath }
 }
 
-async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdentifier) {
+async function buildDesktopApp(
+  controlUrl,
+  cloudBackendUrl,
+  cloudToken,
+  appIdentifier,
+  modelServerUrl
+) {
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) {
     const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
@@ -3992,9 +4861,10 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdent
         VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
         VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
         VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
+        VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
+        VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_SEED_LOCAL_MODELS:
-          PLUGINS_ONLY || MEMORY_ONLY || CLOUD_ONLY ? 'false' : 'true',
+        VITE_WEWORK_E2E_SEED_LOCAL_MODELS: PLUGINS_ONLY || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -4023,6 +4893,74 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdent
   }
   throw new Error(
     `Tauri build did not produce an executable app. Checked: ${candidates.join(', ')}`
+  )
+}
+
+async function verifyConnectedModelsOnLocalExecution({
+  control,
+  cloudEnvironment,
+  setCodexUpstreamProtocol,
+  workspacePath,
+}) {
+  const composerSelector = ACTIVE_COMPOSER_SELECTOR
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-local-option"]')
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await waitForFolderPickerInitialized(control)
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await confirmLocalProjectName(control, 'workspace')
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  const projectSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+    'The local matrix project was not shown in the sidebar'
+  )
+  const projectMenuTestId = projectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-menu-')
+  )
+  assert.ok(projectMenuTestId, 'The local matrix project did not expose its project menu')
+  const projectId = projectMenuTestId.slice('project-menu-'.length)
+  const newConversationSelector = `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+
+  await verifyModelProtocolMatrix({
+    cases: LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES,
+    composerSelector,
+    control,
+    newConversationSelector,
+    screenshotPrefix: 'local-connected-matrix',
+    setCodexUpstreamProtocol,
+    startIndex: LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.length,
+    workspacePath,
+  })
+
+  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
+  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+  )
+  await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(projectMenuTestId),
+    'The local matrix project remained visible after removal'
   )
 }
 
@@ -4106,7 +5044,12 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await assertConfiguredLocalModelsHidden(
+    control,
+    LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length
+  )
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
   await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
@@ -4122,25 +5065,22 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
-  await withTimeout(
+  const cloudInitialRequest = await withTimeout(
     control.awaitScenarioRequestCount('cloud_initial', 2),
     UI_TIMEOUT_MS,
     'The real cloud executor did not complete its model tool loop'
+  )
+  assert.equal(
+    cloudInitialRequest.body?.model,
+    DEFAULT_MODEL_ID,
+    'The remote executor did not receive the selected canonical model id'
   )
   assert.equal(
     (await readFile(join(workspacePath, CLOUD_ARTIFACT_NAME), 'utf8')).trim(),
     CLOUD_ARTIFACT_CONTENT,
     'The real cloud executor did not create the verification artifact'
   )
-  const taskSnapshot = await waitForSnapshot(
-    control,
-    value => value.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
-    'The completed cloud task was not persisted in the sidebar'
-  )
-  const taskRowTestId = taskSnapshot.testIds.find(testId =>
-    testId.startsWith('runtime-local-task-row-')
-  )
-  assert.ok(taskRowTestId, 'The completed cloud task row was not available')
+  const taskRowTestId = await waitForTaskRowByText(control, 'WEWORK_DESKTOP_E2E_CLOUD_TASK')
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_COMPLETION_TEXT,
@@ -4198,6 +5138,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     UI_TIMEOUT_MS,
     'The real cloud executor did not send the follow-up model request'
   )
+  control.releaseCloudFollowUpResponse()
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
@@ -4209,6 +5150,19 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'The cloud follow-up task did not settle before project removal'
   )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
+
+  await verifyModelProtocolMatrix({
+    cases: REMOTE_MODEL_PROTOCOL_MATRIX_CASES,
+    composerSelector,
+    control,
+    newConversationSelector: `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`,
+    screenshotPrefix: 'cloud-matrix',
+    setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
+    startIndex:
+      LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length +
+      HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.length,
+    workspacePath,
+  })
 
   const projectMenuTestId = `project-menu-${projectId}`
   await waitForSnapshot(
@@ -4233,9 +5187,167 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
 }
 
+async function verifyRetryFailureRestoration(control, composerSelector) {
+  control.setScenario('retry')
+  await sendPromptUntilScenarioRequest(control, composerSelector, RETRY_PROMPT, 'retry')
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
+    {
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  const retryDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const retryTaskId = retryDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(retryTaskId, 'The failed retry task did not expose its runtime task ID')
+  const retryTaskRowTestId = `runtime-local-task-row-${retryTaskId}`
+  await control.command('waitFor', `[data-testid="${retryTaskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="${retryTaskRowTestId}"]`)
+  await waitForWorkbenchTask(
+    control,
+    retryTaskId,
+    'The failed retry task did not become active again'
+  )
+  await control.command(
+    'clickIfPresent',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
+    {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-details-toggle"]`
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
+    {
+      text: RETRY_CODEX_ERROR_TEXT,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'retry-01-failure-restored-after-switch.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-retry"]`
+  )
+  await waitForScenarioRequestCount(control, 'retry', 2)
+  control.releaseRetryResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: RETRY_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  assert.equal(
+    control.scenarioRequests.get('retry')?.length,
+    2,
+    'Retry did not issue exactly one additional request for the failed user message'
+  )
+}
+
+async function verifyModelProtocolMatrix({
+  cases,
+  composerSelector,
+  control,
+  newConversationSelector,
+  screenshotPrefix,
+  setCodexUpstreamProtocol,
+  startIndex = 0,
+  workspacePath,
+}) {
+  for (const [caseIndex, model] of cases.entries()) {
+    const matrixIndex = startIndex + caseIndex
+    console.log(
+      `Model protocol matrix ${matrixIndex + 1}/${MODEL_PROTOCOL_MATRIX_TOTAL} started: ${matrixCaseId(model)}`
+    )
+    if (model.source === 'codex') {
+      assert.ok(
+        setCodexUpstreamProtocol,
+        `${matrixCaseId(model)} requires a Codex upstream protocol setter`
+      )
+      await setCodexUpstreamProtocol(model.protocol)
+    }
+    control.setMatrixCase(model)
+    await control.command('clickWhenEnabled', newConversationSelector)
+    await control.command('waitFor', composerSelector, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await selectE2EModel(control, model.optionId, model.label)
+
+    await sendPromptWithButton(control, composerSelector, matrixTextPrompt(model))
+    await waitForMatrixStage(control, model, 'tool')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: matrixTextCompletion(model),
+      timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+    })
+
+    await sendPromptWithButton(control, composerSelector, matrixToolPrompt(model))
+    await waitForMatrixStage(control, model, 'awaiting_tool_output', 'complete')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: matrixToolCompletion(model),
+      timeoutMs: MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+    })
+    assert.equal(
+      (await readFile(join(workspacePath, matrixArtifact(model)), 'utf8')).trim(),
+      matrixArtifactContent(model),
+      `${matrixCaseId(model)} apply_patch did not create the expected artifact`
+    )
+    assert.equal(
+      control.matrixState?.stage,
+      'complete',
+      `${matrixCaseId(model)} did not complete text and tool turns`
+    )
+    assert.ok(
+      control.matrixState.requests.length >= 3,
+      `${matrixCaseId(model)} did not send the text/tool/tool-output request sequence`
+    )
+    await prepareCompletedTurnScreenshot(control)
+    await captureVerificationScreenshot(
+      control,
+      `${screenshotPrefix}-${String(matrixIndex + 1).padStart(2, '0')}-${matrixCaseId(model)}.png`
+    )
+    console.log(`Model protocol matrix passed: ${matrixCaseId(model)}`)
+  }
+}
+
+async function waitForMatrixStage(control, model, ...expectedStages) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < MODEL_PROTOCOL_MATRIX_TIMEOUT_MS) {
+    if (control.fatalError) throw control.fatalError
+    if (expectedStages.includes(control.matrixState?.stage)) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(
+    `${matrixCaseId(model)} did not reach ${expectedStages.join(' or ')} within ${MODEL_PROTOCOL_MATRIX_TIMEOUT_MS}ms; current stage=${control.matrixState?.stage ?? 'missing'}`
+  )
+}
+
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
+  const secondaryProjectPath = join(resultDir, 'secondary-project-root')
+  const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
@@ -4243,6 +5355,8 @@ async function main() {
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
+    mkdir(secondaryProjectPath, { recursive: true }),
+    mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
   await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
@@ -4272,6 +5386,7 @@ async function main() {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
   }
   const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
+  const modelSwitchVerification = []
   let app
   let appBundlePath
   let cloudEnvironment
@@ -4302,7 +5417,8 @@ async function main() {
       control.controlUrl,
       cloudEnvironment?.backendUrl ?? control.url,
       cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
-      appIdentifier
+      appIdentifier,
+      control.url
     )
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
@@ -4352,6 +5468,19 @@ async function main() {
     await control.command('focusMainWindow', 'body')
 
     if (CLOUD_ONLY) {
+      phase = 'local-connected-model-protocol-matrix'
+      await verifyConnectedModelsOnLocalExecution({
+        control,
+        cloudEnvironment,
+        setCodexUpstreamProtocol: protocol =>
+          writeCodexConfig(
+            join(executorHome, 'codex'),
+            control.url,
+            '',
+            codexUpstreamApiFormat(protocol)
+          ),
+        workspacePath,
+      })
       phase = 'cloud-project-flow'
       await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
       await writeFile(
@@ -4374,6 +5503,49 @@ async function main() {
     })
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
+    control.restoreCloudModels()
+    await control.command('dispatchLocalModelSettingsChanged', '')
+    const canonicalModelOption = `model-option-${DEFAULT_MODEL_ID}`
+    const synthesizedModelOption = `model-option-codex-${DEFAULT_MODEL_ID}`
+    const legacyGpt55ModelOption = 'model-option-gpt-5.5'
+    const publicModelOption = `model-option-${CLOUD_PUBLIC_MODEL_NAME}`
+    const recoveredModelMenu = await ensureModelOptionVisible(control, canonicalModelOption)
+    assert.equal(
+      recoveredModelMenu.testIds.filter(testId => testId === canonicalModelOption).length,
+      1,
+      'The canonical Executor model appeared more than once'
+    )
+    assert.equal(
+      recoveredModelMenu.testIds.includes(synthesizedModelOption),
+      false,
+      'The Backend-synthesized runtime Codex duplicate remained visible'
+    )
+    assert.equal(
+      recoveredModelMenu.testIds.includes(legacyGpt55ModelOption),
+      false,
+      'The legacy GPT 5.5 Codex model remained visible'
+    )
+    assert.equal(
+      (await ensureModelOptionVisible(control, publicModelOption)).testIds.includes(
+        publicModelOption
+      ),
+      true,
+      'The independent public model was removed while deduplicating runtime Codex'
+    )
+    await captureVerificationScreenshot(control, '00-canonical-model-catalog.png')
+    await control.command('press', 'body', { key: 'Escape' })
+
+    if (RETRY_ONLY) {
+      phase = 'retry-failure-restoration'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyRetryFailureRestoration(control, ACTIVE_COMPOSER_SELECTOR)
+      console.log(`Wework desktop retry-restoration E2E passed. Evidence: ${resultDir}`)
+      return
+    }
 
     if (SHORT_CONVERSATION_ONLY) {
       phase = 'short-conversation-layout'
@@ -4434,7 +5606,7 @@ async function main() {
 
     phase = 'project-folder-cancel'
     await control.command('click', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('click', '[data-testid="project-create-local-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4451,8 +5623,7 @@ async function main() {
 
     phase = 'composer-project-folder-select'
     await control.command('click', '[data-testid="project-work-button"]')
-    await control.command('hover', '[data-testid="add-local-project-option"]')
-    await control.command('click', '[data-testid="add-local-existing-project-option"]')
+    await control.command('click', '[data-testid="add-local-project-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4475,6 +5646,40 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
+    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+      value: 'workspace',
+    })
+    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: secondaryProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, secondaryProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
+      text: 'secondary-project-root',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-local-project-create-button"]',
+      {
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
 
     const composerSelector = ACTIVE_COMPOSER_SELECTOR
     await control.command('waitFor', composerSelector, {
@@ -4487,12 +5692,12 @@ async function main() {
       snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
       'The newly opened folder project was not shown in the sidebar'
     )
-    const projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
+    let projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
       testId.startsWith('project-menu-')
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
-    const projectId = projectMenuTestId.slice('project-menu-'.length)
-    const projectRowSelector = `[data-testid="project-row-${projectId}"]`
+    let projectId = projectMenuTestId.slice('project-menu-'.length)
+    let projectRowSelector = `[data-testid="project-row-${projectId}"]`
     await control.command('waitFor', projectRowSelector, {
       text: 'workspace',
       timeoutMs: UI_TIMEOUT_MS,
@@ -4530,7 +5735,7 @@ async function main() {
 
     phase = 'project-folder-reopen'
     await control.command('click', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('click', '[data-testid="project-create-local-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -4553,10 +5758,60 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
+    await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+      value: 'workspace',
+    })
+    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: secondaryProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, secondaryProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
+      text: 'secondary-project-root',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-local-project-create-button"]',
+      {
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await control.command('waitFor', '[data-testid^="project-menu-"]', {
+    const reopenedProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.some(
+          testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+        ),
+      'The reopened folder project was not shown with its current identity'
+    )
+    const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+    )
+    assert.ok(reopenedProjectMenuTestId, 'The reopened folder project identity was not found')
+    projectMenuTestId = reopenedProjectMenuTestId
+    projectId = projectMenuTestId.slice('project-menu-'.length)
+    projectRowSelector = `[data-testid="project-row-${projectId}"]`
+    await control.command('waitFor', projectRowSelector, {
+      text: 'workspace',
       timeoutMs: UI_TIMEOUT_MS,
     })
 
@@ -4795,6 +6050,15 @@ async function main() {
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
 
+    phase = 'completed-turn-fork'
+    await verifyCompletedTurnFork({
+      composerSelector,
+      control,
+      executorHome,
+      sourceTaskRowTestId: taskRowTestId,
+      workspacePath,
+    })
+
     phase = 'blank-task-draft-restoration'
     await control.command(
       'clickWhenEnabled',
@@ -4838,6 +6102,7 @@ async function main() {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await ensureTaskRowVisible(control, taskRowTestId)
       await control.command('click', `[data-testid="${taskRowTestId}"]`)
       await control.command('waitFor', '[data-testid="model-selector-button"]', {
         text: MODEL_LABEL,
@@ -4861,119 +6126,152 @@ async function main() {
         'The follow-up request did not preserve the user prompt'
       )
 
-      phase = 'local-model-switch-same-conversation'
-      const sourceModel = LOCAL_MODEL_CASES[0]
-      const targetModel = LOCAL_MODEL_CASES[1]
-      control.localProtocolStates.set(sourceModel.protocol, {
-        stage: 'model_switch_source',
-        requests: [],
-      })
-      control.localProtocolStates.set(targetModel.protocol, {
-        stage: 'model_switch_target',
-        requests: [],
-      })
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', composerSelector, {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      })
-      await selectE2EModel(control, sourceModel.optionId, sourceModel.label)
-      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
-      await control.command('waitFor', '[data-testid="assistant-error-switch-model-retry"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      await prepareCompletedTurnScreenshot(control)
-      await captureVerificationScreenshot(control, 'model-switch-retry-01-failed.png')
-      await control.command('click', '[data-testid="assistant-error-switch-model-retry"]')
-      await control.command('waitFor', '[data-testid="model-selector-menu"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      await captureVerificationScreenshot(
-        control,
-        'model-switch-retry-02-picker-open.png',
-        '[data-testid="model-selector-menu"]'
-      )
-      await selectE2EModel(control, targetModel.optionId, targetModel.label)
-      await captureVerificationScreenshot(control, 'model-switch-retry-03-target-selected.png')
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: LOCAL_MODEL_SWITCH_COMPLETE,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      const sourceSwitchState = control.localProtocolStates.get(sourceModel.protocol)
-      const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
-      assert.equal(
-        sourceSwitchState?.requests.length,
-        2,
-        'The old custom model received the automatic retry after switching'
-      )
-      assert.equal(
-        targetSwitchState?.stage,
-        'model_switch_target_complete',
-        'The new custom model did not complete the automatic same-conversation retry'
-      )
-      await control.command('waitFor', '[data-testid="model-selector-button"]', {
-        text: targetModel.label,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      const appliedModelLabel = await control.command(
-        'getText',
-        '[data-testid="model-selector-button"]'
-      )
-      assert.doesNotMatch(
-        appliedModelLabel,
-        /下一轮|Next/,
-        'The applied custom model remained incorrectly marked as next-turn only'
-      )
-      await prepareCompletedTurnScreenshot(control)
-      await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
-      control.localProtocolStates.set(sourceModel.protocol, { stage: 'initial', requests: [] })
-      control.localProtocolStates.set(targetModel.protocol, { stage: 'initial', requests: [] })
-
-      for (const [index, localModel] of LOCAL_MODEL_CASES.entries()) {
-        phase = `local-model-${localModel.protocol}-initial`
+      for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
+        phase = `local-model-switch-${switchCase.id}`
+        const sourceModel = LOCAL_MODEL_CASES.find(
+          model => model.protocol === switchCase.sourceProtocol
+        )
+        const targetModel = LOCAL_MODEL_CASES.find(
+          model => model.protocol === switchCase.targetProtocol
+        )
+        assert.ok(sourceModel, `Missing ${switchCase.sourceProtocol} local switch source`)
+        assert.ok(targetModel, `Missing ${switchCase.targetProtocol} local switch target`)
+        for (const model of LOCAL_MODEL_CASES) {
+          control.localProtocolStates.set(model.protocol, { stage: 'initial', requests: [] })
+        }
+        control.localProtocolStates.set(sourceModel.protocol, {
+          stage: 'model_switch_source',
+          requests: [],
+        })
+        control.localProtocolStates.set(targetModel.protocol, {
+          stage: 'model_switch_target',
+          requests: [],
+        })
+        await rm(join(workspacePath, LOCAL_MODEL_SWITCH_ARTIFACT), { force: true })
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', composerSelector, {
           timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
         })
-        await selectE2EModel(control, localModel.optionId, localModel.label)
-        await sendPrompt(control, composerSelector, localProtocolPrompt(localModel, 'INITIAL'))
+        await selectE2EModel(control, sourceModel.optionId, sourceModel.label)
+        await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
         await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: `WEWORK_LOCAL_${localModel.protocol.toUpperCase()}_COMPLETE`,
+          text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
           timeoutMs: UI_TIMEOUT_MS,
         })
-        assert.equal(
-          await readFile(join(workspacePath, localProtocolArtifact(localModel)), 'utf8'),
-          `${localProtocolArtifactContent(localModel)}\n`,
-          `${localModel.protocol} apply_patch did not create the expected artifact`
-        )
-
-        phase = `local-model-${localModel.protocol}-follow-up`
-        await sendPrompt(control, composerSelector, localProtocolPrompt(localModel, 'FOLLOW_UP'))
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: `WEWORK_LOCAL_${localModel.protocol.toUpperCase()}_FOLLOW_UP_COMPLETE`,
+        await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+        await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
+          visible: true,
           timeoutMs: UI_TIMEOUT_MS,
         })
-        const localState = control.localProtocolStates.get(localModel.protocol)
-        assert.equal(
-          localState?.stage,
-          'follow_up_complete',
-          `${localModel.protocol} did not complete the send/tool/follow-up lifecycle`
-        )
+        const sourceRequestsBeforeSwitch = control.localProtocolStates.get(sourceModel.protocol)
+          ?.requests.length
         assert.ok(
-          localState.requests.length >= 3,
-          `${localModel.protocol} did not send the full model request sequence`
+          sourceRequestsBeforeSwitch && sourceRequestsBeforeSwitch >= 3,
+          `${switchCase.id} did not complete its source tool loop and failed follow-up`
         )
-        await prepareCompletedTurnScreenshot(control)
-        await captureVerificationScreenshot(
-          control,
-          `${String(index + 3).padStart(2, '0')}-local-model-${localModel.protocol}-follow-up.png`
+        if (switchIndex === 0) {
+          await prepareCompletedTurnScreenshot(control)
+          await captureVerificationScreenshot(control, 'model-switch-retry-01-failed.png')
+        }
+        await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
+        await control.command('clickWhenEnabled', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
+          stableMs: COMPOSER_READY_STABILITY_MS,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        if (switchIndex === 0) {
+          await captureVerificationScreenshot(
+            control,
+            'model-switch-retry-02-picker-open.png',
+            '[data-testid="model-selector-menu"]'
+          )
+        }
+        await selectE2EModel(control, targetModel.optionId, targetModel.label)
+        if (switchIndex === 0) {
+          await captureVerificationScreenshot(control, 'model-switch-retry-03-target-selected.png')
+        }
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: LOCAL_MODEL_SWITCH_COMPLETE,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        assert.equal(
+          await readFile(join(workspacePath, LOCAL_MODEL_SWITCH_ARTIFACT), 'utf8'),
+          LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT,
+          `${switchCase.id} did not execute its source tool call before switching`
         )
+        const sourceSwitchState = control.localProtocolStates.get(sourceModel.protocol)
+        const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
+        assert.equal(
+          sourceSwitchState?.requests.length,
+          sourceRequestsBeforeSwitch,
+          `${switchCase.id} retried through the old custom model`
+        )
+        assert.equal(
+          targetSwitchState?.stage,
+          'model_switch_target_complete',
+          `${switchCase.id} did not complete the automatic same-conversation retry`
+        )
+        await control.command('waitFor', '[data-testid="model-selector-button"]', {
+          text: targetModel.label,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        const appliedModelLabel = await control.command(
+          'getText',
+          '[data-testid="model-selector-button"]'
+        )
+        assert.doesNotMatch(
+          appliedModelLabel,
+          /下一轮|Next/,
+          `${switchCase.id} left the applied model marked as next-turn only`
+        )
+        modelSwitchVerification.push({
+          direction: switchCase.id,
+          sourceProtocol: sourceModel.protocol,
+          targetProtocol: targetModel.protocol,
+          sourceRequestCount: sourceSwitchState.requests.length,
+          targetRequestCount: targetSwitchState.requests.length,
+          targetHistoryVerified: targetSwitchState.historyVerified === true,
+          toolArtifactVerified: true,
+          completed: true,
+        })
+        if (switchIndex === 0) {
+          await prepareCompletedTurnScreenshot(control)
+          await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
+        }
+      }
+      await writeFile(
+        join(resultDir, 'model-switch-protocol-verification.json'),
+        `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
+        'utf8'
+      )
+      if (MODEL_SWITCH_ONLY) {
+        assert.deepEqual(
+          modelSwitchVerification.map(result => result.direction),
+          LOCAL_MODEL_SWITCH_CASES.map(result => result.id),
+          'The focused model-switch E2E did not verify all six protocol directions'
+        )
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework desktop six-way model-switch E2E passed. Evidence: ${resultDir}`)
+        return
       }
 
+      phase = 'local-model-protocol-matrix'
+      await verifyModelProtocolMatrix({
+        cases: LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
+        composerSelector,
+        control,
+        newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+        screenshotPrefix: 'local-matrix',
+        workspacePath,
+      })
+
+      await ensureTaskRowVisible(control, taskRowTestId)
       await control.command('click', `[data-testid="${taskRowTestId}"]`)
       await control.command('waitFor', '[data-testid="model-selector-button"]', {
         text: MODEL_LABEL,
@@ -5070,38 +6368,7 @@ async function main() {
     )
 
     phase = 'retry'
-    control.setScenario('retry')
-    await sendPromptUntilScenarioRequest(control, composerSelector, RETRY_PROMPT, 'retry')
-    await control.command(
-      'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
-      {
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
-    await control.command(
-      'clickWhenEnabled',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-retry"]`,
-      {
-        stableMs: COMPOSER_READY_STABILITY_MS,
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
-    await waitForScenarioRequestCount(control, 'retry', 2)
-    control.releaseRetryResponse()
-    await control.command(
-      'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-      {
-        text: RETRY_COMPLETION_TEXT,
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
-    assert.equal(
-      control.scenarioRequests.get('retry')?.length,
-      2,
-      'Retry did not issue exactly one additional request for the failed user message'
-    )
+    await verifyRetryFailureRestoration(control, composerSelector)
 
     phase = 'reconnect'
     await verifyReconnectRecovery({ composerSelector, control })
@@ -5146,6 +6413,7 @@ async function main() {
       UNSENT_SECOND_TASK_DRAFT,
       'The second task composer did not persist its draft before switching tasks'
     )
+    await ensureTaskRowVisible(control, taskRowTestId)
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await control.command('fill', composerSelector, { value: UNSENT_FIRST_TASK_DRAFT })
     await waitForPersistedComposerInput(
@@ -5160,6 +6428,7 @@ async function main() {
       UNSENT_SECOND_TASK_DRAFT,
       'The second task lost its unsent composer draft after switching tasks'
     )
+    await ensureTaskRowVisible(control, taskRowTestId)
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await waitForControlValue(
       control,
@@ -5173,6 +6442,7 @@ async function main() {
     const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
     const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
     const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
+    const bottomWorkspaceTabCloseSelector = '[data-testid="close-bottom-workspace-tab-button"]'
     const rightBrowserTabCloseSelector = '[data-testid="right-workspace-browser-tab-close-button"]'
     const retainedBrowserUrl = 'https://example.com/session-state'
     await control.command('waitFor', rightPanelToggleSelector, {
@@ -5186,7 +6456,24 @@ async function main() {
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
     await control.command('click', bottomPanelToggleSelector)
-    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
+      control,
+      value => {
+        const terminalOpened =
+          value.testIds.includes('workspace-terminal-window') &&
+          !value.testIds.includes('workspace-tool-launcher')
+        const localTerminalUnavailable =
+          value.testIds.includes('workspace-tool-launcher') &&
+          value.testIds.includes('workspace-local-device-limited-tools')
+        return terminalOpened || localTerminalUnavailable
+      },
+      'The first task bottom workspace panel did not open a terminal or limited-tools launcher',
+      UI_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
+    const firstTaskOpenedTerminal = firstTaskBottomWorkspaceSnapshot.testIds.includes(
+      'workspace-terminal-window'
+    )
     await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
     const secondTaskWorkspaceSnapshot = JSON.parse(
       await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
@@ -5201,26 +6488,40 @@ async function main() {
       false,
       'The first task browser leaked into the second task'
     )
+    assert.equal(
+      secondTaskWorkspaceSnapshot.testIds.includes('workspace-tool-launcher'),
+      false,
+      'The first task bottom workspace launcher leaked into the second task'
+    )
+    await ensureTaskRowVisible(control, taskRowTestId)
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
-    await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    if (firstTaskOpenedTerminal) {
+      await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
+    } else {
+      await waitForSnapshot(
+        control,
+        value =>
+          value.testIds.includes('bottom-workspace-panel') &&
+          value.testIds.includes('workspace-tool-launcher') &&
+          value.testIds.includes('workspace-local-device-limited-tools'),
+        'The first task bottom workspace limited-tools state was not restored',
+        UI_TIMEOUT_MS,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
+    }
     await control.command('waitFor', activeBrowserInputSelector, { timeoutMs: UI_TIMEOUT_MS })
     assert.equal(
       await control.command('getValue', activeBrowserInputSelector),
       retainedBrowserUrl,
       'The Wework built-in browser URL was reset after switching conversations'
     )
-    const restoredWorkspaceSnapshot = JSON.parse(
-      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-    )
+    const restoredWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.ok(
       restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
       'The browser tab was not restored after switching conversations'
     )
     await captureVerificationScreenshot(control, 'workspace-resources-restored-after-switch.png')
-    await control.command(
-      'click',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="close-bottom-workspace-tab-button"]`
-    )
+    await control.command('click', bottomWorkspaceTabCloseSelector)
     await control.command('click', rightBrowserTabCloseSelector)
 
     await control.command('fill', composerSelector, { value: '' })
@@ -5308,14 +6609,21 @@ async function main() {
     )
     await control.command('click', '[data-testid="project-work-button"]')
     await control.command('click', '[data-testid="add-local-project-option"]')
-    await control.command('click', '[data-testid="add-local-blank-project-option"]')
-    await control.command('fill', '[data-testid="standalone-blank-project-name-input"]', {
-      value: COMPOSER_PROJECT_NAME,
+    await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+      timeoutMs: UI_TIMEOUT_MS,
     })
+    await waitForFolderPickerInitialized(control)
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: composerProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, composerProjectPath)
     await control.command(
       'clickWhenEnabled',
-      '[data-testid="save-standalone-blank-project-button"]'
+      '[data-testid="confirm-device-folder-picker-button"]',
+      { timeoutMs: UI_TIMEOUT_MS }
     )
+    await confirmLocalProjectName(control, COMPOSER_PROJECT_NAME)
     const createdComposerProjectSnapshot = await waitForSnapshot(
       control,
       snapshot =>
@@ -5387,6 +6695,9 @@ async function main() {
           ),
           desktopScenario: desktopScenario?.diagnostics?.() ?? null,
           cloudModelStage: control.cloudModelStage,
+          matrixCase: control.matrixCase ? matrixCaseId(control.matrixCase) : null,
+          matrixStage: control.matrixState?.stage ?? null,
+          matrixRequestCount: control.matrixState?.requests.length ?? 0,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,

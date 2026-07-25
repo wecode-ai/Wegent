@@ -42,7 +42,8 @@ fn hook_user_id(value: &Value) -> Option<String> {
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn spawn_turn(&self, turn: SpawnTurnRequest) {
+    pub(super) fn spawn_turn(&self, mut turn: SpawnTurnRequest) {
+        self.apply_project_workspace_roots(&mut turn.request);
         let SpawnTurnRequest {
             local_task_id,
             request,
@@ -170,6 +171,7 @@ impl RuntimeWorkRpcHandler {
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_subtask_id = request.subtask_id.to_string();
             let callback_hook_turn = Arc::clone(&hook_turn);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
@@ -183,7 +185,12 @@ impl RuntimeWorkRpcHandler {
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         thread_id,
-                        turn_id,
+                        turn_id.clone(),
+                    );
+                    active_turn_handler.record_runtime_turn_id(
+                        &active_turn_local_task_id,
+                        &active_turn_subtask_id,
+                        &turn_id,
                     );
                 });
             let finished_turn_handler = handler.clone();
@@ -272,6 +279,9 @@ impl RuntimeWorkRpcHandler {
                 self.finish_local_task(local_task_id, Some(thread_id.clone()), status);
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, request);
+                let turn_id = self.local_task_link(local_task_id).and_then(|link| {
+                    tasks::runtime_turn_id_from_link(&link, &request.subtask_id.to_string())
+                });
                 match turn.outcome {
                     ExecutionOutcome::Completed { content } => emit_response_event(
                         &self.event_tx,
@@ -279,7 +289,7 @@ impl RuntimeWorkRpcHandler {
                         "response.completed",
                         local_task_id,
                         request,
-                        json!({"value": content}),
+                        json!({"value": content, "turnId": turn_id}),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
                         &self.event_tx,
@@ -289,6 +299,7 @@ impl RuntimeWorkRpcHandler {
                         request,
                         json!({
                             "value": "",
+                            "turnId": turn_id,
                             "stop_reason": stop_reason,
                             "silent_exit": true,
                             "silent_exit_reason": "waiting_for_user_input"
@@ -303,6 +314,7 @@ impl RuntimeWorkRpcHandler {
                         json!({"error": {"message": message}}),
                     ),
                     ExecutionOutcome::Failed { message } => {
+                        self.persist_failed_assistant_message(local_task_id, request, &message);
                         let mut fields = task_fields(&request.task_id, &request.subtask_id);
                         fields.push(("local_task_id", local_task_id.to_owned()));
                         fields.push(("error", message.clone()));
@@ -323,6 +335,7 @@ impl RuntimeWorkRpcHandler {
             Err(error) => {
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
                 self.finish_local_task(local_task_id, None, "failed");
+                self.persist_failed_assistant_message(local_task_id, request, &error);
                 let mut fields = task_fields(&request.task_id, &request.subtask_id);
                 fields.push(("local_task_id", local_task_id.to_owned()));
                 fields.push(("error", error.clone()));
@@ -340,6 +353,44 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    pub(super) fn persist_failed_assistant_message(
+        &self,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        error: &str,
+    ) {
+        let timestamp = now_ms();
+        let message = json!({
+            "id": format!("{local_task_id}:assistant:{}", request.subtask_id),
+            "role": "assistant",
+            "content": "",
+            "status": "failed",
+            "error": error,
+            "errorType": "response.failed",
+            "subtaskId": request.subtask_id,
+            "createdAt": timestamp,
+            "completedAt": timestamp,
+        });
+        self.store.update_task(local_task_id, |link| {
+            append_runtime_handle_message(&mut link.runtime_handle, message.clone());
+            link.updated_at = timestamp;
+        });
+    }
+
+    pub(super) fn apply_project_workspace_roots(&self, request: &mut ExecutionRequest) {
+        if !request.runtime_workspace_roots.is_empty() {
+            return;
+        }
+        let Some(cwd) = request.cwd() else {
+            return;
+        };
+        let project_index = CodexGlobalProjectIndex::load();
+        let Some(project) = project_index.project_for_path(cwd) else {
+            return;
+        };
+        request.runtime_workspace_roots = project.roots.clone();
+    }
+
     pub(super) fn register_codex_thread_workspace_root(
         &self,
         thread_id: &str,
@@ -351,7 +402,11 @@ impl RuntimeWorkRpcHandler {
         if infer_workspace_kind(workspace_path) == "chat" {
             return;
         }
-        match register_codex_global_thread_workspace_root(thread_id, workspace_path) {
+        match register_codex_global_thread_workspace_root(
+            thread_id,
+            workspace_path,
+            request.runtime_project_key.as_deref(),
+        ) {
             Ok(Some(workspace_root)) => {
                 log_executor_event(
                     "runtime work codex thread workspace root registered",

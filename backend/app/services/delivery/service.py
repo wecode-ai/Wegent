@@ -17,7 +17,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.cloud_project import CloudProject, LoopItemTaskBinding
-from app.models.delivery import Delivery, DeliveryAsset, LoopItem
+from app.models.delivery import (
+    Delivery,
+    DeliveryAsset,
+    LoopItem,
+    loop_datetime_is_unset,
+)
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import DeliveryCreate, LoopItemTaskBind
 from app.services.delivery.access import require_loop_item_access
@@ -210,7 +215,7 @@ class DeliveryService:
         item = require_loop_item_access(
             db, delivery.loop_item_id, user_id, BaseRole.Developer
         )
-        if delivery.source_task_binding_id is not None:
+        if delivery.source_task_binding_id:
             self._require_active_task_binding(
                 db, item.id, delivery.source_task_binding_id
             )
@@ -333,7 +338,7 @@ class DeliveryService:
                 LoopItemTaskBinding.task_user_id == user_id,
                 LoopItemTaskBinding.device_id == source_task.device_id,
                 LoopItemTaskBinding.task_id == source_task.task_id,
-                LoopItemTaskBinding.unlinked_at.is_(None),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
             .first()
         )
@@ -358,7 +363,7 @@ class DeliveryService:
             .filter(
                 LoopItemTaskBinding.loop_item_id == item_id,
                 LoopItemTaskBinding.id == binding_id,
-                LoopItemTaskBinding.unlinked_at.is_(None),
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
             )
             .first()
         )

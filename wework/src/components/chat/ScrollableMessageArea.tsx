@@ -77,6 +77,7 @@ interface ScrollableMessageAreaProps {
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
+  onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
@@ -142,6 +143,7 @@ function areScrollableMessageAreaPropsEqual(
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
     previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
+    previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
@@ -201,6 +203,7 @@ function ScrollableMessagePaneContent({
   onOpenAssistantPlan,
   onEditLastUserMessage,
   canEditLastUserMessage,
+  onForkMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
@@ -232,6 +235,7 @@ function ScrollableMessagePaneContent({
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
+  const autoLoadedTranscriptGapKeysRef = useRef(new Set<string>())
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [turnNavigationLoading, setTurnNavigationLoading] = useState(false)
   const [turnNavigationTargetMessageId, setTurnNavigationTargetMessageId] = useState<string | null>(
@@ -336,10 +340,13 @@ function ScrollableMessagePaneContent({
       if (!onLoadTranscriptGap) return
       const gapKey = runtimeTranscriptGapKey(gap)
       if (loadingTranscriptGapKeyRef.current !== null) return
+      if (reason === 'visible') {
+        if (autoLoadedTranscriptGapKeysRef.current.has(gapKey)) return
+        autoLoadedTranscriptGapKeysRef.current.add(gapKey)
+      }
 
       loadingTranscriptGapKeyRef.current = gapKey
       setLoadingTranscriptGapKey(gapKey)
-      handleTurnNavigationLoadStateChange(true)
       try {
         await onLoadTranscriptGap(gap)
       } catch (error) {
@@ -352,11 +359,14 @@ function ScrollableMessagePaneContent({
       } finally {
         loadingTranscriptGapKeyRef.current = null
         setLoadingTranscriptGapKey(current => (current === gapKey ? null : current))
-        handleTurnNavigationLoadStateChange(false)
       }
     },
-    [handleTurnNavigationLoadStateChange, onLoadTranscriptGap]
+    [onLoadTranscriptGap]
   )
+
+  useEffect(() => {
+    autoLoadedTranscriptGapKeysRef.current.clear()
+  }, [currentScrollKey])
 
   const renderTranscriptGapAfterMessage = useCallback(
     (message: WorkbenchMessage, nextMessage: WorkbenchMessage | undefined) => {
@@ -821,6 +831,7 @@ function ScrollableMessagePaneContent({
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onEditLastUserMessage={onEditLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
+                onForkMessage={onForkMessage}
                 onLoadFullTranscript={onLoadFullTranscript}
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}

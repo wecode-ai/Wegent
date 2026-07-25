@@ -24,6 +24,18 @@ Wework 使用已配置的云端地址和登录 token 直接构造代理模型配
 4. backend 验证登录 token 和模型访问权限，按 `user_id + namespace + name` 精确解析 Model CRD。
 5. backend 取出真实 provider 配置，将请求中的模型名称改写为 provider `model_id`，再流式转发请求和响应。
 
+### 协议与端点解析
+
+代理网关支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。Model CRD 的 `protocol`、`apiFormat` 和 `wire_api` 决定实际请求协议；配置互相冲突或无法确定协议时，backend 会直接返回配置错误，不会静默回退到其他协议。
+
+provider `base_url` 可以是服务根地址、带版本前缀的 API base，或已经包含协议端点的完整地址。网关按路径段合并协议端点并去除重叠部分，例如：
+
+- `https://api.anthropic.com` 和 Anthropic Messages 解析为 `/v1/messages`。
+- `https://proxy.example.com/v1` 和 Anthropic Messages 仍解析为 `/v1/messages`，不会生成 `/v1/v1/messages`。
+- 已包含 `/responses`、`/chat/completions` 或 `/v1/messages` 的地址不会重复追加端点。
+
+云端或远端设备执行任务时，模型选择器不会展示只配置在当前桌面端的本机自定义模型。本机模型只能由本机 executor 使用；Codex 内置模型和云端 Model CRD 可以用于本机或云端执行。
+
 ## 安全收益
 
 - Wework 桌面端和本地 executor 永远不会拿到真实 provider `api_key`。

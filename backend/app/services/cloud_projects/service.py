@@ -4,6 +4,7 @@
 
 """Cloud project lifecycle and local execution bindings."""
 
+import logging
 import re
 import uuid
 
@@ -26,6 +27,8 @@ from app.schemas.cloud_project import (
     LocalBindingCreate,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+
+logger = logging.getLogger(__name__)
 
 
 class CloudProjectService:
@@ -73,8 +76,9 @@ class CloudProjectService:
             db.commit()
         except IntegrityError as exc:
             db.rollback()
+            logger.exception("Failed to create cloud project")
             raise HTTPException(
-                status.HTTP_409_CONFLICT, "Cloud project key already exists"
+                status.HTTP_409_CONFLICT, "Cloud project could not be created"
             ) from exc
         db.refresh(project)
         return project

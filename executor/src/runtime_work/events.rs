@@ -3507,6 +3507,123 @@ mod tests {
     }
 
     #[test]
+    fn completes_the_original_tool_across_interleaved_text_and_tool_events() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "command-item-1",
+                        "callId": "call-1",
+                        "type": "commandExecution",
+                        "command": "pwd",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "message-1",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": ""
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "message-1",
+                    "delta": "Checking another command."
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "command-item-2",
+                        "callId": "call-2",
+                        "type": "commandExecution",
+                        "command": "git status",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "command-item-1",
+                        "callId": "call-1",
+                        "type": "commandExecution",
+                        "command": "pwd",
+                        "status": "completed",
+                        "aggregatedOutput": "/workspace\n",
+                        "exitCode": 0
+                    }
+                }
+            }),
+        );
+
+        let first_tool = event_rx.try_recv().expect("first tool start");
+        let process_text = event_rx.try_recv().expect("interleaved text");
+        let second_tool = event_rx.try_recv().expect("second tool start");
+        let first_tool_done = event_rx.try_recv().expect("first tool completion");
+
+        assert_eq!(first_tool["event"], "response.block.created");
+        assert_eq!(first_tool["payload"]["data"]["block"]["id"], "call-1");
+        assert_eq!(process_text["event"], "response.block.created");
+        assert_eq!(process_text["payload"]["data"]["block"]["type"], "text");
+        assert_eq!(second_tool["event"], "response.block.created");
+        assert_eq!(second_tool["payload"]["data"]["block"]["id"], "call-2");
+        assert_eq!(first_tool_done["event"], "response.block.updated");
+        assert_eq!(first_tool_done["payload"]["data"]["block_id"], "call-1");
+        assert_eq!(
+            first_tool_done["payload"]["data"]["updates"]["status"],
+            "done"
+        );
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn limits_codex_exec_output_delta_event_size() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {

@@ -106,6 +106,7 @@ export interface ExecutorRuntimeClient {
   setRuntimeGoal: (data: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (data: RuntimeGoalClearRequest) => Promise<RuntimeGoalClearResponse>
   openRuntimeWorkspace: (data: RuntimeWorkspaceOpenRequest) => Promise<RuntimeWorkspaceOpenResponse>
+  upsertLocalRuntimeProject: ReturnType<typeof createRuntimeWorkApi>['upsertLocalRuntimeProject']
   renameRuntimeWorkspace: (
     data: RuntimeWorkspaceRenameRequest
   ) => Promise<RuntimeWorkspaceOpenResponse>

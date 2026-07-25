@@ -113,7 +113,7 @@ export function ModelSelectorTrigger({
         disabled={disabled}
         style={desktopStyle}
         className={cn(
-          'flex h-8 min-w-8 max-w-full items-center gap-1 overflow-hidden rounded-full px-2 text-sm font-light leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-8 min-w-8 max-w-full items-center gap-1 overflow-hidden rounded-full px-2 text-sm font-normal leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
           !isMobile &&
             'transition-[width,background-color,color,opacity] duration-200 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none',
           buttonClassName
@@ -132,7 +132,7 @@ export function ModelSelectorTrigger({
           ref={measureRef}
           aria-hidden="true"
           data-testid="model-selector-width-measure"
-          className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-sm font-light leading-[18px]"
+          className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-sm font-normal leading-[18px]"
         >
           {label}
         </span>
