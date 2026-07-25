@@ -2049,11 +2049,17 @@ class LangGraphAgentBuilder:
 
             # Check if we've exceeded retry limit
             if _truncation_retry_count >= self.max_truncation_retries:
-                self._last_termination_reason = "tool_call_truncation_retry_exhausted"
                 logger.error(
                     "[stream_tokens] Max truncation retries exceeded (%d). "
                     "Yielding final truncation warning.",
                     self.max_truncation_retries,
+                )
+                # Persist the authoritative state (incl. any compaction checkpoint)
+                # instead of returning with an empty/stale chain.
+                snapshot = await agent.aget_state({**exec_config})
+                authoritative = snapshot.values.get("messages", [])
+                self._finalize_turn_history(
+                    authoritative, turn_ctx, "tool_call_truncation_retry_exhausted"
                 )
                 logger.warning(
                     "[stream_tokens] Termination: reason=tool_call_truncation_retry_exhausted "
@@ -2062,9 +2068,9 @@ class LangGraphAgentBuilder:
                     agent_iteration,
                     self.max_iterations,
                     recursion_limit,
-                    len(_collected_state_messages),
-                    _tail_signature(_collected_state_messages),
-                    _last_tool_call_name(_collected_state_messages) or "none",
+                    len(authoritative),
+                    _tail_signature(authoritative),
+                    _last_tool_call_name(authoritative) or "none",
                 )
                 # Yield truncation marker to show warning in UI
                 yield f"{TRUNCATED_MARKER_START}{e.reason}{TRUNCATED_MARKER_END}"
@@ -2213,9 +2219,55 @@ class LangGraphAgentBuilder:
                 )
                 raise
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error in stream_tokens")
             raise
+        finally:
+            # Per-level teardown: each stream_tokens invocation owns exactly its
+            # own thread and deletes it here on every exit path. Cleanup never
+            # breaks the turn, but failures are logged, not silently suppressed.
+            thread_id = turn_ctx.current_thread_id
+            saver = self._checkpointer
+            checkpoints_in_saver: int | None = None
+            adelete_thread_ok: bool | None = None
+            if saver is not None:
+                thread_config = {"configurable": {"thread_id": thread_id}}
+                try:
+                    # Measure BEFORE delete, else it is always 0.
+                    checkpoints_in_saver = len(list(saver.list(thread_config)))
+                except Exception:
+                    checkpoints_in_saver = -1
+                try:
+                    await saver.adelete_thread(thread_id)
+                    adelete_thread_ok = True
+                except Exception:
+                    adelete_thread_ok = False
+                    logger.warning(
+                        "[stream_tokens] Failed to delete turn checkpoint thread=%s",
+                        thread_id,
+                        exc_info=True,
+                    )
+            chain = self._last_messages_chain
+            has_summary_marker = any(
+                isinstance(entry.get("additional_kwargs"), dict)
+                and entry["additional_kwargs"].get("summary_compacted") is True
+                for entry in chain
+            )
+            post_compaction_tool_pairs = sum(
+                1 for entry in chain if entry.get("role") == "tool"
+            )
+            logger.info(
+                "[stream_tokens] turn persistence: thread=%s reason=%s chain_msgs=%d "
+                "has_summary_marker=%s post_compaction_tool_pairs=%d "
+                "checkpoints_in_saver=%s adelete_thread_ok=%s",
+                thread_id,
+                self._last_termination_reason,
+                len(chain),
+                has_summary_marker,
+                post_compaction_tool_pairs,
+                checkpoints_in_saver,
+                adelete_thread_ok,
+            )
 
     def get_final_content(self, state: dict[str, Any]) -> str:
         """Extract final content from agent state.

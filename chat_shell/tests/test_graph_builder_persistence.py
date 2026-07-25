@@ -408,3 +408,88 @@ async def test_truncation_retry_seeds_new_thread_with_ephemeral_instruction(
     ]
     assert len(ephemeral) == 1
     assert "[SYSTEM ERROR]" in ephemeral[0].content
+
+
+@pytest.mark.asyncio
+async def test_truncation_exhausted_persists_checkpoint(monkeypatch):
+    from chat_shell.agents.graph_builder import (
+        LangGraphAgentBuilder,
+        ToolCallTruncatedError,
+    )
+
+    authoritative = [
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(content="partial", id="a1"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            raise ToolCallTruncatedError(reason="length", has_tool_calls=True)
+            yield  # pragma: no cover
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    monkeypatch.setattr(builder, "max_truncation_retries", 1)
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    chain = builder._last_messages_chain
+    assert any(c.get("additional_kwargs", {}).get("summary_compacted") for c in chain)
+    assert builder._last_termination_reason == "tool_call_truncation_retry_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_stream_tokens_deletes_turn_thread_on_exit(monkeypatch):
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    deleted: list[str] = []
+
+    class _MockSaver:
+        def list(self, _config):
+            return iter([object()])  # one committed checkpoint (exit durability)
+
+        async def adelete_thread(self, thread_id):
+            deleted.append(thread_id)
+
+    class _EmptySnap:
+        values: dict = {"messages": []}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            for _ in []:
+                yield
+
+        async def aget_state(self, _config):
+            return _EmptySnap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    builder._checkpointer = _MockSaver()
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    assert len(deleted) == 1  # exactly the turn's own thread torn down
