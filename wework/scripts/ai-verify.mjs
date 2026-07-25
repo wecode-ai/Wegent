@@ -17,6 +17,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const defaultTimeoutMs = 30_000
 const startupTimeoutMs = 60_000
+const commandResultGraceMs = 5_000
 const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -57,6 +58,14 @@ function parseArgs(argv) {
     index += 1
   }
   return { command, options }
+}
+
+export function resolveStartupTimeout(timeout) {
+  const configuredTimeout = timeout === undefined ? startupTimeoutMs : Number(timeout)
+  if (!Number.isFinite(configuredTimeout) || configuredTimeout <= 0) {
+    throw new Error('--timeout must be a finite positive number')
+  }
+  return configuredTimeout
 }
 
 function json(response, status, value) {
@@ -186,6 +195,9 @@ async function runServer(sessionPath, token) {
           ready: Boolean(ready),
           readyInfo: ready,
           pid: app?.pid ?? null,
+          queuedCommands: queue.length,
+          commandPolls: commandPolls.length,
+          pendingCommands: pending.size,
         })
       }
       if (request.method === 'POST' && url.pathname === '/command') {
@@ -206,7 +218,11 @@ async function runServer(sessionPath, token) {
         try {
           return json(response, 200, {
             ok: true,
-            value: await withTimeout(result, timeoutMs, `Timed out running ${command.action}`),
+            value: await withTimeout(
+              result,
+              timeoutMs + commandResultGraceMs,
+              `Timed out running ${command.action}`
+            ),
           })
         } catch (error) {
           pending.delete(id)
@@ -324,9 +340,16 @@ async function main() {
       { detached: true, stdio: 'ignore' }
     )
     child.unref()
-    const startupDeadline = Date.now() + startupTimeoutMs
+    const startupDeadline = Date.now() + resolveStartupTimeout(options.timeout)
     while (Date.now() < startupDeadline) {
-      const session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      let session
+      try {
+        session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        continue
+      }
       if (session.controlUrl) {
         try {
           const status = await request(session, token, '/status')

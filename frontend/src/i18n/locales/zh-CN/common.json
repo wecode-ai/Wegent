@@ -1266,6 +1266,8 @@
     "supports_image_input_hint": "开启后，该模型会被标记为可直接理解图片内容。",
     "supports_video_input": "支持视频理解",
     "supports_video_input_hint": "开启后，该模型会被标记为可直接理解视频画面。",
+    "wework_available": "在wework中可用",
+    "wework_available_hint": "开启后，wework 桌面客户端可以使用该模型。",
     "rerank_top_n": "返回结果数",
     "rerank_top_n_hint": "返回前 N 个结果",
     "rerank_return_documents": "返回文档内容",

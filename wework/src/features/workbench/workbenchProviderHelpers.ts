@@ -2,15 +2,10 @@ import type {
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
   RuntimeTaskAddress,
-  RuntimeWorkListResponse,
   UnifiedModel,
   User,
 } from '@/types/api'
 import type { DeviceUpgradeStatusPayload } from '@/types/device-events'
-import { findRuntimeTask } from './workbenchRuntimeHelpers'
-
-const CLAUDE_CODE_RUNTIME_FAMILY = 'claude.claude'
-const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
 
 export const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
@@ -61,19 +56,6 @@ export function getNewChatModelSelection(user: User | null): ModelSelectionConfi
 
 export function getRuntimeTaskChatScopeKey(address: RuntimeTaskAddress): string {
   return ['runtime', address.deviceId, address.taskId].join(':')
-}
-
-function getRuntimeCompatibilityFamily(runtime?: string | null): string | null {
-  if (runtime === 'codex') return OPENAI_RESPONSES_RUNTIME_FAMILY
-  if (runtime === 'claude_code' || runtime === 'claude') return CLAUDE_CODE_RUNTIME_FAMILY
-  return null
-}
-
-export function getCurrentRuntimeTaskCompatibilityFamily(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress | null | undefined
-): string | null {
-  return getRuntimeCompatibilityFamily(findRuntimeTask(runtimeWork, address)?.runtime)
 }
 
 export function normalizeGuidanceError(error?: string) {

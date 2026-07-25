@@ -53,6 +53,8 @@ Environment:
                         Set to 1 to use the normal executor home in debug builds.
   WEWORK_MALLOC_STACK_LOGGING
                         Set to 1 to enable macOS malloc stack logging for WebKit diagnostics.
+  WEWORK_DISABLE_BACKGROUND_THROTTLING
+                        Set to 1 to keep the macOS WebView active while hidden.
   MACOS_BUILD_TARGET    Default macOS Rust/Tauri target when --target is not provided.
 
 Examples:
@@ -275,6 +277,8 @@ WEWORK_PORT_VALUE="$WEWORK_PORT" \
 BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
 WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
 WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
+WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE="${WEWORK_DISABLE_BACKGROUND_THROTTLING:-0}" \
+WEWORK_DIR_VALUE="$WEWORK_DIR" \
 TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
 python3 - <<'PY'
 import json
@@ -290,6 +294,17 @@ config = {
 app_identifier = os.environ["WEWORK_APP_IDENTIFIER_VALUE"].strip()
 if app_identifier:
     config["identifier"] = app_identifier
+
+if os.environ["WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE"] == "1":
+    with open(
+        os.path.join(os.environ["WEWORK_DIR_VALUE"], "src-tauri", "tauri.conf.json"),
+        encoding="utf-8",
+    ) as handle:
+        base_config = json.load(handle)
+    windows = base_config["app"]["windows"]
+    for window in windows:
+        window["backgroundThrottling"] = "disabled"
+    config["app"] = {"windows": windows}
 
 if os.environ["WEWORK_RELEASE_UI_VALUE"] != "true":
     config["bundle"] = {

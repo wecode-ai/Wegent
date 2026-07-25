@@ -20,7 +20,9 @@ from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.oxml.text.font import CT_RPr
 from docx.shared import Inches, Pt, RGBColor
+from docx.text.run import Run
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -37,6 +39,11 @@ PRIMARY_COLOR = RGBColor(20, 184, 166)  # #14B8A6
 TEXT_COLOR = RGBColor(36, 41, 46)
 CODE_BG_COLOR = RGBColor(246, 248, 250)
 LINK_COLOR = RGBColor(85, 185, 247)
+LATIN_FONT = "Arial"
+EAST_ASIA_FONT = "Microsoft YaHei"
+MONOSPACE_FONT = "Courier New"
+DOCUMENT_LANGUAGE = "en-US"
+EAST_ASIA_LANGUAGE = "zh-CN"
 
 
 def generate_task_docx(
@@ -89,25 +96,56 @@ def generate_task_docx(
 
 def _setup_document_styles(doc: Document):
     """Configure document-wide styles with emoji support for Word, WPS, and macOS"""
-    # Set default font
     style = doc.styles["Normal"]
     font = style.font
-    # Use Arial which has better emoji support than Calibri
-    font.name = "Arial"
+    font.name = LATIN_FONT
     font.size = Pt(11)
     font.color.rgb = TEXT_COLOR
 
-    # Note: We don't set document-wide emoji font here because different platforms
-    # have different emoji fonts (Apple Color Emoji on macOS, Segoe UI Emoji on Windows).
-    # Instead, we rely on the Office application's automatic font fallback mechanism,
-    # which works well in modern versions (Word 2016+, macOS Word, WPS Office).
-    #
-    # The key is to ensure text is properly UTF-8 encoded, which python-docx handles automatically.
+    style_rpr = style._element.get_or_add_rPr()
+    _set_rpr_fonts(style_rpr, LATIN_FONT, EAST_ASIA_FONT)
+    _set_rpr_language(style_rpr)
 
     # Set paragraph spacing
     paragraph_format = style.paragraph_format
     paragraph_format.space_after = Pt(12)
     paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+
+
+def _set_rpr_fonts(rpr: CT_RPr, latin_font: str, east_asia_font: str) -> None:
+    """Set explicit Latin and East Asian fonts on a run-properties element."""
+    r_fonts = rpr.find(qn("w:rFonts"))
+    if r_fonts is None:
+        r_fonts = OxmlElement("w:rFonts")
+        rpr.insert(0, r_fonts)
+
+    r_fonts.set(qn("w:ascii"), latin_font)
+    r_fonts.set(qn("w:hAnsi"), latin_font)
+    r_fonts.set(qn("w:eastAsia"), east_asia_font)
+    r_fonts.set(qn("w:cs"), latin_font)
+
+
+def _set_rpr_language(rpr: CT_RPr) -> None:
+    """Mark run properties as English text with Simplified Chinese East Asia text."""
+    language = rpr.find(qn("w:lang"))
+    if language is None:
+        language = OxmlElement("w:lang")
+        rpr.append(language)
+
+    language.set(qn("w:val"), DOCUMENT_LANGUAGE)
+    language.set(qn("w:eastAsia"), EAST_ASIA_LANGUAGE)
+
+
+def _set_run_fonts(
+    run: Run,
+    latin_font: str = LATIN_FONT,
+    east_asia_font: str = EAST_ASIA_FONT,
+) -> None:
+    """Apply the document font contract to a run."""
+    run.font.name = latin_font
+    rpr = run._element.get_or_add_rPr()
+    _set_rpr_fonts(rpr, latin_font, east_asia_font)
+    _set_rpr_language(rpr)
 
 
 def _add_document_header(doc: Document, task_title: str):
@@ -116,6 +154,7 @@ def _add_document_header(doc: Document, task_title: str):
     logo = doc.add_paragraph()
     logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = logo.add_run("Wegent AI")
+    _set_run_fonts(run)
     run.font.size = Pt(24)
     run.font.bold = True
     run.font.color.rgb = PRIMARY_COLOR
@@ -203,11 +242,11 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
     time_run.font.size = Pt(9)
     time_run.font.color.rgb = RGBColor(160, 160, 160)
 
-    # Contexts (attachments and knowledge bases) for user messages
+    # Export attachment contexts for user messages.
+    # Knowledge base contexts are runtime metadata and must not be exported.
     if is_user and subtask.contexts:
         from app.models.subtask_context import ContextType
 
-        # Filter attachment type contexts
         attachment_contexts = [
             ctx
             for ctx in subtask.contexts
@@ -215,15 +254,6 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
         ]
         if attachment_contexts:
             _add_attachments(doc, attachment_contexts, db)
-
-        # Filter knowledge base type contexts
-        knowledge_base_contexts = [
-            ctx
-            for ctx in subtask.contexts
-            if ctx.context_type == ContextType.KNOWLEDGE_BASE.value
-        ]
-        if knowledge_base_contexts:
-            _add_knowledge_bases(doc, knowledge_base_contexts)
 
     # Message content — strip system-injected metadata (<system-reminder> etc.) for user messages
     content = (
@@ -380,36 +410,6 @@ def _add_file_attachment(doc: Document, attachment: SubtaskContext):
     p_fmt = p.paragraph_format
     p_fmt.left_indent = Inches(0.2)
     p_fmt.space_after = Pt(6)
-
-
-def _add_knowledge_bases(doc: Document, knowledge_bases: List[SubtaskContext]):
-    """Add knowledge base info cards"""
-    for kb in knowledge_bases:
-        p = doc.add_paragraph()
-
-        # Get knowledge base info from type_data
-        type_data = kb.type_data or {}
-        document_count = type_data.get("document_count", 0)
-
-        # Knowledge base type label (gray color, consistent with attachment labels)
-        type_run = p.add_run("[KB] ")
-        type_run.font.bold = True
-        type_run.font.size = Pt(9)
-        type_run.font.color.rgb = RGBColor(100, 100, 100)
-
-        # Knowledge base name
-        name_run = p.add_run(kb.name)
-        name_run.font.size = Pt(10)
-
-        # Document count
-        count_run = p.add_run(f" ({document_count} docs)")
-        count_run.font.size = Pt(9)
-        count_run.font.color.rgb = RGBColor(150, 150, 150)
-
-        # Add background shading
-        p_fmt = p.paragraph_format
-        p_fmt.left_indent = Inches(0.2)
-        p_fmt.space_after = Pt(6)
 
 
 def _get_file_type_label(extension: str) -> str:
@@ -679,7 +679,7 @@ def _add_inline_formatting(paragraph, text: str):
             _add_text_with_emoji_support(paragraph, seg_data, bold=True, italic=True)
         elif seg_type == "code":
             run = paragraph.add_run(seg_data)
-            run.font.name = "Courier New"
+            _set_run_fonts(run, MONOSPACE_FONT)
             run.font.size = Pt(10)
             run.font.color.rgb = RGBColor(207, 34, 46)
         elif seg_type == "link":
@@ -746,6 +746,8 @@ def _add_text_with_emoji_support(
         # Apply emoji-specific font configuration
         if is_emoji:
             _set_emoji_font(run)
+        else:
+            _set_run_fonts(run)
 
 
 def _set_emoji_font(run):
@@ -799,6 +801,8 @@ def _add_hyperlink(paragraph, url: str, text: str):
 
     new_run = OxmlElement("w:r")
     rPr = OxmlElement("w:rPr")
+    _set_rpr_fonts(rPr, LATIN_FONT, EAST_ASIA_FONT)
+    _set_rpr_language(rPr)
 
     # Style (blue + underline)
     color = OxmlElement("w:color")
@@ -828,7 +832,7 @@ def _add_code_block(doc: Document, code: str, language: str):
 
     # Add code content
     run = p.add_run(code)
-    run.font.name = "Courier New"
+    _set_run_fonts(run, MONOSPACE_FONT)
     run.font.size = Pt(9)
     run.font.color.rgb = TEXT_COLOR
 

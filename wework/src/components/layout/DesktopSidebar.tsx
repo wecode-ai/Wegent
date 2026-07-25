@@ -34,6 +34,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
@@ -43,7 +44,6 @@ import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudC
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
-  StandaloneBlankProjectDialog,
   StandaloneFolderProjectDialog,
   type StandaloneRemoteDialogIntent,
   type StandaloneWorkspaceDialogMode,
@@ -188,7 +188,6 @@ interface DesktopSidebarProps {
   onOpenPlugins: () => void
   onOpenSites?: () => void
   onRefreshDevices?: () => Promise<void>
-  onOpenBlankStandaloneProject?: () => void
   onOpenStandaloneFolderProject?: (
     mode: StandaloneWorkspaceDialogMode,
     intent?: StandaloneRemoteDialogIntent
@@ -206,6 +205,12 @@ interface DesktopSidebarProps {
   onSelectStandaloneDevice?: (deviceId: string | null) => void
   onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
+  onUpdateLocalRuntimeProject?: (data: {
+    deviceId: string
+    projectKey: string
+    name: string
+    roots: string[]
+  }) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
   onSetRuntimeProjectPinned?: (data: RuntimeProjectPinRequest) => Promise<void>
@@ -252,8 +257,6 @@ interface ArchiveConversationsConfirmDialogProps {
   onConfirm: () => Promise<void> | void
 }
 
-const PROJECT_CREATE_MENU_WIDTH = 248
-const PROJECT_CREATE_MENU_MARGIN = 8
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 3000
 const PROJECT_APPEARANCE_COLORS = [
   'blue',
@@ -1928,7 +1931,7 @@ function ProjectItem({
   onSetRuntimeProjectAppearance?: (data: RuntimeProjectAppearanceRequest) => Promise<void>
   onReorderRuntimeProjectTasks?: (data: RuntimeProjectTaskReorderRequest) => Promise<void>
   onSetRuntimeTaskPinned?: (data: RuntimeTaskPinRequest) => Promise<void>
-  onRenameProject: (project: ProjectWithTasks) => void
+  onRenameProject: (project: ProjectWithTasks, projectWork?: RuntimeProjectWork) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onMarkRuntimeTaskRead?: (address: RuntimeTaskAddress) => void
   onRenameRuntimeTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
@@ -2261,10 +2264,18 @@ function ProjectItem({
                   onSelect: toggleProjectPinned,
                 },
                 {
-                  label: t('workbench.rename_project', '重命名项目'),
+                  label:
+                    runtimeProjectWork?.project.stateDeviceId === sidebarStateDeviceId &&
+                    runtimeProjectWork?.project.source !== 'remote_project'
+                      ? t('workbench.edit_project', '编辑项目')
+                      : t('workbench.rename_project', '重命名项目'),
                   icon: Edit3,
-                  testId: `rename-project-${project.id}`,
-                  onSelect: () => onRenameProject(project),
+                  testId:
+                    runtimeProjectWork?.project.stateDeviceId === sidebarStateDeviceId &&
+                    runtimeProjectWork?.project.source !== 'remote_project'
+                      ? `edit-project-${project.id}`
+                      : `rename-project-${project.id}`,
+                  onSelect: () => onRenameProject(project, runtimeProjectWork),
                 },
                 {
                   label: t('workbench.change_project_appearance'),
@@ -2546,13 +2557,13 @@ export function DesktopSidebar({
   onOpenPlugins,
   onOpenSites,
   onRefreshDevices,
-  onOpenBlankStandaloneProject,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
   onCreatePermanentWorktree,
   onSelectStandaloneDevice,
   onGetRemoteDeviceStartupCommand,
   onUpdateProjectName,
+  onUpdateLocalRuntimeProject,
   onRemoveProject,
   onReorderRuntimeProjects,
   onSetRuntimeProjectPinned,
@@ -2622,17 +2633,24 @@ export function DesktopSidebar({
   const [isArchivingProjectSection, setIsArchivingProjectSection] = useState(false)
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
-  const projectCreateMenuRef = useRef<HTMLDivElement>(null)
-  const projectCreateMenuFloatingRef = useRef<HTMLDivElement>(null)
-  const [projectCreateMenuOpen, setProjectCreateMenuOpen] = useState(false)
-  const [projectCreateMenuPosition, setProjectCreateMenuPosition] =
-    useState<ProjectCreateMenuPosition | null>(null)
-  const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
+  const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
   const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
     useState<StandaloneRemoteDialogIntent>('project')
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
+  const [editingLocalProject, setEditingLocalProject] = useState<RuntimeProjectWork | null>(null)
+  const openProjectEditor = (project: ProjectWithTasks, projectWork?: RuntimeProjectWork) => {
+    if (
+      projectWork?.project.stateDeviceId === sidebarStateDeviceId &&
+      projectWork?.project.source !== 'remote_project' &&
+      onUpdateLocalRuntimeProject
+    ) {
+      setEditingLocalProject(projectWork)
+      return
+    }
+    setRenamingProject(project)
+  }
   const [projectsExpanded, setProjectsExpanded] = useState(() =>
     readStoredBoolean(projectsExpandedStorageKey, true)
   )
@@ -2936,23 +2954,12 @@ export function DesktopSidebar({
     })
   }, [selectedRuntimeProjectAutoExpandKey, selectedRuntimeProjectId, storageScope])
 
-  const openProjectCreateMenu = (anchor: HTMLElement) => {
-    setProjectCreateMenuOpen(open => {
-      if (open) return false
-
-      const anchorRect = anchor.getBoundingClientRect()
-      const maxLeft = Math.max(
-        PROJECT_CREATE_MENU_MARGIN,
-        window.innerWidth - PROJECT_CREATE_MENU_WIDTH - PROJECT_CREATE_MENU_MARGIN
-      )
-      setProjectCreateMenuPosition({
-        top: Math.max(PROJECT_CREATE_MENU_MARGIN, anchorRect.bottom + PROJECT_CREATE_MENU_MARGIN),
-        left: Math.min(anchorRect.right + PROJECT_CREATE_MENU_MARGIN, maxLeft),
-      })
-      return true
-    })
+  const openProjectCreateDialog = () => {
+    setProjectCreateDialogOpen(true)
     void onRefreshDevices?.().catch(() => undefined)
   }
+
+  useEscapeKey(() => setProjectCreateDialogOpen(false), projectCreateDialogOpen)
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
@@ -3005,36 +3012,6 @@ export function DesktopSidebar({
   }, [imNotificationMenuOpen, settingsMenuOpen])
 
   useEffect(() => {
-    if (!projectCreateMenuOpen) return
-
-    const handleOutsidePointer = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
-      const target = event.target as Node
-      if (
-        !projectCreateMenuRef.current?.contains(target) &&
-        !projectCreateMenuFloatingRef.current?.contains(target)
-      ) {
-        setProjectCreateMenuOpen(false)
-      }
-    }
-
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setProjectCreateMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handleOutsidePointer)
-    document.addEventListener('mousedown', handleOutsidePointer)
-    document.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      document.removeEventListener('pointerdown', handleOutsidePointer)
-      document.removeEventListener('mousedown', handleOutsidePointer)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [projectCreateMenuOpen])
-
-  useEffect(() => {
     if (!currentRuntimeTask) return
 
     const taskRow = document.querySelector(
@@ -3060,7 +3037,7 @@ export function DesktopSidebar({
         'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
-          : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+          : 'bg-[rgb(var(--color-sidebar))]',
         !windowFocused &&
           !(background.imagePath && background.inSidebar) &&
           'bg-[rgb(var(--color-sidebar-unfocused))]',
@@ -3296,7 +3273,7 @@ export function DesktopSidebar({
                         onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
                         onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
                         onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
-                        onRenameProject={setRenamingProject}
+                        onRenameProject={openProjectEditor}
                         onOpenRuntimeTask={onOpenRuntimeTask}
                         onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
                         onRenameRuntimeTask={onRenameRuntimeTask}
@@ -3310,7 +3287,7 @@ export function DesktopSidebar({
               </section>
             )}
             <section>
-              <div ref={projectCreateMenuRef}>
+              <div>
                 <SidebarSectionHeader
                   title={t('workbench.projects', '项目')}
                   expanded={displayedProjectsExpanded}
@@ -3343,84 +3320,103 @@ export function DesktopSidebar({
                       data-testid="projects-create-button"
                       onClick={event => {
                         event.stopPropagation()
-                        openProjectCreateMenu(event.currentTarget)
+                        openProjectCreateDialog()
                       }}
                       className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
-                      aria-expanded={projectCreateMenuOpen}
+                      aria-expanded={projectCreateDialogOpen}
                     >
                       <FolderPlus className="h-4 w-4" />
                     </button>
                   </div>
                 </SidebarSectionHeader>
               </div>
-              {projectCreateMenuOpen &&
-                projectCreateMenuPosition &&
+              {projectCreateDialogOpen &&
                 createPortal(
                   <div
-                    ref={projectCreateMenuFloatingRef}
-                    data-testid="projects-create-button-menu"
-                    className="fixed z-modal rounded-xl border border-border bg-surface p-1.5 text-sm text-text-primary shadow-lg"
-                    style={{
-                      top: projectCreateMenuPosition.top,
-                      left: projectCreateMenuPosition.left,
-                      width: PROJECT_CREATE_MENU_WIDTH,
+                    data-testid="project-create-dialog-overlay"
+                    className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+                    onClick={event => {
+                      if (event.target === event.currentTarget) setProjectCreateDialogOpen(false)
                     }}
-                    onClick={event => event.stopPropagation()}
                   >
-                    <button
-                      type="button"
-                      data-testid="project-create-blank-option"
-                      onClick={() => {
-                        setProjectCreateMenuOpen(false)
-                        if (onOpenBlankStandaloneProject) {
-                          onOpenBlankStandaloneProject()
-                        } else {
-                          setBlankProjectDialogOpen(true)
-                        }
-                      }}
-                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="project-create-dialog-title"
+                      data-testid="projects-create-button-menu"
+                      className="w-full max-w-[520px] rounded-2xl border border-border bg-popover p-5 text-text-primary shadow-2xl"
                     >
-                      <FolderPlus className="h-4 w-4 shrink-0 text-text-secondary" />
-                      <span className="truncate">
-                        {t('workbench.new_blank_project', '新建空白项目')}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="project-create-existing-option"
-                      onClick={() => {
-                        setProjectCreateMenuOpen(false)
-                        if (onOpenStandaloneFolderProject) {
-                          onOpenStandaloneFolderProject('existing')
-                        } else {
-                          setStandaloneWorkspaceDialogMode('existing')
-                        }
-                      }}
-                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
-                    >
-                      <FolderPlus className="h-4 w-4 shrink-0 text-text-secondary" />
-                      <span className="truncate">
-                        {t('workbench.use_existing_folder', '使用现有文件夹')}
-                      </span>
-                    </button>
-                    <div className="my-1 border-t border-border" />
-                    <button
-                      type="button"
-                      data-testid="project-create-remote-option"
-                      onClick={() => {
-                        setProjectCreateMenuOpen(false)
-                        if (onOpenStandaloneFolderProject) {
-                          onOpenStandaloneFolderProject('remote', 'project')
-                        } else {
-                          setStandaloneRemoteDialogIntent('project')
-                          setStandaloneWorkspaceDialogMode('remote')
-                        }
-                      }}
-                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
-                    >
-                      <Globe2 className="h-4 w-4 shrink-0 text-text-secondary" />
-                      <span className="truncate">{t('workbench.remote_project', '远程项目')}</span>
-                    </button>
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <h2 id="project-create-dialog-title" className="heading-base">
+                            {t('workbench.create_project_title', '创建项目')}
+                          </h2>
+                          <p className="mt-2 text-sm leading-5 text-text-secondary">
+                            {t(
+                              'workbench.create_project_description',
+                              '选择项目运行的位置。之后可以在项目中切换工作目录。'
+                            )}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          data-testid="close-project-source-dialog"
+                          aria-label={t('workbench.close_dialog', '关闭')}
+                          onClick={() => setProjectCreateDialogOpen(false)}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          data-testid="project-create-local-option"
+                          onClick={() => {
+                            setProjectCreateDialogOpen(false)
+                            if (onOpenStandaloneFolderProject) {
+                              onOpenStandaloneFolderProject('existing')
+                            } else {
+                              setStandaloneWorkspaceDialogMode('existing')
+                            }
+                          }}
+                          className="rounded-xl border border-border bg-background p-4 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                        >
+                          <FolderOpen className="h-5 w-5 text-text-primary" />
+                          <span className="mt-3 block text-base font-medium">
+                            {t('workbench.local_project', '本地项目')}
+                          </span>
+                          <span className="mt-1 block text-sm leading-5 text-text-secondary">
+                            {t('workbench.local_project_description', '选择一个或多个本地文件夹。')}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="project-create-remote-option"
+                          onClick={() => {
+                            setProjectCreateDialogOpen(false)
+                            if (onOpenStandaloneFolderProject) {
+                              onOpenStandaloneFolderProject('remote', 'project')
+                            } else {
+                              setStandaloneRemoteDialogIntent('project')
+                              setStandaloneWorkspaceDialogMode('remote')
+                            }
+                          }}
+                          className="rounded-xl border border-border bg-background p-4 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                        >
+                          <Globe2 className="h-5 w-5 text-text-primary" />
+                          <span className="mt-3 block text-base font-medium">
+                            {t('workbench.cloud_project', '云端项目')}
+                          </span>
+                          <span className="mt-1 block text-sm leading-5 text-text-secondary">
+                            {t(
+                              'workbench.cloud_project_description',
+                              '使用云设备或远程主机上的项目目录。'
+                            )}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
                   </div>,
                   document.body
                 )}
@@ -3471,7 +3467,7 @@ export function DesktopSidebar({
                       onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
                       onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
                       onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
-                      onRenameProject={setRenamingProject}
+                      onRenameProject={openProjectEditor}
                       onOpenRuntimeTask={onOpenRuntimeTask}
                       onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
                       onRenameRuntimeTask={onRenameRuntimeTask}
@@ -3703,16 +3699,6 @@ export function DesktopSidebar({
             />
           )}
 
-          <StandaloneBlankProjectDialog
-            open={blankProjectDialogOpen}
-            devices={devices}
-            preferredDeviceId={preferredDeviceId}
-            onClose={() => setBlankProjectDialogOpen(false)}
-            onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-            onListDeviceDirectories={onListDeviceDirectories}
-            onCreateDeviceDirectory={onCreateDeviceDirectory}
-            onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-          />
           <StandaloneFolderProjectDialog
             key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
             open={standaloneWorkspaceDialogMode !== null}
@@ -3781,6 +3767,33 @@ export function DesktopSidebar({
             onSubmit={name =>
               renamingProject ? onUpdateProjectName(renamingProject.id, name) : Promise.resolve()
             }
+          />
+          <LocalProjectEditDialog
+            open={editingLocalProject !== null}
+            projectWork={editingLocalProject}
+            device={
+              devices.find(
+                device =>
+                  device.device_id ===
+                  (editingLocalProject?.project.stateDeviceId ||
+                    editingLocalProject?.deviceWorkspaces[0]?.deviceId)
+              ) ?? null
+            }
+            onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+            onListDeviceDirectories={onListDeviceDirectories}
+            onCreateDeviceDirectory={onCreateDeviceDirectory}
+            onClose={() => setEditingLocalProject(null)}
+            onSave={data =>
+              onUpdateLocalRuntimeProject
+                ? onUpdateLocalRuntimeProject(data)
+                : Promise.reject(new Error('Local project editing is unavailable'))
+            }
+            onDelete={() => {
+              if (!editingLocalProject) return
+              const projectId = runtimeProjectUiId(editingLocalProject.project)
+              setEditingLocalProject(null)
+              void onRemoveProject(projectId)
+            }}
           />
         </div>
       </div>

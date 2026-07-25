@@ -7,10 +7,10 @@ import { isTauriRuntime } from './runtime-environment'
 const CLOUD_AUTHORIZATION_WINDOW_LABEL = 'cloud-authorization'
 const CLOUD_AUTHORIZATION_WINDOW_TITLE = 'Wegent Cloud'
 const WINDOW_CREATION_TIMEOUT_MS = 10_000
-const AUTHORIZATION_WINDOW_WIDTH = 520
-const AUTHORIZATION_WINDOW_HEIGHT = 560
-const AUTHORIZATION_WINDOW_MIN_WIDTH = 440
-const AUTHORIZATION_WINDOW_MIN_HEIGHT = 500
+const AUTHORIZATION_WINDOW_WIDTH = 1000
+const AUTHORIZATION_WINDOW_HEIGHT = 640
+const AUTHORIZATION_WINDOW_MIN_WIDTH = 960
+const AUTHORIZATION_WINDOW_MIN_HEIGHT = 620
 const AUTHORIZATION_WINDOW_VERTICAL_OFFSET = -36
 
 interface AuthorizationWindowPosition {
@@ -68,9 +68,10 @@ function formatTauriError(payload: unknown): string {
   return 'Unknown Tauri window error'
 }
 
-async function getAuthorizationWindowPosition(): Promise<AuthorizationWindowPosition> {
+async function getAuthorizationWindowPosition(
+  currentWindow: ReturnType<typeof getCurrentWindow>
+): Promise<AuthorizationWindowPosition> {
   try {
-    const currentWindow = getCurrentWindow()
     const [position, size, scaleFactor] = await Promise.all([
       currentWindow.outerPosition(),
       currentWindow.outerSize(),
@@ -144,7 +145,8 @@ export async function openCloudAuthorizationWindow(
     await existingWindow.close().catch(() => undefined)
   }
 
-  const position = await getAuthorizationWindowPosition()
+  const currentWindow = getCurrentWindow()
+  const position = await getAuthorizationWindowPosition(currentWindow)
   const authWindow = new WebviewWindow(CLOUD_AUTHORIZATION_WINDOW_LABEL, {
     url,
     title: CLOUD_AUTHORIZATION_WINDOW_TITLE,
@@ -152,6 +154,7 @@ export async function openCloudAuthorizationWindow(
     height: AUTHORIZATION_WINDOW_HEIGHT,
     minWidth: AUTHORIZATION_WINDOW_MIN_WIDTH,
     minHeight: AUTHORIZATION_WINDOW_MIN_HEIGHT,
+    parent: currentWindow,
     ...position,
     preventOverflow: true,
     resizable: true,

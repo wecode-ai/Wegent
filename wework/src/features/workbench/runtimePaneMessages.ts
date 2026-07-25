@@ -146,6 +146,12 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onMessageAction({
         type: 'assistant_done',
         subtaskId: identity.subtaskId,
+        turnId:
+          typeof payload.result.turnId === 'string'
+            ? payload.result.turnId
+            : typeof payload.result.turn_id === 'string'
+              ? payload.result.turn_id
+              : undefined,
         content: doneContent(payload.result),
         blocks,
         fileChanges,
@@ -471,12 +477,15 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     id: role === 'user' && clientMessageId ? clientMessageId : message.id,
     role,
     subtaskId,
+    turnId: message.turnId ?? message.turn_id ?? undefined,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
     contentTruncated: contentTruncated || undefined,
     contentOriginalChars: contentTruncated ? runtimeMessageOriginalChars(message) : undefined,
     runtimeMessageIndex,
     status,
     runtimeStatus,
+    error: message.error ?? undefined,
+    errorType: message.errorType ?? message.error_type ?? undefined,
     source,
     attachments: message.attachments,
     runtimeGoalRequest: normalizeRuntimeGoalRequest(message),

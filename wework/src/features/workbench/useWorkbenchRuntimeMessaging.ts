@@ -4,7 +4,6 @@ import { ApiError } from '@/api/http'
 import { WEWORK_CLIENT_ORIGIN } from '@/api/backend/backendServices'
 import type { ExecutorClient } from '@/api/executorAccess'
 import i18n from '@/i18n'
-import { getModelExecutionOverride } from '@/features/cloud-connection/modelExecution'
 import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -15,6 +14,7 @@ import {
 } from '@/lib/device-capabilities'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -116,9 +116,7 @@ interface UseWorkbenchRuntimeMessagingOptions {
 
 function isConfiguredLocalModel(model: UnifiedModel | null): boolean {
   if (!model) return false
-  const override = getModelExecutionOverride(model)
-  const modelName = override?.modelName ?? model.name
-  return localModelIdFromModelName(modelName) !== null
+  return localModelIdFromModelName(model.name) !== null
 }
 
 function isLocalDeviceTarget(
@@ -502,6 +500,30 @@ export function useWorkbenchRuntimeMessaging({
         projectId,
         state.selectedDeviceWorkspaceId
       )
+      const selectedRuntimeProject = projectId
+        ? state.runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
+            ?.project
+        : null
+      const selectedRuntimeProjectWork = projectId
+        ? state.runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
+        : null
+      const configuredRuntimeRoots =
+        selectedRuntimeProject?.roots?.map(root => root.path.trim()).filter(Boolean) ?? []
+      const runtimeWorkspaceRoots =
+        selectedRuntimeProject?.source === 'local_project'
+          ? Array.from(
+              new Set(
+                (configuredRuntimeRoots.length > 0
+                  ? configuredRuntimeRoots
+                  : (selectedRuntimeProjectWork?.deviceWorkspaces.map(
+                      workspace => workspace.workspacePath
+                    ) ?? [])
+                )
+                  .map(normalizeRuntimeWorkspacePath)
+                  .filter(Boolean)
+              )
+            )
+          : []
       let runtimeTaskTarget: Pick<
         RuntimeTaskCreateRequest,
         'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
@@ -520,10 +542,14 @@ export function useWorkbenchRuntimeMessaging({
         }
         optimisticDeviceId = selectedProjectWorkspace.deviceId
         runtimeTaskTarget =
-          selectedProjectWorkspace.id != null
+          selectedProjectWorkspace.id != null &&
+          selectedProjectWorkspace.workspaceSource !== 'local' &&
+          !services.cloudBackgroundApi
             ? {
                 projectId,
                 deviceWorkspaceId: selectedProjectWorkspace.id,
+                deviceId: selectedProjectWorkspace.deviceId,
+                workspacePath: selectedProjectWorkspace.workspacePath,
               }
             : {
                 deviceId: selectedProjectWorkspace.deviceId,
@@ -594,6 +620,13 @@ export function useWorkbenchRuntimeMessaging({
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
         execution: payload.execution,
+        ...(selectedRuntimeProject?.source === 'local_project'
+          ? {
+              runtimeProjectKey: selectedRuntimeProject.key,
+              runtimeProjectName: selectedRuntimeProject.name,
+              runtimeWorkspaceRoots,
+            }
+          : {}),
         ...(options?.ephemeral ? { ephemeral: true } : {}),
         ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
@@ -650,6 +683,7 @@ export function useWorkbenchRuntimeMessaging({
         hasSelectedProjectWorkspace: Boolean(selectedProjectWorkspace),
         optimisticWorkspacePath: optimisticWorkspacePath ?? null,
       })
+      dispatch({ type: 'runtime_task_started', address: optimisticAddress })
       options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
       if (options?.openInMainPane !== false) {
         runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
@@ -750,6 +784,7 @@ export function useWorkbenchRuntimeMessaging({
         return address
       } catch (error) {
         const message = error instanceof Error ? error.message : '发送失败'
+        dispatch({ type: 'runtime_task_settled', address: optimisticAddress })
         if (optimisticWorkspace && optimisticWorkspacePath && !options?.ephemeral) {
           dispatch({
             type: 'runtime_task_optimistic_upserted',
@@ -784,6 +819,7 @@ export function useWorkbenchRuntimeMessaging({
       reportError,
       reportSendBlocked,
       runtimeTasks,
+      services.cloudBackgroundApi,
       state.currentProject,
       state.devices,
       state.projects,

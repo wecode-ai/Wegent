@@ -60,6 +60,7 @@ const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_B
 const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
+const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
@@ -77,6 +78,7 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
+
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -702,6 +704,9 @@ fn persistent_codex_app_server_launch_config(
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
     ]);
+    launch_config
+        .config_overrides
+        .extend(codex_streaming_patch_config_overrides());
     launch_config
 }
 
@@ -1991,6 +1996,9 @@ fn explicit_codex_upstream(
         api_format: non_empty_config(model_config, "upstream_api_format")
             .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
             .unwrap_or_else(|| "openai-responses".to_owned()),
+        convert_custom_tools: non_empty_config(model_config, "tool_profile")
+            .or_else(|| non_empty_config(model_config, "toolProfile"))
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
         api_key: api_key.to_owned(),
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
@@ -2009,6 +2017,7 @@ fn shell_path_config_override() -> String {
 fn codex_streaming_patch_config_overrides() -> Vec<String> {
     vec![
         CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned(),
+        CODEX_APPLY_PATCH_FREEFORM_OVERRIDE.to_owned(),
         CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
     ]
 }
@@ -2028,23 +2037,20 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
 }
 
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
-    if !bool_value(
+    let compat_proxy = bool_value(
         request
             .model_config
             .get("codex_responses_compat_proxy")
             .or_else(|| request.model_config.get("codexResponsesCompatProxy")),
     )
-    .unwrap_or(false)
-    {
-        return model_id(request);
+    .unwrap_or(false);
+    let catalog_model_id = non_empty_config(&request.model_config, "codex_catalog_model_id")
+        .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
+    if compat_proxy {
+        catalog_model_id.clone().or_else(|| model_id(request))
+    } else {
+        model_id(request)
     }
-    if let Some(catalog_model_id) =
-        non_empty_config(&request.model_config, "codex_catalog_model_id")
-            .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"))
-    {
-        return Some(catalog_model_id);
-    }
-    model_id(request)
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -2110,12 +2116,33 @@ fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> 
                 .collect()
         })
         .unwrap_or_default();
+    let api_format = provider_config
+        .get("upstream_api_format")
+        .or_else(|| provider_config.get("upstreamApiFormat"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai-responses")
+        .to_owned();
+    let convert_custom_tools = api_format != "openai-responses"
+        || provider_config
+            .get("tool_profile")
+            .or_else(|| provider_config.get("toolProfile"))
+            .and_then(|value| value.as_str())
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+    let request_path = match api_format.as_str() {
+        "openai-chat-completions" => "/chat/completions",
+        "anthropic-messages" => "/messages",
+        _ => "/responses",
+    };
+    let base_url = base_url.trim_end_matches('/').to_owned();
 
     Some(LocalModelProxyUpstream {
         registration_id: provider.to_owned(),
-        base_url: base_url.trim_end_matches('/').to_owned(),
-        request_url: None,
-        api_format: "openai-responses".to_owned(),
+        request_url: Some(format!("{base_url}{request_path}")),
+        base_url,
+        api_format,
+        convert_custom_tools,
         api_key,
         default_headers,
         proxy_url: None,
@@ -2770,6 +2797,12 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
+    let binary_attachment_context =
+        AttachmentPromptProcessor::build_binary_attachment_context(&success);
+    if !binary_attachment_context.is_empty() {
+        request.prompt =
+            append_text_attachment_context(&request.prompt, &binary_attachment_context);
+    }
     let text_attachment_context =
         AttachmentPromptProcessor::build_text_attachment_context(&success);
     if !text_attachment_context.is_empty() {
@@ -3208,6 +3241,21 @@ fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>)
     );
 }
 
+fn insert_runtime_workspace_roots(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    let roots = request
+        .runtime_workspace_roots
+        .iter()
+        .map(|root| root.trim())
+        .filter(|root| !root.is_empty())
+        .collect::<Vec<_>>();
+    if !roots.is_empty() {
+        params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
+    }
+}
+
 fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
     let active_profile = response
         .get("activePermissionProfile")
@@ -3246,6 +3294,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3276,6 +3325,7 @@ fn thread_fork_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3339,6 +3389,7 @@ fn thread_resume_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3398,6 +3449,7 @@ fn turn_start_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }

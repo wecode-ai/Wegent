@@ -8,7 +8,10 @@
 //! Chat Completions must be adapted at the local executor boundary. The event
 //! shapes and custom-tool mapping preserve Codex semantics across protocols.
 
-use std::{collections::BTreeMap, pin::Pin};
+use std::{
+    collections::{BTreeMap, HashMap},
+    pin::Pin,
+};
 
 use axum::body::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -196,6 +199,152 @@ fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
             }))
         })
         .collect()
+}
+
+fn responses_tools(tools: &[Value], context: &ToolContext) -> Vec<Value> {
+    tools
+        .iter()
+        .map(|tool| {
+            let Some(name) = tool.get("name").and_then(Value::as_str) else {
+                return tool.clone();
+            };
+            if context.is_custom(name) {
+                let contract = if name == "apply_patch" {
+                    format!("{APPLY_PATCH_OUTPUT_CONTRACT}\n\n")
+                } else {
+                    "Put only the custom tool's raw input in the function's `input` field. Do not add Markdown fences or explanatory text.\n\n".to_owned()
+                };
+                let description = if name == "apply_patch" {
+                    contract
+                } else {
+                    let definition = serde_json::to_string(tool).unwrap_or_default();
+                    format!("{contract}Original tool definition:\n```json\n{definition}\n```")
+                };
+                return json!({
+                    "type": "function",
+                    "name": name,
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            CUSTOM_TOOL_INPUT_FIELD: {
+                                "type": "string",
+                                "description": CUSTOM_TOOL_INPUT_DESCRIPTION
+                            }
+                        },
+                        "required": [CUSTOM_TOOL_INPUT_FIELD],
+                        "additionalProperties": false
+                    }
+                });
+            }
+            tool.clone()
+        })
+        .collect()
+}
+
+fn responses_tool_choice(choice: &Value) -> Option<Value> {
+    let choice_type = choice.get("type").and_then(Value::as_str)?;
+    if choice_type == "custom" {
+        let mut converted = choice.clone();
+        converted["type"] = Value::String("function".to_owned());
+        return Some(converted);
+    }
+    None
+}
+
+/// Convert a Codex Responses request into a Responses request where custom
+/// tools (such as `apply_patch`) are exposed as standard `function` tools.
+/// This lets non-OpenAI / gateway providers that speak the Responses wire
+/// protocol see the tool while preserving Codex custom-tool semantics on the
+/// way back through [`responses_sse_to_responses`].
+pub(super) fn responses_to_responses(body: &Value) -> Result<(Value, ToolContext), String> {
+    let mut result = body.clone();
+    let context = build_tool_context(&result);
+
+    if let Some(tools) = result.get("tools").and_then(Value::as_array) {
+        if !tools.is_empty() {
+            result["tools"] = Value::Array(responses_tools(tools, &context));
+        }
+    }
+
+    if let Some(input) = result.get("input") {
+        result["input"] = convert_responses_input_items(input, &context)?;
+    }
+
+    if let Some(choice) = result.get("tool_choice") {
+        if let Some(converted) = responses_tool_choice(choice) {
+            result["tool_choice"] = converted;
+        }
+    }
+
+    Ok((result, context))
+}
+
+fn convert_responses_input_items(input: &Value, context: &ToolContext) -> Result<Value, String> {
+    let items = match input {
+        Value::Array(items) => items,
+        _ => return Ok(input.clone()),
+    };
+
+    let mut call_id_to_name: HashMap<String, String> = HashMap::new();
+    for item in items {
+        if item.get("type").and_then(Value::as_str) == Some("custom_tool_call") {
+            if let (Some(call_id), Some(name)) = (
+                item.get("call_id").and_then(Value::as_str),
+                item.get("name").and_then(Value::as_str),
+            ) {
+                call_id_to_name.insert(call_id.to_owned(), name.to_owned());
+            }
+        }
+    }
+
+    let mut converted = Vec::new();
+    for item in items {
+        converted.push(convert_responses_input_item(
+            item,
+            context,
+            &call_id_to_name,
+        )?);
+    }
+    Ok(Value::Array(converted))
+}
+
+fn convert_responses_input_item(
+    item: &Value,
+    context: &ToolContext,
+    call_id_to_name: &HashMap<String, String>,
+) -> Result<Value, String> {
+    let item_type = item.get("type").and_then(Value::as_str);
+    let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+
+    match item_type {
+        Some("custom_tool_call") if context.is_custom(name) => {
+            let mut converted = item.clone();
+            converted["type"] = Value::String("function_call".to_owned());
+            if let Some(input) = converted.get("input").and_then(Value::as_str) {
+                let arguments = serde_json::to_string(&json!({CUSTOM_TOOL_INPUT_FIELD: input}))
+                    .map_err(|error| error.to_string())?;
+                converted["arguments"] = Value::String(arguments);
+                converted.as_object_mut().unwrap().remove("input");
+            }
+            Ok(converted)
+        }
+        Some("custom_tool_call_output") => {
+            let call_id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(name) = call_id_to_name.get(call_id) {
+                if context.is_custom(name) {
+                    let mut converted = item.clone();
+                    converted["type"] = Value::String("function_call_output".to_owned());
+                    return Ok(converted);
+                }
+            }
+            Ok(item.clone())
+        }
+        _ => Ok(item.clone()),
+    }
 }
 
 fn chat_tool_choice(choice: &Value) -> Value {
@@ -477,6 +626,339 @@ struct ChatStreamState<S> {
     saw_choice: bool,
 }
 
+/// State kept while rewriting a Responses API stream so that function-call
+/// events for originally-custom tools are presented to Codex as
+/// `custom_tool_call` events again.
+struct ResponsesCustomToolState {
+    context: ToolContext,
+    calls: HashMap<String, CustomToolCallAccumulatingState>,
+}
+
+#[derive(Default)]
+struct CustomToolCallAccumulatingState {
+    name: String,
+    arguments: String,
+    done: bool,
+}
+
+impl ResponsesCustomToolState {
+    fn is_custom_item(&self, item: &Value) -> Option<String> {
+        if item.get("type").and_then(Value::as_str) != Some("function_call") {
+            return None;
+        }
+        let name = item.get("name").and_then(Value::as_str)?;
+        if !self.context.is_custom(name) {
+            return None;
+        }
+        Some(name.to_owned())
+    }
+
+    fn start_call(&mut self, item_id: &str, name: &str) {
+        self.calls.entry(item_id.to_owned()).or_default().name = name.to_owned();
+    }
+
+    fn append_arguments(&mut self, item_id: &str, delta: &str) {
+        if let Some(state) = self.calls.get_mut(item_id) {
+            state.arguments.push_str(delta);
+        }
+    }
+
+    fn finish_arguments(&mut self, item_id: &str, arguments: Option<&str>) -> Option<String> {
+        let state = self.calls.get_mut(item_id)?;
+        if let Some(arguments) = arguments {
+            state.arguments = arguments.to_owned();
+        }
+        state.done = true;
+        extract_custom_tool_input(&state.name, &state.arguments)
+    }
+
+    fn snapshot_input(&self, item_id: &str) -> Option<String> {
+        let state = self.calls.get(item_id)?;
+        if state.arguments.is_empty() {
+            return None;
+        }
+        extract_custom_tool_input(&state.name, &state.arguments)
+    }
+}
+
+fn extract_custom_tool_input(_name: &str, arguments: &str) -> Option<String> {
+    if let Ok(value) = serde_json::from_str::<Value>(arguments) {
+        if let Some(input) = value.get(CUSTOM_TOOL_INPUT_FIELD).cloned() {
+            return match input {
+                Value::String(text) => Some(text),
+                other => serde_json::to_string(&other).ok(),
+            };
+        }
+    }
+    Some(arguments.to_owned())
+}
+
+fn function_call_item_to_custom(item: &mut Value, input: Option<&str>) {
+    item["type"] = Value::String("custom_tool_call".to_owned());
+    let input = input.map(|value| value.to_owned()).or_else(|| {
+        item.get("arguments")
+            .and_then(Value::as_str)
+            .and_then(|arguments| extract_custom_tool_input("", arguments))
+    });
+    if let Some(input) = input {
+        item["input"] = Value::String(input);
+    }
+    if let Some(object) = item.as_object_mut() {
+        object.remove("arguments");
+    }
+}
+
+/// Transform a Responses API SSE stream so that `function_call` events for
+/// tools that were originally `type: "custom"` are turned back into
+/// `custom_tool_call` events Codex understands.
+pub(super) fn responses_sse_to_responses<S, E>(
+    stream: S,
+    context: ToolContext,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::error::Error + Send + 'static,
+{
+    use std::collections::VecDeque;
+
+    let state = ResponsesStreamState {
+        stream: Box::pin(stream),
+        pending: String::new(),
+        output: VecDeque::new(),
+        context_state: ResponsesCustomToolState {
+            context,
+            calls: HashMap::new(),
+        },
+        source_done: false,
+        terminal_seen: false,
+    };
+
+    futures_util::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(output) = state.output.pop_front() {
+                return Some((output, state));
+            }
+            if state.terminal_seen {
+                return None;
+            }
+            if state.source_done {
+                state.terminal_seen = true;
+                return Some((
+                    Ok(super::responses_failed_event(
+                        "Upstream Responses stream ended before a terminal event",
+                    )),
+                    state,
+                ));
+            }
+            match state.stream.next().await {
+                Some(Ok(bytes)) => {
+                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    while let Some(block) = super::take_sse_block(&mut state.pending) {
+                        if super::is_responses_terminal_event(&block) {
+                            state.terminal_seen = true;
+                        }
+                        let rewritten =
+                            rewrite_responses_sse_block(&block, &mut state.context_state);
+                        if let Some(rewritten) = rewritten {
+                            if !rewritten.is_empty() {
+                                state
+                                    .output
+                                    .push_back(Ok(Bytes::from(format!("{}\n\n", rewritten))));
+                            }
+                        } else {
+                            state
+                                .output
+                                .push_back(Ok(Bytes::from(format!("{}\n\n", block))));
+                        }
+                    }
+                }
+                Some(Err(error)) => {
+                    state.source_done = true;
+                    state.terminal_seen = true;
+                    return Some((Ok(super::responses_failed_event(&error.to_string())), state));
+                }
+                None => {
+                    state.source_done = true;
+                    if !state.pending.trim().is_empty() {
+                        let trailing = std::mem::take(&mut state.pending);
+                        let trailing = trailing.trim_end();
+                        if super::is_responses_terminal_event(trailing) {
+                            state.terminal_seen = true;
+                        }
+                        let rewritten =
+                            rewrite_responses_sse_block(trailing, &mut state.context_state);
+                        if let Some(rewritten) = rewritten {
+                            if !rewritten.is_empty() {
+                                state
+                                    .output
+                                    .push_back(Ok(Bytes::from(format!("{}\n\n", rewritten))));
+                            }
+                        } else {
+                            state
+                                .output
+                                .push_back(Ok(Bytes::from(format!("{}\n\n", trailing))));
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+struct ResponsesStreamState<S> {
+    stream: Pin<Box<S>>,
+    pending: String,
+    output: std::collections::VecDeque<Result<Bytes, std::io::Error>>,
+    context_state: ResponsesCustomToolState,
+    source_done: bool,
+    terminal_seen: bool,
+}
+
+fn rewrite_responses_sse_block(
+    block: &str,
+    state: &mut ResponsesCustomToolState,
+) -> Option<String> {
+    let mut event_name: Option<String> = None;
+    let mut data_lines: Vec<&str> = Vec::new();
+    for raw_line in block.lines() {
+        let line = raw_line.trim_start_matches('\u{feff}').trim_start();
+        if let Some(value) = line.strip_prefix("event:") {
+            event_name = Some(value.trim().to_owned());
+        } else if let Some(value) = line.strip_prefix("data:") {
+            data_lines.push(value.trim_start());
+        }
+    }
+    if data_lines.is_empty() {
+        return None;
+    }
+    let data = data_lines.join("\n");
+    let data = data.trim();
+    let mut value = serde_json::from_str::<Value>(data).ok()?;
+
+    let rewritten = match event_name.as_deref() {
+        Some("response.output_item.added") => {
+            if let Some(item) = value.get_mut("item") {
+                if let Some(name) = state.is_custom_item(item) {
+                    let item_id = item
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                    state.start_call(&item_id, &name);
+                    function_call_item_to_custom(item, None);
+                }
+            }
+            rewrite_event_data(block, &value)
+        }
+        Some("response.function_call_arguments.delta") => {
+            let item_id = value
+                .get("item_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                state.append_arguments(&item_id, delta);
+            }
+            if state.calls.contains_key(&item_id) {
+                // Swallow the original delta; we'll emit the full input on done.
+                return Some(String::new());
+            }
+            None
+        }
+        Some("response.function_call_arguments.done") => {
+            let item_id = value
+                .get("item_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let arguments = value.get("arguments").and_then(Value::as_str);
+            if let Some(input) = state.finish_arguments(&item_id, arguments) {
+                let output_index = value.get("output_index").cloned().unwrap_or(Value::Null);
+                let mut events = String::new();
+                events.push_str(&format_sse_event(
+                    "response.custom_tool_call_input.delta",
+                    &json!({
+                        "type": "response.custom_tool_call_input.delta",
+                        "item_id": item_id,
+                        "output_index": output_index,
+                        "delta": input,
+                    }),
+                ));
+                events.push_str(&format_sse_event(
+                    "response.custom_tool_call_input.done",
+                    &json!({
+                        "type": "response.custom_tool_call_input.done",
+                        "item_id": item_id,
+                        "output_index": output_index,
+                        "input": input,
+                    }),
+                ));
+                return Some(events);
+            }
+            None
+        }
+        Some("response.output_item.done") => {
+            if let Some(item) = value.get_mut("item") {
+                if state.is_custom_item(item).is_some() {
+                    let input = item
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .and_then(|item_id| state.snapshot_input(item_id));
+                    function_call_item_to_custom(item, input.as_deref());
+                }
+            }
+            rewrite_event_data(block, &value)
+        }
+        Some("response.completed") => {
+            if let Some(response) = value.get_mut("response") {
+                if let Some(output) = response.get_mut("output").and_then(Value::as_array_mut) {
+                    for item in output {
+                        if state.is_custom_item(item).is_some() {
+                            let input = item
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .and_then(|item_id| state.snapshot_input(item_id));
+                            function_call_item_to_custom(item, input.as_deref());
+                        }
+                    }
+                }
+            }
+            rewrite_event_data(block, &value)
+        }
+        _ => None,
+    };
+
+    rewritten.or_else(|| Some(block.to_owned()))
+}
+
+fn format_sse_event(event: &str, data: &Value) -> String {
+    format!(
+        "event: {}\ndata: {}\n\n",
+        event,
+        serde_json::to_string(data).unwrap_or_default()
+    )
+}
+
+fn rewrite_event_data(block: &str, value: &Value) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut replaced = false;
+    for raw_line in block.lines() {
+        let line = raw_line.trim_start_matches('\u{feff}').trim_start();
+        if let Some(data) = line.strip_prefix("data:") {
+            if !replaced {
+                lines.push(format!(
+                    "data: {}",
+                    serde_json::to_string(value).unwrap_or_else(|_| data.trim_start().to_owned())
+                ));
+                replaced = true;
+                continue;
+            }
+        }
+        lines.push(raw_line.to_owned());
+    }
+    Some(lines.join("\n"))
+}
+
 pub(super) fn chat_sse_to_responses<S, E>(
     stream: S,
     context: ToolContext,
@@ -513,7 +995,7 @@ where
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
                     state.pending.push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(block) = take_sse_block(&mut state.pending) {
+                    while let Some(block) = super::take_sse_block(&mut state.pending) {
                         state.handle_block(&block, true);
                     }
                 }
@@ -924,18 +1406,6 @@ impl<S> ChatStreamState<S> {
             json!({"type": "response.failed", "response": response}),
         )
     }
-}
-
-fn take_sse_block(buffer: &mut String) -> Option<String> {
-    let index = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"))?;
-    let delimiter_len = if buffer[index..].starts_with("\r\n\r\n") {
-        4
-    } else {
-        2
-    };
-    let block = buffer[..index].to_owned();
-    buffer.drain(..index + delimiter_len);
-    Some(block)
 }
 
 fn reasoning_delta(delta: &Value) -> Option<String> {
@@ -1583,5 +2053,201 @@ mod tests {
         .await;
         assert!(output.contains("response.completed"));
         assert!(!output.contains("response.failed"));
+    }
+
+    #[test]
+    fn responses_to_responses_converts_custom_apply_patch_tool() {
+        let input = json!({
+            "model": "wework-gpt-5.6-sol",
+            "instructions": "You are a coding agent.",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "Edit it"}]},
+                {"type": "custom_tool_call", "call_id": "call_1", "name": "apply_patch", "input": "*** Begin Patch\n*** End Patch"},
+                {"type": "custom_tool_call_output", "call_id": "call_1", "output": "Done"}
+            ],
+            "tools": [
+                {"type": "function", "name": "exec_command", "description": "Run commands", "parameters": {"type": "object", "properties": {}}},
+                {"type": "custom", "name": "apply_patch", "description": "Patch files"}
+            ],
+            "stream": true
+        });
+
+        let (converted, context) = responses_to_responses(&input).expect("request should convert");
+        assert!(context.is_custom("apply_patch"));
+        assert_eq!(converted["tools"][0]["type"], "function");
+        assert_eq!(converted["tools"][0]["name"], "exec_command");
+        assert_eq!(converted["tools"][0]["description"], "Run commands");
+        assert_eq!(converted["tools"][1]["type"], "function");
+        assert_eq!(converted["tools"][1]["name"], "apply_patch");
+        assert!(converted["tools"][1]["description"]
+            .as_str()
+            .is_some_and(
+                |value| value.starts_with("Critical apply_patch input contract:")
+                    && !value.contains("Original tool definition:")
+            ));
+        assert_eq!(
+            converted["tools"][1]["parameters"]["properties"]["input"]["type"],
+            "string"
+        );
+        assert_eq!(converted["input"][1]["type"], "function_call");
+        assert_eq!(
+            converted["input"][1]["arguments"],
+            "{\"input\":\"*** Begin Patch\\n*** End Patch\"}"
+        );
+        assert_eq!(converted["input"][2]["type"], "function_call_output");
+    }
+
+    async fn convert_responses_stream(input: &str, context: ToolContext) -> String {
+        responses_sse_to_responses(
+            futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+                input.to_owned(),
+            ))]),
+            context,
+        )
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|item| String::from_utf8_lossy(&item.expect("stream item")).into_owned())
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn responses_sse_to_responses_rewrites_function_call_for_custom_tool() {
+        let mut context = ToolContext::default();
+        context.insert("apply_patch".to_owned(), ToolKind::Custom);
+
+        let output = convert_responses_stream(
+            concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_1\",\"name\":\"apply_patch\",\"arguments\":\"\"}}\n\n",
+                "event: response.function_call_arguments.delta\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** End Patch\\\"}\"}\n\n",
+                "event: response.function_call_arguments.done\n",
+                "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"output_index\":0,\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** End Patch\\\"}\"}\n\n",
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** End Patch\\\"}\"}}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** End Patch\\\"}\"}]}}\n\n"
+            ),
+            context,
+        )
+        .await;
+
+        assert!(
+            output.contains("\"type\":\"custom_tool_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("\"input\":\"*** Begin Patch\\n*** End Patch\""),
+            "output: {output}"
+        );
+        assert!(
+            !output.contains("\"type\":\"function_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("response.custom_tool_call_input.delta"),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("response.custom_tool_call_input.done"),
+            "output: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_sse_to_responses_extracts_input_for_generic_custom_tool() {
+        let mut context = ToolContext::default();
+        context.insert("my_custom_tool".to_owned(), ToolKind::Custom);
+
+        let output = convert_responses_stream(
+            concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_1\",\"name\":\"my_custom_tool\",\"arguments\":\"\"}}\n\n",
+                "event: response.function_call_arguments.delta\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"input\\\":\\\"raw custom input\\\"}\"}\n\n",
+                "event: response.function_call_arguments.done\n",
+                "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"output_index\":0,\"arguments\":\"{\\\"input\\\":\\\"raw custom input\\\"}\"}\n\n",
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"my_custom_tool\",\"arguments\":\"{\\\"input\\\":\\\"raw custom input\\\"}\"}}\n\n"
+            ),
+            context,
+        )
+        .await;
+
+        assert!(
+            output.contains("\"type\":\"custom_tool_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("\"input\":\"raw custom input\""),
+            "output: {output}"
+        );
+        assert!(!output.contains("\"arguments\""), "output: {output}");
+        assert!(
+            output.contains("response.custom_tool_call_input.done"),
+            "output: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_sse_to_responses_extracts_input_from_done_item_without_delta() {
+        let mut context = ToolContext::default();
+        context.insert("apply_patch".to_owned(), ToolKind::Custom);
+
+        let output = convert_responses_stream(
+            concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_1\",\"name\":\"apply_patch\"}}\n\n",
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** End Patch\\\"}\"}}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** End Patch\\\"}\"}]}}\n\n"
+            ),
+            context,
+        )
+        .await;
+
+        assert!(
+            output.contains("\"type\":\"custom_tool_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("\"input\":\"*** Begin Patch\\n*** End Patch\""),
+            "output: {output}"
+        );
+        assert!(
+            !output.contains("\"type\":\"function_call\""),
+            "output: {output}"
+        );
+        assert!(!output.contains("\"arguments\""), "output: {output}");
+    }
+
+    #[tokio::test]
+    async fn responses_sse_to_responses_leaves_regular_function_calls_unchanged() {
+        let output = convert_responses_stream(
+            concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n",
+                "event: response.function_call_arguments.delta\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}\n\n",
+                "event: response.function_call_arguments.done\n",
+                "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\",\"output_index\":0,\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}}\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+
+        assert!(
+            output.contains("\"type\":\"function_call\""),
+            "output: {output}"
+        );
+        assert!(
+            output.contains("response.function_call_arguments.delta"),
+            "output: {output}"
+        );
+        assert!(!output.contains("custom_tool_call"), "output: {output}");
     }
 }

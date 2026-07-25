@@ -68,6 +68,7 @@ export type WorkbenchMessage = Omit<
 > & {
   blocks?: ProcessingBlock[]
   runtimeMessageIndex?: number | null
+  turnId?: string | null
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
