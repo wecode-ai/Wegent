@@ -179,6 +179,7 @@ export function ActionMenu({
           <div
             ref={menuRef}
             data-testid={`${testId}-menu`}
+            data-embedded-browser-occlusion
             style={{
               left: menuPosition?.left ?? 0,
               top: menuPosition?.top ?? 0,
