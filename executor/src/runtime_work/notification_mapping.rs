@@ -197,28 +197,63 @@ pub(crate) fn log_text_mapping(
     params: &Value,
     text: &str,
 ) {
-    log_executor_event(
-        "codex runtime text mapping",
-        &[
-            ("local_task_id", local_task_id.to_owned()),
-            ("method", method.to_owned()),
-            ("action", action.to_owned()),
-            (
-                "resolved_phase",
-                resolved_phase.unwrap_or("<none>").to_owned(),
-            ),
-            (
-                "phase",
-                codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
-            ),
-            (
-                "item_id",
-                notification_item_id(params).unwrap_or_else(|| "<none>".to_owned()),
-            ),
-            ("text_len", text.len().to_string()),
-            ("text_preview", truncate_log_text(text, 160)),
-        ],
+    let mut fields = text_mapping_log_fields(
+        local_task_id,
+        method,
+        action,
+        resolved_phase,
+        params,
+        text.len(),
     );
+    fields.push(("text_preview", truncate_log_text(text, 160)));
+    log_executor_event("codex runtime text mapping", &fields);
+}
+
+pub(crate) fn log_text_mapping_metadata(
+    local_task_id: &str,
+    method: &str,
+    action: &str,
+    resolved_phase: Option<&str>,
+    params: &Value,
+    text_len: usize,
+) {
+    let fields = text_mapping_log_fields(
+        local_task_id,
+        method,
+        action,
+        resolved_phase,
+        params,
+        text_len,
+    );
+    log_executor_event("codex runtime text mapping", &fields);
+}
+
+fn text_mapping_log_fields(
+    local_task_id: &str,
+    method: &str,
+    action: &str,
+    resolved_phase: Option<&str>,
+    params: &Value,
+    text_len: usize,
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("local_task_id", local_task_id.to_owned()),
+        ("method", method.to_owned()),
+        ("action", action.to_owned()),
+        (
+            "resolved_phase",
+            resolved_phase.unwrap_or("<none>").to_owned(),
+        ),
+        (
+            "phase",
+            codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        (
+            "item_id",
+            notification_item_id(params).unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        ("text_len", text_len.to_string()),
+    ]
 }
 
 pub(crate) fn log_stream_text_mapping(

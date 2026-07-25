@@ -4588,6 +4588,43 @@ describe('DesktopWorkbenchLayout', () => {
     })
   })
 
+  test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
+    const createResult = createDeferred<RuntimeTaskAddress | false>()
+    const optimisticAddress: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-failed',
+      workspacePath: '/workspace/project',
+    }
+    const unsubscribe = vi.fn()
+    subscribeRuntimeTaskStreamMock.mockReturnValue(unsubscribe)
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      return createResult.promise
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    await waitFor(() =>
+      expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalledWith(
+        optimisticAddress,
+        expect.any(Object)
+      )
+    )
+
+    await act(async () => {
+      createResult.resolve(false)
+      await createResult.promise
+    })
+
+    await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
+  })
+
   test('moves right workspace tabs into the titlebar in Tauri', async () => {
     const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
       .__TAURI_INTERNALS__

@@ -4658,14 +4658,18 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('clears thinking when a created runtime task transcript is already complete', async () => {
+    let createdClientMessageId: string | undefined
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      createRuntimeTask: vi.fn(async request => ({
-        accepted: true,
-        deviceId: 'device-1',
-        taskId: request.taskId,
-        workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
-      })),
+      createRuntimeTask: vi.fn(async request => {
+        createdClientMessageId = request.clientMessageId
+        return {
+          accepted: true,
+          deviceId: 'device-1',
+          taskId: request.taskId,
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'claude_code',
+        }
+      }),
       getRuntimeTranscript: vi.fn(async (address: RuntimeTaskAddress) => ({
         taskId: address.taskId,
         workspacePath: address.workspacePath ?? '/workspace/project-alpha',
@@ -4677,6 +4681,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'user',
             content: '修复 CI',
             status: 'done',
+            clientMessageId: createdClientMessageId,
           },
           {
             id: `${address.taskId}:assistant:1`,

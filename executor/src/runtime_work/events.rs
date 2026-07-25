@@ -18,8 +18,9 @@ use super::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
     notification_mapping::{
-        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        log_dropped_notification, log_stream_text_mapping, log_text_mapping,
+        log_text_mapping_metadata, map_text_chunk, map_tool_output_delta, notification_item_id,
+        TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -810,13 +811,13 @@ impl CodexNotificationEventMapper {
             }
             Ok(Some(TextChunkMapping::FinalCompleted { text })) => {
                 if self.final_text_offset == 0 {
-                    log_text_mapping(
+                    log_text_mapping_metadata(
                         emit_context.local_task_id,
                         method,
                         "emit_completed_final_without_delta",
                         resolved_phase,
                         params,
-                        &text,
+                        text.len(),
                     );
                     emit_response_event(
                         emit_context.event_tx,

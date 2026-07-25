@@ -2754,7 +2754,7 @@ function hasUnsettledRuntimePaneState(messages: WorkbenchMessage[]): boolean {
   )
 }
 
-function transcriptSettlesLatestSeededTurn(
+export function transcriptSettlesLatestSeededTurn(
   transcriptMessages: WorkbenchMessage[],
   seededMessages: WorkbenchMessage[]
 ): boolean {
@@ -2763,9 +2763,7 @@ function transcriptSettlesLatestSeededTurn(
 
   const latestMatchingUserIndex = findLastIndex(
     transcriptMessages,
-    message =>
-      message.role === 'user' &&
-      (message.id === latestSeededUser.id || message.content === latestSeededUser.content)
+    message => message.role === 'user' && message.id === latestSeededUser.id
   )
   if (latestMatchingUserIndex < 0) return false
 
