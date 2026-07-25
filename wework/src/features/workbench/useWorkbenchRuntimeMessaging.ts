@@ -522,6 +522,8 @@ export function useWorkbenchRuntimeMessaging({
             ? {
                 projectId,
                 deviceWorkspaceId: selectedProjectWorkspace.id,
+                deviceId: selectedProjectWorkspace.deviceId,
+                workspacePath: selectedProjectWorkspace.workspacePath,
               }
             : {
                 deviceId: selectedProjectWorkspace.deviceId,

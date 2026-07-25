@@ -4480,7 +4480,7 @@ async function verifyConnectedModelsOnLocalExecution({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="projects-create-button"]')
-  await control.command('click', '[data-testid="project-create-existing-option"]')
+  await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -4492,6 +4492,15 @@ async function verifyConnectedModelsOnLocalExecution({
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: 'workspace',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('waitFor', composerSelector, {
