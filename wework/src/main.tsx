@@ -13,11 +13,13 @@ import { installPerformanceDiagnostics, recordReactCommit } from './lib/performa
 import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 
 const isSystemDragPanel = isTauriRuntime() && window.location.pathname === '/system-drag'
 if (!isSystemDragPanel) {
   installDebugPanelLogCapture()
   installAppLogging()
+  installFrontendRecoveryBridge()
   installWeworkAutomationBridge()
   installDesktopExtensions()
   installExternalLinkHandler()

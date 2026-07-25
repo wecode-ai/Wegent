@@ -25,6 +25,7 @@ from app.schemas.delivery import (
     LoopItemCollaboratorResponse,
     LoopItemCreate,
     LoopItemListResponse,
+    LoopItemReorder,
     LoopItemResponse,
     LoopItemTaskBind,
     LoopItemTaskBindingResponse,
@@ -192,6 +193,22 @@ def create_loop_item(
 ) -> LoopItemResponse:
     item = loop_item_service.create(db, project_id, current_user.id, values)
     return LoopItemResponse.model_validate(item)
+
+
+@router.post(
+    "/cloud-projects/{project_id}/loop-items/reorder",
+    response_model=LoopItemListResponse,
+)
+def reorder_loop_items(
+    project_id: int,
+    values: LoopItemReorder,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemListResponse:
+    items = loop_item_service.reorder(db, project_id, current_user.id, values)
+    return LoopItemListResponse(
+        items=[LoopItemResponse.model_validate(item) for item in items]
+    )
 
 
 @router.get("/loop-items/{item_id}", response_model=LoopItemResponse)

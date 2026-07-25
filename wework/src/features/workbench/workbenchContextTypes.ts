@@ -119,7 +119,6 @@ export interface WorkbenchContextValue {
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
-  currentRuntimeTaskRunning: boolean
   runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
@@ -200,12 +199,13 @@ export interface WorkbenchContextValue {
     addresses: RuntimeTaskAddress[],
     options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
-  forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
+  forkCurrentRuntimeTask: (
+    target: RuntimeTaskForkTarget,
+    options?: { lastTurnId?: string; title?: string }
+  ) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
-  markRuntimeTaskStarted: (address: RuntimeTaskAddress) => void
-  markRuntimeTaskSettled: (address: RuntimeTaskAddress) => void
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,
@@ -357,10 +357,7 @@ export type WorkbenchPaneState = Pick<
   | 'error'
 >
 
-export type WorkbenchPaneContextValue = Omit<
-  WorkbenchContextValue,
-  'state' | 'currentRuntimeTaskRunning' | 'cloudWorkStatus'
-> & {
+export type WorkbenchPaneContextValue = Omit<WorkbenchContextValue, 'state' | 'cloudWorkStatus'> & {
   state: WorkbenchPaneState
 }
 

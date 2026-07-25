@@ -973,6 +973,8 @@ mod tests {
             runtime_handle: Value::Null,
             parent: None,
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,

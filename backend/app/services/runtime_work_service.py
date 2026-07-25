@@ -3505,7 +3505,7 @@ def _build_runtime_execution_request(
     )
     execution_request.mcp_servers.append(
         {
-            "name": "wegent-delivery",
+            "name": "wegent_delivery",
             "url": (
                 f"{settings.BACKEND_INTERNAL_URL.rstrip('/')}"
                 f"{settings.API_PREFIX}/mcp/delivery/sse"
@@ -3527,6 +3527,20 @@ def _message_with_application_context(
         value = entry.get("value")
         if isinstance(value, str) and value.strip():
             entries.append(f"[{name}]\n{value.strip()}")
+    if "cloud://projects" in message and "projectSpaceCapability" not in (
+        context or {}
+    ):
+        entries.append(
+            "[projectSpaceCapability]\n"
+            "The user activated the Wegent project-space capability.\n"
+            "Use the wegent_delivery MCP server for project-space operations.\n"
+            "wegent_delivery is a server id, not a callable tool.\n"
+            "Use list_cloud_projects to list projects and create_cloud_project "
+            "to create one.\n"
+            "Use resolve_cloud_reference to resolve cloud:// references.\n"
+            "MCP resources describe addressable data; do not use "
+            "list_mcp_resources to discover tools."
+        )
     if not entries:
         return message
     context_text = "\n\n".join(entries)

@@ -21,6 +21,7 @@ import type {
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
@@ -125,6 +126,9 @@ export interface ChatInputProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
   onPause?: () => void
   toolbarLeadingContext?: ReactNode
@@ -231,6 +235,9 @@ export function ChatInput({
   workspaceTarget,
   workspaceFileApi,
   cloudMentionCandidates,
+  cloudProjectCandidates,
+  cloudSpaceEnabled,
+  onSelectCloudProject,
   isStreaming = false,
   onPause,
   toolbarLeadingContext,
@@ -337,6 +344,9 @@ export function ChatInput({
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
+    cloudProjectCandidates,
+    cloudSpaceEnabled,
+    onSelectCloudProject,
   }
   const errorBanner = error ? (
     <div

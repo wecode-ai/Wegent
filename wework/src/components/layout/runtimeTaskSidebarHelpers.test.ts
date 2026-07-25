@@ -60,7 +60,7 @@ describe('runtimeTaskSidebarHelpers', () => {
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
   })
 
-  test('does not reorder a running task when streaming updates change updatedAt', () => {
+  test('uses the latest activity when a completed task resumes and updates again', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
@@ -90,8 +90,8 @@ describe('runtimeTaskSidebarHelpers', () => {
     }
 
     expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
-      'completed',
       'running',
+      'completed',
     ])
   })
 

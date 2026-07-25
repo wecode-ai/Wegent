@@ -18,6 +18,7 @@ import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { readDroppedFiles } from '@/tauri/droppedFiles'
+import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 
 interface ProjectChatComposerProps {
@@ -49,6 +50,9 @@ interface ProjectChatComposerProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  onSelectCloudProject?: (project: CloudProject) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -100,6 +104,9 @@ export function ProjectChatComposer({
   workspaceTarget,
   workspaceFileApi,
   cloudMentionCandidates,
+  cloudProjectCandidates,
+  cloudSpaceEnabled,
+  onSelectCloudProject,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -257,6 +264,9 @@ export function ProjectChatComposer({
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
           cloudMentionCandidates={cloudMentionCandidates}
+          cloudProjectCandidates={cloudProjectCandidates}
+          cloudSpaceEnabled={cloudSpaceEnabled}
+          onSelectCloudProject={onSelectCloudProject}
           className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}

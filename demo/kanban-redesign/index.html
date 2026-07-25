@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>看板 · 项目空间</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<!-- ============ Sidebar ============ -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="logo">W</div>
+    <span>项目空间</span>
+  </div>
+
+  <a class="nav-item active" href="projects.html">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    项目空间
+  </a>
+  <a class="nav-item" href="my-work.html">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>
+    我的工作
+  </a>
+  <div class="nav-item">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    搜索
+    <span class="kbd-hint">⌘K</span>
+  </div>
+
+  <div class="sidebar-section">
+    <span>项目空间</span>
+    <span class="add-btn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </span>
+  </div>
+  <a class="project-item active" href="index.html">
+    <span class="dot"></span>
+    看板项目
+    <span class="count">6</span>
+  </a>
+
+  <div class="sidebar-footer">
+    <div class="avatar">L</div>
+    <div class="user-meta">
+      <div class="name">local</div>
+      <div class="email">local@wework.local</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ Main ============ -->
+<div class="main">
+  <header class="topbar">
+    <div class="project-title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      看板项目
+    </div>
+
+    <div class="tabs">
+      <a class="tab active" href="index.html">事项</a>
+      <a class="tab" href="files.html">文件</a>
+    </div>
+
+    <div class="spacer"></div>
+
+    <button class="icon-btn" title="项目成员" data-open="members">
+      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+    </button>
+    <button class="btn-primary" data-open="new-task">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      新建任务
+    </button>
+  </header>
+
+  <div class="board-header">
+    <h1>顶层任务</h1>
+    <span class="sub">3 个任务 · 更新于今天</span>
+  </div>
+
+  <div class="board">
+
+    <!-- 收集箱 -->
+    <div class="column">
+      <div class="column-header">
+        <span class="status-dot" style="background:#a1a1aa"></span>
+        <span class="title">收集箱</span>
+        <span class="count">2</span>
+        <span class="col-add">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+      </div>
+
+      <div class="card" data-open="detail">
+        <div class="card-id">1FFD6B9-2</div>
+        <div class="card-title">整理项目需求文档</div>
+        <div class="card-meta">
+          <span class="badge priority-low">普通</span>
+          <span class="date">07-24</span>
+        </div>
+        <div class="card-sub">
+          <span class="sub-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+            1 个子任务
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </span>
+          <span class="sub-add">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            子任务
+          </span>
+        </div>
+      </div>
+
+      <div class="card" data-open="detail">
+        <div class="card-id">1FFD6B9-1</div>
+        <div class="card-title">搭建 CI 流水线</div>
+        <div class="card-meta">
+          <span class="badge priority-mid">重要</span>
+          <span class="date">07-24</span>
+        </div>
+        <div class="card-sub">
+          <span class="sub-link" style="color:var(--text-3)">暂无子任务</span>
+          <span class="sub-add">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            子任务
+          </span>
+        </div>
+      </div>
+
+      <div class="add-card" data-open="new-task">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建工作项
+      </div>
+    </div>
+
+    <!-- 待开始 -->
+    <div class="column">
+      <div class="column-header">
+        <span class="status-dot" style="background:#6366f1"></span>
+        <span class="title">待开始</span>
+        <span class="count">1</span>
+        <span class="col-add">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+      </div>
+
+      <div class="card" data-open="detail">
+        <div class="card-id">1FFD6B9-3</div>
+        <div class="card-title">设计评审与走查</div>
+        <div class="card-meta">
+          <span class="badge priority-high">紧急</span>
+          <span class="date">07-24</span>
+        </div>
+        <div class="card-sub">
+          <span class="sub-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+            2 个子任务
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </span>
+          <span class="sub-add">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            子任务
+          </span>
+        </div>
+      </div>
+
+      <div class="add-card" data-open="new-task">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建工作项
+      </div>
+    </div>
+
+    <!-- 进行中 -->
+    <div class="column">
+      <div class="column-header">
+        <span class="status-dot" style="background:#f59e0b"></span>
+        <span class="title">进行中</span>
+        <span class="count">0</span>
+        <span class="col-add">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+      </div>
+      <div class="column-empty">拖拽任务到这里开始处理</div>
+      <div class="add-card" data-open="new-task">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建工作项
+      </div>
+    </div>
+
+    <!-- 待确认 -->
+    <div class="column">
+      <div class="column-header">
+        <span class="status-dot" style="background:#8b5cf6"></span>
+        <span class="title">待确认</span>
+        <span class="count">0</span>
+        <span class="col-add">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+      </div>
+      <div class="column-empty">等待确认的任务会显示在这里</div>
+      <div class="add-card" data-open="new-task">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建工作项
+      </div>
+    </div>
+
+    <!-- 已完成 -->
+    <div class="column">
+      <div class="column-header">
+        <span class="status-dot" style="background:#10b981"></span>
+        <span class="title">已完成</span>
+        <span class="count">0</span>
+        <span class="col-add">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+      </div>
+      <div class="column-empty">已完成的任务会归档在这里</div>
+      <div class="add-card" data-open="new-task">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建工作项
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ Overlay: task detail drawer ============ -->
+<div class="overlay drawer-overlay" id="overlay-detail">
+  <div class="drawer">
+    <div class="drawer-header">
+      <button class="icon-btn" data-close title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+      <span class="task-id">1FFD6B9-3</span>
+      <span class="save-state">已保存</span>
+      <button class="icon-btn" title="更多">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      </button>
+    </div>
+
+    <div class="drawer-body">
+      <h1>设计评审与走查</h1>
+
+      <div class="attr-grid">
+        <div class="attr-cell">
+          <div class="attr-label">状态</div>
+          <div class="attr-value"><span class="status-dot" style="background:#6366f1"></span>待开始</div>
+        </div>
+        <div class="attr-cell">
+          <div class="attr-label">优先级</div>
+          <div class="attr-value"><span class="badge priority-high">紧急</span></div>
+        </div>
+        <div class="attr-cell">
+          <div class="attr-label">负责人</div>
+          <div class="attr-value muted">添加负责人</div>
+        </div>
+        <div class="attr-cell">
+          <div class="attr-label">截止时间</div>
+          <div class="attr-value">07-28</div>
+        </div>
+        <div class="attr-cell">
+          <div class="attr-label">父任务</div>
+          <div class="attr-value muted">无父任务</div>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-title">描述</div>
+        <div class="md-text">
+          <p><strong>目标:</strong>对看板重设计稿进行完整走查,确认信息层级与交互状态。</p>
+          <p>覆盖事项看板、文件视图、任务详情三个核心页面;重点检查空状态、hover 反馈与徽章用色是否克制。</p>
+          <p>走查结论记录在本任务的评论中,问题项拆分为子任务跟进。</p>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-title">
+          子任务
+          <span class="count">2</span>
+          <span class="link-add">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            新建子任务
+          </span>
+        </div>
+        <div class="detail-row">
+          <span class="status-dot" style="background:#f59e0b"></span>
+          <span class="task-id">1FFD6B9-4</span>
+          <span class="row-title">核对看板列的拖拽排序</span>
+          <span class="row-tail">进行中</span>
+        </div>
+        <div class="detail-row">
+          <span class="status-dot" style="background:#6366f1"></span>
+          <span class="task-id">1FFD6B9-5</span>
+          <span class="row-title">确认任务详情抽屉的字段完整性</span>
+          <span class="row-tail">待开始</span>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-title">
+          参与者
+          <span class="link-add">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            添加参与者
+          </span>
+        </div>
+        <div class="detail-row">
+          <div class="avatar">L</div>
+          <span class="row-title">local</span>
+          <span class="row-tail"><span class="badge">自动加入</span></span>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-title">
+          附件
+          <span class="link-add">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            添加附件
+          </span>
+        </div>
+        <div class="detail-row">
+          <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+          <span class="row-title">design-spec.pdf</span>
+          <span class="row-tail">
+            2.4 MB
+            <button class="icon-btn small" title="下载">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+            </button>
+            <button class="icon-btn small" title="删除">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-title">本地执行</div>
+        <div class="empty-hint">尚未关联本地任务</div>
+      </div>
+    </div>
+
+    <div class="drawer-footer">
+      <button class="btn-primary" data-open="start-task">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+        开启本地任务
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Overlay: new task dialog ============ -->
+<div class="overlay" id="overlay-new-task">
+  <div class="dialog">
+    <div class="dialog-header">
+      <h2>新建任务</h2>
+      <button class="icon-btn" data-close title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="dialog-body">
+      <div class="field">
+        <label>父任务</label>
+        <select class="select">
+          <option>顶层任务</option>
+          <option>整理项目需求文档</option>
+          <option>搭建 CI 流水线</option>
+          <option>设计评审与走查</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>标题</label>
+        <input class="input" type="text" placeholder="目标或事项标题">
+      </div>
+      <div class="field">
+        <label>描述</label>
+        <textarea class="textarea" placeholder="写下背景、要求或直接完成的文档内容…"></textarea>
+      </div>
+      <div class="field">
+        <label>状态</label>
+        <select class="select">
+          <option>收集箱</option>
+          <option selected>待开始</option>
+          <option>进行中</option>
+          <option>待确认</option>
+          <option>已完成</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>优先级</label>
+        <select class="select">
+          <option>无</option>
+          <option>低</option>
+          <option selected>普通</option>
+          <option>高</option>
+          <option>紧急</option>
+        </select>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn-secondary" data-close>取消</button>
+      <button class="btn-primary">创建任务</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Overlay: start local task dialog (stacks above the drawer) ============ -->
+<div class="overlay overlay-top" id="overlay-start-task">
+  <div class="dialog">
+    <div class="dialog-header">
+      <h2>开启本地任务</h2>
+      <button class="icon-btn" data-close title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="dialog-body">
+      <div class="task-summary">
+        <span class="task-id">1FFD6B9-3</span>
+        <span class="task-title">设计评审与走查</span>
+      </div>
+      <div class="field">
+        <label>本地项目</label>
+        <select class="select">
+          <option>github_wegent(当前目录)</option>
+          <option>weibo_wegent / wegent-cli</option>
+          <option>选择其他目录…</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>启动指令</label>
+        <textarea class="textarea" rows="3">对照设计稿走查看板三个核心页面,
+记录问题并拆分为子任务。</textarea>
+      </div>
+      <div class="field-hint">新任务会获得当前项目空间上下文,可读取共享目录、任务和历史交付,但不会自动上传本地会话。</div>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn-secondary" data-close>取消</button>
+      <button class="btn-primary">开启任务</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Overlay: project members dialog ============ -->
+<div class="overlay" id="overlay-members">
+  <div class="dialog">
+    <div class="dialog-header">
+      <div>
+        <h2>项目成员</h2>
+        <div class="sub">成员只能访问被授权的云项目、任务、共享文件和交付。</div>
+      </div>
+      <button class="icon-btn" data-close title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="dialog-body">
+      <div class="member-row">
+        <div class="avatar">L</div>
+        <div class="member-meta">
+          <div class="name">local</div>
+          <div class="email">local@wework.local</div>
+        </div>
+        <span class="owner-tag">Owner</span>
+      </div>
+      <div class="member-row">
+        <div class="avatar" style="background:linear-gradient(135deg,#34d399,#10b981)">陈</div>
+        <div class="member-meta">
+          <div class="name">陈晨</div>
+          <div class="email">chenchen@example.com</div>
+        </div>
+        <select class="select">
+          <option>可编辑</option>
+          <option>可查看</option>
+        </select>
+        <button class="icon-btn small" title="移除">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="member-row">
+        <div class="avatar" style="background:linear-gradient(135deg,#fbbf24,#f59e0b)">林</div>
+        <div class="member-meta">
+          <div class="name">林一</div>
+          <div class="email">linyi@example.com</div>
+        </div>
+        <select class="select">
+          <option>可编辑</option>
+          <option selected>可查看</option>
+        </select>
+        <button class="icon-btn small" title="移除">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="add-member">
+        <input class="input" type="text" placeholder="搜索用户名或邮箱">
+        <select class="select">
+          <option>可编辑</option>
+          <option>可查看</option>
+        </select>
+        <button class="btn-primary">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

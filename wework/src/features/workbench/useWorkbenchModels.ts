@@ -22,6 +22,7 @@ interface WorkbenchModelApi {
 interface UseWorkbenchModelsOptions {
   api: WorkbenchModelApi
   locked: boolean
+  filterModel?: (model: UnifiedModel) => boolean
   scopeKey?: string
   persistSelection?: boolean
   selectionConfig?: ModelSelectionConfig | null
@@ -94,6 +95,7 @@ function getSelectionKey(
 export function useWorkbenchModels({
   api,
   locked,
+  filterModel,
   scopeKey = DEFAULT_MODEL_SCOPE_KEY,
   persistSelection = true,
   selectionConfig,
@@ -103,7 +105,10 @@ export function useWorkbenchModels({
   onSelectionBlocked,
 }: UseWorkbenchModelsOptions) {
   const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
-  const models = availableModels
+  const models = useMemo(
+    () => (filterModel ? availableModels.filter(filterModel) : availableModels),
+    [availableModels, filterModel]
+  )
   const [selectedModelByScope, setSelectedModelByScope] = useState<
     Record<string, UnifiedModel | null>
   >({})
@@ -120,7 +125,7 @@ export function useWorkbenchModels({
     Record<string, string | null>
   >({})
   const effectiveSelectionConfig = useMemo(() => {
-    if (selectionConfig?.modelName) {
+    if (selectionConfig?.modelName && findConfiguredModel(models, selectionConfig)) {
       return selectionConfig
     }
     return defaultSelectionConfig?.(models) ?? selectionConfig ?? null

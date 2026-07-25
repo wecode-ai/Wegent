@@ -7,9 +7,11 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
+from app.schemas.tagging import MAX_TAGS_PER_ITEM
+from app.schemas.tagging import normalize_tags as _normalize_tags
 
 
 class LoopItemCreate(BaseModel):
@@ -22,6 +24,9 @@ class LoopItemCreate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
+    tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
+
+    _normalize = field_validator("tags", mode="before")(_normalize_tags)
 
 
 class LoopItemUpdate(BaseModel):
@@ -35,6 +40,19 @@ class LoopItemUpdate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
+    tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+
+    _normalize = field_validator("tags", mode="before")(
+        lambda value: None if value is None else _normalize_tags(value)
+    )
+
+
+class LoopItemReorder(BaseModel):
+    """Manual order of the TODOs inside one board lane (parent + status)."""
+
+    parent_id: str | None = Field(default=None, max_length=64)
+    status: Literal["inbox", "pending", "in_progress", "in_review", "completed"]
+    item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
 class LoopItemResponse(BaseModel):
@@ -51,12 +69,23 @@ class LoopItemResponse(BaseModel):
     priority: str
     due_at: datetime | None
     sort_order: int
+    tags: list[str] = []
     created_by_user_id: int
     current_delivery_id: str | None
     version: int
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_tags(cls, value: object) -> object:
+        """Fill tags from the metadata JSON when the input has no tags key."""
+        if isinstance(value, dict) and "tags" not in value:
+            metadata = value.get("metadata_json")
+            tags = metadata.get("tags") if isinstance(metadata, dict) else None
+            return {**value, "tags": _normalize_tags(tags)}
+        return value
 
     @field_validator("parent_id", "current_delivery_id", mode="before")
     @classmethod

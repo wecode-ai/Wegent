@@ -10,13 +10,55 @@ from urllib.parse import urlparse
 from app.db.session import SessionLocal
 from app.mcp_server.auth import MCPAuthInfo
 from app.mcp_server.tools.decorator import mcp_tool
-from app.models.delivery import DeliveryAsset
+from app.models.delivery import DeliveryAsset, LoopItem, loop_datetime_value_is_unset
+from app.schemas.cloud_project import CloudProjectCreate
+from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.loop_items import loop_item_service
 
 TEXT_ASSET_LIMIT = 1024 * 1024
+
+
+def _serialize_todo(item: LoopItem) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "cloudProjectId": item.cloud_project_id,
+        "parentId": item.parent_id or None,
+        "title": item.title,
+        "description": item.description,
+        "status": item.status,
+        "priority": item.priority,
+        "assigneeUserId": item.assignee_user_id or None,
+        "dueAt": (None if loop_datetime_value_is_unset(item.due_at) else item.due_at),
+        "currentDeliveryId": item.current_delivery_id or None,
+        "version": item.version,
+        "createdByUserId": item.created_by_user_id,
+        "createdAt": item.created_at,
+        "updatedAt": item.updated_at,
+        "completedAt": (
+            None
+            if loop_datetime_value_is_unset(item.completed_at)
+            else item.completed_at
+        ),
+        "deletedAt": (
+            None if loop_datetime_value_is_unset(item.deleted_at) else item.deleted_at
+        ),
+    }
+
+
+def _serialize_collaborator(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "loopItemId": row["loop_item_id"],
+        "userId": row["user_id"],
+        "userName": row["user_name"],
+        "email": row["email"] or None,
+        "source": row["source"],
+        "addedByUserId": row["added_by_user_id"],
+        "createdAt": row["created_at"],
+    }
 
 
 @mcp_tool(
@@ -129,6 +171,37 @@ def list_cloud_projects(token_info: MCPAuthInfo) -> dict[str, Any]:
 
 
 @mcp_tool(
+    name="create_cloud_project",
+    description=(
+        "Create a cloud project space for sharing TODOs, deliveries, and files. "
+        "project_key (2-16 alphanumeric characters, uppercased automatically) sets "
+        "the task numbering prefix, e.g. WEG produces TODO ids like WEG-18; when "
+        "omitted a key is generated from the name. The creator automatically "
+        "becomes the project Owner."
+    ),
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def create_cloud_project(
+    name: str,
+    token_info: MCPAuthInfo,
+    project_key: str | None = None,
+    description: str = "",
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        values = CloudProjectCreate(
+            name=name, project_key=project_key, description=description
+        )
+        project = cloud_project_service.create(db, token_info.user_id, values)
+        return {
+            "id": project.id,
+            "key": project.project_key,
+            "name": project.name,
+            "description": project.description,
+        }
+
+
+@mcp_tool(
     name="list_cloud_workspace",
     description="List authorized shared files and folders in a cloud project.",
     server="delivery",
@@ -217,6 +290,222 @@ def list_cloud_todos(cloud_project_id: int, token_info: MCPAuthInfo) -> dict[str
 
 
 @mcp_tool(
+    name="get_cloud_todo",
+    description="Get full details of one TODO in an authorized cloud project.",
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def get_cloud_todo(item_id: str, token_info: MCPAuthInfo) -> dict[str, Any]:
+    with SessionLocal() as db:
+        item = loop_item_service.get(db, item_id, token_info.user_id)
+        return _serialize_todo(item)
+
+
+@mcp_tool(
+    name="create_cloud_todo",
+    description=(
+        "Create a TODO in an authorized cloud project. Status must be one of "
+        "inbox, pending, in_progress, in_review, completed; priority one of "
+        "none, low, medium, high, urgent; due_at is an ISO 8601 datetime."
+    ),
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def create_cloud_todo(
+    cloud_project_id: int,
+    title: str,
+    token_info: MCPAuthInfo,
+    description: str = "",
+    status: str = "inbox",
+    priority: str = "none",
+    assignee_user_id: int | None = None,
+    due_at: str | None = None,
+    parent_id: str | None = None,
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        values = LoopItemCreate(
+            title=title,
+            description=description,
+            status=status,
+            priority=priority,
+            assignee_user_id=assignee_user_id,
+            due_at=due_at,
+            parent_id=parent_id,
+        )
+        item = loop_item_service.create(
+            db, cloud_project_id, token_info.user_id, values
+        )
+        return _serialize_todo(item)
+
+
+@mcp_tool(
+    name="update_cloud_todo",
+    description=(
+        "Update a TODO with optimistic locking: pass the current version from "
+        "get_cloud_todo. Only provided fields are changed; fields left out keep "
+        "their current values."
+    ),
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def update_cloud_todo(
+    item_id: str,
+    version: int,
+    token_info: MCPAuthInfo,
+    title: str | None = None,
+    description: str | None = None,
+    status: str | None = None,
+    priority: str | None = None,
+    assignee_user_id: int | None = None,
+    due_at: str | None = None,
+    parent_id: str | None = None,
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        provided = {
+            field: value
+            for field, value in {
+                "title": title,
+                "description": description,
+                "status": status,
+                "priority": priority,
+                "assignee_user_id": assignee_user_id,
+                "due_at": due_at,
+                "parent_id": parent_id,
+            }.items()
+            if value is not None
+        }
+        values = LoopItemUpdate(version=version, **provided)
+        item = loop_item_service.update(db, item_id, token_info.user_id, values)
+        return _serialize_todo(item)
+
+
+@mcp_tool(
+    name="delete_cloud_todo",
+    description=(
+        "Soft delete a TODO. The TODO moves to the recycle bin and can be "
+        "restored with restore_cloud_todo."
+    ),
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def delete_cloud_todo(item_id: str, token_info: MCPAuthInfo) -> dict[str, Any]:
+    with SessionLocal() as db:
+        item = loop_item_service.delete(db, item_id, token_info.user_id)
+        return _serialize_todo(item)
+
+
+@mcp_tool(
+    name="restore_cloud_todo",
+    description="Restore a soft-deleted TODO from the recycle bin.",
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def restore_cloud_todo(item_id: str, token_info: MCPAuthInfo) -> dict[str, Any]:
+    with SessionLocal() as db:
+        item = loop_item_service.restore(db, item_id, token_info.user_id)
+        return _serialize_todo(item)
+
+
+@mcp_tool(
+    name="list_cloud_todo_recycle_bin",
+    description=(
+        "List soft-deleted TODOs of an authorized cloud project, most recently "
+        "deleted first."
+    ),
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def list_cloud_todo_recycle_bin(
+    cloud_project_id: int, token_info: MCPAuthInfo
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        items = loop_item_service.list_deleted(db, cloud_project_id, token_info.user_id)
+        return {"items": [_serialize_todo(item) for item in items]}
+
+
+@mcp_tool(
+    name="list_cloud_todo_collaborators",
+    description="List collaborators of a TODO in an authorized cloud project.",
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def list_cloud_todo_collaborators(
+    item_id: str, token_info: MCPAuthInfo
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        rows = loop_item_service.list_collaborators(db, item_id, token_info.user_id)
+        return {"collaborators": [_serialize_collaborator(row) for row in rows]}
+
+
+@mcp_tool(
+    name="add_cloud_todo_collaborator",
+    description=(
+        "Add a cloud project member as a collaborator of a TODO. Requires "
+        "Developer permission on the project."
+    ),
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def add_cloud_todo_collaborator(
+    item_id: str, collaborator_user_id: int, token_info: MCPAuthInfo
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        row = loop_item_service.add_collaborator(
+            db, item_id, collaborator_user_id, token_info.user_id
+        )
+        return _serialize_collaborator(row)
+
+
+@mcp_tool(
+    name="remove_cloud_todo_collaborator",
+    description=(
+        "Remove a collaborator from a TODO. Requires Developer permission on "
+        "the project."
+    ),
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def remove_cloud_todo_collaborator(
+    item_id: str, collaborator_user_id: int, token_info: MCPAuthInfo
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        loop_item_service.remove_collaborator(
+            db, item_id, collaborator_user_id, token_info.user_id
+        )
+        return {"removed": True, "loopItemId": item_id, "userId": collaborator_user_id}
+
+
+@mcp_tool(
+    name="list_cloud_todo_attachments",
+    description="List attachments of a TODO in an authorized cloud project.",
+    server="delivery",
+    exclude_params=["token_info"],
+)
+def list_cloud_todo_attachments(
+    item_id: str, token_info: MCPAuthInfo
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        attachments = loop_item_service.list_attachments(
+            db, item_id, token_info.user_id
+        )
+        return {
+            "attachments": [
+                {
+                    "id": attachment.id,
+                    "loopItemId": attachment.loop_item_id,
+                    "displayName": attachment.display_name,
+                    "contentType": attachment.content_type or None,
+                    "sizeBytes": attachment.size_bytes,
+                    "sha256": attachment.sha256,
+                    "createdByUserId": attachment.created_by_user_id,
+                    "createdAt": attachment.created_at,
+                }
+                for attachment in attachments
+            ]
+        }
+
+
+@mcp_tool(
     name="resolve_cloud_reference",
     description=(
         "Resolve a cloud:// reference inserted by Wework @ mentions. Returns the "
@@ -231,7 +520,8 @@ def resolve_cloud_reference(reference: str, token_info: MCPAuthInfo) -> dict[str
         return {"error": "Unsupported cloud reference"}
     parts = [part for part in parsed.path.split("/") if part]
     if not parts:
-        return {"error": "Cloud project id is missing"}
+        # Generic cloud space reference: return every accessible project.
+        return list_cloud_projects(token_info)
     try:
         project_id = int(parts[0])
     except ValueError:
