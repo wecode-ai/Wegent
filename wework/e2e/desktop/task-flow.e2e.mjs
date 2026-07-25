@@ -1352,6 +1352,11 @@ async function confirmLocalProjectName(control, name) {
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('local-project-create-dialog'),
+    'The local project create dialog did not close after confirmation'
+  )
 }
 
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
@@ -4646,15 +4651,6 @@ async function verifyConnectedModelsOnLocalExecution({
     timeoutMs: UI_TIMEOUT_MS,
   })
   await confirmLocalProjectName(control, 'workspace')
-  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-    timeoutMs: UI_TIMEOUT_MS,
-  })
-  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-    value: 'workspace',
-  })
-  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
-    timeoutMs: UI_TIMEOUT_MS,
-  })
   await control.command('waitFor', composerSelector, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5378,7 +5374,6 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await confirmLocalProjectName(control, 'workspace')
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -5491,7 +5486,6 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await confirmLocalProjectName(control, 'workspace')
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
