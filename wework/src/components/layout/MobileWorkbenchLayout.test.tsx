@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -11,6 +11,10 @@ import type {
 import type { RuntimeWorkListResponse, UnifiedModel } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { MobileWorkbenchLayout as ActualMobileWorkbenchLayout } from './MobileWorkbenchLayout'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import '@/i18n'
 
 const paneSessionMockRef = vi.hoisted(() => ({
@@ -201,13 +205,23 @@ function MobileWorkbenchLayout(props: LegacyMobileWorkbenchLayoutProps) {
   const { workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
   // eslint-disable-next-line react-hooks/immutability -- Vitest hoisted mocks need the latest pane session before rendering the layout.
   paneSessionMockRef.current = paneSession
+  const lifecycleStore = useMemo(() => {
+    const store = new RuntimeTaskLifecycleStore('mobile-workbench-layout-test')
+    store.syncRuntimeWork(workbenchValue.state.runtimeWork)
+    if (workbenchValue.state.currentRuntimeTask) {
+      store.executorStarted(workbenchValue.state.currentRuntimeTask)
+    }
+    return store
+  }, [workbenchValue.state.currentRuntimeTask, workbenchValue.state.runtimeWork])
 
   return (
-    <WorkbenchContext.Provider value={workbenchValue}>
-      <WorkbenchPaneContext.Provider value={paneValue}>
-        <ActualMobileWorkbenchLayout />
-      </WorkbenchPaneContext.Provider>
-    </WorkbenchContext.Provider>
+    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+      <WorkbenchContext.Provider value={workbenchValue}>
+        <WorkbenchPaneContext.Provider value={paneValue}>
+          <ActualMobileWorkbenchLayout />
+        </WorkbenchPaneContext.Provider>
+      </WorkbenchContext.Provider>
+    </RuntimeTaskLifecycleProvider>
   )
 }
 
@@ -242,6 +256,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     listLocalSkills: vi.fn().mockResolvedValue([]),
     ...props.projectChat,
   }
+  const lifecycleTaskRunning = Boolean(state.currentRuntimeTask)
   const workbenchValue = {
     state,
     isStartupReady: true,
@@ -249,7 +264,6 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
       listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '/', entries: [] }),
       readWorkspaceTextFile: vi.fn(),
     },
-    currentRuntimeTaskRunning: Boolean(state.currentRuntimeTask),
     cloudWorkStatus: {
       availability: 'available',
       checks: { teams: 'available', devices: 'available', runtimeWork: 'available' },
@@ -360,7 +374,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     status: createPaneStatus({
       messages: props.messages ?? [],
       sending: Boolean(state.isSending),
-      taskRunning: workbenchValue.currentRuntimeTaskRunning,
+      taskRunning: lifecycleTaskRunning,
     }),
     transcriptLoading: false,
     transcriptHasMoreBefore: false,
@@ -1406,45 +1420,51 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('shows running status on mobile runtime tasks', async () => {
+    const runningWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 1, name: 'github_wegent' },
+          totalTasks: 1,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              tasks: [
+                {
+                  taskId: 'codex-1',
+                  workspacePath: '/repo/Wegent',
+                  title: 'Fix reconnect',
+                  runtime: 'codex',
+                  running: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('mobile-layout-test')
+    lifecycleStore.syncRuntimeWork(runningWork)
+
     render(
-      <MobileWorkbenchLayout
-        state={{
-          ...baseState,
-          runtimeWork: {
-            projects: [
-              {
-                project: { id: 1, name: 'github_wegent' },
-                totalTasks: 1,
-                deviceWorkspaces: [
-                  {
-                    id: 91,
-                    deviceId: 'local-device',
-                    deviceName: 'Local Mac',
-                    deviceStatus: 'online',
-                    available: true,
-                    workspacePath: '/repo/Wegent',
-                    tasks: [
-                      {
-                        taskId: 'codex-1',
-                        workspacePath: '/repo/Wegent',
-                        title: 'Fix reconnect',
-                        runtime: 'codex',
-                        running: true,
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-            chats: [],
-            totalTasks: 1,
-          },
-        }}
-        messages={[]}
-        onSelectProject={vi.fn()}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-      />
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <MobileWorkbenchLayout
+          state={{
+            ...baseState,
+            runtimeWork: runningWork,
+          }}
+          messages={[]}
+          onSelectProject={vi.fn()}
+          onInputChange={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </RuntimeTaskLifecycleProvider>
     )
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))

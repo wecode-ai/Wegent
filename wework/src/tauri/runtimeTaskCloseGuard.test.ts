@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeWorkListResponse } from '@/types/api'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import {
   CLOSE_TO_TRAY_HINT_REQUESTED_EVENT,
   closeMainWindowToTray,
@@ -45,6 +46,12 @@ function runtimeWorkWithTasks(tasks: Array<{ running?: boolean }>): RuntimeWorkL
   }
 }
 
+function lifecycleWithTasks(tasks: Array<{ running?: boolean }>) {
+  const store = new RuntimeTaskLifecycleStore('close-guard-test')
+  store.syncRuntimeWork(runtimeWorkWithTasks(tasks))
+  return store.getSnapshot()
+}
+
 describe('runtime task close guard', () => {
   beforeEach(() => {
     invokeMock.mockReset()
@@ -52,39 +59,14 @@ describe('runtime task close guard', () => {
   })
 
   test('detects running tasks across runtime work', () => {
-    expect(hasRunningRuntimeTasks(runtimeWorkWithTasks([{ running: false }]))).toBe(false)
-    expect(hasRunningRuntimeTasks(runtimeWorkWithTasks([{ running: true }]))).toBe(true)
-    expect(
-      hasRunningRuntimeTasks(runtimeWorkWithTasks([{ running: false, goalStatus: 'active' }]))
-    ).toBe(false)
-    expect(
-      hasRunningRuntimeTasks({
-        projects: [],
-        chats: [
-          {
-            deviceId: 'local-device',
-            available: true,
-            workspacePath: '/chat',
-            tasks: [
-              {
-                taskId: 'chat-task',
-                workspacePath: '/chat',
-                title: 'Chat task',
-                runtime: 'claude_code',
-                running: true,
-              },
-            ],
-          },
-        ],
-        totalTasks: 1,
-      })
-    ).toBe(true)
+    expect(hasRunningRuntimeTasks(lifecycleWithTasks([{ running: false }]))).toBe(false)
+    expect(hasRunningRuntimeTasks(lifecycleWithTasks([{ running: true }]))).toBe(true)
   })
 
   test('does not prompt when no runtime task is running', () => {
     const confirmClose = vi.fn()
 
-    expect(shouldPreventRuntimeTaskClose(runtimeWorkWithTasks([]), confirmClose)).toBe(false)
+    expect(shouldPreventRuntimeTaskClose(lifecycleWithTasks([]), confirmClose)).toBe(false)
     expect(confirmClose).not.toHaveBeenCalled()
   })
 
@@ -92,7 +74,7 @@ describe('runtime task close guard', () => {
     const confirmClose = vi.fn().mockReturnValue(false)
 
     expect(
-      shouldPreventRuntimeTaskClose(runtimeWorkWithTasks([{ running: true }]), confirmClose)
+      shouldPreventRuntimeTaskClose(lifecycleWithTasks([{ running: true }]), confirmClose)
     ).toBe(true)
     expect(confirmClose).toHaveBeenCalledTimes(1)
   })
@@ -101,7 +83,7 @@ describe('runtime task close guard', () => {
     const confirmClose = vi.fn().mockReturnValue(true)
 
     expect(
-      shouldPreventRuntimeTaskClose(runtimeWorkWithTasks([{ running: true }]), confirmClose)
+      shouldPreventRuntimeTaskClose(lifecycleWithTasks([{ running: true }]), confirmClose)
     ).toBe(false)
     expect(confirmClose).toHaveBeenCalledTimes(1)
   })

@@ -1190,6 +1190,18 @@ async function waitForWorkbenchTask(control, taskId, message) {
   throw new Error(message)
 }
 
+async function waitForWorkbenchDebugState(control, predicate, message) {
+  const startedAt = Date.now()
+  let lastSnapshot = null
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    lastSnapshot = snapshot
+    if (predicate(snapshot)) return snapshot
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
+}
+
 async function assertConfiguredLocalModelsHidden(control, startIndex) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < MODEL_PROTOCOL_MATRIX_TIMEOUT_MS) {
@@ -2636,11 +2648,13 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
       !snapshot.testIds.includes(goalUnreadTestId),
     'The running Goal turn did not render a consistent sidebar, composer, and message state'
   )
-  const runningDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const runningDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.pane?.status?.isAssistantStreaming === true,
+    'The running Goal turn never entered visible streaming state'
   )
   assert.equal(
-    runningDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    runningDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
     true,
     'The running Goal turn was not authoritative runtime work'
   )
@@ -2677,30 +2691,34 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
     'The between-turn Goal gap did not preserve the sidebar, composer, message, and unread state',
     UI_TIMEOUT_MS
   )
-  const betweenTurnsDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const continuationDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.pane?.status?.isAssistantStreaming === true &&
+      snapshot.pane?.status?.taskExecution?.running === true,
+    'The automatic Goal continuation never entered visible streaming state'
   )
   assert.equal(
-    betweenTurnsDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    continuationDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
     true,
-    'The active Goal stopped being visibly running between turns'
+    'The active Goal stopped being visibly running during automatic continuation'
   )
   assert.equal(
-    betweenTurnsDebugSnapshot.pane?.goal?.status,
+    continuationDebugSnapshot.pane?.goal?.status,
     'active',
-    'The Goal stopped being active between turns'
+    'The Goal stopped being active during automatic continuation'
   )
   assert.equal(
-    betweenTurnsDebugSnapshot.pane?.status?.taskExecution?.running,
+    continuationDebugSnapshot.pane?.status?.taskExecution?.running,
     true,
-    'The active Goal lost its unified running state between turns'
+    'The active Goal lost its unified running state during automatic continuation'
   )
   assert.equal(
-    betweenTurnsDebugSnapshot.pane?.status?.isBusy,
+    continuationDebugSnapshot.pane?.status?.isBusy,
     true,
-    'The active Goal released the composer between turns'
+    'The active Goal released the composer during automatic continuation'
   )
-  await captureVerificationScreenshot(control, 'goal-idle-02-between-turns.png')
+  await captureVerificationScreenshot(control, 'goal-idle-02-automatic-continuation.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
@@ -2731,7 +2749,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
     await control.command('getWorkbenchDebugSnapshot', 'body')
   )
   assert.equal(
-    completedDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    completedDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
     false,
     `The completed Goal remained authoritative runtime work: ${JSON.stringify(
       completedDebugSnapshot.workbench?.runningState ?? null
@@ -2877,7 +2895,7 @@ async function verifyGoalRestartRecoveryLifecycle({
     await control.command('getWorkbenchDebugSnapshot', 'body')
   )
   assert.equal(
-    interruptedDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    interruptedDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
     false,
     'Opening the interrupted Goal changed the executor-owned running state'
   )

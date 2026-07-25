@@ -14,13 +14,7 @@ export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
 }
 
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
-  return (
-    task.completedAt ||
-    (!task.running ? task.updatedAt : null) ||
-    task.createdAt ||
-    task.updatedAt ||
-    undefined
-  )
+  return task.completedAt || task.updatedAt || task.createdAt || undefined
 }
 
 export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {

@@ -6,6 +6,7 @@ import type {
 } from '@/types/api'
 import { buildTrayMenuTaskGroups } from './trayMenuState'
 import { parseTrayTaskMenuId } from './trayTaskMenuId'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 
 function task(overrides: Partial<RuntimeTaskSummary>): RuntimeTaskSummary {
   return {
@@ -34,6 +35,12 @@ function runtimeWork(overrides: Partial<RuntimeWorkListResponse>): RuntimeWorkLi
     totalTasks: 0,
     ...overrides,
   }
+}
+
+function lifecycle(work: RuntimeWorkListResponse) {
+  const store = new RuntimeTaskLifecycleStore('tray-test')
+  store.syncRuntimeWork(work)
+  return store.getSnapshot()
 }
 
 describe('buildTrayMenuTaskGroups', () => {
@@ -92,7 +99,7 @@ describe('buildTrayMenuTaskGroups', () => {
       totalTasks: 4,
     })
 
-    const groups = buildTrayMenuTaskGroups(work)
+    const groups = buildTrayMenuTaskGroups(work, { lifecycle: lifecycle(work) })
 
     expect(groups.running.map(item => item.title)).toEqual(['Running task'])
     expect(groups.running.map(item => item.projectName)).toEqual(['Project 1'])
@@ -196,6 +203,7 @@ describe('buildTrayMenuTaskGroups', () => {
     })
 
     const groups = buildTrayMenuTaskGroups(work, {
+      lifecycle: lifecycle(work),
       reminders: {
         unreadTaskKeys: new Set(['device-a\0unread']),
         unreadCount: 1,
@@ -244,6 +252,7 @@ describe('buildTrayMenuTaskGroups', () => {
     })
 
     const groups = buildTrayMenuTaskGroups(work, {
+      lifecycle: lifecycle(work),
       reminders: {
         unreadTaskKeys: new Set(['device-a\0unread']),
         unreadCount: 1,

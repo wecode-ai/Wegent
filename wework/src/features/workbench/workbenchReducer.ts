@@ -25,16 +25,6 @@ import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtime
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
 const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
-const TERMINAL_RUNTIME_TASK_STATUSES = new Set([
-  'done',
-  'complete',
-  'completed',
-  'failed',
-  'error',
-  'cancelled',
-  'canceled',
-])
-
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
   defaultTeam: null,
@@ -43,8 +33,6 @@ export const initialWorkbenchState: WorkbenchState = {
   runtimeWork: null,
   currentProject: null,
   currentRuntimeTask: null,
-  activeRuntimeTasks: [],
-  pendingSettledRuntimeTasks: [],
   standaloneChatKey: 0,
   selectedDeviceWorkspaceId: null,
   pendingProjectWorkspaceProjectId: null,
@@ -134,8 +122,6 @@ export type WorkbenchAction =
       address: RuntimeTaskAddress
     }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
-  | { type: 'runtime_task_started'; address: RuntimeTaskAddress }
-  | { type: 'runtime_task_settled'; address: RuntimeTaskAddress }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
 
@@ -582,115 +568,6 @@ function removeOptimisticRuntimeTask(
   }
 }
 
-function sameRuntimeTaskActivity(left: RuntimeTaskAddress, right: RuntimeTaskAddress): boolean {
-  return left.deviceId === right.deviceId && left.taskId === right.taskId
-}
-
-function upsertActiveRuntimeTask(
-  current: RuntimeTaskAddress[],
-  address: RuntimeTaskAddress
-): RuntimeTaskAddress[] {
-  return [
-    ...current.filter(activeAddress => !sameRuntimeTaskActivity(activeAddress, address)),
-    address,
-  ]
-}
-
-function updateRuntimeTaskRunning(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress,
-  running: boolean,
-  shouldUpdate: (task: RuntimeTaskSummary) => boolean = () => true
-): RuntimeWorkListResponse | null {
-  if (!runtimeWork) return null
-
-  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
-    ...workspace,
-    tasks: workspace.tasks.map(task => {
-      const taskAddress: RuntimeTaskAddress = {
-        deviceId: workspace.deviceId,
-        taskId: task.taskId,
-        workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-      }
-      if (
-        !sameRuntimeTaskActivity(taskAddress, address) ||
-        task.running === running ||
-        !shouldUpdate(task)
-      )
-        return task
-      return { ...task, running }
-    }),
-  })
-
-  return {
-    ...runtimeWork,
-    projects: runtimeWork.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
-    })),
-    chats: runtimeWork.chats.map(updateWorkspace),
-  }
-}
-
-function applyRuntimeTaskActivity(
-  runtimeWork: RuntimeWorkListResponse | null,
-  pendingSettledRuntimeTasks: RuntimeTaskAddress[]
-): RuntimeWorkListResponse | null {
-  return pendingSettledRuntimeTasks.reduce(
-    (current, address) => updateRuntimeTaskRunning(current, address, false),
-    runtimeWork
-  )
-}
-
-function preserveActiveRuntimeTaskRunning(
-  runtimeWork: RuntimeWorkListResponse | null,
-  activeRuntimeTasks: RuntimeTaskAddress[]
-): RuntimeWorkListResponse | null {
-  return activeRuntimeTasks.reduce(
-    (currentRuntimeWork, address) =>
-      updateRuntimeTaskRunning(
-        currentRuntimeWork,
-        address,
-        true,
-        task => !isTerminalRuntimeTaskStatus(task.status)
-      ),
-    runtimeWork
-  )
-}
-
-function retainPendingSettledRuntimeTasks(
-  runtimeWork: RuntimeWorkListResponse | null,
-  pendingSettledRuntimeTasks: RuntimeTaskAddress[]
-): RuntimeTaskAddress[] {
-  if (!runtimeWork || pendingSettledRuntimeTasks.length === 0) {
-    return pendingSettledRuntimeTasks
-  }
-
-  const workspaces = [
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-    ...runtimeWork.chats,
-  ]
-  return pendingSettledRuntimeTasks.filter(address =>
-    workspaces.some(workspace =>
-      workspace.tasks.some(task =>
-        sameRuntimeTaskActivity(
-          {
-            deviceId: workspace.deviceId,
-            taskId: task.taskId,
-            workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-          },
-          address
-        )
-      )
-    )
-  )
-}
-
-function isTerminalRuntimeTaskStatus(status: string | null | undefined): boolean {
-  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
-  return normalized ? TERMINAL_RUNTIME_TASK_STATUSES.has(normalized) : false
-}
-
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   taskId: string,
@@ -979,16 +856,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
   switch (action.type) {
     case 'bootstrapped': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
-      const nextRuntimeWork =
-        action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
-      const pendingSettledRuntimeTasks = retainPendingSettledRuntimeTasks(
-        nextRuntimeWork,
-        state.pendingSettledRuntimeTasks
-      )
-      const runtimeWork = applyRuntimeTaskActivity(
-        preserveActiveRuntimeTaskRunning(nextRuntimeWork, state.activeRuntimeTasks),
-        pendingSettledRuntimeTasks
-      )
+      const runtimeWork = action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork
       return {
         ...state,
         user: action.user,
@@ -996,7 +864,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         projects: action.projects,
         devices,
         runtimeWork,
-        pendingSettledRuntimeTasks,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
           devices,
@@ -1022,20 +889,12 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         action.runtimeWork === undefined
           ? state.runtimeWork
           : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
-      const pendingSettledRuntimeTasks = retainPendingSettledRuntimeTasks(
-        mergedRuntimeWork,
-        state.pendingSettledRuntimeTasks
-      )
-      const runtimeWork = applyRuntimeTaskActivity(
-        preserveActiveRuntimeTaskRunning(mergedRuntimeWork, state.activeRuntimeTasks),
-        pendingSettledRuntimeTasks
-      )
+      const runtimeWork = mergedRuntimeWork
       const refreshedState = {
         ...state,
         projects: action.projects,
         devices,
         runtimeWork,
-        pendingSettledRuntimeTasks,
         currentRuntimeTask: reconcileCurrentRuntimeTaskAddress(
           state.currentRuntimeTask,
           devices,
@@ -1087,14 +946,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         state.runtimeWork,
         action.runtimeWork
       )
-      const pendingSettledRuntimeTasks = retainPendingSettledRuntimeTasks(
-        mergedRuntimeWork,
-        state.pendingSettledRuntimeTasks
-      )
-      const runtimeWork = applyRuntimeTaskActivity(
-        preserveActiveRuntimeTaskRunning(mergedRuntimeWork, state.activeRuntimeTasks),
-        pendingSettledRuntimeTasks
-      )
+      const runtimeWork = mergedRuntimeWork
       debugRuntimeSidebarState('reducer-runtime-work-refreshed', {
         incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork),
         previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
@@ -1103,7 +955,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork,
-        pendingSettledRuntimeTasks,
         currentProject: resolveCurrentProjectAfterRefresh(
           state.currentProject,
           state.projects,
@@ -1319,27 +1170,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         runtimeWork: state.runtimeWork
           ? removeRuntimeTasks(state.runtimeWork, action.addresses)
           : null,
-      }
-    case 'runtime_task_started':
-      return {
-        ...state,
-        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, true),
-        activeRuntimeTasks: upsertActiveRuntimeTask(state.activeRuntimeTasks, action.address),
-        pendingSettledRuntimeTasks: state.pendingSettledRuntimeTasks.filter(
-          address => !sameRuntimeTaskActivity(address, action.address)
-        ),
-      }
-    case 'runtime_task_settled':
-      return {
-        ...state,
-        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, false),
-        activeRuntimeTasks: state.activeRuntimeTasks.filter(
-          address => !sameRuntimeTaskActivity(address, action.address)
-        ),
-        pendingSettledRuntimeTasks: upsertActiveRuntimeTask(
-          state.pendingSettledRuntimeTasks,
-          action.address
-        ),
       }
     case 'current_task_cleared':
       return {

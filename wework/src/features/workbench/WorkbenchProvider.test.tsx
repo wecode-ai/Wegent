@@ -20,6 +20,10 @@ import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbe
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
+import {
+  useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleStoreSnapshot,
+} from './runtimeTaskLifecycle'
 import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import {
@@ -565,17 +569,8 @@ function DeviceStatusProbe() {
 }
 
 function RuntimeRunningTasksProbe() {
-  const runtimeWork = useWorkbench().state.runtimeWork
-  const runningTaskIds = [
-    ...(runtimeWork?.projects.flatMap(project =>
-      project.deviceWorkspaces.flatMap(workspace =>
-        workspace.tasks.filter(task => task.running).map(task => task.taskId)
-      )
-    ) ?? []),
-    ...(runtimeWork?.chats.flatMap(workspace =>
-      workspace.tasks.filter(task => task.running).map(task => task.taskId)
-    ) ?? []),
-  ]
+  const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
+  const runningTaskIds = [...lifecycle.runningTaskKeys].map(key => key.split('\0')[1])
   return <span data-testid="runtime-running-task-ids">{runningTaskIds.join('|') || 'none'}</span>
 }
 
@@ -602,6 +597,7 @@ function RemoteRuntimeCacheProbe() {
 
 function ProjectSendProbe() {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
+  const taskLifecycle = useRuntimeTaskLifecycle(currentRuntimeTask)
   const imageAttachment = createImageAttachment()
   const localImageAttachment = createLocalImageAttachment()
   const currentRuntimeTaskSummary = findRuntimeTask(workbench.state.runtimeWork, currentRuntimeTask)
@@ -689,7 +685,7 @@ function ProjectSendProbe() {
           .join('|') ?? ''}
       </span>
       <span data-testid="current-created-runtime-task-running">
-        {workbench.currentRuntimeTaskRunning ? 'running' : 'idle'}
+        {taskLifecycle?.derived.isRunning ? 'running' : 'idle'}
       </span>
       <span data-testid="runtime-task-errors">
         {workbench.state.runtimeWork?.projects
@@ -1206,6 +1202,7 @@ function ArchiveRemoteRuntimeTaskProbe() {
 
 function RuntimeOpenProbe() {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
+  const taskLifecycle = useRuntimeTaskLifecycle(currentRuntimeTask)
   const [fileChangesDiff, setFileChangesDiff] = useState('')
   const [fileChangesStatus, setFileChangesStatus] = useState('')
   const fileChangesMessage = paneSession.messages.find(message => message.fileChanges)
@@ -1279,7 +1276,7 @@ function RuntimeOpenProbe() {
       <span data-testid="runtime-goal-objective">{paneSession.goal?.objective ?? 'none'}</span>
       <span data-testid="runtime-goal-status">{paneSession.goal?.status ?? 'none'}</span>
       <span data-testid="current-runtime-task-running">
-        {workbench.currentRuntimeTaskRunning ? 'running' : 'idle'}
+        {taskLifecycle?.derived.isRunning ? 'running' : 'idle'}
       </span>
       <span data-testid="runtime-file-changes-diff">{fileChangesDiff}</span>
       <span data-testid="runtime-file-changes-status">{fileChangesStatus}</span>
@@ -1813,7 +1810,6 @@ describe('WorkbenchProvider runtime tasks', () => {
                   title: 'Runtime A',
                   runtime: 'codex',
                   running: true,
-                  goalStatus: 'active',
                 },
               ],
             },

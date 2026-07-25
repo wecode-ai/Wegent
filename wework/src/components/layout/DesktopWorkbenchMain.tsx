@@ -1189,8 +1189,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     selectedAssistantPlanContent ?? selectedAssistantPlan?.fallbackContent ?? null
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
-  const paneIsResponseStreaming =
-    paneSession.status.isResponseActive || paneSession.status.taskExecution.running
+  const paneIsResponseStreaming = paneSession.status.isResponseActive
   const latestPreviousTurnSubtaskId = useMemo(() => {
     for (let index = paneMessages.length - 1; index >= 0; index -= 1) {
       const message = paneMessages[index]

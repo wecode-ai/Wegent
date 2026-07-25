@@ -138,8 +138,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
-  const paneIsResponseStreaming =
-    paneSession.status.isResponseActive || paneSession.status.taskExecution.running
+  const paneIsResponseStreaming = paneSession.status.isResponseActive
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const activeConversationProject = activePaneProject
   const effectiveProjectChat = projectChat ?? {
