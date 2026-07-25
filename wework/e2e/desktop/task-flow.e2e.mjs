@@ -2,7 +2,16 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, appendFile, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  appendFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -137,6 +146,15 @@ const MODEL_PROTOCOL_MATRIX_CASES = [
   })),
   ...CLOUD_MODEL_CASES,
 ]
+const LOCAL_MODEL_SWITCH_CASES = MODEL_PROTOCOLS.flatMap(sourceProtocol =>
+  MODEL_PROTOCOLS.filter(targetProtocol => targetProtocol !== sourceProtocol).map(
+    targetProtocol => ({
+      sourceProtocol,
+      targetProtocol,
+      id: `${sourceProtocol}-to-${targetProtocol}`,
+    })
+  )
+)
 const LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.map(model => ({
   ...model,
   execution: 'local',
@@ -165,6 +183,9 @@ const LOCAL_MODEL_SWITCH_INITIAL_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_INITIAL_C
 const LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT =
   'WEWORK_LOCAL_MODEL_SWITCH_FOLLOW_UP: continue this conversation with the second custom model.'
 const LOCAL_MODEL_SWITCH_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_COMPLETE'
+const LOCAL_MODEL_SWITCH_INVALID_CALL_ID = 'functions.exec_command:0'
+const LOCAL_MODEL_SWITCH_ARTIFACT = 'wework-model-switch-protocol.txt'
+const LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT = 'WEWORK_MODEL_SWITCH_PROTOCOL_EXEC_COMMAND'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
@@ -192,6 +213,7 @@ const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+const ACTIVE_SWITCH_MODEL_RETRY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-switch-model-retry"]`
 const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
@@ -202,6 +224,7 @@ const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
 const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
 const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
 const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
+const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -829,6 +852,21 @@ async function verifyCompletedTurnFork({
     'The fork follow-up mutated the source task transcript'
   )
   await captureVerificationScreenshot(control, 'completed-turn-fork-04-source-unchanged.png')
+}
+
+async function ensureTaskRowVisible(control, taskRowTestId) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (snapshot.testIds.includes(taskRowTestId)) return
+    const expandTasksButton = snapshot.testIds.find(testId =>
+      testId.startsWith('project-runtime-tasks-expand-')
+    )
+    assert.ok(expandTasksButton, `Unable to reveal task row ${taskRowTestId}`)
+    await control.command('click', `[data-testid="${expandTasksButton}"]`)
+  }
+  await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
 }
 
 async function waitForBlankConversation(control, composerSelector) {
@@ -2410,6 +2448,10 @@ function localProtocolPatch(model) {
     `+${localProtocolArtifactContent(model)}`,
     '*** End Patch',
   ].join('\n')
+}
+
+function localModelSwitchCommand() {
+  return `printf '%s' '${LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT}' > '${LOCAL_MODEL_SWITCH_ARTIFACT}'`
 }
 
 function matrixCaseId(model) {
@@ -4523,27 +4565,34 @@ class DesktopE2EServer {
         serialized.includes(LOCAL_MODEL_SWITCH_INITIAL_PROMPT),
         'The first custom model did not receive the model-switch initial prompt'
       )
+      state.stage = 'model_switch_source_awaiting_tool_output'
+      this.writeModelSwitchToolCall(response, model)
+      return
+    }
+    if (state.stage === 'model_switch_source_awaiting_tool_output') {
+      this.assertModelSwitchHistory(model, body)
       state.stage = 'model_switch_source_complete'
       this.writeLocalAssistantMessage(response, model, LOCAL_MODEL_SWITCH_INITIAL_COMPLETE)
       return
     }
     if (state.stage === 'model_switch_source_complete') {
-      assert.equal(model.protocol, 'responses', 'The switch-and-retry source must use Responses')
       assert.ok(
         serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT),
         'The first custom model did not receive the prompt that should fail before switching'
       )
       state.stage = 'model_switch_source_failed'
-      const responseId = `local-model-switch-failure-${Date.now()}`
-      this.writeSse(response, [
-        responseCreated(responseId),
-        responseFailed(responseId, 'WEWORK_LOCAL_MODEL_SWITCH_RETRY_FAILURE'),
-      ])
+      this.writeLocalError(response, model, 'WEWORK_LOCAL_MODEL_SWITCH_RETRY_FAILURE')
       return
     }
     if (state.stage === 'model_switch_source_failed' && codexRequestKind(body) === 'compaction') {
-      const responseId = `local-model-switch-compaction-${Date.now()}`
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      this.writeLocalAssistantMessage(response, model, '')
+      return
+    }
+    if (
+      state.stage === 'model_switch_source_failed' &&
+      serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+    ) {
+      this.writeLocalError(response, model, 'WEWORK_LOCAL_MODEL_SWITCH_RETRY_FAILURE')
       return
     }
     if (
@@ -4551,6 +4600,10 @@ class DesktopE2EServer {
       (codexRequestKind(body) === 'compaction' ||
         serialized.includes('CONTEXT CHECKPOINT COMPACTION'))
     ) {
+      if (this.hasModelSwitchHistory(model, body)) {
+        this.assertModelSwitchHistory(model, body)
+        state.historyVerified = true
+      }
       this.writeLocalAssistantMessage(response, model, '')
       return
     }
@@ -4563,6 +4616,10 @@ class DesktopE2EServer {
         serialized.includes(LOCAL_MODEL_SWITCH_INITIAL_COMPLETE),
         'The switched custom model did not preserve the earlier conversation context'
       )
+      if (!state.historyVerified) {
+        this.assertModelSwitchHistory(model, body)
+        state.historyVerified = true
+      }
       state.stage = 'model_switch_target_complete'
       this.writeLocalAssistantMessage(response, model, LOCAL_MODEL_SWITCH_COMPLETE)
       return
@@ -4825,6 +4882,128 @@ class DesktopE2EServer {
     )
   }
 
+  assertModelSwitchHistory(model, body) {
+    const serialized = JSON.stringify(body)
+    assert.ok(
+      !serialized.includes(LOCAL_MODEL_SWITCH_INVALID_CALL_ID),
+      `${model.protocol} received the original invalid provider tool call ID`
+    )
+
+    if (model.protocol === 'responses') {
+      const items = Array.isArray(body.input) ? body.input : []
+      const call = items.find(
+        item => item?.type === 'function_call' && item?.name === 'exec_command'
+      )
+      const output = items.find(item => item?.type === 'function_call_output')
+
+      assert.ok(call, 'Responses lost the converted exec_command call history')
+      assert.ok(output, 'Responses lost the converted exec_command output history')
+      if (call.id != null) {
+        assert.match(call.id, /^[A-Za-z0-9_-]+$/, 'Responses received an invalid item ID')
+      }
+      assert.match(call.call_id, /^[A-Za-z0-9_-]+$/, 'Responses received an invalid call ID')
+      assert.equal(
+        output.call_id,
+        call.call_id,
+        'Responses broke the cross-protocol tool call/output association'
+      )
+      return
+    }
+
+    if (model.protocol === 'chat') {
+      const call = body.messages
+        ?.flatMap(message => message?.tool_calls ?? [])
+        .find(candidate => candidate?.function?.name === 'exec_command')
+      const output = body.messages?.find(
+        message => message?.role === 'tool' && message?.tool_call_id === call?.id
+      )
+
+      assert.ok(call, 'Chat lost the converted exec_command call history')
+      assert.ok(output, 'Chat lost the converted exec_command output history')
+      assert.match(call.id, /^[A-Za-z0-9_-]+$/, 'Chat received an invalid tool call ID')
+      assert.deepEqual(
+        JSON.parse(call.function?.arguments ?? '{}'),
+        { cmd: localModelSwitchCommand() },
+        'Chat changed the exec_command arguments during protocol conversion'
+      )
+      return
+    }
+
+    const blocks = body.messages?.flatMap(message => message?.content ?? []) ?? []
+    const call = blocks.find(block => block?.type === 'tool_use' && block?.name === 'exec_command')
+    const output = blocks.find(
+      block => block?.type === 'tool_result' && block?.tool_use_id === call?.id
+    )
+
+    assert.ok(call, 'Anthropic lost the converted exec_command call history')
+    assert.ok(output, 'Anthropic lost the converted exec_command output history')
+    assert.match(call.id, /^[A-Za-z0-9_-]+$/, 'Anthropic received an invalid tool use ID')
+    assert.deepEqual(
+      call.input,
+      { cmd: localModelSwitchCommand() },
+      'Anthropic changed the exec_command input during protocol conversion'
+    )
+  }
+
+  hasModelSwitchHistory(model, body) {
+    if (model.protocol === 'responses') {
+      return body.input?.some(
+        item => item?.type === 'function_call' && item?.name === 'exec_command'
+      )
+    }
+    if (model.protocol === 'chat') {
+      return body.messages?.some(message =>
+        message?.tool_calls?.some(call => call?.function?.name === 'exec_command')
+      )
+    }
+    return body.messages?.some(message =>
+      message?.content?.some(block => block?.type === 'tool_use' && block?.name === 'exec_command')
+    )
+  }
+
+  writeModelSwitchToolCall(response, model) {
+    const toolInput = { cmd: localModelSwitchCommand() }
+    if (model.protocol === 'responses') {
+      const responseId = 'responses-model-switch-tool'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(LOCAL_MODEL_SWITCH_INVALID_CALL_ID, 'exec_command', toolInput),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatToolCall(
+        response,
+        toolInput,
+        LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
+        'exec_command'
+      )
+      return
+    }
+    this.writeAnthropicToolCall(
+      response,
+      toolInput,
+      LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
+      'exec_command'
+    )
+  }
+
+  writeLocalError(response, model, message) {
+    if (model.protocol === 'responses') {
+      const responseId = 'responses-model-switch-error'
+      this.writeSse(response, [responseCreated(responseId), responseFailed(responseId, message)])
+      return
+    }
+    if (model.protocol === 'chat') {
+      json(response, 400, {
+        error: { type: 'invalid_request_error', message },
+      })
+      return
+    }
+    this.writeAnthropicError(response, message)
+  }
+
   writeLocalToolCall(response, model, patch) {
     if (model.protocol === 'responses') {
       const id = `local-${model.protocol}-tool`
@@ -4858,8 +5037,15 @@ class DesktopE2EServer {
     this.writeAnthropicMessage(response, text)
   }
 
-  writeChatToolCall(response, patch) {
-    const argumentsValue = JSON.stringify({ input: patch })
+  writeChatToolCall(
+    response,
+    toolInput,
+    callId = 'chat-local-apply-patch',
+    toolName = 'apply_patch'
+  ) {
+    const argumentsValue = JSON.stringify(
+      toolName === 'apply_patch' ? { input: toolInput } : toolInput
+    )
     const splitAt = Math.max(1, Math.floor(argumentsValue.length / 2))
     const chunks = [
       {
@@ -4873,10 +5059,10 @@ class DesktopE2EServer {
               tool_calls: [
                 {
                   index: 0,
-                  id: 'chat-local-apply-patch',
+                  id: callId,
                   type: 'function',
                   function: {
-                    name: 'apply_patch',
+                    name: toolName,
                     arguments: argumentsValue.slice(0, splitAt),
                   },
                 },
@@ -4896,9 +5082,9 @@ class DesktopE2EServer {
               tool_calls: [
                 {
                   index: 0,
-                  id: 'chat-local-apply-patch',
+                  id: callId,
                   function: {
-                    name: 'apply_patch',
+                    name: toolName,
                     arguments: argumentsValue.slice(splitAt),
                   },
                 },
@@ -4924,8 +5110,13 @@ class DesktopE2EServer {
     this.writeRawSse(response, `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`)
   }
 
-  writeAnthropicToolCall(response, patch) {
-    const input = JSON.stringify({ input: patch })
+  writeAnthropicToolCall(
+    response,
+    toolInput,
+    callId = 'anthropic-local-apply-patch',
+    toolName = 'apply_patch'
+  ) {
+    const input = JSON.stringify(toolName === 'apply_patch' ? { input: toolInput } : toolInput)
     this.writeAnthropicSse(response, [
       [
         'message_start',
@@ -4949,8 +5140,8 @@ class DesktopE2EServer {
           index: 0,
           content_block: {
             type: 'tool_use',
-            id: 'anthropic-local-apply-patch',
-            name: 'apply_patch',
+            id: callId,
+            name: toolName,
             input: {},
           },
         },
@@ -4973,6 +5164,18 @@ class DesktopE2EServer {
         },
       ],
       ['message_stop', { type: 'message_stop' }],
+    ])
+  }
+
+  writeAnthropicError(response, message) {
+    this.writeAnthropicSse(response, [
+      [
+        'error',
+        {
+          type: 'error',
+          error: { type: 'invalid_request_error', message },
+        },
+      ],
     ])
   }
 
@@ -5775,6 +5978,7 @@ async function main() {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
   }
   const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
+  const modelSwitchVerification = []
   let app
   let appBundlePath
   let cloudEnvironment
@@ -6580,6 +6784,7 @@ async function main() {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await ensureTaskRowVisible(control, taskRowTestId)
       await control.command('click', `[data-testid="${taskRowTestId}"]`)
       await control.command('waitFor', '[data-testid="model-selector-button"]', {
         text: MODEL_LABEL,
@@ -6603,77 +6808,140 @@ async function main() {
         'The follow-up request did not preserve the user prompt'
       )
 
-      phase = 'local-model-switch-same-conversation'
-      const sourceModel = LOCAL_MODEL_CASES[0]
-      const targetModel = LOCAL_MODEL_CASES[1]
-      control.localProtocolStates.set(sourceModel.protocol, {
-        stage: 'model_switch_source',
-        requests: [],
-      })
-      control.localProtocolStates.set(targetModel.protocol, {
-        stage: 'model_switch_target',
-        requests: [],
-      })
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', composerSelector, {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      })
-      await selectE2EModel(control, sourceModel.optionId, sourceModel.label)
-      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
-      await control.command('waitFor', '[data-testid="assistant-error-switch-model-retry"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      await prepareCompletedTurnScreenshot(control)
-      await captureVerificationScreenshot(control, 'model-switch-retry-01-failed.png')
-      await control.command('click', '[data-testid="assistant-error-switch-model-retry"]')
-      await control.command('waitFor', '[data-testid="model-selector-menu"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      await captureVerificationScreenshot(
-        control,
-        'model-switch-retry-02-picker-open.png',
-        '[data-testid="model-selector-menu"]'
+      for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
+        phase = `local-model-switch-${switchCase.id}`
+        const sourceModel = LOCAL_MODEL_CASES.find(
+          model => model.protocol === switchCase.sourceProtocol
+        )
+        const targetModel = LOCAL_MODEL_CASES.find(
+          model => model.protocol === switchCase.targetProtocol
+        )
+        assert.ok(sourceModel, `Missing ${switchCase.sourceProtocol} local switch source`)
+        assert.ok(targetModel, `Missing ${switchCase.targetProtocol} local switch target`)
+        for (const model of LOCAL_MODEL_CASES) {
+          control.localProtocolStates.set(model.protocol, { stage: 'initial', requests: [] })
+        }
+        control.localProtocolStates.set(sourceModel.protocol, {
+          stage: 'model_switch_source',
+          requests: [],
+        })
+        control.localProtocolStates.set(targetModel.protocol, {
+          stage: 'model_switch_target',
+          requests: [],
+        })
+        await rm(join(workspacePath, LOCAL_MODEL_SWITCH_ARTIFACT), { force: true })
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('waitFor', composerSelector, {
+          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+        })
+        await selectE2EModel(control, sourceModel.optionId, sourceModel.label)
+        await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+        await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
+          visible: true,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        const sourceRequestsBeforeSwitch = control.localProtocolStates.get(sourceModel.protocol)
+          ?.requests.length
+        assert.ok(
+          sourceRequestsBeforeSwitch && sourceRequestsBeforeSwitch >= 3,
+          `${switchCase.id} did not complete its source tool loop and failed follow-up`
+        )
+        if (switchIndex === 0) {
+          await prepareCompletedTurnScreenshot(control)
+          await captureVerificationScreenshot(control, 'model-switch-retry-01-failed.png')
+        }
+        await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
+        await control.command('clickWhenEnabled', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
+          stableMs: COMPOSER_READY_STABILITY_MS,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        if (switchIndex === 0) {
+          await captureVerificationScreenshot(
+            control,
+            'model-switch-retry-02-picker-open.png',
+            '[data-testid="model-selector-menu"]'
+          )
+        }
+        await selectE2EModel(control, targetModel.optionId, targetModel.label)
+        if (switchIndex === 0) {
+          await captureVerificationScreenshot(control, 'model-switch-retry-03-target-selected.png')
+        }
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: LOCAL_MODEL_SWITCH_COMPLETE,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        assert.equal(
+          await readFile(join(workspacePath, LOCAL_MODEL_SWITCH_ARTIFACT), 'utf8'),
+          LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT,
+          `${switchCase.id} did not execute its source tool call before switching`
+        )
+        const sourceSwitchState = control.localProtocolStates.get(sourceModel.protocol)
+        const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
+        assert.equal(
+          sourceSwitchState?.requests.length,
+          sourceRequestsBeforeSwitch,
+          `${switchCase.id} retried through the old custom model`
+        )
+        assert.equal(
+          targetSwitchState?.stage,
+          'model_switch_target_complete',
+          `${switchCase.id} did not complete the automatic same-conversation retry`
+        )
+        await control.command('waitFor', '[data-testid="model-selector-button"]', {
+          text: targetModel.label,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        const appliedModelLabel = await control.command(
+          'getText',
+          '[data-testid="model-selector-button"]'
+        )
+        assert.doesNotMatch(
+          appliedModelLabel,
+          /下一轮|Next/,
+          `${switchCase.id} left the applied model marked as next-turn only`
+        )
+        modelSwitchVerification.push({
+          direction: switchCase.id,
+          sourceProtocol: sourceModel.protocol,
+          targetProtocol: targetModel.protocol,
+          sourceRequestCount: sourceSwitchState.requests.length,
+          targetRequestCount: targetSwitchState.requests.length,
+          targetHistoryVerified: targetSwitchState.historyVerified === true,
+          toolArtifactVerified: true,
+          completed: true,
+        })
+        if (switchIndex === 0) {
+          await prepareCompletedTurnScreenshot(control)
+          await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
+        }
+      }
+      await writeFile(
+        join(resultDir, 'model-switch-protocol-verification.json'),
+        `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
+        'utf8'
       )
-      await selectE2EModel(control, targetModel.optionId, targetModel.label)
-      await captureVerificationScreenshot(control, 'model-switch-retry-03-target-selected.png')
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: LOCAL_MODEL_SWITCH_COMPLETE,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      const sourceSwitchState = control.localProtocolStates.get(sourceModel.protocol)
-      const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
-      assert.equal(
-        sourceSwitchState?.requests.length,
-        2,
-        'The old custom model received the automatic retry after switching'
-      )
-      assert.equal(
-        targetSwitchState?.stage,
-        'model_switch_target_complete',
-        'The new custom model did not complete the automatic same-conversation retry'
-      )
-      await control.command('waitFor', '[data-testid="model-selector-button"]', {
-        text: targetModel.label,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
-      const appliedModelLabel = await control.command(
-        'getText',
-        '[data-testid="model-selector-button"]'
-      )
-      assert.doesNotMatch(
-        appliedModelLabel,
-        /下一轮|Next/,
-        'The applied custom model remained incorrectly marked as next-turn only'
-      )
-      await prepareCompletedTurnScreenshot(control)
-      await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
-      control.localProtocolStates.set(sourceModel.protocol, { stage: 'initial', requests: [] })
-      control.localProtocolStates.set(targetModel.protocol, { stage: 'initial', requests: [] })
+      if (MODEL_SWITCH_ONLY) {
+        assert.deepEqual(
+          modelSwitchVerification.map(result => result.direction),
+          LOCAL_MODEL_SWITCH_CASES.map(result => result.id),
+          'The focused model-switch E2E did not verify all six protocol directions'
+        )
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework desktop six-way model-switch E2E passed. Evidence: ${resultDir}`)
+        return
+      }
 
       phase = 'local-model-protocol-matrix'
       await verifyModelProtocolMatrix({
@@ -6685,6 +6953,7 @@ async function main() {
         workspacePath,
       })
 
+      await ensureTaskRowVisible(control, taskRowTestId)
       await control.command('click', `[data-testid="${taskRowTestId}"]`)
       await control.command('waitFor', '[data-testid="model-selector-button"]', {
         text: MODEL_LABEL,
@@ -6848,6 +7117,7 @@ async function main() {
       UNSENT_SECOND_TASK_DRAFT,
       'The second task composer did not persist its draft before switching tasks'
     )
+    await ensureTaskRowVisible(control, taskRowTestId)
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await control.command('fill', composerSelector, { value: UNSENT_FIRST_TASK_DRAFT })
     await waitForPersistedComposerInput(
@@ -6862,6 +7132,7 @@ async function main() {
       UNSENT_SECOND_TASK_DRAFT,
       'The second task lost its unsent composer draft after switching tasks'
     )
+    await ensureTaskRowVisible(control, taskRowTestId)
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await waitForControlValue(
       control,
@@ -6926,6 +7197,7 @@ async function main() {
       false,
       'The first task bottom workspace launcher leaked into the second task'
     )
+    await ensureTaskRowVisible(control, taskRowTestId)
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     if (firstTaskOpenedTerminal) {
       await control.command('waitFor', activeTerminalSelector, { timeoutMs: UI_TIMEOUT_MS })
