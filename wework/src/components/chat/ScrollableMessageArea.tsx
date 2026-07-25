@@ -47,6 +47,7 @@ interface ScrollableMessageAreaProps {
   turnNavigation?: RuntimeTurnNavigationItem[]
   className?: string
   scrollerClassName?: string
+  contentClassName?: string
   messageListClassName?: string
   stickyFooter?: ReactNode
   stickyFooterClassName?: string
@@ -116,6 +117,7 @@ function areScrollableMessageAreaPropsEqual(
     previous.turnNavigation !== next.turnNavigation ? 'turnNavigation' : null,
     previous.className !== next.className ? 'className' : null,
     previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
+    previous.contentClassName !== next.contentClassName ? 'contentClassName' : null,
     previous.messageListClassName !== next.messageListClassName ? 'messageListClassName' : null,
     previous.stickyFooter !== next.stickyFooter ? 'stickyFooter' : null,
     previous.stickyFooterClassName !== next.stickyFooterClassName ? 'stickyFooterClassName' : null,
@@ -188,6 +190,7 @@ function ScrollableMessagePaneContent({
   turnNavigation,
   className,
   scrollerClassName,
+  contentClassName,
   messageListClassName,
   stickyFooter,
   stickyFooterClassName,
@@ -806,7 +809,8 @@ function ScrollableMessagePaneContent({
             'min-w-0',
             stickyFooter && 'flex-1 shrink-0',
             (turnNavigationLoading || turnNavigationTargetMessageId || autoScrollSuspended) &&
-              '[overflow-anchor:none]'
+              '[overflow-anchor:none]',
+            contentClassName
           )}
         >
           {messages.length === 0 ? (

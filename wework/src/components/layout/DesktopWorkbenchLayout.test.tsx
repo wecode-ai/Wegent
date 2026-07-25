@@ -1206,7 +1206,8 @@ describe('DesktopWorkbenchLayout', () => {
   function renderWorkspacePanelLayout({
     mainWidth,
     withAppearance = false,
-  }: { mainWidth?: number; withAppearance?: boolean } = {}) {
+    messages,
+  }: { mainWidth?: number; withAppearance?: boolean; messages?: WorkbenchMessage[] } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
     }
@@ -1215,6 +1216,7 @@ describe('DesktopWorkbenchLayout', () => {
     const layout = (
       <DesktopWorkbenchLayout
         {...baseProps}
+        messages={messages}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -4101,6 +4103,54 @@ describe('DesktopWorkbenchLayout', () => {
     expect(content).toHaveStyle({ width: '580px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
+  })
+
+  test('expands the right workspace panel, keeps the composer available, and restores chat', async () => {
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Ready',
+          status: 'done',
+          createdAt: '2026-07-25T00:00:00.000Z',
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    const content = screen.getByTestId('desktop-workbench-content')
+    const panelShell = screen.getByTestId('right-workspace-panel-shell')
+    const expandButton = screen.getByTestId('toggle-right-workspace-panel-expanded-button')
+
+    expect(expandButton).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(expandButton)
+
+    expect(content).toHaveStyle({ width: '100%' })
+    expect(panelShell).toHaveStyle({ width: '100%' })
+    expect(panelShell).toHaveClass('absolute', 'inset-y-0', 'right-0')
+    expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-chat-scroll-sticky-footer')).toHaveClass('z-critical')
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass('z-critical')
+    expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-expanded-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '0px' })
+    expect(panelShell).toHaveStyle({ width: '100%' })
+
+    await userEvent.click(screen.getByTestId('restore-conversation-from-expanded-workspace-button'))
+
+    await waitFor(() => {
+      expect(content).toHaveStyle({ width: '420px' })
+      expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    })
+    expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
   })
 
   test('shows the workbench background through the right and bottom panels', async () => {

@@ -7528,7 +7528,59 @@ async function main() {
       restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
       'The browser tab was not restored after switching conversations'
     )
-    await captureVerificationScreenshot(control, 'workspace-resources-restored-after-switch.png')
+    await captureVerificationScreenshot(control, 'workspace-panel-01-default-split.png')
+
+    const expandedPanelToggleSelector =
+      '[data-testid="toggle-right-workspace-panel-expanded-button"]'
+    const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
+    await control.command('click', expandedPanelToggleSelector)
+    await control.command(
+      'waitFor',
+      '[data-testid="restore-conversation-from-expanded-workspace-button"]',
+      { timeoutMs: UI_TIMEOUT_MS }
+    )
+    assert.equal(
+      await control.command('getInlineStyle', rightPanelShellSelector, { value: 'width' }),
+      '100%',
+      'The expanded right workspace panel did not occupy the full workbench width'
+    )
+    const expandedWorkspaceSnapshot = JSON.parse(
+      await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+    )
+    assert.equal(
+      expandedWorkspaceSnapshot.testIds.includes('right-workspace-resize-handle'),
+      false,
+      'The right workspace resize handle remained visible while expanded'
+    )
+    assert.ok(
+      expandedWorkspaceSnapshot.testIds.includes('project-chat-composer'),
+      'The main composer disappeared while the right workspace panel was expanded'
+    )
+    await captureVerificationScreenshot(control, 'workspace-panel-02-expanded.png')
+
+    await control.command('click', '[data-testid="collapse-sidebar-button"]')
+    await control.command('waitFor', '[data-testid="expand-sidebar-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    assert.equal(
+      await control.command('getInlineStyle', rightPanelShellSelector, { value: 'width' }),
+      '100%',
+      'The expanded right workspace panel changed width after the sidebar collapsed'
+    )
+    await captureVerificationScreenshot(control, 'workspace-panel-03-expanded-sidebar-hidden.png')
+
+    await control.command('click', '[data-testid="expand-sidebar-button"]')
+    await control.command('waitFor', '[data-testid="collapse-sidebar-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command(
+      'click',
+      '[data-testid="restore-conversation-from-expanded-workspace-button"]'
+    )
+    await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, 'workspace-panel-04-restored-split.png')
     await control.command('click', bottomWorkspaceTabCloseSelector)
     await control.command('click', rightBrowserTabCloseSelector)
 

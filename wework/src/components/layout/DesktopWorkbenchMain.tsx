@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeftRight, MessageCircle, MessageSquareWarning } from 'lucide-react'
+import { ArrowLeftRight, ChevronRight, MessageCircle, MessageSquareWarning } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
@@ -224,6 +224,7 @@ interface SelectedAssistantPlan {
 
 interface WorkbenchPaneWorkspaceState {
   rightPanelOpen: boolean
+  rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
 }
@@ -232,6 +233,7 @@ interface PendingBlankBrowserMigration {
   sourcePaneKey: string
   browserLabel: string
   rightPanelOpen: boolean
+  rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
   createdAt: number
@@ -946,6 +948,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () =>
       initialBlankBrowserMigration?.rightPanelOpen ?? initialWorkspaceState?.rightPanelOpen ?? false
   )
+  const [rightPanelExpanded, setRightPanelExpanded] = useState(
+    () =>
+      initialBlankBrowserMigration?.rightPanelExpanded ??
+      initialWorkspaceState?.rightPanelExpanded ??
+      false
+  )
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(
     () =>
       initialBlankBrowserMigration?.rightPanelView ??
@@ -957,8 +965,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       initialBlankBrowserMigration?.rightPanelTabs ?? initialWorkspaceState?.rightPanelTabs ?? []
   )
   useEffect(() => {
-    onWorkspaceStateChange(paneKey, { rightPanelOpen, rightPanelTabs, rightPanelView })
-  }, [onWorkspaceStateChange, paneKey, rightPanelOpen, rightPanelTabs, rightPanelView])
+    onWorkspaceStateChange(paneKey, {
+      rightPanelOpen,
+      rightPanelExpanded,
+      rightPanelTabs,
+      rightPanelView,
+    })
+  }, [
+    onWorkspaceStateChange,
+    paneKey,
+    rightPanelExpanded,
+    rightPanelOpen,
+    rightPanelTabs,
+    rightPanelView,
+  ])
   const [migratedEmbeddedBrowserLabel, setMigratedEmbeddedBrowserLabel] = useState<string | null>(
     () => initialBlankBrowserMigration?.browserLabel ?? null
   )
@@ -1013,7 +1033,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     sourceSubtaskId: undefined,
     reloadDiff: undefined,
   })
-  const closeRightPanel = useCallback(() => setRightPanelOpen(false), [setRightPanelOpen])
+  const closeRightPanel = useCallback(() => {
+    setRightPanelExpanded(false)
+    setRightPanelOpen(false)
+  }, [])
   const onlyTemporaryChatOpen =
     rightPanelTabs.length === 1 &&
     rightPanelTabs[0].startsWith('chat:') &&
@@ -1042,7 +1065,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onCollapse: closeRightPanel,
     defaultPanelWidth: onlyTemporaryChatOpen ? TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH : undefined,
   })
-  const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
+  const chatColumnWidth = rightPanelOpen && !rightPanelExpanded ? rightSplitChatWidth : '100%'
   const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
   const environmentInfoDocked =
     Boolean(currentRuntimeTask) &&
@@ -1060,9 +1083,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onEnvironmentInfoOverlayOpenChange(false)
   }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange])
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
-  const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
+  const rightPanelShellWidth = rightPanelOpen
+    ? rightPanelExpanded
+      ? '100%'
+      : `calc(100% - ${rightSplitChatWidth}px)`
+    : '0px'
   const rightPanelTitlebarWidth = rightPanelOpen
-    ? rightPanelShellWidth
+    ? rightPanelExpanded && sidebarCollapsed
+      ? 'calc(100% - 14rem)'
+      : rightPanelShellWidth
     : COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
@@ -1172,6 +1201,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       sourcePaneKey: paneKey,
       browserLabel: embeddedBrowserLabel,
       rightPanelOpen,
+      rightPanelExpanded,
       rightPanelView,
       rightPanelTabs,
       createdAt: Date.now(),
@@ -1180,6 +1210,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask,
     embeddedBrowserLabel,
     paneKey,
+    rightPanelExpanded,
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
@@ -1501,6 +1532,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         const currentTabs = current.includes(tab) ? current : [...current, tab]
         const next = currentTabs.filter(openTab => openTab !== tab)
         if (next.length === 0) {
+          setRightPanelExpanded(false)
           setRightPanelOpen(false)
           setRightPanelView('launcher')
           return next
@@ -1511,7 +1543,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     },
-    [rightPanelView, setOpenFileRequest, setRightPanelOpen, setRightPanelTabs, setRightPanelView]
+    [rightPanelView, setOpenFileRequest, setRightPanelTabs, setRightPanelView]
   )
 
   const openReviewFromDiffLoader = useCallback(
@@ -1776,10 +1808,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         setRightPanelView(current =>
           effectiveRightPanelTabs.includes(current as RightWorkspacePanelTab) ? current : 'launcher'
         )
+      } else {
+        setRightPanelExpanded(false)
       }
       return nextOpen
     })
-  }, [effectiveRightPanelTabs, setRightPanelOpen, setRightPanelView])
+  }, [effectiveRightPanelTabs, setRightPanelView])
+  const toggleRightPanelExpanded = useCallback(() => {
+    setRightPanelExpanded(expanded => !expanded)
+  }, [])
   const toggleBottomPanel = useCallback(
     () => setCurrentBottomPanelOpen(open => !open),
     [setCurrentBottomPanelOpen]
@@ -1893,8 +1930,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           : undefined
       }
       rightPanelOpen={rightPanelOpen}
+      rightPanelExpanded={rightPanelExpanded}
       bottomPanelOpen={bottomPanelOpen}
       onToggleRightPanel={toggleRightPanel}
+      onToggleRightPanelExpanded={toggleRightPanelExpanded}
       onToggleBottomPanel={toggleBottomPanel}
     />
   )
@@ -2039,7 +2078,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )}
       <div
         data-testid="titlebar-main-actions"
-        className="relative z-0 flex h-full shrink-0 items-center justify-end gap-1 pr-1"
+        className={cn(
+          'relative z-0 flex h-full shrink-0 items-center justify-end gap-1 pr-1',
+          rightPanelExpanded && 'invisible'
+        )}
       >
         {mainHeaderActions}
       </div>
@@ -2056,7 +2098,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         className={cn(
           'pointer-events-none absolute right-0 top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden',
           background.imagePath && background.inTopBar ? 'bg-transparent' : 'bg-background/95',
-          rightPanelOpen ? 'border-l border-border/60' : undefined,
+          rightPanelOpen && !rightPanelExpanded ? 'border-l border-border/60' : undefined,
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{ width: rightPanelTitlebarWidth }}
@@ -2087,6 +2129,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setHasPreviousTurnReview(false)
     setRightPanelView('launcher')
     setRightPanelTabs([])
+    setRightPanelExpanded(false)
     setSelectedAssistantPlan(null)
     setReviewState({
       loading: false,
@@ -2189,6 +2232,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 externalScrollRef={workbenchScrollRef}
                 turnNavigationPortalTarget={turnNavigationPortalTarget}
                 scrollerClassName="overflow-visible scrollbar-none"
+                contentClassName={rightPanelExpanded ? 'invisible' : undefined}
                 messageListClassName={cn(
                   DESKTOP_MESSAGE_LIST_CLASS,
                   chatContentResizing && 'transition-none'
@@ -2198,7 +2242,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   hasMainBackground
                     ? 'from-transparent via-transparent'
                     : 'from-background via-background',
-                  chatContentResizing && 'transition-none'
+                  chatContentResizing && 'transition-none',
+                  rightPanelExpanded && 'z-critical'
                 )}
                 stickyFooter={
                   <>
@@ -2214,7 +2259,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     <div
                       className={cn(
                         DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
-                        chatContentResizing && 'transition-none'
+                        chatContentResizing && 'transition-none',
+                        rightPanelExpanded && 'z-critical'
                       )}
                       data-testid="desktop-floating-composer-layer"
                     >
@@ -2222,6 +2268,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         className="pointer-events-auto"
                         data-testid="desktop-floating-composer-card"
                       >
+                        {rightPanelExpanded && (
+                          <button
+                            type="button"
+                            data-testid="restore-conversation-from-expanded-workspace-button"
+                            className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
+                            onClick={() => setRightPanelExpanded(false)}
+                          >
+                            <span>{t('workbench.latest_conversation_turn')}</span>
+                            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        )}
                         {showConversationDeviceBanner ? (
                           <ConversationDeviceOfflineBanner
                             device={activeDevice}
@@ -2467,7 +2524,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             )}
           </aside>
         </div>
-        {rightPanelOpen && (
+        {rightPanelOpen && !rightPanelExpanded && (
           <div
             data-testid="right-workspace-resize-handle"
             role="separator"
@@ -2486,11 +2543,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           id="right-workspace-panel-shell"
           data-testid="right-workspace-panel-shell"
           className={cn(
-            'relative z-popover min-w-0 shrink-0 overflow-hidden',
+            'z-popover min-w-0 shrink-0 overflow-hidden',
+            rightPanelExpanded ? 'absolute inset-y-0 right-0' : 'relative',
             hasMainBackground ? 'bg-background/20' : 'bg-background',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
             rightPanelOpen
-              ? 'pointer-events-auto border-l border-border/60 opacity-100'
+              ? cn(
+                  'pointer-events-auto opacity-100',
+                  !rightPanelExpanded && 'border-l border-border/60'
+                )
               : 'pointer-events-none opacity-0'
           )}
           style={{ width: rightPanelShellWidth }}
