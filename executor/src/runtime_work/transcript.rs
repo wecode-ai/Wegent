@@ -1415,6 +1415,7 @@ fn tool_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> 
     if let Some(object) = block.as_object_mut() {
         insert_tool_output_fields(object, item, options);
         insert_image_generation_render_payload(object, item);
+        insert_request_user_input_render_payload(object, item);
     }
     block
 }
@@ -1436,6 +1437,7 @@ fn merge_tool_output(
             merge_tool_input(object, command_input_from_output(item));
             insert_tool_output_fields(object, item, options);
             insert_image_generation_render_payload(object, item);
+            insert_request_user_input_render_payload(object, item);
             object.insert("status".to_owned(), Value::String(tool_status(item)));
         }
         return;
@@ -1451,6 +1453,7 @@ fn merge_tool_output(
     if let Some(object) = block.as_object_mut() {
         insert_tool_output_fields(object, item, options);
         insert_image_generation_render_payload(object, item);
+        insert_request_user_input_render_payload(object, item);
     }
     if let Some(input) = command_input_from_output(item) {
         if let Some(object) = block.as_object_mut() {
@@ -1500,6 +1503,41 @@ fn insert_image_generation_render_payload(object: &mut Map<String, Value>, item:
         payload.insert("savedPath".to_owned(), Value::String(path));
     }
     object.insert("render_payload".to_owned(), Value::Object(payload));
+}
+
+fn insert_request_user_input_render_payload(object: &mut Map<String, Value>, item: &Value) {
+    if item_type(item) == "functioncall" && tool_name(item) == "request_user_input" {
+        let mut payload = parse_json_object_string(item, "arguments")
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        payload.insert(
+            "kind".to_owned(),
+            Value::String("request_user_input".to_owned()),
+        );
+        payload.insert("requestId".to_owned(), Value::String(tool_call_id(item)));
+        object.insert("render_payload".to_owned(), Value::Object(payload));
+        return;
+    }
+
+    if item_type(item) != "functioncalloutput" {
+        return;
+    }
+    let Some(payload) = object
+        .get_mut("render_payload")
+        .and_then(Value::as_object_mut)
+        .filter(|payload| {
+            payload.get("kind").and_then(Value::as_str) == Some("request_user_input")
+        })
+    else {
+        return;
+    };
+    let Some(response) = output_payload_text(item)
+        .and_then(|output| serde_json::from_str::<Value>(&output).ok())
+        .filter(Value::is_object)
+    else {
+        return;
+    };
+    payload.insert("response".to_owned(), response);
 }
 
 fn command_input(item: &Value) -> Value {
@@ -2953,6 +2991,85 @@ mod tests {
         assert_eq!(block["type"], "tool");
         assert_eq!(block["tool_name"], "codex.list_mcp_resources");
         assert_eq!(block["status"], "done");
+    }
+
+    #[test]
+    fn transcript_restores_pending_request_user_input_as_interactive_block() {
+        let thread = json!({
+            "id": "thread-1",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "function_call",
+                                "call_id": "request-1",
+                                "name": "request_user_input",
+                                "arguments": "{\"questions\":[{\"id\":\"direction\",\"question\":\"Which direction?\",\"options\":[{\"label\":\"Complete\",\"description\":\"Cover the full flow.\"}]}]}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["tool_name"], "request_user_input");
+        assert_eq!(block["status"], "pending");
+        assert_eq!(block["render_payload"]["kind"], "request_user_input");
+        assert_eq!(block["render_payload"]["requestId"], "request-1");
+        assert_eq!(
+            block["render_payload"]["questions"][0]["question"],
+            "Which direction?"
+        );
+    }
+
+    #[test]
+    fn transcript_restores_answered_request_user_input_response() {
+        let thread = json!({
+            "id": "thread-1",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "function_call",
+                                "call_id": "request-1",
+                                "name": "request_user_input",
+                                "arguments": "{\"questions\":[{\"id\":\"direction\",\"question\":\"Which direction?\"}]}"
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "function_call_output",
+                                "call_id": "request-1",
+                                "output": "{\"answers\":{\"direction\":{\"answers\":[\"Complete\"]}}}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["status"], "done");
+        assert_eq!(
+            block["render_payload"]["response"]["answers"]["direction"]["answers"][0],
+            "Complete"
+        );
     }
 
     #[test]
