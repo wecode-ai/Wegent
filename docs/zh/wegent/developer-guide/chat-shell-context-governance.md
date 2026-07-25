@@ -196,6 +196,11 @@ Phase 2a 让**最后的权威 LangGraph state** 成为唯一收口的唯一来�
 - 所有**流式**终止路径都经它：正常结束、`completed_with_unexecuted_tool_calls`、
   工具上限 recovery、截断重试与重试耗尽、silent/deferred。旧的
   `_collected_state_messages` / 长度门槛权威判定已移除。
+- **finalizer 执行 ≠ 落库**：finalizer 只在 builder 上设置内存里的
+  `_last_messages_chain`；它是否 durable 落进 `subtask.result.messages_chain` 取决于
+  终止状态。受支持的（COMPLETED 类）终止会落库；`FAILED` / `CANCELLED` 的携带与落库
+  推迟到 Phase 2b（见下文“不在 Phase 2a 范围”）。因此 finalizer 可能在一条最终并不
+  落库的路径上运行。
 - **引擎级非流式**路径（`agent.execute` → `_collect_final_state_from_events`）**不**
   构建 `messages_chain`：它返回 LangGraph 最终 state（调用方只消费 content/tool-results，
   `messages_chain` 仅在流式路径落库）。它仍复用 request-local checkpointer、exit
@@ -283,7 +288,7 @@ Phase 2a 让**最后的权威 LangGraph state** 成为唯一收口的唯一来�
 
 ### reload 从最新压缩检查点开始（Phase 1）
 
-早期实现每一轮都从完整存储历史重建并重新评估压缩，长会话会因此“复原膨胀”。Phase 1 把自包含检查点持久化进压缩那一轮的 `messages_chain`（保留的近期 user 消息带 `checkpoint_retained`，summary 带 `summary_compacted`），并通过 backend 的 `from_latest_compaction` 路径从最新检查点 reload。详见下面的 Phase 1 一节。
+早期实现每一轮都从完整存储历史重建并重新评估压缩，长会话会因此“复原膨胀”。Phase 1 把自包含检查点持久化进压缩那一轮的 `messages_chain`（保留的近期 user 消息带 `checkpoint_retained`，summary 带 `summary_compacted`），并通过 backend 的 `from_latest_compaction` 路径从最新检查点 reload。详见上面的 Phase 1 一节。
 
 ### `max_output_tokens` 主要是预算输入，不是历史改写结果
 

@@ -270,6 +270,12 @@ single finalizer, on every terminal path.
   `completed_with_unexecuted_tool_calls`, tool-limit recovery, truncation retry
   and retry-exhausted, and silent/deferred exit. The old
   `_collected_state_messages` / length-gate authority is gone.
+- **Finalizer execution ≠ durable persistence.** The finalizer only sets the
+  in-memory `_last_messages_chain` on the builder; whether that becomes durable in
+  `subtask.result.messages_chain` depends on the terminal status. Supported
+  (COMPLETED-style) terminals persist it; carrying and persisting it for `FAILED`
+  / `CANCELLED` is deferred to Phase 2b (see "Not in Phase 2a" below). So the
+  finalizer may run on a path whose chain is not ultimately stored.
 - The **engine-level non-streaming** path (`agent.execute` →
   `_collect_final_state_from_events`) does **not** build a `messages_chain`: it
   returns the LangGraph final state (its callers consume only content/tool-results,
