@@ -287,7 +287,7 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
-  test('keeps distance from bottom when content reflows after a width change', () => {
+  test('keeps a visible text anchor fixed when paused content remeasures', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
 
@@ -319,7 +319,7 @@ describe('ScrollableMessageArea', () => {
       )
 
       const scroller = screen.getByTestId('chat-message-scroll-area')
-      const message = screen.getByText('正在阅读的长消息').closest('[data-message-id]')!
+      const anchor = screen.getByText('正在阅读的长消息').closest('[data-scroll-anchor]')!
       Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
       Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
       Object.defineProperty(scroller, 'scrollTop', {
@@ -331,85 +331,21 @@ describe('ScrollableMessageArea', () => {
         scroller.scrollTop = Number(top)
       })
       mockRect(scroller, 100, 300)
-      mockScrollRelativeRect(message, scroller, 380, 160)
+      mockScrollRelativeRect(anchor, scroller, 450, 40)
 
       fireEvent.wheel(scroller, { deltaY: -80 })
       fireEvent.scroll(scroller)
       ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
-      mockScrollRelativeRect(message, scroller, 620, 280)
+      Object.defineProperty(scroller, 'scrollHeight', { value: 1440, configurable: true })
+      mockScrollRelativeRect(anchor, scroller, 690, 40)
       act(() => {
         resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
       })
 
-      expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-        top: 300,
-        behavior: 'auto',
-      })
-    } finally {
-      vi.stubGlobal('ResizeObserver', originalResizeObserver)
-    }
-  })
-
-  test('keeps distance from bottom while a tall message reflows', () => {
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    const originalResizeObserver = globalThis.ResizeObserver
-
-    class ResizeObserverMock {
-      constructor(callback: ResizeObserverCallback) {
-        resizeCallbacks.push(callback)
-      }
-
-      observe = vi.fn()
-      disconnect = vi.fn()
-    }
-
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
-
-    try {
-      render(
-        <ScrollableMessageArea
-          conversationKey="tall-width-reflow"
-          messages={[
-            {
-              id: 'tall-width-reflow-message',
-              role: 'assistant',
-              content: '超长段落',
-              status: 'done',
-              createdAt: '2026-05-29T00:00:00.000Z',
-            },
-          ]}
-        />
-      )
-
-      const scroller = screen.getByTestId('chat-message-scroll-area')
-      const message = screen.getByText('超长段落').closest('[data-message-id]')!
-      Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
-      Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
-      Object.defineProperty(scroller, 'scrollTop', {
-        value: 500,
-        writable: true,
-        configurable: true,
-      })
-      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
-        scroller.scrollTop = Number(top)
-      })
-      mockRect(scroller, 100, 300)
-      mockScrollRelativeRect(message, scroller, 100, 800)
-
-      fireEvent.wheel(scroller, { deltaY: -80 })
-      fireEvent.scroll(scroller)
-      ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
-
-      mockScrollRelativeRect(message, scroller, 100, 1200)
-      act(() => {
-        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-      })
-
-      expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-        top: 500,
-        behavior: 'auto',
-      })
+      expect(scroller.scrollTo).not.toHaveBeenCalled()
+      expect(scroller.scrollTop).toBe(540)
+      expect(anchor.getBoundingClientRect().top).toBe(150)
     } finally {
       vi.stubGlobal('ResizeObserver', originalResizeObserver)
     }
