@@ -2104,6 +2104,30 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
+  test('routes assistant folder links to the workspace directory panel', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-folder-link',
+            role: 'assistant',
+            content: '[docs](folder://%2FUsers%2Fdev%2Frepo%2Fdocs)',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs', {
+      isDirectory: true,
+    })
+  })
+
   test('opens local HTML file links in the Wework built-in browser', () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
