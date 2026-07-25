@@ -493,3 +493,75 @@ async def test_stream_tokens_deletes_turn_thread_on_exit(monkeypatch):
         pass
 
     assert len(deleted) == 1  # exactly the turn's own thread torn down
+
+
+@pytest.mark.asyncio
+async def test_nonstreaming_recovery_uses_current_state_and_deletes_thread(monkeypatch):
+    from langchain_core.messages import ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    authoritative = [
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t2", "name": "_probe", "args": {}}],
+            id="a2",
+        ),
+        ToolMessage(content="ok", tool_call_id="t2", name="_probe", id="tm2"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    recovery_seen: list = []
+    deleted: list[str] = []
+
+    class _Resp:
+        content = "final answer"
+
+    class _RecoveryLLM:
+        async def ainvoke(self, messages):
+            recovery_seen.extend(messages)
+            return _Resp()
+
+    class _MockSaver:
+        async def adelete_thread(self, thread_id):
+            deleted.append(thread_id)
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            raise GraphRecursionError("limit")
+            yield  # pragma: no cover
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    builder = LangGraphAgentBuilder(llm=_RecoveryLLM())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    builder._checkpointer = _MockSaver()
+
+    final_state, _events = await builder._collect_final_state_from_events(
+        messages=[{"role": "user", "content": "hi"}]
+    )
+
+    msgs = final_state["messages"]
+    # final_state built from the current authoritative state + recovery reply
+    assert any(
+        getattr(m, "additional_kwargs", {}).get("summary_compacted") for m in msgs
+    )
+    assert msgs[-1].content == "final answer"
+    # recovery LLM saw the current state (with the checkpoint), not just lc_messages
+    assert any(
+        getattr(m, "additional_kwargs", {}).get("summary_compacted")
+        for m in recovery_seen
+    )
+    assert len(deleted) == 1  # non-streaming thread torn down

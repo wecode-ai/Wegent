@@ -746,35 +746,6 @@ def _new_messages_from_state(
     return [msg for msg in collected if not msg.id or msg.id not in input_ids]
 
 
-def _build_limit_recovery_messages_chain(
-    *,
-    collected_state_messages: list[BaseMessage],
-    limit_messages: list[BaseMessage],
-    input_ids: frozenset[str],
-    final_response_text: str,
-) -> list[BaseMessage]:
-    """Build persisted chain for tool-limit recovery turns.
-
-    When LangGraph raises ``GraphRecursionError`` before emitting a final
-    ``on_chain_end`` state, ``collected_state_messages`` can be empty even
-    though the turn should still persist the recovery notice. Fall back to the
-    synthetic ``limit_messages`` prompt so ``messages_chain`` is not lost.
-    """
-
-    chain = (
-        _new_messages_from_state(collected_state_messages, input_ids)
-        if collected_state_messages
-        else []
-    )
-    limit_recovery_messages = _new_messages_from_state(limit_messages, input_ids)
-    if limit_recovery_messages:
-        chain = list(chain) + list(limit_recovery_messages)
-
-    if final_response_text:
-        chain = list(chain) + [AIMessage(content=final_response_text)]
-    return chain
-
-
 class LangGraphAgentBuilder:
     """Builder for LangGraph-based agent workflows using prebuilt ReAct agent."""
 
@@ -952,17 +923,21 @@ class LangGraphAgentBuilder:
                 self.max_iterations,
                 len(all_events),
             )
-            limit_messages = list(lc_messages) + [
+            # Recover from the CURRENT authoritative state (post-compaction, with
+            # completed tool pairs), not the pre-run lc_messages.
+            snapshot = await agent.aget_state({**exec_config})
+            safe_state = sanitize_tool_pairs(snapshot.values.get("messages", []))
+            recovery_input = safe_state + [
                 HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
             ]
 
             try:
                 _log_direct_llm_request(
-                    messages=limit_messages,
+                    messages=recovery_input,
                     tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
                     request_name="tool_limit_recovery",
                 )
-                response = await self.llm.ainvoke(limit_messages)
+                response = await self.llm.ainvoke(recovery_input)
                 _log_direct_llm_response(
                     response=response,
                     request_name="tool_limit_recovery",
@@ -982,7 +957,7 @@ class LangGraphAgentBuilder:
                         final_content = "".join(text_parts)
 
                 final_state = {
-                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
+                    "messages": safe_state + [AIMessage(content=final_content)]
                 }
                 return final_state, all_events
             except Exception:
@@ -994,6 +969,19 @@ class LangGraphAgentBuilder:
         except Exception:
             logger.exception("Error while collecting final state from events")
             raise
+        finally:
+            # Non-streaming path owns its own thread too; delete it on every exit.
+            saver = self._checkpointer
+            if saver is not None:
+                try:
+                    await saver.adelete_thread(nonstream_thread_id)
+                except Exception:
+                    logger.warning(
+                        "[collect_final_state_from_events] Failed to delete turn "
+                        "checkpoint thread=%s",
+                        nonstream_thread_id,
+                        exc_info=True,
+                    )
 
     def _find_prompt_modifier_tools(self) -> list[Any]:
         """Find all tools that implement the PromptModifierTool protocol.
