@@ -47,7 +47,6 @@ function createPaneStatus({
     activeAssistantMessage,
     taskExecution: {
       known: taskRunning,
-      turnRunning: taskRunning,
       running: taskRunning,
       continuable: true,
       status: null,

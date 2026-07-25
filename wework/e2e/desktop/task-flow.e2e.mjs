@@ -35,6 +35,11 @@ const GOAL_IDLE_PROMPT =
   'WEWORK_DESKTOP_E2E_GOAL_IDLE: create an active goal and keep it active for one continuation.'
 const GOAL_IDLE_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
 const GOAL_IDLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_COMPLETE'
+const GOAL_RESTART_PROMPT =
+  'WEWORK_DESKTOP_E2E_GOAL_RESTART: keep this active goal running until Wework restarts.'
+const GOAL_RESTART_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_INITIAL_COMPLETE'
+const GOAL_RESTART_RESUME_PROMPT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_RESUME'
+const GOAL_RESTART_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_COMPLETE'
 const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
   ...Array.from({ length: 24 }, (_, index) =>
@@ -192,6 +197,7 @@ const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
 const RETRY_ONLY = process.argv.includes('--retry-only')
 const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
+const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
 const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
 const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
@@ -514,12 +520,24 @@ async function waitForSnapshot(
   selector = 'body'
 ) {
   const startedAt = Date.now()
+  let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('snapshot', selector))
+    lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(message)
+  const relevantTestIds = (lastSnapshot?.testIds ?? []).filter(
+    testId =>
+      testId.startsWith('runtime-local-task-') ||
+      [
+        'goal-status-bar',
+        'pause-response-button',
+        'send-message-button',
+        'thinking-indicator',
+      ].includes(testId)
+  )
+  throw new Error(`${message}; relevant test IDs: ${JSON.stringify(relevantTestIds)}`)
 }
 
 async function getElementMetrics(control, selector) {
@@ -1137,14 +1155,18 @@ async function waitForMacosSleepInhibitor(appProcessId, expectedRunning) {
   )
 }
 
-async function waitForExecutorReadyEvidence(logPath, timeoutMs = UI_TIMEOUT_MS) {
+async function waitForExecutorReadyEvidence(
+  logPath,
+  timeoutMs = UI_TIMEOUT_MS,
+  minimumProcessCount = 1
+) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const content = await readFile(logPath, 'utf8').catch(() => '')
     const processIds = [...content.matchAll(/app IPC stdio ready[^\n]*process_id=(\d+)/g)].map(
       match => Number(match[1])
     )
-    if (processIds.length > 0) return { processIds, content }
+    if (processIds.length >= minimumProcessCount) return { processIds, content }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`Timed out waiting for executor stdio-ready evidence in ${logPath}`)
@@ -2507,6 +2529,188 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
   )
 }
 
+async function verifyGoalRestartRecoveryLifecycle({
+  composerSelector,
+  control,
+  executorLogPath,
+  restartDesktopApp,
+}) {
+  control.setScenario('goal_restart')
+  const taskRowsBeforeGoal = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-goal-button"]')
+  await control.command('waitFor', '[data-testid="goal-draft-pill"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    GOAL_RESTART_PROMPT,
+    'goal_restart'
+  )
+  const goalTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeGoal,
+    'WEWORK_DESKTOP_E2E_GOAL_RESTART'
+  )
+  const goalTaskId = goalTaskRowTestId.replace('runtime-local-task-row-', '')
+  const goalUnreadTestId = `runtime-local-task-unread-dot-${goalTaskId}`
+  const goalRunningTestId = `runtime-local-task-running-${goalTaskId}`
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_restart', 2),
+    UI_TIMEOUT_MS,
+    'The active Goal did not enter automatic continuation before restart'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button') &&
+      snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes(goalUnreadTestId),
+    'The user did not see the Goal working before Wework restarted'
+  )
+  await captureVerificationScreenshot(control, 'goal-restart-01-working-before-restart.png')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  const executorReadyBeforeRestart = await waitForExecutorReadyEvidence(executorLogPath)
+  const executorProcessIdBeforeRestart = executorReadyBeforeRestart.processIds.at(-1)
+  assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
+
+  await restartDesktopApp()
+
+  const executorReadyAfterRestart = await waitForExecutorReadyEvidence(
+    executorLogPath,
+    UI_TIMEOUT_MS,
+    executorReadyBeforeRestart.processIds.length + 1
+  )
+  const executorProcessIdAfterRestart = executorReadyAfterRestart.processIds.at(-1)
+  assert.ok(executorProcessIdAfterRestart, 'The restarted executor process ID was not recorded')
+  assert.notEqual(
+    executorProcessIdAfterRestart,
+    executorProcessIdBeforeRestart,
+    'Restarting Wework reused the executor process that owned the active Goal'
+  )
+  assert.equal(
+    processIsAlive(executorProcessIdBeforeRestart),
+    false,
+    'The original executor remained alive after a full Wework restart'
+  )
+
+  await control.command('waitFor', `[data-testid="${goalTaskRowTestId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalTaskRowTestId) &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes(goalUnreadTestId),
+    'The interrupted Goal looked running or completed after Wework restarted',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'goal-restart-02-returned-not-running.png')
+
+  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('goal-status-bar') &&
+      snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      snapshot.text.includes(GOAL_RESTART_PROMPT),
+    'Opening the interrupted Goal did not present a stable, user-controlled recovery state',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const interruptedDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  assert.equal(
+    interruptedDebugSnapshot.workbench?.currentRuntimeTaskRunning,
+    false,
+    'Opening the interrupted Goal changed the executor-owned running state'
+  )
+  assert.equal(
+    interruptedDebugSnapshot.pane?.goal?.status,
+    'active',
+    'Restarting Wework discarded the persisted Goal'
+  )
+  await captureVerificationScreenshot(control, 'goal-restart-03-opened-waiting-for-user.png')
+
+  const requestCountBeforeUserResume = control.scenarioRequests.get('goal_restart')?.length ?? 0
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
+  assert.equal(
+    control.scenarioRequests.get('goal_restart')?.length ?? 0,
+    requestCountBeforeUserResume,
+    'The interrupted Goal resumed without an explicit user action'
+  )
+
+  control.markGoalRestartResumeRequested()
+  await sendPrompt(control, composerSelector, GOAL_RESTART_RESUME_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequestCount('goal_restart', requestCountBeforeUserResume + 1),
+    UI_TIMEOUT_MS,
+    'The executor did not resume the Goal after explicit user input'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(goalRunningTestId) &&
+      snapshot.testIds.includes('pause-response-button') &&
+      snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalUnreadTestId),
+    'The user did not see consistent running feedback after explicitly resuming the Goal'
+  )
+  await captureVerificationScreenshot(control, 'goal-restart-04-explicitly-resumed.png')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  control.releaseGoalRestartResponse()
+  await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'goal-restart-05-completed-unread.png')
+
+  await control.command('clickWhenEnabled', `[data-testid="${goalTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GOAL_RESTART_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      !snapshot.testIds.includes(goalRunningTestId) &&
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('goal-status-bar'),
+    'The recovered Goal did not settle into a consistent final state',
+    UI_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'goal-restart-06-completed-read.png')
+}
+
 class RealCloudEnvironment {
   constructor({ codexBinary, executorBinary, modelServerUrl, workspacePath }) {
     this.codexBinary = codexBinary
@@ -2817,10 +3021,15 @@ class DesktopE2EServer {
     this.goalIdleContinuationRelease = new Promise(resolvePromise => {
       this.releaseGoalIdleContinuation = resolvePromise
     })
+    this.goalRestartResumeRelease = new Promise(resolvePromise => {
+      this.releaseGoalRestartResume = resolvePromise
+    })
     this.cloudFollowUpRelease = new Promise(resolvePromise => {
       this.releaseCloudFollowUp = resolvePromise
     })
     this.goalIdleStage = 'initial'
+    this.goalRestartStage = 'initial'
+    this.goalRestartResumeRequested = false
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.localProtocolStates = new Map(
@@ -2966,6 +3175,7 @@ class DesktopE2EServer {
         'request_user_input',
         'window_lifecycle',
         'goal_idle',
+        'goal_restart',
         'turn_navigation',
         'cancellation',
         'retry',
@@ -3068,6 +3278,14 @@ class DesktopE2EServer {
 
   releaseGoalIdleResponse() {
     this.releaseGoalIdleContinuation()
+  }
+
+  releaseGoalRestartResponse() {
+    this.releaseGoalRestartResume()
+  }
+
+  markGoalRestartResumeRequested() {
+    this.goalRestartResumeRequested = true
   }
 
   releaseCloudFollowUpResponse() {
@@ -3566,6 +3784,80 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'goal_restart') {
+      this.recordScenarioRequest('goal_restart', modelRequest)
+      if (this.goalRestartStage === 'initial') {
+        assert.ok(
+          JSON.stringify(body).includes(GOAL_RESTART_PROMPT),
+          'The real Codex request did not contain the Goal restart prompt'
+        )
+        this.goalRestartStage = 'continuation'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GOAL_RESTART_INITIAL_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (this.goalRestartStage === 'continuation') {
+        this.goalRestartStage = 'waiting_resume'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await new Promise(resolvePromise => response.once('close', resolvePromise))
+        return
+      }
+      if (this.goalRestartStage === 'waiting_resume') {
+        assert.equal(
+          this.goalRestartResumeRequested,
+          true,
+          'The interrupted Goal resumed without explicit user input'
+        )
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        this.goalRestartStage = 'awaiting_resume_release'
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.goalRestartResumeRelease
+        response.end(
+          createSse([
+            ...functionCall(
+              'wework-e2e-goal-restart-complete',
+              updateGoal.name,
+              updateGoal.arguments
+            ),
+            responseCompleted(responseId),
+          ])
+        )
+        return
+      }
+      assert.equal(
+        this.goalRestartStage,
+        'awaiting_resume_release',
+        `Unexpected Goal restart model stage: ${this.goalRestartStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The resumed Goal did not return its update_goal output'
+      )
+      this.goalRestartStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GOAL_RESTART_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -5331,32 +5623,48 @@ async function main() {
       desktopScenario?.codexConfigToml
     )
 
-    app = spawn(appBinary, [], {
-      cwd: weworkDir,
-      env: {
-        ...process.env,
-        CODEX_BIN: codexBinary,
-        HOME: homePath,
-        WEGENT_CODEX_HOME: join(executorHome, 'codex'),
-        WEGENT_EXECUTOR_HOME: executorHome,
-        WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'true',
-        WEGENT_EXECUTOR_LOG_DIR: resultDir,
-        WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
-        DEVICE_ID: `wework-e2e-device-${process.pid}`,
-        DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
-        DEVICE_SESSION_GATEWAY_PORT: '0',
-        VITE_WEWORK_E2E: 'true',
-        WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
-        WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
-        WEWORK_EXECUTOR_SIDECAR: executorBinary,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-    })
-    await Promise.all([
-      appendProcessOutput(app.stdout, appLogPath),
-      appendProcessOutput(app.stderr, appLogPath),
-    ])
+    const appEnvironment = {
+      ...process.env,
+      CODEX_BIN: codexBinary,
+      HOME: homePath,
+      WEGENT_CODEX_HOME: join(executorHome, 'codex'),
+      WEGENT_EXECUTOR_HOME: executorHome,
+      WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
+      WEGENT_EXECUTOR_LOG_DIR: resultDir,
+      WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
+      DEVICE_ID: `wework-e2e-device-${process.pid}`,
+      DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+      DEVICE_SESSION_GATEWAY_PORT: '0',
+      VITE_WEWORK_E2E: 'true',
+      WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
+      WEWORK_EXECUTOR_SIDECAR: executorBinary,
+    }
+    const startDesktopAppProcess = async () => {
+      const child = spawn(appBinary, [], {
+        cwd: weworkDir,
+        env: appEnvironment,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
+      })
+      await Promise.all([
+        appendProcessOutput(child.stdout, appLogPath),
+        appendProcessOutput(child.stderr, appLogPath),
+      ])
+      return child
+    }
+    app = await startDesktopAppProcess()
+    const restartDesktopApp = async () => {
+      const readyCountBeforeRestart = control.readyCount
+      await stopProcessGroup(app)
+      app = await startDesktopAppProcess()
+      await withTimeout(
+        control.awaitReadyAfter(readyCountBeforeRestart),
+        WORKBENCH_READY_TIMEOUT_MS,
+        'The restarted Wework application did not reconnect to the desktop controller'
+      )
+      await control.command('focusMainWindow', 'body')
+    }
 
     const ready = await withTimeout(
       control.awaitReady(),
@@ -5457,6 +5765,18 @@ async function main() {
         control,
       })
       console.log(`Wework desktop Goal idle-state E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (GOAL_RESTART_ONLY) {
+      phase = 'goal-restart-recovery'
+      await verifyGoalRestartRecoveryLifecycle({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorLogPath,
+        restartDesktopApp,
+      })
+      console.log(`Wework desktop Goal restart E2E passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -6193,6 +6513,14 @@ async function main() {
     phase = 'goal-idle-unread'
     await verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control })
 
+    phase = 'goal-restart-recovery'
+    await verifyGoalRestartRecoveryLifecycle({
+      composerSelector,
+      control,
+      executorLogPath,
+      restartDesktopApp,
+    })
+
     phase = 'cancellation'
     control.setScenario('cancellation')
     await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
@@ -6430,22 +6758,8 @@ async function main() {
       snapshot => snapshot.text.includes('Permanent E2E'),
       'The permanent worktree was not added to the project list'
     )
-    const appRuntimeEntries = await readdir(join(executorHome, 'app-runtime'), {
-      withFileTypes: true,
-    })
-    const appRuntimeDirectory = appRuntimeEntries.find(entry => entry.isDirectory())
-    assert.ok(appRuntimeDirectory, 'The isolated app runtime directory was not created')
     const worktreeState = JSON.parse(
-      await readFile(
-        join(
-          executorHome,
-          'app-runtime',
-          appRuntimeDirectory.name,
-          'runtime-work',
-          'worktrees.json'
-        ),
-        'utf8'
-      )
+      await readFile(join(executorHome, 'runtime-work', 'worktrees.json'), 'utf8')
     )
     assert.equal(
       Object.values(worktreeState.records ?? {}).some(record => record.permanent === true),

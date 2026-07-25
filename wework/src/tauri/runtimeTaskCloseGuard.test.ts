@@ -56,7 +56,7 @@ describe('runtime task close guard', () => {
     expect(hasRunningRuntimeTasks(runtimeWorkWithTasks([{ running: true }]))).toBe(true)
     expect(
       hasRunningRuntimeTasks(runtimeWorkWithTasks([{ running: false, goalStatus: 'active' }]))
-    ).toBe(true)
+    ).toBe(false)
     expect(
       hasRunningRuntimeTasks({
         projects: [],

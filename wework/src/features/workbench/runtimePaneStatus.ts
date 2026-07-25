@@ -7,7 +7,6 @@ export type RuntimePaneSendPhase = 'idle' | 'submitting' | 'awaiting_assistant'
 
 export interface RuntimePaneTaskExecution {
   known: boolean
-  turnRunning: boolean
   running: boolean
   continuable: boolean
   status: string | null
@@ -34,17 +33,15 @@ export function getRuntimePaneTaskExecution(
   if (!task) {
     return {
       known: false,
-      turnRunning: false,
       running: false,
       continuable: false,
       status: null,
     }
   }
 
-  const turnRunning = typeof task.running === 'boolean' ? task.running : null
+  const running = typeof task.running === 'boolean' ? task.running : null
   return {
-    known: turnRunning !== null,
-    turnRunning: turnRunning === true,
+    known: running !== null,
     running: isRuntimeTaskRunning(task),
     continuable: task.continuable !== false,
     status: normalizeTaskStatus(task),
@@ -75,8 +72,7 @@ export function deriveRuntimePaneStatus({
   currentRuntimeTask: RuntimeTaskAddress | null
   taskExecution: RuntimePaneTaskExecution
 }): RuntimePaneStatus {
-  const messageStreamingCanDriveExecution =
-    taskExecution.turnRunning || (!taskExecution.known && !taskExecution.running)
+  const messageStreamingCanDriveExecution = taskExecution.running || !taskExecution.known
   const activeAssistantMessage = messageStreamingCanDriveExecution
     ? (findActiveAssistantMessage(messages) ?? null)
     : null
@@ -87,8 +83,7 @@ export function deriveRuntimePaneStatus({
   const isBusy = isSubmitting || isResponseActive || taskExecution.running
   const isWaitingForAssistantMessage =
     !isAssistantStreaming && isLastMessageWaitingForAssistant(messages)
-  const isWaitingBetweenGoalTurns =
-    !isAssistantStreaming && taskExecution.running && !taskExecution.turnRunning
+  const isWaitingWhileTaskRuns = !isAssistantStreaming && taskExecution.running
 
   return {
     sendPhase,
@@ -100,9 +95,9 @@ export function deriveRuntimePaneStatus({
     isResponseActive,
     isBusy,
     isWaitingForAssistantIndicator:
-      ((isSubmitting || isAwaitingAssistant || taskExecution.turnRunning) &&
+      ((isSubmitting || isAwaitingAssistant || taskExecution.running) &&
         isWaitingForAssistantMessage) ||
-      isWaitingBetweenGoalTurns,
+      isWaitingWhileTaskRuns,
     canSendQueuedMessage: Boolean(currentRuntimeTask) && taskExecution.continuable && !isBusy,
   }
 }

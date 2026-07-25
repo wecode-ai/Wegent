@@ -183,7 +183,7 @@ describe('buildTrayMenuTaskGroups', () => {
                   taskId: 'goal-gap',
                   title: 'Goal between turns',
                   updatedAt: '2026-01-06T00:00:00Z',
-                  running: false,
+                  running: true,
                   goalStatus: 'active',
                 }),
               ],

@@ -263,6 +263,9 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::Running => "running",
                 };
                 let thread_id = turn.thread_id.clone();
+                if turn.goal_status_observed {
+                    self.sync_runtime_task_goal_status(local_task_id, turn.goal_status.clone());
+                }
                 self.register_thread_event_route(
                     &thread_id,
                     local_task_id.to_owned(),

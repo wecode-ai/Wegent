@@ -93,7 +93,6 @@ describe('runtime pane status', () => {
 
     expect(getRuntimePaneTaskExecution(runtimeWorkWithoutRunningState, runtimeAddress)).toEqual({
       known: false,
-      turnRunning: false,
       running: false,
       continuable: true,
       status: null,
@@ -122,7 +121,6 @@ describe('runtime pane status', () => {
       currentRuntimeTask: runtimeAddress,
       taskExecution: {
         known: false,
-        turnRunning: false,
         running: false,
         continuable: false,
         status: null,
@@ -141,7 +139,6 @@ describe('runtime pane status', () => {
       currentRuntimeTask: runtimeAddress,
       taskExecution: {
         known: true,
-        turnRunning: false,
         running: false,
         continuable: true,
         status: 'failed',
@@ -164,7 +161,6 @@ describe('runtime pane status', () => {
 
     expect(status.taskExecution).toEqual({
       known: true,
-      turnRunning: false,
       running: false,
       continuable: true,
       status: 'done',
@@ -186,7 +182,6 @@ describe('runtime pane status', () => {
 
     expect(status.taskExecution).toEqual({
       known: true,
-      turnRunning: false,
       running: false,
       continuable: true,
       status: 'active',
@@ -197,7 +192,32 @@ describe('runtime pane status', () => {
     expect(status.canSendQueuedMessage).toBe(true)
   })
 
-  test('keeps an active goal visibly running between continuation turns', () => {
+  test('keeps an executor-owned goal visibly running between continuation turns', () => {
+    const taskExecution = getRuntimePaneTaskExecution(
+      runtimeWork(true, 'active', 'active'),
+      runtimeAddress
+    )
+    const status = deriveRuntimePaneStatus({
+      messages: [assistantMessage('done')],
+      sendPhase: 'idle',
+      currentRuntimeTask: runtimeAddress,
+      taskExecution,
+    })
+
+    expect(status.taskExecution).toEqual({
+      known: true,
+      running: true,
+      continuable: true,
+      status: 'active',
+    })
+    expect(status.activeAssistantMessage).toBeNull()
+    expect(status.isAssistantStreaming).toBe(false)
+    expect(status.isWaitingForAssistantIndicator).toBe(true)
+    expect(status.isBusy).toBe(true)
+    expect(status.canSendQueuedMessage).toBe(false)
+  })
+
+  test('does not infer execution from an active goal after executor restart', () => {
     const taskExecution = getRuntimePaneTaskExecution(
       runtimeWork(false, 'active', 'active'),
       runtimeAddress
@@ -211,16 +231,13 @@ describe('runtime pane status', () => {
 
     expect(status.taskExecution).toEqual({
       known: true,
-      turnRunning: false,
-      running: true,
+      running: false,
       continuable: true,
       status: 'active',
     })
-    expect(status.activeAssistantMessage).toBeNull()
-    expect(status.isAssistantStreaming).toBe(false)
-    expect(status.isWaitingForAssistantIndicator).toBe(true)
-    expect(status.isBusy).toBe(true)
-    expect(status.canSendQueuedMessage).toBe(false)
+    expect(status.isWaitingForAssistantIndicator).toBe(false)
+    expect(status.isBusy).toBe(false)
+    expect(status.canSendQueuedMessage).toBe(true)
   })
 
   test('keeps conversation continuation separate from turn execution', () => {

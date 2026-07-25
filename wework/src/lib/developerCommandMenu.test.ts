@@ -291,7 +291,6 @@ function createDebugSnapshot() {
         activeAssistantMessage: null,
         taskExecution: {
           known: true,
-          turnRunning: true,
           running: true,
           continuable: true,
           status: 'running',

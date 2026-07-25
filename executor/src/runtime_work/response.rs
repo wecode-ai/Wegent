@@ -572,6 +572,9 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     if let Some(turn_status) = link.turn_status.clone() {
         task.insert("turnStatus".to_owned(), Value::String(turn_status));
     }
+    if let Some(goal_status) = link.goal_status.clone() {
+        task.insert("goalStatus".to_owned(), Value::String(goal_status));
+    }
     task.insert("pinned".to_owned(), Value::Bool(link.pinned));
     if let Some(order) = link.pinned_order {
         task.insert("pinnedOrder".to_owned(), json!(order));
@@ -1031,7 +1034,7 @@ mod tests {
 
     #[test]
     fn current_turn_state_is_exposed_separately_from_conversation_lifecycle() {
-        let link = RuntimeTaskLink::from_thread_metadata(
+        let mut link = RuntimeTaskLink::from_thread_metadata(
             &json!({
                 "id": "thread-1",
                 "status": {"type": "active", "activeFlags": []},
@@ -1042,6 +1045,7 @@ mod tests {
             "/workspace/project".to_owned(),
             true,
         );
+        link.goal_status = Some("active".to_owned());
         let payload = local_task_json(link);
 
         assert_eq!(payload["status"], "running");
@@ -1049,6 +1053,7 @@ mod tests {
         assert_eq!(payload["continuable"], true);
         assert_eq!(payload["threadStatus"], "active");
         assert_eq!(payload["turnStatus"], "inProgress");
+        assert_eq!(payload["goalStatus"], "active");
     }
 
     #[test]

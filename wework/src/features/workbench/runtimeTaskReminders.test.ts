@@ -7,6 +7,7 @@ import type {
 import {
   buildRuntimeTaskReminderSnapshot,
   getRuntimeTaskReminderItemKey,
+  reconcileRuntimeTaskOngoingKeys,
   reconcileRuntimeTaskUnreadKeys,
 } from './runtimeTaskReminders'
 
@@ -84,7 +85,26 @@ describe('runtimeTaskReminders', () => {
     expect(snapshot.settledUnreadItems).toEqual([])
   })
 
-  test('keeps an active goal ongoing between automatic turns', () => {
+  test('keeps an executor-owned goal ongoing between automatic turns', () => {
+    const goalTask = task({
+      running: true,
+      status: 'active',
+      goalStatus: 'active',
+      turnStatus: 'completed',
+    })
+    const key = getRuntimeTaskReminderItemKey(workspace([goalTask]), goalTask)
+
+    const snapshot = buildRuntimeTaskReminderSnapshot({
+      runtimeWork: runtimeWork([goalTask]),
+      previousOngoingTaskKeys: new Set([key]),
+      currentRuntimeTask: null,
+    })
+
+    expect(snapshot.runningTaskKeys.has(key)).toBe(true)
+    expect(snapshot.settledUnreadItems).toEqual([])
+  })
+
+  test('does not treat a persisted active goal as running after executor restart', () => {
     const goalTask = task({
       running: false,
       status: 'active',
@@ -99,7 +119,7 @@ describe('runtimeTaskReminders', () => {
       currentRuntimeTask: null,
     })
 
-    expect(snapshot.runningTaskKeys.has(key)).toBe(true)
+    expect(snapshot.runningTaskKeys.has(key)).toBe(false)
     expect(snapshot.settledUnreadItems).toEqual([])
   })
 
@@ -179,6 +199,7 @@ describe('runtimeTaskReminders', () => {
     const nextUnreadTaskKeys = reconcileRuntimeTaskUnreadKeys({
       previousUnreadTaskKeys: new Set(['stale-task-key', visibleKey, runningKey]),
       visibleTaskKeys: snapshot.taskKeys,
+      unreadEligibleTaskKeys: snapshot.unreadEligibleTaskKeys,
       runningTaskKeys: snapshot.runningTaskKeys,
       currentTaskKey: snapshot.currentTaskKey,
       settledUnreadItems: snapshot.settledUnreadItems,
@@ -204,11 +225,62 @@ describe('runtimeTaskReminders', () => {
     const nextUnreadTaskKeys = reconcileRuntimeTaskUnreadKeys({
       previousUnreadTaskKeys: new Set([key]),
       visibleTaskKeys: snapshot.taskKeys,
+      unreadEligibleTaskKeys: snapshot.unreadEligibleTaskKeys,
       runningTaskKeys: snapshot.runningTaskKeys,
       currentTaskKey: snapshot.currentTaskKey,
       settledUnreadItems: snapshot.settledUnreadItems,
     })
 
     expect(nextUnreadTaskKeys).toEqual(new Set())
+  })
+
+  test('clears a stale unread marker while a persisted goal is still active', () => {
+    const goalTask = task({
+      running: false,
+      status: 'active',
+      goalStatus: 'active',
+      turnStatus: 'completed',
+    })
+    const key = getRuntimeTaskReminderItemKey(workspace([goalTask]), goalTask)
+    const snapshot = buildRuntimeTaskReminderSnapshot({
+      runtimeWork: runtimeWork([goalTask]),
+      previousOngoingTaskKeys: new Set([key]),
+      currentRuntimeTask: null,
+    })
+
+    const nextUnreadTaskKeys = reconcileRuntimeTaskUnreadKeys({
+      previousUnreadTaskKeys: new Set([key]),
+      visibleTaskKeys: snapshot.taskKeys,
+      unreadEligibleTaskKeys: snapshot.unreadEligibleTaskKeys,
+      runningTaskKeys: snapshot.runningTaskKeys,
+      currentTaskKey: snapshot.currentTaskKey,
+      settledUnreadItems: snapshot.settledUnreadItems,
+    })
+
+    expect(nextUnreadTaskKeys).toEqual(new Set())
+  })
+
+  test('keeps an observed completion edge until the active Goal snapshot settles', () => {
+    const key = 'local-device\0task-1'
+
+    expect(
+      reconcileRuntimeTaskOngoingKeys({
+        previousOngoingTaskKeys: new Set([key]),
+        runningTaskKeys: new Set(),
+        activeGoalTaskKeys: new Set([key]),
+      })
+    ).toEqual(new Set([key]))
+  })
+
+  test('does not reconstruct running history after a renderer restart', () => {
+    const key = 'local-device\0task-1'
+
+    expect(
+      reconcileRuntimeTaskOngoingKeys({
+        previousOngoingTaskKeys: new Set(),
+        runningTaskKeys: new Set(),
+        activeGoalTaskKeys: new Set([key]),
+      })
+    ).toEqual(new Set())
   })
 })
