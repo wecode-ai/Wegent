@@ -694,6 +694,9 @@ export function useWorkbenchRuntimeMessaging({
         optimisticWorkspacePath: optimisticWorkspacePath ?? null,
       })
       lifecycleStore.sendRequested(optimisticAddress)
+      if (options?.initialGoal) {
+        lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
+      }
       options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
       if (options?.openInMainPane !== false) {
         runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
@@ -1106,6 +1109,7 @@ export function useWorkbenchRuntimeMessaging({
 
       return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
         onError: options?.onError,
+        onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
         ephemeral: true,
         sideSource: options?.source,
         openInMainPane: false,

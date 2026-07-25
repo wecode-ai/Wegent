@@ -3555,6 +3555,11 @@ describe('WorkbenchProvider runtime tasks', () => {
       deferred<
         Awaited<ReturnType<NonNullable<WorkbenchServices['runtimeWorkApi']>['createRuntimeTask']>>
       >()
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -3588,6 +3593,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
     })
 
     renderWorkbench(<ProjectSendProbe />, services)
@@ -3629,6 +3637,28 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
     const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: request.taskId,
+        subtaskId: 'goal-turn',
+        shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+      streamHandlers.onChatDone?.({
+        taskId: request.taskId,
+        subtaskId: 'goal-turn',
+        deviceId: 'device-1',
+        result: { value: 'initial turn settled before goal lookup' },
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('current-created-runtime-task-running')).toHaveTextContent(
+        'running'
+      )
+    )
+    expect(screen.getByTestId('pane-busy')).toHaveTextContent('busy')
+
     await act(async () => {
       createRuntimeTask.resolve({
         accepted: true,
@@ -4628,14 +4658,18 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('clears thinking when a created runtime task transcript is already complete', async () => {
+    let createdClientMessageId: string | undefined
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      createRuntimeTask: vi.fn(async request => ({
-        accepted: true,
-        deviceId: 'device-1',
-        taskId: request.taskId,
-        workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
-      })),
+      createRuntimeTask: vi.fn(async request => {
+        createdClientMessageId = request.clientMessageId
+        return {
+          accepted: true,
+          deviceId: 'device-1',
+          taskId: request.taskId,
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'claude_code',
+        }
+      }),
       getRuntimeTranscript: vi.fn(async (address: RuntimeTaskAddress) => ({
         taskId: address.taskId,
         workspacePath: address.workspacePath ?? '/workspace/project-alpha',
@@ -4647,6 +4681,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'user',
             content: '修复 CI',
             status: 'done',
+            clientMessageId: createdClientMessageId,
           },
           {
             id: `${address.taskId}:assistant:1`,

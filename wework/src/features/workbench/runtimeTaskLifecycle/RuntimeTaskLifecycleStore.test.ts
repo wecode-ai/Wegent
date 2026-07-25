@@ -107,6 +107,26 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('submitting')
   })
 
+  test('does not clear an in-flight send from an early idle transcript', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.syncTranscript(address, transcript({ running: false }), {
+      preserveActiveTurn: true,
+    })
+
+    expect(store.getTask(address)?.execution.phase).toBe('starting')
+    expect(store.getTask(address)?.turn.phase).toBe('submitting')
+
+    store.sendAccepted(address)
+    store.syncTranscript(address, transcript({ running: false }), {
+      preserveActiveTurn: true,
+    })
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+  })
+
   test('does not clear an active send because a transcript contains historical settled output', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
@@ -122,7 +142,8 @@ describe('RuntimeTaskLifecycleStore', () => {
             status: 'done',
           },
         ],
-      })
+      }),
+      { preserveActiveTurn: true }
     )
 
     expect(store.getTask(address)?.execution.phase).toBe('starting')
@@ -150,7 +171,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('idle')
   })
 
-  test('treats explicit executor idle as authoritative over a stale streaming message', () => {
+  test('does not let a stale idle transcript override a live streaming turn', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
     store.sendRequested(address)
@@ -160,8 +181,22 @@ describe('RuntimeTaskLifecycleStore', () => {
       transcript({
         running: false,
         messages: [{ id: 'assistant-1', role: 'assistant', content: '', status: 'streaming' }],
-      })
+      }),
+      { preserveActiveTurn: true }
     )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.derived.isTurnActive).toBe(true)
+  })
+
+  test('treats an explicit executor snapshot as authoritative over a live turn', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.turnStarted(address)
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
 
     const snapshot = store.getTask(address)
     expect(snapshot?.execution.phase).toBe('idle')

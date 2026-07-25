@@ -714,6 +714,17 @@ describe('WorkspaceBrowserPanel', () => {
     expect(input).toHaveValue('https://bad.invalid/')
   })
 
+  test('preserves an unsubmitted address draft when focus leaves before navigation', () => {
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'https://example.com/session-state' } })
+    fireEvent.blur(input)
+
+    expect(input).toHaveValue('https://example.com/session-state')
+  })
+
   test('hides the native browser when the browser panel becomes inactive', async () => {
     mockBrowserHostRect()
     const { rerender } = render(<WorkspaceBrowserPanel active />)

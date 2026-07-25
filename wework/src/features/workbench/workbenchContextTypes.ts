@@ -91,6 +91,7 @@ export interface CreateTemporaryRuntimeTaskOptions {
   source?: RuntimeTaskAddress | null
   attachments?: Attachment[]
   onError?: (error: string) => void
+  onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
 export interface CreateProjectRuntimeTaskOptions {
