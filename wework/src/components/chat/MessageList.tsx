@@ -1909,6 +1909,7 @@ function AssistantMessage({
         <ToolBlocksDisplay
           key={`${segment.kind}:${index}`}
           blocks={segment.blocks}
+          fileEditDurationBlocks={displayBlocks}
           isStreaming={isStreaming}
           startedAt={segment.blocks[0]?.createdAt}
           forceExpanded={segment.kind === 'narrative'}

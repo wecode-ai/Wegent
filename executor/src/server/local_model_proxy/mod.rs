@@ -30,6 +30,7 @@ use axum::{
 };
 use futures_util::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::logging::log_executor_event;
 
@@ -37,6 +38,7 @@ use super::{codex_responses_proxy_transform, HttpError};
 
 pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
+const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
 
 pub(crate) fn route<S>() -> MethodRouter<S>
 where
@@ -565,37 +567,34 @@ fn prepare_request(
     convert_custom_tools: bool,
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
+    let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: format!("Invalid Codex Responses request: {error}"),
+    })?;
+    normalize_responses_request_ids(&mut responses_body);
+
     if api_format == "openai-responses" {
-        let mut request_value =
-            serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
-                status: StatusCode::BAD_REQUEST,
-                detail: format!("Invalid Codex Responses request: {error}"),
-            })?;
         let conversion = if convert_custom_tools {
             let (converted, context) =
-                chat::responses_to_responses(&request_value).map_err(|error| HttpError {
+                chat::responses_to_responses(&responses_body).map_err(|error| HttpError {
                     status: StatusCode::BAD_REQUEST,
                     detail: format!("Failed to convert local model request: {error}"),
                 })?;
-            request_value = converted;
+            responses_body = converted;
             Some(Conversion::Responses(context))
         } else {
             None
         };
         let expanded_browser_tools =
             codex_responses_proxy_transform::expand_wework_browser_namespace_tools(
-                &mut request_value,
+                &mut responses_body,
             );
-        let body = serde_json::to_vec(&request_value).map_err(|error| HttpError {
+        let body = serde_json::to_vec(&responses_body).map_err(|error| HttpError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize local model request: {error}"),
         })?;
         return Ok((body, conversion, expanded_browser_tools));
     }
-    let responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: format!("Invalid Codex Responses request: {error}"),
-    })?;
     let (converted, context) = match api_format {
         "openai-chat-completions" => chat::responses_to_chat(&responses_body)
             .map(|(body, context)| (body, Conversion::Chat(context))),
@@ -612,6 +611,70 @@ fn prepare_request(
         detail: format!("Failed to serialize local model request: {error}"),
     })?;
     Ok((body, Some(context), HashSet::new()))
+}
+
+fn normalize_responses_request_ids(body: &mut Value) -> usize {
+    let Some(input) = body.get_mut("input") else {
+        return 0;
+    };
+    let items = match input {
+        Value::Array(items) => items.as_mut_slice(),
+        Value::Object(_) => std::slice::from_mut(input),
+        _ => return 0,
+    };
+    let mut changed = 0;
+
+    for item in items {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        for field in ["id", "call_id"] {
+            let Some(value) = object.get_mut(field) else {
+                continue;
+            };
+            let Some(raw) = value.as_str() else {
+                continue;
+            };
+            let normalized = normalized_responses_api_id(raw);
+            if normalized != raw {
+                *value = Value::String(normalized);
+                changed += 1;
+            }
+        }
+    }
+
+    changed
+}
+
+fn normalized_responses_api_id(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+    {
+        return value.to_owned();
+    }
+
+    let mut prefix = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(NORMALIZED_API_ID_PREFIX_LENGTH)
+        .collect::<String>();
+    if prefix.is_empty() {
+        prefix.push_str("id");
+    }
+    let digest = Sha256::digest(value.as_bytes());
+    let suffix = digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{prefix}_{suffix}")
 }
 
 #[derive(Debug)]
@@ -942,6 +1005,87 @@ mod tests {
 
         assert_eq!(prepared["tools"][0]["type"], "custom");
         assert!(conversion.is_none());
+    }
+
+    #[test]
+    fn normalizes_cross_protocol_history_ids_for_native_responses_models() {
+        let body = cross_protocol_history_with_invalid_ids();
+
+        let (prepared, conversion, _) =
+            prepare_request("openai-responses", false, &body).expect("native request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+        let call = &prepared["input"][0];
+        let output = &prepared["input"][1];
+        let item_id = call["id"].as_str().expect("function call item id");
+        let call_id = call["call_id"].as_str().expect("function call id");
+
+        assert_valid_api_id(item_id);
+        assert_valid_api_id(call_id);
+        assert_ne!(item_id, "fc_functions.exec_command:0");
+        assert_ne!(call_id, "functions.exec_command:0");
+        assert_eq!(output["call_id"], call["call_id"]);
+        assert!(conversion.is_none());
+    }
+
+    #[test]
+    fn normalizes_cross_protocol_history_ids_before_chat_conversion() {
+        let body = cross_protocol_history_with_invalid_ids();
+
+        let (prepared, conversion, _) =
+            prepare_request("openai-chat-completions", false, &body).expect("chat request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+        let call = &prepared["messages"][0]["tool_calls"][0];
+        let output = &prepared["messages"][1];
+        let call_id = call["id"].as_str().expect("chat tool call id");
+
+        assert_valid_api_id(call_id);
+        assert_ne!(call_id, "functions.exec_command:0");
+        assert_eq!(output["tool_call_id"], call["id"]);
+        assert!(matches!(conversion, Some(Conversion::Chat(_))));
+    }
+
+    #[test]
+    fn normalizes_cross_protocol_history_ids_before_anthropic_conversion() {
+        let body = cross_protocol_history_with_invalid_ids();
+
+        let (prepared, conversion, _) =
+            prepare_request("anthropic-messages", false, &body).expect("Anthropic request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+        let call = &prepared["messages"][0]["content"][0];
+        let output = &prepared["messages"][1]["content"][0];
+        let call_id = call["id"].as_str().expect("Anthropic tool use id");
+
+        assert_valid_api_id(call_id);
+        assert_ne!(call_id, "functions.exec_command:0");
+        assert_eq!(output["tool_use_id"], call["id"]);
+        assert!(matches!(conversion, Some(Conversion::Anthropic(_))));
+    }
+
+    fn cross_protocol_history_with_invalid_ids() -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "model": "gpt-5.6-sol",
+            "input": [
+                {
+                    "type": "function_call",
+                    "id": "fc_functions.exec_command:0",
+                    "call_id": "functions.exec_command:0",
+                    "name": "exec_command",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "functions.exec_command:0",
+                    "output": "done"
+                }
+            ]
+        }))
+        .expect("request body")
+    }
+
+    fn assert_valid_api_id(value: &str) {
+        assert!(value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-')));
     }
 
     #[test]

@@ -77,6 +77,8 @@ Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在�
 
 同一对话可在回合之间切换模型。Wework 为每次续聊传递所选模型及其 provider 配置，executor 在恢复空闲 Codex thread 前等待当前 app-server 订阅真正释放，使 `thread/resume` 能应用新的 provider 覆盖，随后由恢复操作重新订阅。若不等待释放完成，Codex 会保留已加载 thread 的旧 provider，即使 `turn/start` 中的模型名已经变化，实际请求仍可能发往旧的自定义模型上游。对于仍缓存旧本地路由 URL 的已加载 thread，本地模型代理还会依据本次请求的模型，在相同网关地址和凭据作用域内选择当前活跃的模型注册；这样模型切换继续使用 `resume` 保持原会话上下文，无需 fork thread，也不会跨用户或跨 provider 复用凭据。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。
 
+本地模型代理以 Codex Responses 协议作为内部统一表示，并在 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种上游协议之间双向转换。切换协议时，历史中的工具调用 ID 和工具结果引用必须在请求边界统一规范化为只包含字母、数字、下划线或短横线的稳定 ID，并在同一历史内保持一一对应；不得把 provider 原始 ID 直接透传给另一个协议。流式响应返回的工具调用 ID 也执行同样的规范化，确保后续工具结果能够关联到原调用，并使 `item/started` 与 `item/completed` 收敛到同一个 Wework 工具块。
+
 Wework 在发送用户消息前生成稳定的客户端消息 ID，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求传入 executor，再映射到 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留对应的 `clientMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
