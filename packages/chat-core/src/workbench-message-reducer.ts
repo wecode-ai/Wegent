@@ -76,6 +76,7 @@ export interface WorkbenchMessage<
   id: string
   taskId?: string
   subtaskId?: string
+  turnId?: string
   shellType?: string
   role: WorkbenchMessageRole
   content: string
@@ -154,6 +155,7 @@ export type WorkbenchMessageAction<
       type: 'assistant_done'
       messageId?: string
       subtaskId?: string
+      turnId?: string
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
@@ -317,6 +319,7 @@ export function reduceWorkbenchMessages<
             createAssistantMessage<TAttachment, TFileChanges>({
               messageId: action.messageId,
               subtaskId: action.subtaskId,
+              turnId: action.turnId,
               content: action.content ?? '',
               status: 'done',
               blocks: finalizeProcessingBlocks(action.blocks, 'done'),
@@ -329,6 +332,7 @@ export function reduceWorkbenchMessages<
         isAssistantMessageForAction(message, action)
           ? limitWorkbenchMessage({
               ...clearMessageError(message),
+              turnId: action.turnId ?? message.turnId,
               content: action.content ?? message.content,
               streamTextOffset: undefined,
               // A completed response is authoritative. Do not retain a stream
@@ -759,6 +763,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   messageId,
   taskId,
   subtaskId,
+  turnId,
   shellType,
   content = '',
   status = 'streaming',
@@ -773,6 +778,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   messageId?: string
   taskId?: string
   subtaskId?: string
+  turnId?: string
   shellType?: string
   content?: string
   status?: WorkbenchMessageStatus
@@ -788,6 +794,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
     id: messageId ?? `assistant-${subtaskId ?? Date.now()}`,
     taskId,
     subtaskId,
+    turnId,
     shellType,
     role: 'assistant',
     content,

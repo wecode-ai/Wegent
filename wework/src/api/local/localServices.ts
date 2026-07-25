@@ -2120,6 +2120,12 @@ export function createRuntimeWorkApiFromIpc(
       }
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
+      if (data.lastTurnId) {
+        return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
+          ...data,
+          taskId: data.source.taskId,
+        })
+      }
       return requestWithLocalDevice('runtime.tasks.import_fork', data)
     },
   }

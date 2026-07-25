@@ -30,4 +30,6 @@ Interrupting stops the current response but does not roll back completed file ed
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
 
+To branch from a completed AI response, move the pointer to its message actions and choose **Continue in new task**. The new task keeps the conversation context through that response and uses the same workspace. The source task and later messages remain unchanged. The action is hidden for streaming, cancelled, or unmappable Codex turns.
+
 When you switch away while viewing the bottom of a conversation, Wework preserves its follow-latest state. Returning to a conversation that continued streaming in the background shows its newest content. If you scrolled upward before switching, Wework restores that reading position instead.

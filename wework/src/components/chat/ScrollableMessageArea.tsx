@@ -77,6 +77,7 @@ interface ScrollableMessageAreaProps {
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
+  onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
@@ -142,6 +143,7 @@ function areScrollableMessageAreaPropsEqual(
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
     previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
+    previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
@@ -201,6 +203,7 @@ function ScrollableMessagePaneContent({
   onOpenAssistantPlan,
   onEditLastUserMessage,
   canEditLastUserMessage,
+  onForkMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
@@ -828,6 +831,7 @@ function ScrollableMessagePaneContent({
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onEditLastUserMessage={onEditLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
+                onForkMessage={onForkMessage}
                 onLoadFullTranscript={onLoadFullTranscript}
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}

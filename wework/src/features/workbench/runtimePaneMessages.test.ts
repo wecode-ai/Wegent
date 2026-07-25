@@ -397,6 +397,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       deviceId: 'device-1',
       offset: 0,
       result: {
+        turnId: 'turn-9',
         value: [
           '当前分支比 origin/main ahead 1，可以直接 push。',
           '',
@@ -409,6 +410,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions[0]).toMatchObject({
       type: 'assistant_done',
       subtaskId: 'subtask-9',
+      turnId: 'turn-9',
       content: '当前分支比 origin/main ahead 1，可以直接 push。',
     })
     expect(info).toHaveBeenCalledWith(
