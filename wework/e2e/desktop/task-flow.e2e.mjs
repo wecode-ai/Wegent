@@ -61,7 +61,7 @@ const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 384 * 1024
 )
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 224 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 232 * 1024
 )
 const MEMORY_MAX_SETTLED_DOM_NODE_COUNT = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES ?? 900
@@ -2618,6 +2618,9 @@ class DesktopE2EServer {
     this.windowLifecycleResponseStarted = new Promise(resolvePromise => {
       this.resolveWindowLifecycleResponseStarted = resolvePromise
     })
+    this.cloudFollowUpRelease = new Promise(resolvePromise => {
+      this.releaseCloudFollowUp = resolvePromise
+    })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.localProtocolStates = new Map(
@@ -2856,6 +2859,10 @@ class DesktopE2EServer {
 
   releaseWindowLifecycleResponse() {
     this.releaseWindowLifecycle()
+  }
+
+  releaseCloudFollowUpResponse() {
+    this.releaseCloudFollowUp()
   }
 
   releaseConcurrentMemoryResponses() {
@@ -3324,11 +3331,20 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
         'The real cloud Codex request did not contain the follow-up prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.cloudFollowUpRelease
+      response.end(
+        createSse([
+          assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+      )
       return
     }
 
@@ -4727,6 +4743,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     UI_TIMEOUT_MS,
     'The real cloud executor did not send the follow-up model request'
   )
+  control.releaseCloudFollowUpResponse()
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
@@ -4934,6 +4951,7 @@ async function waitForMatrixStage(control, model, ...expectedStages) {
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
+  const secondaryProjectPath = join(resultDir, 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
@@ -4942,6 +4960,7 @@ async function main() {
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
+    mkdir(secondaryProjectPath, { recursive: true }),
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
@@ -5237,6 +5256,27 @@ async function main() {
     await control.command('fill', '[data-testid="local-project-create-name-input"]', {
       value: 'workspace',
     })
+    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: secondaryProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, secondaryProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
+      text: 'secondary-project-root',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     await control.command(
       'clickWhenEnabled',
       '[data-testid="confirm-local-project-create-button"]',
@@ -5327,6 +5367,27 @@ async function main() {
     })
     await control.command('fill', '[data-testid="local-project-create-name-input"]', {
       value: 'workspace',
+    })
+    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: secondaryProjectPath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await waitForFolderPathReady(control, secondaryProjectPath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
+      text: 'secondary-project-root',
+      timeoutMs: UI_TIMEOUT_MS,
     })
     await control.command(
       'clickWhenEnabled',

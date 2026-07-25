@@ -1148,6 +1148,95 @@ describe('workbenchReducer', () => {
     expect(refreshed.runtimeWork?.totalTasks).toBe(2)
   })
 
+  test('preserves a locally started task across a stale runtime work refresh', () => {
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 7, name: 'Repo' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/repo',
+              projectId: 7,
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/repo',
+                  title: 'Running task',
+                  runtime: 'codex',
+                  status: 'active',
+                  running: false,
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const address = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      taskId: 'runtime-a',
+    }
+    const started = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        runtimeWork,
+      },
+      { type: 'runtime_task_started', address }
+    )
+
+    const staleRefresh = workbenchReducer(started, {
+      type: 'runtime_work_refreshed',
+      runtimeWork,
+    })
+
+    expect(staleRefresh.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0].running).toBe(true)
+
+    const terminalRefresh = workbenchReducer(started, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        ...runtimeWork,
+        projects: [
+          {
+            ...runtimeWork.projects[0],
+            deviceWorkspaces: [
+              {
+                ...runtimeWork.projects[0].deviceWorkspaces[0],
+                tasks: [
+                  {
+                    ...runtimeWork.projects[0].deviceWorkspaces[0].tasks[0],
+                    status: 'done',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(terminalRefresh.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0].running).toBe(
+      false
+    )
+
+    const settled = workbenchReducer(staleRefresh, {
+      type: 'runtime_task_settled',
+      address,
+    })
+    const settledRefresh = workbenchReducer(settled, {
+      type: 'runtime_work_refreshed',
+      runtimeWork,
+    })
+
+    expect(settledRefresh.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0].running).toBe(false)
+  })
+
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

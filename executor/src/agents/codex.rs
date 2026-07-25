@@ -3241,6 +3241,21 @@ fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>)
     );
 }
 
+fn insert_runtime_workspace_roots(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    let roots = request
+        .runtime_workspace_roots
+        .iter()
+        .map(|root| root.trim())
+        .filter(|root| !root.is_empty())
+        .collect::<Vec<_>>();
+    if !roots.is_empty() {
+        params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
+    }
+}
+
 fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
     let active_profile = response
         .get("activePermissionProfile")
@@ -3279,6 +3294,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3309,6 +3325,7 @@ fn thread_fork_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3372,6 +3389,7 @@ fn thread_resume_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3431,6 +3449,7 @@ fn turn_start_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }

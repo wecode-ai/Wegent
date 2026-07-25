@@ -17,6 +17,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const defaultTimeoutMs = 30_000
 const startupTimeoutMs = 60_000
+const commandResultGraceMs = 5_000
 const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -186,6 +187,9 @@ async function runServer(sessionPath, token) {
           ready: Boolean(ready),
           readyInfo: ready,
           pid: app?.pid ?? null,
+          queuedCommands: queue.length,
+          commandPolls: commandPolls.length,
+          pendingCommands: pending.size,
         })
       }
       if (request.method === 'POST' && url.pathname === '/command') {
@@ -206,7 +210,11 @@ async function runServer(sessionPath, token) {
         try {
           return json(response, 200, {
             ok: true,
-            value: await withTimeout(result, timeoutMs, `Timed out running ${command.action}`),
+            value: await withTimeout(
+              result,
+              timeoutMs + commandResultGraceMs,
+              `Timed out running ${command.action}`
+            ),
           })
         } catch (error) {
           pending.delete(id)

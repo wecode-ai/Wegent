@@ -79,7 +79,7 @@ import {
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
-  getSingleProjectDeviceWorkspaceId,
+  getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -480,6 +480,8 @@ export function WorkbenchProvider({
   const {
     cloudWorkStatus,
     markRuntimeTasksArchived,
+    markRuntimeProjectRemoved,
+    clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,
@@ -744,6 +746,9 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
+        response.roots.forEach(workspacePath =>
+          clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
+        )
         rememberExecutionDevice(response.deviceId)
         await refreshWorkLists()
         dispatch({
@@ -774,6 +779,10 @@ export function WorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
+      clearRuntimeProjectRemoval({
+        deviceId: openedDeviceId,
+        workspacePath: openedWorkspacePath,
+      })
       writeLastProjectId(user.id, null)
       rememberExecutionDevice(openedDeviceId)
       dispatch({
@@ -784,7 +793,14 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [executorClient, refreshWorkLists, rememberExecutionDevice, state.devices, user.id]
+    [
+      clearRuntimeProjectRemoval,
+      executorClient,
+      refreshWorkLists,
+      rememberExecutionDevice,
+      state.devices,
+      user.id,
+    ]
   )
 
   const startNewChat = useCallback(() => {
@@ -796,7 +812,7 @@ export function WorkbenchProvider({
       dispatch({
         type: 'project_workspace_selected',
         project,
-        deviceWorkspaceId: getSingleProjectDeviceWorkspaceId(state.runtimeWork, project.id),
+        deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
       })
       navigateTo('/')
       requestNewChatComposerFocus()
@@ -967,7 +983,7 @@ export function WorkbenchProvider({
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
-      const deviceWorkspaceId = getSingleProjectDeviceWorkspaceId(state.runtimeWork, projectId)
+      const deviceWorkspaceId = getDefaultProjectDeviceWorkspaceId(state.runtimeWork, projectId)
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (!project) return
       projectSelectionStartedRef.current = true
@@ -1057,6 +1073,8 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     refreshWorkLists,
+    markRuntimeProjectRemoved,
+    clearRuntimeProjectRemoval,
     rememberExecutionDevice,
   })
   const runtimeMessaging = useWorkbenchRuntimeMessaging({
