@@ -525,7 +525,9 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
     MAX_LIVE_MESSAGE_CONTENT_CHARS,
     message.contentOriginalChars
   )
-  const blocks = message.blocks?.map(limitProcessingBlock)
+  const blocks = sortProcessingBlocksByCreatedAt(
+    message.blocks?.map(limitProcessingBlock)
+  )
   return {
     ...message,
     content: content.text,
@@ -565,6 +567,28 @@ function limitProcessingBlock<TFileChanges>(
     }
   }
   return block
+}
+
+function sortProcessingBlocksByCreatedAt<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
+): WorkbenchProcessingBlock<TFileChanges>[] | undefined {
+  if (!blocks) return undefined
+
+  return blocks
+    .map((block, index) => ({ block, index }))
+    .sort((left, right) => {
+      const leftCreatedAt = Number.isFinite(left.block.createdAt)
+        ? left.block.createdAt
+        : Number.POSITIVE_INFINITY
+      const rightCreatedAt = Number.isFinite(right.block.createdAt)
+        ? right.block.createdAt
+        : Number.POSITIVE_INFINITY
+      if (leftCreatedAt === rightCreatedAt) {
+        return left.index - right.index
+      }
+      return leftCreatedAt - rightCreatedAt
+    })
+    .map(({ block }) => block)
 }
 
 function limitToolBlock(block: WorkbenchToolBlock): WorkbenchToolBlock {
@@ -1076,7 +1100,10 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
   subtaskId: string,
   incomingBlock: WorkbenchProcessingBlock<TFileChanges>
 ): WorkbenchProcessingBlock<TFileChanges>[] {
-  const finalizedBlocks = finalizeOpenNarrativeBlocks(message.blocks)
+  const finalizedBlocks = finalizeOpenNarrativeBlocks(
+    message.blocks,
+    incomingBlock.createdAt
+  )
   if (!shouldMovePendingContentBeforeBlock(message, incomingBlock))
     return finalizedBlocks
 
@@ -1088,7 +1115,7 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
       type: 'text',
       content: message.content,
       status: 'done',
-      createdAt: Date.now()
+      createdAt: incomingBlock.createdAt
     }
   ]
 }
@@ -1105,7 +1132,8 @@ function getTextBlockCount(blocks: WorkbenchProcessingBlock[]): number {
 }
 
 function finalizeOpenNarrativeBlocks<TFileChanges>(
-  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined,
+  nextBlockCreatedAt: number
 ): WorkbenchProcessingBlock<TFileChanges>[] {
   return (blocks ?? []).map((block) => {
     if (
@@ -1117,6 +1145,7 @@ function finalizeOpenNarrativeBlocks<TFileChanges>(
       return {
         ...block,
         status: 'done' as const,
+        createdAt: Math.min(block.createdAt, nextBlockCreatedAt),
         completedAt: block.completedAt ?? Date.now()
       }
     }

@@ -6213,8 +6213,11 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-block-times')).toHaveTextContent(
-        '1780617606000|1780617600000'
+        '1780617600000|1780617606000'
       )
+    )
+    expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
+      'text:处理完成:done|thinking:读取历史记录:done'
     )
   })
 
