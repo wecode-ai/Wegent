@@ -7,7 +7,6 @@ import {
   appendFile,
   mkdir,
   readFile,
-  readdir,
   rm,
   symlink,
   writeFile,
@@ -794,13 +793,8 @@ async function verifyCompletedTurnFork({
   )
   const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
-  const runtimeInstances = await readdir(join(executorHome, 'app-runtime'))
-  assert.equal(runtimeInstances.length, 1, 'The desktop E2E expected one app runtime instance')
   const runtimeIndex = JSON.parse(
-    await readFile(
-      join(executorHome, 'app-runtime', runtimeInstances[0], 'runtime-work', 'index.json'),
-      'utf8'
-    )
+    await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
   )
   assert.equal(
     runtimeIndex.tasks[sourceTaskId]?.workspace_path,
