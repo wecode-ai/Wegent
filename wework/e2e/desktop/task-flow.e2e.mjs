@@ -6256,7 +6256,7 @@ async function main() {
 
   const desktopScenario = await loadDesktopScenario(
     process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
-    { resultDir, uiTimeoutMs: UI_TIMEOUT_MS }
+    { resultDir, uiTimeoutMs: UI_TIMEOUT_MS, workspacePath }
   )
   if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')

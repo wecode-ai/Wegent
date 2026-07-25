@@ -463,6 +463,48 @@ fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
 }
 
 #[test]
+fn transcript_matches_cached_user_message_to_attachment_wrapped_provider_message() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "role": "user",
+        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+    })];
+    let cached_messages = vec![json!({
+        "id": "cached-user",
+        "role": "user",
+        "content": "Fix the sidebar",
+        "clientMessageId": "runtime-local-pane-1",
+        "attachments": [{"filename": "image.png", "local_path": "/tmp/image.png"}]
+    })];
+
+    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(provider_messages.len(), 1);
+    assert_eq!(
+        provider_messages[0]["clientMessageId"],
+        "runtime-local-pane-1"
+    );
+    assert_eq!(
+        provider_messages[0]["attachments"][0]["filename"],
+        "image.png"
+    );
+}
+
+#[test]
+fn transcript_navigation_uses_client_message_id_for_live_message_matching() {
+    let navigation = transcript_turn_navigation(&[json!({
+        "id": "provider-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+    })]);
+
+    assert_eq!(navigation.len(), 1);
+    assert_eq!(navigation[0]["id"], "runtime-local-pane-1");
+    assert_eq!(navigation[0]["promptPreview"], "Fix the sidebar");
+}
+
+#[test]
 fn transcript_appends_cached_failed_assistant_missing_from_provider() {
     let mut provider_messages =
         vec![json!({"id": "user-1", "role": "user", "content": "retry this"})];

@@ -193,6 +193,8 @@ executor 从原生 Codex session 发现用户消息时，会把 `local_images`�
 
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。
 
+Codex transcript 中同一轮用户输入可能同时包含附件包装、应用上下文和用户消息事件。executor 必须先提取用户可见请求文本，再用该文本合并同轮重复消息，同时保留 `clientMessageId` 和附件元数据。发言导航的 id 优先使用 `clientMessageId`；已加载回合的预览必须从同一份用户可见文本生成，不能展示 `# Files mentioned by the user` 或 `<application_context>` 等运行时注入内容。
+
 runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。Rust executor 的 Codex app-server 路径以 app-server 通知流作为本轮事件来源；如果后续接入 diff 通知，`runtime.tasks.create`、`runtime.tasks.send` 和 `runtime.tasks.transcript` 必须把它规范化为消息上的 `fileChanges`。这样前端无需等待下一次列表刷新，就能在当前 assistant 消息下显示本轮文件变更卡片。
 
 历史 transcript 统一使用 `subtaskId` 标识 assistant 消息所属的 subtask，但 Backend 转发的云端任务 ID 是数字，本地 executor 的 turn ID 是字符串。Wework 在恢复消息的映射边界必须把两种值统一成字符串；工具调用块和文件变更块都依赖该标识，不能因 ID 的传输类型不同而丢弃历史执行记录。

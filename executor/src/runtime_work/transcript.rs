@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use serde_json::{json, Map, Value};
 
@@ -17,6 +20,9 @@ use super::util::{
 const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS: usize = 200_000;
 const MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS: usize = 120_000;
+const CODEX_REQUEST_MARKER: &str = "## My request for Codex:";
+const APPLICATION_CONTEXT_OPEN: &str = "<application_context>";
+const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
 
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptBuildOptions {
@@ -76,7 +82,7 @@ fn transcript_messages_with_options(
         let fold_commentary = turn_should_fold_commentary(turn);
         let mut assistant_segment_index = 0;
         let mut assistant = AssistantTurnAccumulation::new(turn_file_changes.clone());
-        let mut seen_user_messages = HashSet::new();
+        let mut seen_user_messages = HashMap::new();
         let prefer_user_message_events = turn_has_user_message_event(turn);
         for (item_index, raw_item) in turn
             .get("items")
@@ -950,11 +956,11 @@ fn push_accumulated_assistant(
     assistant.clear_after_emit();
 }
 
-fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64, turn_id: &str) {
+fn user_message(item: &Value, created_at: i64, turn_id: &str) -> Option<Value> {
     let content = extract_text(item).unwrap_or_default();
     let attachments = user_message_image_attachments(item, created_at);
     if content.trim().is_empty() && attachments.is_empty() {
-        return;
+        return None;
     }
 
     let mut message = json!({
@@ -981,7 +987,7 @@ fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64, t
             object.insert("attachments".to_owned(), Value::Array(attachments));
         }
     }
-    messages.push(message);
+    Some(message)
 }
 
 fn push_user_message_once(
@@ -989,26 +995,79 @@ fn push_user_message_once(
     item: &Value,
     created_at: i64,
     turn_id: &str,
-    seen: &mut HashSet<String>,
+    seen: &mut HashMap<String, usize>,
 ) -> bool {
-    let Some(signature) = user_message_signature(item) else {
-        push_user_message(messages, item, created_at, turn_id);
-        return true;
-    };
-    if !seen.insert(signature) {
+    let Some(message) = user_message(item, created_at, turn_id) else {
         return false;
+    };
+
+    if let Some(signature) = user_message_signature(item) {
+        if let Some(message_index) = seen.get(&signature).copied() {
+            if let Some(existing) = messages.get_mut(message_index) {
+                merge_missing_user_message_metadata(existing, &message);
+            }
+            return false;
+        }
+        seen.insert(signature, messages.len());
     }
-    push_user_message(messages, item, created_at, turn_id);
+    messages.push(message);
     true
 }
 
 fn user_message_signature(item: &Value) -> Option<String> {
     let content = extract_text(item)?;
-    let normalized = content.trim();
+    let normalized = normalized_user_request_content(&content);
     if normalized.is_empty() {
         return None;
     }
-    Some(normalized.to_owned())
+    Some(normalized)
+}
+
+pub(crate) fn normalized_user_request_content(content: &str) -> String {
+    let request_content = content
+        .find(CODEX_REQUEST_MARKER)
+        .map(|index| &content[index + CODEX_REQUEST_MARKER.len()..])
+        .filter(|request| !request.trim().is_empty())
+        .unwrap_or(content);
+    let visible_content = strip_leading_application_context(request_content);
+    visible_content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn strip_leading_application_context(content: &str) -> &str {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with(APPLICATION_CONTEXT_OPEN) {
+        return trimmed;
+    }
+    let Some(close_index) = trimmed.find(APPLICATION_CONTEXT_CLOSE) else {
+        return trimmed;
+    };
+    trimmed[close_index + APPLICATION_CONTEXT_CLOSE.len()..].trim_start()
+}
+
+pub(crate) fn merge_missing_user_message_metadata(target: &mut Value, source: &Value) {
+    let Some(target) = target.as_object_mut() else {
+        return;
+    };
+    let Some(source) = source.as_object() else {
+        return;
+    };
+    for key in [
+        "clientMessageId",
+        "client_message_id",
+        "attachments",
+        "source",
+        "runtimeGoalRequest",
+        "runtime_goal_request",
+    ] {
+        if target.get(key).map(Value::is_null).unwrap_or(true) {
+            if let Some(value) = source.get(key) {
+                target.insert(key.to_owned(), value.clone());
+            }
+        }
+    }
 }
 
 fn is_internal_turn_abort_message(item: &Value) -> bool {
@@ -3253,6 +3312,50 @@ mod tests {
                 .as_str()
                 .is_some_and(|content| content.contains("AGENTS.md"))
         }));
+    }
+
+    #[test]
+    fn transcript_deduplicates_attachment_wrapper_and_visible_user_event() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "id": "wrapped-user",
+                            "type": "userMessage",
+                            "content": [{
+                                "type": "inputText",
+                                "text": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+                            }]
+                        },
+                        {
+                            "id": "visible-user",
+                            "type": "userMessage",
+                            "clientId": "runtime-local-pane-1",
+                            "message": "Fix the sidebar"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let user_messages = messages
+            .iter()
+            .filter(|message| message["role"] == "user")
+            .collect::<Vec<_>>();
+
+        assert_eq!(user_messages.len(), 1);
+        assert_eq!(
+            user_messages[0]["content"],
+            "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+        );
+        assert_eq!(user_messages[0]["clientMessageId"], "runtime-local-pane-1");
     }
 
     #[test]
