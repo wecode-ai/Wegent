@@ -1301,7 +1301,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     selectedAssistantPlanContent ?? selectedAssistantPlan?.fallbackContent ?? null
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
-  const paneIsResponseStreaming = paneSession.status.isAssistantStreaming
+  const paneIsBusy = paneSession.status.isBusy
   const latestPreviousTurnSubtaskId = useMemo(() => {
     for (let index = paneMessages.length - 1; index >= 0; index -= 1) {
       const message = paneMessages[index]
@@ -2284,7 +2284,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             cloudProjectCandidates={cloudProjectMentionCandidates}
                             cloudSpaceEnabled={Boolean(services?.deliveryApi)}
                             onSelectCloudProject={handleSelectCloudProject}
-                            isStreaming={paneIsResponseStreaming}
+                            isStreaming={paneIsBusy}
                             onPause={pauseCurrentResponse}
                             onCompactContext={compactCurrentContext}
                             goal={paneSession.goal}
@@ -2418,7 +2418,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     cloudProjectCandidates={cloudProjectMentionCandidates}
                     cloudSpaceEnabled={Boolean(services?.deliveryApi)}
                     onSelectCloudProject={handleSelectCloudProject}
-                    isStreaming={paneIsResponseStreaming}
+                    isStreaming={paneIsBusy}
                     onPause={pauseCurrentResponse}
                     onCompactContext={compactCurrentContext}
                     goal={paneSession.goal}
@@ -2560,7 +2560,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           runtimeWork={runtimeWork}
           currentProject={currentProject}
           devices={devices}
-          requiresStop={paneIsResponseStreaming}
+          requiresStop={paneIsBusy}
           onOpenChange={setForkDialogOpen}
           onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
           onPrepareDeviceWorkspace={prepareDeviceWorkspace}

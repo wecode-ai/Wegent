@@ -1103,6 +1103,13 @@ async fn runtime_archives_project_and_all_conversations() {
     assert_eq!(archive_calls.len(), 2);
     assert_eq!(archive_calls[0]["params"]["threadId"], "thread-project");
     assert_eq!(archive_calls[1]["params"]["threadId"], "thread-other");
+    let unsubscribe_calls = read_json_lines(&log_path)
+        .into_iter()
+        .filter(|call| call["method"] == "thread/unsubscribe")
+        .collect::<Vec<_>>();
+    assert_eq!(unsubscribe_calls.len(), 2);
+    assert_eq!(unsubscribe_calls[0]["params"]["threadId"], "thread-project");
+    assert_eq!(unsubscribe_calls[1]["params"]["threadId"], "thread-other");
 }
 
 #[tokio::test]

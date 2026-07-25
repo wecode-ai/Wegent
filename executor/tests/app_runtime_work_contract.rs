@@ -454,6 +454,9 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
     assert!(calls.iter().any(|call| call["method"] == "thread/archive"));
     assert!(calls
         .iter()
+        .any(|call| call["method"] == "thread/unsubscribe"));
+    assert!(calls
+        .iter()
         .any(|call| call["method"] == "thread/unarchive"));
     assert!(calls
         .iter()
@@ -753,6 +756,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/archive"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"success":true}}}}'
       ;;
     *'"method":"thread/unarchive"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'

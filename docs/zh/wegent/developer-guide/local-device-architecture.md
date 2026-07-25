@@ -73,6 +73,10 @@ executor 当前进程维护的活跃任务集合是 `running` 的唯一权威来
 
 目标（goal）有独立的生命周期。目标为 `active` 表示其目标仍可在后续回合继续推进，不表示当前存在模型回合。因此，任务空闲时保留 active goal 不会将任务重新标记为运行中；用户发送下一条消息会直接创建新回合，而不是把消息作为对运行中回合的引导。
 
+Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。
+
+前端运行状态只保存在内存中，不写入本地文件或浏览器存储。用户发送消息时的乐观 `starting` 也由同一个状态机维护，并在 executor 明确返回 `running=true` 或 `running=false` 后收敛。Active Goal 自动续轮时，只要 executor 仍把任务保留在当前进程的活跃集合中，两轮之间仍显示任务运行中，但回合状态为 `idle`，因此不显示“正在思考”也不产生未读；Wework 或 executor 重启后，新进程若返回 `running=false`，任务立即显示为空闲，即使 Goal 仍为 `active`，并且不会自动恢复执行。只有未读完成提醒会持久化，且不能反向推断运行状态。
+
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
 同一对话可在回合之间切换模型。Wework 为每次续聊传递所选模型及其 provider 配置，executor 在恢复空闲 Codex thread 前等待当前 app-server 订阅真正释放，使 `thread/resume` 能应用新的 provider 覆盖，随后由恢复操作重新订阅。若不等待释放完成，Codex 会保留已加载 thread 的旧 provider，即使 `turn/start` 中的模型名已经变化，实际请求仍可能发往旧的自定义模型上游。对于仍缓存旧本地路由 URL 的已加载 thread，本地模型代理还会依据本次请求的模型，在相同网关地址和凭据作用域内选择当前活跃的模型注册；这样模型切换继续使用 `resume` 保持原会话上下文，无需 fork thread，也不会跨用户或跨 provider 复用凭据。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。

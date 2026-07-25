@@ -697,6 +697,61 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
+  test('coalesces continuous virtualizer measurements without starving navigation', () => {
+    const resizeObservers: Array<{ callback: ResizeObserverCallback }> = []
+    const originalResizeObserver = globalThis.ResizeObserver
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeObservers.push({ callback })
+      }
+
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    try {
+      render(
+        <ScrollableMessageArea
+          messages={[
+            {
+              id: 'measured-user-1',
+              role: 'user',
+              content: '第一条持续测量需求',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:00.000Z',
+            },
+            {
+              id: 'measured-assistant-1',
+              role: 'assistant',
+              content: '第一条持续测量回复',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:01.000Z',
+            },
+            {
+              id: 'measured-user-2',
+              role: 'user',
+              content: '第二条持续测量需求',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:02.000Z',
+            },
+          ]}
+        />
+      )
+      act(() => {
+        for (let index = 0; index < 25; index += 1) {
+          resizeObservers.forEach(observer => observer.callback([], observer as ResizeObserver))
+        }
+      })
+
+      flushScheduledTimers()
+      expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+    }
+  })
+
   test('updates message navigation when the runtime appends to the same messages array', () => {
     const messages = [
       {
@@ -755,14 +810,20 @@ describe('ScrollableMessageArea', () => {
         createdAt: '2026-05-29T00:00:02.000Z',
       },
     ]
+    const querySelectorAllSpy = vi.spyOn(HTMLElement.prototype, 'querySelectorAll')
     const { rerender } = render(<ScrollableMessageArea messages={messages} />)
     flushScheduledTimers()
-    const scheduledCount = requestAnimationFrameSpy.mock.calls.length
+    querySelectorAllSpy.mockClear()
 
     rerender(<ScrollableMessageArea messages={[...messages]} />)
     flushScheduledTimers()
 
-    expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(scheduledCount)
+    expect(
+      querySelectorAllSpy.mock.calls.filter(([selector]) =>
+        String(selector).includes('[data-message-id]')
+      )
+    ).toHaveLength(0)
+    querySelectorAllSpy.mockRestore()
   })
 
   test('uses newer transcript turns while runtime navigation metadata is catching up', () => {

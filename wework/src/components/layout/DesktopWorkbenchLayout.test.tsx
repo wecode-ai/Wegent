@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode } from 'react'
+import { StrictMode, useMemo } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
@@ -9,6 +9,10 @@ import { createProjectApi } from '@/api/projects'
 import { AuthContext } from '@/features/auth/useAuth'
 import { AppearanceProvider } from '@/features/appearance'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -99,7 +103,12 @@ function createPaneStatus({
   return {
     sendPhase: isSubmitting ? 'submitting' : isAwaitingAssistant ? 'awaiting_assistant' : 'idle',
     activeAssistantMessage,
-    taskExecution: { known: taskRunning, running: taskRunning, continuable: true, status: null },
+    taskExecution: {
+      known: taskRunning,
+      running: taskRunning,
+      continuable: true,
+      status: null,
+    },
     isSubmitting,
     isAwaitingAssistant,
     isAssistantStreaming,
@@ -773,7 +782,7 @@ describe('DesktopWorkbenchLayout', () => {
     codeCommentContexts?: unknown[]
     subagentStatuses?: RuntimeSubagentStatus[]
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
-    currentRuntimeTaskRunning?: boolean
+    lifecycleTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
     isRuntimeTranscriptLoading?: boolean
     runtimeTranscriptHasMoreBefore?: boolean
@@ -823,17 +832,33 @@ describe('DesktopWorkbenchLayout', () => {
   function DesktopWorkbenchLayout(props: LegacyDesktopWorkbenchLayoutProps) {
     const { authValue, workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
     paneSessionMockRef.current = paneSession
+    const lifecycleTaskRunning =
+      props.lifecycleTaskRunning ?? Boolean(workbenchValue.state.currentRuntimeTask)
+    const lifecycleStore = useMemo(() => {
+      const store = new RuntimeTaskLifecycleStore('desktop-workbench-layout-test')
+      store.syncRuntimeWork(workbenchValue.state.runtimeWork)
+      if (lifecycleTaskRunning && workbenchValue.state.currentRuntimeTask) {
+        store.executorStarted(workbenchValue.state.currentRuntimeTask)
+      }
+      return store
+    }, [
+      lifecycleTaskRunning,
+      workbenchValue.state.currentRuntimeTask,
+      workbenchValue.state.runtimeWork,
+    ])
 
     return (
-      <AppearanceProvider>
-        <AuthContext.Provider value={authValue}>
-          <WorkbenchContext.Provider value={workbenchValue}>
-            <WorkbenchPaneContext.Provider value={paneValue}>
-              <ActualDesktopWorkbenchLayout />
-            </WorkbenchPaneContext.Provider>
-          </WorkbenchContext.Provider>
-        </AuthContext.Provider>
-      </AppearanceProvider>
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <AppearanceProvider>
+          <AuthContext.Provider value={authValue}>
+            <WorkbenchContext.Provider value={workbenchValue}>
+              <WorkbenchPaneContext.Provider value={paneValue}>
+                <ActualDesktopWorkbenchLayout />
+              </WorkbenchPaneContext.Provider>
+            </WorkbenchContext.Provider>
+          </AuthContext.Provider>
+        </AppearanceProvider>
+      </RuntimeTaskLifecycleProvider>
     )
   }
 
@@ -943,6 +968,7 @@ describe('DesktopWorkbenchLayout', () => {
       onBlockedModelSelect: vi.fn(),
       ...props.projectChat,
     }
+    const lifecycleTaskRunning = props.lifecycleTaskRunning ?? Boolean(state.currentRuntimeTask)
     const workbenchValue = {
       services: {
         attachmentApi: {
@@ -968,8 +994,6 @@ describe('DesktopWorkbenchLayout', () => {
       state,
       isStartupReady: true,
       workspaceFileApi: props.workspaceFileApi ?? baseProps.workspaceFileApi,
-      currentRuntimeTaskRunning:
-        props.currentRuntimeTaskRunning ?? Boolean(state.currentRuntimeTask),
       cloudWorkStatus: {
         availability: 'available',
         checks: { teams: 'available', devices: 'available', runtimeWork: 'available' },
@@ -1090,7 +1114,7 @@ describe('DesktopWorkbenchLayout', () => {
         messages: props.messages ?? [],
         sending: Boolean(state.isSending),
         waitingForAssistant: Boolean(props.isAwaitingAssistantStart),
-        taskRunning: workbenchValue.currentRuntimeTaskRunning,
+        taskRunning: lifecycleTaskRunning,
       }),
       transcriptLoading: Boolean(props.isRuntimeTranscriptLoading),
       transcriptHasMoreBefore: Boolean(props.runtimeTranscriptHasMoreBefore),
@@ -3720,8 +3744,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(baseProps.onSend).not.toHaveBeenCalled()
   })
 
-  test('keeps the composer available without an inline notice while runtime task is running', async () => {
-    const onSend = vi.fn()
+  test('shows one consistent running state across the composer and message area', () => {
     const onlineDevice = {
       id: 1,
       device_id: 'device-1',
@@ -3736,7 +3759,7 @@ describe('DesktopWorkbenchLayout', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        currentRuntimeTaskRunning
+        lifecycleTaskRunning
         state={{
           ...baseProps.state,
           devices: [onlineDevice],
@@ -3745,7 +3768,7 @@ describe('DesktopWorkbenchLayout', () => {
             workspacePath: '/workspace/project-alpha',
             taskId: 'runtime-a',
           },
-          input: '继续修',
+          input: '',
         }}
         messages={[
           {
@@ -3760,17 +3783,14 @@ describe('DesktopWorkbenchLayout', () => {
           ...baseProps.projectWork,
           devices: [onlineDevice],
         }}
-        onSend={onSend}
       />
     )
 
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('placeholder', '要求后续变更')
-    expect(screen.getByTestId('send-message-button')).not.toBeDisabled()
-
-    await userEvent.click(screen.getByTestId('send-message-button'))
-
-    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toBeInTheDocument()
   })
 
   test('hides inline composer notice while a send request is in flight', async () => {
@@ -3804,7 +3824,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
-    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+    expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
   })
 
   test('shows an external upgrade action for the active low-version device', async () => {
@@ -6672,7 +6693,7 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         state={state}
-        currentRuntimeTaskRunning
+        lifecycleTaskRunning
         onLoadEnvironmentInfo={onLoadEnvironmentInfo}
       />
     )
@@ -6683,7 +6704,7 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         state={state}
-        currentRuntimeTaskRunning={false}
+        lifecycleTaskRunning={false}
         onLoadEnvironmentInfo={onLoadEnvironmentInfo}
       />
     )

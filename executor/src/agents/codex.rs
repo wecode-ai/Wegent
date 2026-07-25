@@ -185,6 +185,8 @@ struct ActiveCodexTurn {
 pub struct CodexAppServerTurn {
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub goal_status: Option<String>,
+    pub goal_status_observed: bool,
 }
 
 #[path = "codex/interaction.rs"]
@@ -976,17 +978,13 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;
                 let goal_response = client.request("thread/goal/set", goal_params).await?;
-                if goal_response_goal_is_active(&goal_response) {
-                    state.set_goal_status("active");
-                }
+                sync_goal_status_from_response(&mut state, &goal_response);
             } else if resuming_thread {
                 if let Ok(goal_response) = client
                     .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
                     .await
                 {
-                    if goal_response_goal_is_active(&goal_response) {
-                        state.set_goal_status("active");
-                    }
+                    sync_goal_status_from_response(&mut state, &goal_response);
                 }
             }
 
@@ -1069,7 +1067,13 @@ async fn run_codex_app_server_turn_on_shared_client(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex shared turn request finished", &turn_fields);
-        Ok(CodexAppServerTurn { thread_id, outcome })
+        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        Ok(CodexAppServerTurn {
+            thread_id,
+            outcome,
+            goal_status,
+            goal_status_observed,
+        })
     }
     .await;
 
@@ -1234,12 +1238,13 @@ pub async fn run_codex_app_server_turn_with_cancel(
         if !request.ephemeral {
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                with_rpc_timeout(
+                let goal_response = with_rpc_timeout(
                     "thread/goal/set",
                     timeout_seconds,
                     rpc.request("thread/goal/set", goal_params, &mut state),
                 )
                 .await?;
+                sync_goal_status_from_response(&mut state, &goal_response);
             }
             if let Some(name) = initial_thread_name
                 .as_deref()
@@ -1305,7 +1310,13 @@ pub async fn run_codex_app_server_turn_with_cancel(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex turn request finished", &turn_fields);
-        Ok(CodexAppServerTurn { thread_id, outcome })
+        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        Ok(CodexAppServerTurn {
+            thread_id,
+            outcome,
+            goal_status,
+            goal_status_observed,
+        })
     }
     .await;
 
@@ -1672,12 +1683,15 @@ fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> O
         .or_else(|| string_value(params, "turn_id"))
 }
 
-fn goal_response_goal_is_active(response: &Value) -> bool {
-    response
+fn sync_goal_status_from_response(state: &mut CodexRunState, response: &Value) {
+    match response
         .get("goal")
         .and_then(|goal| goal.get("status"))
         .and_then(Value::as_str)
-        .is_some_and(|status| status.eq_ignore_ascii_case("active"))
+    {
+        Some(status) => state.set_goal_status(status),
+        None => state.clear_goal_status(),
+    }
 }
 
 fn string_value(value: &Value, key: &str) -> Option<String> {
