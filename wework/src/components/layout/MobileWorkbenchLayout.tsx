@@ -138,7 +138,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
-  const paneIsResponseStreaming = paneSession.status.isResponseActive
+  const paneIsBusy = paneSession.status.isBusy
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const activeConversationProject = activePaneProject
   const effectiveProjectChat = projectChat ?? {
@@ -441,7 +441,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     queuedMessages={paneQueuedMessages}
                     guidanceMessages={paneGuidanceMessages}
                     codeComments={paneSession.codeCommentContexts}
-                    isStreaming={paneIsResponseStreaming}
+                    isStreaming={paneIsBusy}
                     onPause={() => void paneSession.pauseCurrentResponse()}
                     onCompactContext={() => void paneSession.compactContext()}
                     taskPlan={paneSession.taskPlan}
@@ -547,7 +547,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 queuedMessages={paneQueuedMessages}
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
-                isStreaming={paneIsResponseStreaming}
+                isStreaming={paneIsBusy}
                 onPause={() => void paneSession.pauseCurrentResponse()}
                 onCompactContext={() => void paneSession.compactContext()}
                 taskPlan={paneSession.taskPlan}
@@ -612,7 +612,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         runtimeWork={state.runtimeWork}
         currentProject={activeConversationProject}
         devices={state.devices}
-        requiresStop={paneIsResponseStreaming}
+        requiresStop={paneIsBusy}
         onOpenChange={setForkDialogOpen}
         onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}

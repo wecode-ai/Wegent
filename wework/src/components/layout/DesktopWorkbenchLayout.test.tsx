@@ -3744,8 +3744,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(baseProps.onSend).not.toHaveBeenCalled()
   })
 
-  test('keeps the composer available without an inline notice while runtime task is running', async () => {
-    const onSend = vi.fn()
+  test('shows one consistent running state across the composer and message area', () => {
     const onlineDevice = {
       id: 1,
       device_id: 'device-1',
@@ -3769,7 +3768,7 @@ describe('DesktopWorkbenchLayout', () => {
             workspacePath: '/workspace/project-alpha',
             taskId: 'runtime-a',
           },
-          input: '继续修',
+          input: '',
         }}
         messages={[
           {
@@ -3784,17 +3783,14 @@ describe('DesktopWorkbenchLayout', () => {
           ...baseProps.projectWork,
           devices: [onlineDevice],
         }}
-        onSend={onSend}
       />
     )
 
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('placeholder', '要求后续变更')
-    expect(screen.getByTestId('send-message-button')).not.toBeDisabled()
-
-    await userEvent.click(screen.getByTestId('send-message-button'))
-
-    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toBeInTheDocument()
   })
 
   test('hides inline composer notice while a send request is in flight', async () => {
@@ -3828,7 +3824,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
-    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+    expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
   })
 
   test('shows an external upgrade action for the active low-version device', async () => {
