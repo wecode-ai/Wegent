@@ -349,6 +349,21 @@ export function MessageTurnNavigation({
         return
       }
 
+      const loadedMessageId = findLoadedNavigationMessageId(messages, {
+        navigationId: marker.id,
+        messageIndex: marker.messageIndex,
+      })
+      if (loadedMessageId) {
+        setPendingScrollTarget({
+          navigationId: marker.id,
+          messageIndex: marker.messageIndex,
+        })
+        setLoadingMarkerId(marker.id)
+        onNavigationLoadStateChange?.(true)
+        onNavigationScrollTargetChange?.(loadedMessageId)
+        return
+      }
+
       if (!marker.cursor || !onLoadTurnNavigationItem) {
         return
       }
@@ -373,8 +388,10 @@ export function MessageTurnNavigation({
     [
       activeMarkerId,
       contentRef,
+      messages,
       onLoadTurnNavigationItem,
       onNavigationLoadStateChange,
+      onNavigationScrollTargetChange,
       scrollRef,
       scrollToMessageId,
     ]
@@ -524,10 +541,13 @@ function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
     turns.push({
       id: message.id,
       turnIndex: turns.length,
-      messageIndex: index,
+      messageIndex:
+        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
       promptPreview: getUserPromptPreview(message),
       responsePreview: '',
-      cursor: `offset:${index}`,
+      cursor: `offset:${
+        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index
+      }`,
       loaded: true,
     })
     pendingResponsePreviewTurnIndexes.push(turns.length - 1)
@@ -540,6 +560,7 @@ function buildUserTurnsFromNavigation(
   navigation: RuntimeTurnNavigationItem[],
   messages: WorkbenchMessage[]
 ): UserTurn[] {
+  const loadedTurns = buildUserTurns(messages)
   const loadedMessagesByIndex = new Map(
     messages
       .filter(
@@ -550,7 +571,7 @@ function buildUserTurnsFromNavigation(
   )
   const loadedMessagesById = new Map(messages.map(message => [message.id, message]))
 
-  return navigation.map((item, index) => {
+  const navigationTurns = navigation.map((item, index) => {
     const loadedMessage =
       loadedMessagesByIndex.get(item.messageIndex) ?? loadedMessagesById.get(item.id)
     return {
@@ -563,6 +584,11 @@ function buildUserTurnsFromNavigation(
       loaded: Boolean(loadedMessage),
     }
   })
+  const navigationMessageIds = new Set(navigationTurns.map(turn => turn.id))
+
+  return [...navigationTurns, ...loadedTurns.filter(turn => !navigationMessageIds.has(turn.id))]
+    .sort((left, right) => left.messageIndex - right.messageIndex)
+    .map((turn, turnIndex) => ({ ...turn, turnIndex }))
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {

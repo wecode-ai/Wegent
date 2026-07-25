@@ -460,12 +460,64 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     control,
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
   )
+  const assistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const virtualRows = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`
+  )
   assert.equal(userMessages.length, 2, 'The short conversation did not render both user messages')
+  assert.equal(
+    assistantMessages.length,
+    2,
+    'The reopened short conversation did not render both assistant messages'
+  )
+  assert.equal(
+    virtualRows.length,
+    4,
+    'The unified virtual list did not mount every short-conversation turn'
+  )
+  assert.equal(
+    await control.command(
+      'getStyle',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"] [data-index]`,
+      { value: 'position' }
+    ),
+    'absolute',
+    'Short conversations did not use the unified virtual row layout'
+  )
+  const conversationSnapshot = JSON.parse(
+    await control.command(
+      'snapshot',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+    )
+  )
+  assert.ok(
+    countTextOccurrences(conversationSnapshot.text, FRESH_CHAT_PROMPT) >= 2,
+    'The reopened virtualized conversation lost an earlier user message'
+  )
+  assert.ok(
+    countTextOccurrences(conversationSnapshot.text, FRESH_CHAT_COMPLETION_TEXT) >= 2,
+    'The reopened virtualized conversation lost an earlier assistant message'
+  )
   const firstMessage = userMessages[0]
   const messageTopOffset = firstMessage.top - scroller.top
   await writeFile(
     join(resultDir, 'short-conversation-layout-metrics.json'),
-    `${JSON.stringify({ firstMessage, messageTopOffset, scroller }, null, 2)}\n`
+    `${JSON.stringify(
+      {
+        assistantMessages,
+        firstMessage,
+        messageTopOffset,
+        scroller,
+        userMessages,
+        virtualRows,
+      },
+      null,
+      2
+    )}\n`
   )
   await captureVerificationScreenshot(control, 'short-conversation-02-completed-top-aligned.png')
 
@@ -477,6 +529,18 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
+}
+
+function countTextOccurrences(value, search) {
+  if (!search) return 0
+  let count = 0
+  let offset = 0
+  while (true) {
+    const index = value.indexOf(search, offset)
+    if (index === -1) return count
+    count += 1
+    offset = index + search.length
+  }
 }
 
 async function prepareCompletedTurnScreenshot(control) {
@@ -1742,11 +1806,15 @@ async function verifyBackgroundTaskWindowLifecycle({
       timeoutMs: UI_TIMEOUT_MS,
     }
   )
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes(freshTaskRowTestId),
-    'The archived task remained mounted in the sidebar'
-  )
+  const archivedTaskSelector = `[data-testid="${freshTaskRowTestId}"]`
+  const archiveRowRemovalStartedAt = Date.now()
+  let archivedTaskRowCount = 1
+  while (Date.now() - archiveRowRemovalStartedAt < UI_TIMEOUT_MS) {
+    archivedTaskRowCount = Number(await control.command('getElementCount', archivedTaskSelector))
+    if (archivedTaskRowCount === 0) break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(archivedTaskRowCount, 0, 'The archived task remained mounted in the sidebar')
   const archiveEvictionStartedAt = Date.now()
   let cacheAfterArchive = cacheBeforeArchive
   while (Date.now() - archiveEvictionStartedAt < UI_TIMEOUT_MS) {
@@ -4646,15 +4714,6 @@ async function verifyConnectedModelsOnLocalExecution({
     timeoutMs: UI_TIMEOUT_MS,
   })
   await confirmLocalProjectName(control, 'workspace')
-  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-    timeoutMs: UI_TIMEOUT_MS,
-  })
-  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-    value: 'workspace',
-  })
-  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
-    timeoutMs: UI_TIMEOUT_MS,
-  })
   await control.command('waitFor', composerSelector, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5378,7 +5437,6 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await confirmLocalProjectName(control, 'workspace')
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -5491,7 +5549,6 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await confirmLocalProjectName(control, 'workspace')
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
