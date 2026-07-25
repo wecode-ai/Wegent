@@ -288,3 +288,57 @@ async def test_remote_restores_summary_marker_from_metadata(monkeypatch):
 
     assert history[0]["additional_kwargs"]["summary_compacted"] is True
     assert not history[1].get("additional_kwargs")
+
+
+@pytest.mark.asyncio
+async def test_recovery_checkpoint_chain_reloads_with_marker_and_tool_pairing(
+    monkeypatch,
+):
+    """A recovery-path checkpoint (summary + post-compaction tool pair + reply)
+    reloads through the loader identically to a normal-completion checkpoint:
+    marker restored, order preserved, tool-call/result still paired."""
+    from chat_shell.history import loader
+    from chat_shell.storage.interfaces import Message
+
+    class _FakeStore:
+        async def get_history(self, **kwargs):
+            return [
+                Message(
+                    role="user",
+                    content="[COMPACT SUMMARY] body",
+                    id="s1",
+                    metadata={"summary_compacted": True},
+                ),
+                Message(
+                    role="assistant",
+                    content="",
+                    id="a2",
+                    tool_calls=[
+                        {
+                            "id": "t2",
+                            "type": "function",
+                            "function": {"name": "probe", "arguments": "{}"},
+                        }
+                    ],
+                ),
+                Message(role="tool", content="ok", id="tm2", tool_call_id="t2"),
+                Message(role="assistant", content="final answer", id="a3"),
+            ]
+
+    monkeypatch.setattr(loader, "_get_remote_history_store", lambda: _FakeStore())
+
+    history = await loader._load_history_from_remote(task_id=1, is_group_chat=False)
+
+    # Summary marker restored so backend checkpoint scoping can anchor here.
+    assert history[0]["additional_kwargs"]["summary_compacted"] is True
+    # Order preserved.
+    assert [entry["role"] for entry in history] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    # Tool-call / tool-result pairing intact after reload.
+    tool_call_ids = [tc["id"] for tc in history[1]["tool_calls"]]
+    assert tool_call_ids == ["t2"]
+    assert history[2]["tool_call_id"] == "t2"
