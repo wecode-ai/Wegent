@@ -36,6 +36,7 @@ impl RuntimeWorkRpcHandler {
         if request.project_workspace_path.is_none() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
+        self.apply_project_workspace_roots(&mut request);
 
         let mut link = RuntimeTaskLink::new_pending(
             local_task_id.clone(),
@@ -137,6 +138,7 @@ impl RuntimeWorkRpcHandler {
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
+        self.apply_project_workspace_roots(&mut request);
         let recovered_link = self
             .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
             .await;

@@ -2618,6 +2618,9 @@ class DesktopE2EServer {
     this.windowLifecycleResponseStarted = new Promise(resolvePromise => {
       this.resolveWindowLifecycleResponseStarted = resolvePromise
     })
+    this.cloudFollowUpRelease = new Promise(resolvePromise => {
+      this.releaseCloudFollowUp = resolvePromise
+    })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.localProtocolStates = new Map(
@@ -2856,6 +2859,10 @@ class DesktopE2EServer {
 
   releaseWindowLifecycleResponse() {
     this.releaseWindowLifecycle()
+  }
+
+  releaseCloudFollowUpResponse() {
+    this.releaseCloudFollowUp()
   }
 
   releaseConcurrentMemoryResponses() {
@@ -3324,11 +3331,20 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
         'The real cloud Codex request did not contain the follow-up prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.cloudFollowUpRelease
+      response.end(
+        createSse([
+          assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+      )
       return
     }
 
@@ -4712,17 +4728,32 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   await closeBottomWorkspacePanel(control)
 
   control.setScenario('cloud_follow_up')
+  const runningTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-running-'
+  )
   await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
+  await waitForSnapshot(
+    control,
+    value => value.testIds.includes(runningTaskTestId),
+    'The cloud follow-up task never entered the running state'
+  )
   await withTimeout(
     control.awaitScenarioRequest('cloud_follow_up'),
     UI_TIMEOUT_MS,
     'The real cloud executor did not send the follow-up model request'
   )
+  control.releaseCloudFollowUpResponse()
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    value => !value.testIds.includes(runningTaskTestId),
+    'The cloud follow-up task did not settle before project removal'
+  )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
   await verifyModelProtocolMatrix({

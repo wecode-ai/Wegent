@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -9,6 +9,7 @@ describe('EnvironmentInfoPopover', () => {
   const portalContainers: HTMLElement[] = []
 
   afterEach(() => {
+    vi.useRealTimers()
     portalContainers.splice(0).forEach(container => container.remove())
   })
 
@@ -135,6 +136,60 @@ describe('EnvironmentInfoPopover', () => {
       'title',
       '/workspace/api'
     )
+    expect(screen.getByTestId('environment-workspace-path-button')).toHaveClass('min-h-11')
+    expect(screen.getByTestId('environment-workspace-root-button-1')).toHaveClass('min-h-11')
+  })
+
+  test('keeps the newest workspace copy confirmation visible for its full duration', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    })
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspaceRoots: ['/workspace/web', '/workspace/api'],
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('environment-workspace-path-button'))
+    })
+    expect(
+      screen.getByTestId('environment-workspace-path-button').querySelector('[role="status"]')
+    ).not.toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('environment-workspace-root-button-1'))
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1100)
+    })
+
+    expect(
+      screen.getByTestId('environment-workspace-root-button-1').querySelector('[role="status"]')
+    ).not.toBeNull()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(900)
+    })
+    expect(
+      screen.getByTestId('environment-workspace-root-button-1').querySelector('[role="status"]')
+    ).toBeNull()
   })
 
   test('hides git controls and diff stats for a non-git workspace', () => {

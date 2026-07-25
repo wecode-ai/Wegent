@@ -6,7 +6,7 @@ import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { isGitWorkspaceProject } from '@/lib/projectClassification'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { isCloudDevice } from '@/lib/device-selection'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import {
@@ -109,14 +109,16 @@ export function useWorkbenchPaneEnvironment({
       item => String(runtimeProjectUiId(item.project)) === String(workspaceProject.id)
     )
     const projectRoots =
-      projectWork?.project.roots?.map(root => root.path.trim()).filter(Boolean) ?? []
+      projectWork?.project.roots
+        ?.map(root => normalizeRuntimeWorkspacePath(root.path))
+        .filter(Boolean) ?? []
     const roots =
       projectRoots.length > 0
         ? [...new Set(projectRoots)]
         : [
             ...new Set(
               (projectWork?.deviceWorkspaces ?? [])
-                .map(workspace => workspace.workspacePath.trim())
+                .map(workspace => normalizeRuntimeWorkspacePath(workspace.workspacePath))
                 .filter(Boolean)
             ),
           ]

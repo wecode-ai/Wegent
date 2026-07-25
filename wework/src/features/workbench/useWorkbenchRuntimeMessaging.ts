@@ -14,7 +14,7 @@ import {
 } from '@/lib/device-capabilities'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -519,7 +519,7 @@ export function useWorkbenchRuntimeMessaging({
                       workspace => workspace.workspacePath
                     ) ?? [])
                 )
-                  .map(root => root.trim())
+                  .map(normalizeRuntimeWorkspacePath)
                   .filter(Boolean)
               )
             )

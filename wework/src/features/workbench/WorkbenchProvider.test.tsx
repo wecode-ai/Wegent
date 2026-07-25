@@ -651,6 +651,10 @@ function ProjectSendProbe() {
           .map(projectWork => projectWork.project.name)
           .join('|') ?? ''}
       </span>
+      <span data-testid="runtime-chat-workspaces">
+        {workbench.state.runtimeWork?.chats.map(workspace => workspace.workspacePath).join('|') ??
+          ''}
+      </span>
       <span data-testid="runtime-task-titles">
         {workbench.state.runtimeWork?.projects
           .flatMap(projectWork =>
@@ -3548,8 +3552,9 @@ describe('WorkbenchProvider runtime tasks', () => {
                 name: 'Product',
                 source: 'local_project',
                 roots: [
+                  { kind: 'local', path: '/workspace/web/' },
                   { kind: 'local', path: '/workspace/web' },
-                  { kind: 'local', path: '/workspace/api' },
+                  { kind: 'local', path: '/workspace/api/' },
                 ],
               },
               deviceWorkspaces: [
@@ -5029,6 +5034,64 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.projectApi.deleteProject).not.toHaveBeenCalled()
     await waitFor(() =>
       expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent('none')
+    )
+  })
+
+  test('does not restore a removed standalone workspace from an in-flight cloud refresh', async () => {
+    const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork()),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([createDevice()]),
+        listRuntimeWork: vi.fn(() => cloudRuntimeWork.promise),
+      },
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(screen.getByText('open standalone workspace'))
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent(
+        '/workspace/direct-codex'
+      )
+    )
+    await userEvent.click(screen.getByText('remove standalone workspace'))
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent('none')
+    )
+
+    await act(async () => {
+      cloudRuntimeWork.resolve(
+        createRuntimeWork({
+          chats: [
+            {
+              deviceId: 'device-1',
+              deviceName: 'Local Device',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/workspace/direct-codex',
+              workspaceKind: 'chat',
+              tasks: [],
+            },
+          ],
+        })
+      )
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-chat-workspaces')).toHaveTextContent(/^$/)
+    )
+    expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent('none')
+
+    await userEvent.click(screen.getByText('open standalone workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.openRuntimeWorkspace).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent(
+      '/workspace/direct-codex'
     )
   })
 

@@ -367,7 +367,7 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
-    fn apply_project_workspace_roots(&self, request: &mut ExecutionRequest) {
+    pub(super) fn apply_project_workspace_roots(&self, request: &mut ExecutionRequest) {
         if !request.runtime_workspace_roots.is_empty() {
             return;
         }

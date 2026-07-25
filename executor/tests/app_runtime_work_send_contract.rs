@@ -102,11 +102,24 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
     let log_path = temp_path("runtime-multi-root-log", "jsonl");
     let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let project_response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "product",
+                "name": "Product",
+                "roots": [first_root, second_root]
+            }
+        }))
+        .await
+        .expect("local project should be persisted");
+    assert_eq!(project_response["accepted"], true);
+
     let mut execution_request =
         codex_execution_request("inspect both folders", &first_root, "gpt-5.5");
     execution_request["runtime_project_key"] = json!("product");
     execution_request["runtime_project_name"] = json!("Product");
-    execution_request["runtime_workspace_roots"] = json!([first_root, second_root]);
 
     let created = handler
         .handle_runtime_rpc(json!({
@@ -117,7 +130,6 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
                 "message": "inspect both folders",
                 "runtimeProjectKey": "product",
                 "runtimeProjectName": "Product",
-                "runtimeWorkspaceRoots": [first_root, second_root],
                 "executionRequest": execution_request
             }
         }))

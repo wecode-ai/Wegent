@@ -46,7 +46,11 @@ interface UseWorkbenchProjectActionsOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   refreshWorkLists: () => Promise<void>
-  markRuntimeProjectRemoved: (projectId: number) => void
+  markRuntimeProjectRemoved: (
+    projectId: number,
+    workspace?: { deviceId: string; workspacePath: string }
+  ) => void
+  clearRuntimeProjectRemoval: (workspace: { deviceId: string; workspacePath: string }) => void
   rememberExecutionDevice: (deviceId: string) => void
 }
 
@@ -58,6 +62,7 @@ export function useWorkbenchProjectActions({
   services,
   refreshWorkLists,
   markRuntimeProjectRemoved,
+  clearRuntimeProjectRemoval,
   rememberExecutionDevice,
 }: UseWorkbenchProjectActionsOptions) {
   const createProject = useCallback(
@@ -186,9 +191,12 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
+      response.roots.forEach(workspacePath =>
+        clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
+      )
       await refreshWorkLists()
     },
-    [dispatch, executorClient, refreshWorkLists]
+    [clearRuntimeProjectRemoval, dispatch, executorClient, refreshWorkLists]
   )
 
   const removeListedRuntimeProject = useCallback(
@@ -234,8 +242,8 @@ export function useWorkbenchProjectActions({
       const clearsStandaloneWorkspace =
         standaloneDeviceId === runtimeWorkspace.deviceId.trim() &&
         standaloneWorkspacePath === normalizeRuntimeWorkspacePath(runtimeWorkspace.workspacePath)
-      await refreshWorkLists()
       markRuntimeProjectRemoved(projectId)
+      await refreshWorkLists()
       dispatch({ type: 'runtime_project_removed', projectId })
       if (clearsStandaloneWorkspace) {
         dispatch({
@@ -287,6 +295,10 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
+      markRuntimeProjectRemoved(projectId, {
+        deviceId: standaloneDeviceId,
+        workspacePath: standaloneWorkspacePath,
+      })
       await refreshWorkLists()
       dispatch({
         type: 'project_cleared',
@@ -299,6 +311,7 @@ export function useWorkbenchProjectActions({
     [
       dispatch,
       executorClient,
+      markRuntimeProjectRemoved,
       refreshWorkLists,
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,

@@ -41,7 +41,7 @@ import {
   reconcileCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
 } from './remoteRuntimeWorkCache'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 
 interface UseWorkbenchDataRefreshOptions {
   user: User
@@ -97,6 +97,27 @@ function removeRuntimeTasksFromCloudState(
   }
 }
 
+function removeRuntimeProjectFromCloudState(
+  state: CloudRuntimeState,
+  projectId: number,
+  workspace?: { deviceId: string; workspacePath: string }
+): CloudRuntimeState {
+  const removeFromSnapshot = (snapshot: CloudRuntimeState['current']) =>
+    snapshot
+      ? {
+          ...snapshot,
+          runtimeWork: removeRuntimeProject(snapshot.runtimeWork, projectId, workspace),
+        }
+      : null
+  return {
+    ...state,
+    availability:
+      state.inFlightRevision == null ? state.availability : state.lastGood ? 'stale' : 'idle',
+    current: removeFromSnapshot(state.current),
+    lastGood: removeFromSnapshot(state.lastGood),
+  }
+}
+
 function mergeRuntimeTaskAddresses(
   current: RuntimeTaskAddress[],
   incoming: RuntimeTaskAddress[]
@@ -108,11 +129,24 @@ function mergeRuntimeTaskAddresses(
 
 function removeRuntimeProject(
   runtimeWork: RuntimeWorkListResponse,
-  projectId: number
+  projectId: number,
+  workspace?: { deviceId: string; workspacePath: string }
 ): RuntimeWorkListResponse {
   const projects = runtimeWork.projects.filter(
     project => runtimeProjectUiId(project.project) !== projectId
   )
+  const normalizedDeviceId = workspace?.deviceId.trim()
+  const normalizedWorkspacePath = workspace
+    ? normalizeRuntimeWorkspacePath(workspace.workspacePath)
+    : null
+  const chats =
+    normalizedDeviceId && normalizedWorkspacePath
+      ? runtimeWork.chats.filter(
+          chat =>
+            chat.deviceId.trim() !== normalizedDeviceId ||
+            normalizeRuntimeWorkspacePath(chat.workspacePath) !== normalizedWorkspacePath
+        )
+      : runtimeWork.chats
   const totalTasks =
     projects.reduce(
       (projectTotal, project) =>
@@ -122,12 +156,8 @@ function removeRuntimeProject(
           0
         ),
       0
-    ) +
-    runtimeWork.chats.reduce(
-      (workspaceTotal, workspace) => workspaceTotal + workspace.tasks.length,
-      0
-    )
-  return { ...runtimeWork, projects, totalTasks }
+    ) + chats.reduce((workspaceTotal, workspace) => workspaceTotal + workspace.tasks.length, 0)
+  return { ...runtimeWork, projects, chats, totalTasks }
 }
 
 export function useWorkbenchDataRefresh({
@@ -157,6 +187,12 @@ export function useWorkbenchDataRefresh({
   const localRuntimeWorkRef = useRef<RuntimeWorkListResponse | null>(null)
   const devicesRef = useRef(state.devices)
   const archivedRuntimeTaskAddressesRef = useRef<RuntimeTaskAddress[]>([])
+  const removedRuntimeProjectsRef = useRef<
+    Array<{
+      projectId: number
+      workspace?: { deviceId: string; workspacePath: string }
+    }>
+  >([])
   const cloudWorkStatus = useMemo(
     () => selectCloudWorkStatus(cloudRuntimeState),
     [cloudRuntimeState]
@@ -179,6 +215,7 @@ export function useWorkbenchDataRefresh({
       runtimeWork: initialCachedRemoteRuntimeWork,
     }
     archivedRuntimeTaskAddressesRef.current = []
+    removedRuntimeProjectsRef.current = []
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Cached runtime work must switch atomically with the authenticated user.
     updateCloudRuntimeState(
       hasCloudBackgroundApi
@@ -248,6 +285,15 @@ export function useWorkbenchDataRefresh({
       return removeRuntimeTasks(visibleRuntimeWork, archivedRuntimeTaskAddressesRef.current)
     },
     [hasCloudBackgroundApi]
+  )
+
+  const filterRemovedRuntimeProjects = useCallback(
+    (runtimeWork: RuntimeWorkListResponse): RuntimeWorkListResponse =>
+      removedRuntimeProjectsRef.current.reduce(
+        (current, removed) => removeRuntimeProject(current, removed.projectId, removed.workspace),
+        runtimeWork
+      ),
+    []
   )
 
   const refreshCloudBackgroundData = useCallback(
@@ -349,9 +395,16 @@ export function useWorkbenchDataRefresh({
       }
 
       const latestLocalRuntimeWork = localRuntimeWorkRef.current ?? baseRuntimeWork
-      if (runtimeWorkResult?.status === 'fulfilled') {
+      const filteredRuntimeWorkResult =
+        runtimeWorkResult?.status === 'fulfilled'
+          ? {
+              status: 'fulfilled' as const,
+              value: filterRemovedRuntimeProjects(runtimeWorkResult.value),
+            }
+          : runtimeWorkResult
+      if (filteredRuntimeWorkResult?.status === 'fulfilled') {
         releaseConfirmedArchivedRuntimeTasks(
-          mergeRuntimeWorkLists(latestLocalRuntimeWork, runtimeWorkResult.value, {
+          mergeRuntimeWorkLists(latestLocalRuntimeWork, filteredRuntimeWorkResult.value, {
             devices: [
               ...baseDevices,
               ...(devicesResult?.status === 'fulfilled' ? devicesResult.value : []),
@@ -361,13 +414,13 @@ export function useWorkbenchDataRefresh({
       }
 
       const reconciledRuntimeWorkResult =
-        runtimeWorkResult?.status === 'fulfilled'
+        filteredRuntimeWorkResult?.status === 'fulfilled'
           ? {
               status: 'fulfilled' as const,
               value: reconcileCachedRemoteRuntimeWork(
                 cachedRemoteRuntimeWorkRef.current.runtimeWork,
                 removeRuntimeTasks(
-                  runtimeWorkResult.value,
+                  filteredRuntimeWorkResult.value,
                   archivedRuntimeTaskAddressesRef.current
                 ),
                 devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
@@ -408,6 +461,7 @@ export function useWorkbenchDataRefresh({
     },
     [
       dispatch,
+      filterRemovedRuntimeProjects,
       selectVisibleRuntimeWork,
       services.cloudBackgroundApi,
       releaseConfirmedArchivedRuntimeTasks,
@@ -522,21 +576,24 @@ export function useWorkbenchDataRefresh({
     const visibleDevices = resolveDeviceListWithCache(
       selectVisibleDevices(devices, cloudRuntimeStateRef.current)
     )
-    if (runtimeWorkResult) {
-      localRuntimeWorkRef.current = runtimeWorkResult
+    const filteredRuntimeWorkResult = runtimeWorkResult
+      ? filterRemovedRuntimeProjects(runtimeWorkResult)
+      : undefined
+    if (filteredRuntimeWorkResult) {
+      localRuntimeWorkRef.current = filteredRuntimeWorkResult
     }
-    const localRuntimeWork = runtimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
-    if (runtimeWorkResult && !services.cloudBackgroundApi?.listRuntimeWork) {
-      releaseConfirmedArchivedRuntimeTasks(runtimeWorkResult)
+    const localRuntimeWork = filteredRuntimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
+    if (filteredRuntimeWorkResult && !services.cloudBackgroundApi?.listRuntimeWork) {
+      releaseConfirmedArchivedRuntimeTasks(filteredRuntimeWorkResult)
     }
-    const runtimeWork = runtimeWorkResult
+    const runtimeWork = filteredRuntimeWorkResult
       ? selectVisibleRuntimeWork(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
       : hasCloudBackgroundApi
         ? localRuntimeWork
         : filterDisconnectedRemoteRuntimeWork(localRuntimeWork)
     debugRuntimeSidebarState('refresh-resolved', {
-      source: runtimeWorkResult ? 'executor' : 'current-state',
-      executorTaskIds: summarizeRuntimeWorkTaskIds(runtimeWorkResult ?? null),
+      source: filteredRuntimeWorkResult ? 'executor' : 'current-state',
+      executorTaskIds: summarizeRuntimeWorkTaskIds(filteredRuntimeWorkResult ?? null),
       visibleTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
     })
     dispatch({
@@ -554,6 +611,7 @@ export function useWorkbenchDataRefresh({
   }, [
     dispatch,
     executorClient,
+    filterRemovedRuntimeProjects,
     refreshCloudBackgroundData,
     hasCloudBackgroundApi,
     releaseConfirmedArchivedRuntimeTasks,
@@ -583,10 +641,57 @@ export function useWorkbenchDataRefresh({
     [executorClient]
   )
 
-  const markRuntimeProjectRemoved = useCallback((projectId: number) => {
-    if (!localRuntimeWorkRef.current) return
-    localRuntimeWorkRef.current = removeRuntimeProject(localRuntimeWorkRef.current, projectId)
-  }, [])
+  const markRuntimeProjectRemoved = useCallback(
+    (projectId: number, workspace?: { deviceId: string; workspacePath: string }) => {
+      const normalizedWorkspace = workspace
+        ? {
+            deviceId: workspace.deviceId.trim(),
+            workspacePath: normalizeRuntimeWorkspacePath(workspace.workspacePath),
+          }
+        : undefined
+      removedRuntimeProjectsRef.current = [
+        ...removedRuntimeProjectsRef.current.filter(removed => removed.projectId !== projectId),
+        { projectId, workspace: normalizedWorkspace },
+      ]
+      if (localRuntimeWorkRef.current) {
+        localRuntimeWorkRef.current = removeRuntimeProject(
+          localRuntimeWorkRef.current,
+          projectId,
+          normalizedWorkspace
+        )
+      }
+      cachedRemoteRuntimeWorkRef.current = {
+        ...cachedRemoteRuntimeWorkRef.current,
+        runtimeWork: removeRuntimeProject(
+          cachedRemoteRuntimeWorkRef.current.runtimeWork,
+          projectId,
+          normalizedWorkspace
+        ),
+      }
+      updateCloudRuntimeState(
+        removeRuntimeProjectFromCloudState(
+          cloudRuntimeStateRef.current,
+          projectId,
+          normalizedWorkspace
+        )
+      )
+    },
+    [updateCloudRuntimeState]
+  )
+
+  const clearRuntimeProjectRemoval = useCallback(
+    (workspace: { deviceId: string; workspacePath: string }) => {
+      const normalizedDeviceId = workspace.deviceId.trim()
+      const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspace.workspacePath)
+      removedRuntimeProjectsRef.current = removedRuntimeProjectsRef.current.filter(
+        removed =>
+          !removed.workspace ||
+          removed.workspace.deviceId !== normalizedDeviceId ||
+          removed.workspace.workspacePath !== normalizedWorkspacePath
+      )
+    },
+    []
+  )
 
   const refreshDevices = useCallback(
     async (options?: { useCacheFallback?: boolean }) => {
@@ -625,6 +730,7 @@ export function useWorkbenchDataRefresh({
     cloudWorkStatus,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
+    clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,

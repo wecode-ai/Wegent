@@ -481,6 +481,7 @@ export function WorkbenchProvider({
     cloudWorkStatus,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
+    clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,
@@ -745,6 +746,9 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
+        response.roots.forEach(workspacePath =>
+          clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
+        )
         rememberExecutionDevice(response.deviceId)
         await refreshWorkLists()
         dispatch({
@@ -775,6 +779,10 @@ export function WorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
+      clearRuntimeProjectRemoval({
+        deviceId: openedDeviceId,
+        workspacePath: openedWorkspacePath,
+      })
       writeLastProjectId(user.id, null)
       rememberExecutionDevice(openedDeviceId)
       dispatch({
@@ -785,7 +793,14 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [executorClient, refreshWorkLists, rememberExecutionDevice, state.devices, user.id]
+    [
+      clearRuntimeProjectRemoval,
+      executorClient,
+      refreshWorkLists,
+      rememberExecutionDevice,
+      state.devices,
+      user.id,
+    ]
   )
 
   const startNewChat = useCallback(() => {
@@ -1059,6 +1074,7 @@ export function WorkbenchProvider({
     services: resolvedServices,
     refreshWorkLists,
     markRuntimeProjectRemoved,
+    clearRuntimeProjectRemoval,
     rememberExecutionDevice,
   })
   const runtimeMessaging = useWorkbenchRuntimeMessaging({

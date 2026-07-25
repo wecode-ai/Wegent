@@ -101,6 +101,7 @@ export function EnvironmentInfoPopover({
   const [floatingPopoverStyle, setFloatingPopoverStyle] = useState<CSSProperties>()
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const copiedWorkspacePathTimeoutRef = useRef<number | null>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
   const device = info.deviceId ? findWorkbenchDevice(devices, info.deviceId) : undefined
@@ -157,9 +158,24 @@ export function EnvironmentInfoPopover({
 
   async function handleCopyWorkspacePath(workspacePath: string) {
     await copyTextToClipboard(workspacePath)
+    if (copiedWorkspacePathTimeoutRef.current !== null) {
+      window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
+    }
     setCopiedWorkspacePath(workspacePath)
-    window.setTimeout(() => setCopiedWorkspacePath(null), 2000)
+    copiedWorkspacePathTimeoutRef.current = window.setTimeout(() => {
+      setCopiedWorkspacePath(current => (current === workspacePath ? null : current))
+      copiedWorkspacePathTimeoutRef.current = null
+    }, 2000)
   }
+
+  useEffect(
+    () => () => {
+      if (copiedWorkspacePathTimeoutRef.current !== null) {
+        window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
+      }
+    },
+    []
+  )
 
   function getCommitErrorMessage(error: unknown) {
     const fallback = t('workbench.environment_commit_failed', '提交失败')
@@ -311,7 +327,7 @@ export function EnvironmentInfoPopover({
                   return (
                     <div
                       key={workspacePath}
-                      className="flex h-7 min-w-0 items-center gap-2"
+                      className="flex h-11 min-w-0 items-center gap-2 md:h-7"
                       data-testid={`environment-workspace-root-row-${index}`}
                     >
                       <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
@@ -325,7 +341,7 @@ export function EnvironmentInfoPopover({
                         onClick={() => void handleCopyWorkspacePath(workspacePath)}
                         title={workspacePath}
                         aria-label={`${t('workbench.environment_workspace_path')} · ${workspacePath}`}
-                        className="flex min-w-0 flex-1 items-center gap-1 rounded py-1 text-left hover:text-text-primary"
+                        className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded py-1 text-left hover:text-text-primary md:min-h-0"
                       >
                         <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
                         <span
