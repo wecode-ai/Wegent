@@ -795,6 +795,8 @@ describe('DesktopWorkbenchLayout', () => {
     onOpenStandaloneWorkspace?: (...args: unknown[]) => Promise<void> | void
     onOpenRuntimeTask?: (...args: unknown[]) => Promise<void> | void
     onSearchRuntimeWork?: (...args: unknown[]) => Promise<unknown>
+    onCancelRuntimePaneTask?: WorkbenchContextValue['cancelRuntimePaneTask']
+    onForkCurrentRuntimeTask?: WorkbenchContextValue['forkCurrentRuntimeTask']
     onListImPrivateSessions?: () => Promise<unknown>
     onBindRuntimeTaskToImSessions?: (...args: unknown[]) => Promise<unknown>
     onGetImNotificationSettings?: () => Promise<unknown>
@@ -1023,7 +1025,8 @@ describe('DesktopWorkbenchLayout', () => {
       archiveProjectConversations: vi.fn().mockResolvedValue(undefined),
       archiveProjectsConversations: vi.fn().mockResolvedValue(undefined),
       archiveChatConversations: vi.fn().mockResolvedValue(undefined),
-      forkCurrentRuntimeTask: vi.fn().mockResolvedValue(undefined),
+      forkCurrentRuntimeTask:
+        props.onForkCurrentRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
       listImPrivateSessions:
         props.onListImPrivateSessions ?? vi.fn().mockResolvedValue({ total: 0, items: [] }),
       bindRuntimeTaskToImSessions:
@@ -1080,7 +1083,7 @@ describe('DesktopWorkbenchLayout', () => {
       createEnvironmentBranch:
         props.onCreateEnvironmentBranch ?? baseProps.onCreateEnvironmentBranch,
       sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
-      cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
+      cancelRuntimePaneTask: props.onCancelRuntimePaneTask ?? vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
       retryFailedMessage: vi.fn().mockResolvedValue(true),
       pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
@@ -1846,6 +1849,58 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+  })
+
+  test('forks an earlier completed turn without stopping the running follow-up', async () => {
+    const currentRuntimeTask = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-1',
+    }
+    const onCancelRuntimePaneTask = vi.fn().mockResolvedValue(true)
+    const onForkCurrentRuntimeTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask,
+        }}
+        lifecycleTaskRunning
+        messages={[
+          {
+            id: 'assistant-turn-1',
+            role: 'assistant',
+            content: 'First turn complete',
+            status: 'done',
+            turnId: 'turn-1',
+            createdAt: '2026-07-25T12:00:00.000Z',
+          },
+          {
+            id: 'assistant-turn-2',
+            role: 'assistant',
+            content: 'Follow-up is streaming',
+            status: 'streaming',
+            turnId: 'turn-2',
+            createdAt: '2026-07-25T12:01:00.000Z',
+          },
+        ]}
+        onCancelRuntimePaneTask={onCancelRuntimePaneTask}
+        onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('fork-message-button'))
+
+    expect(onCancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(onForkCurrentRuntimeTask).toHaveBeenCalledWith(
+      {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+      },
+      { lastTurnId: 'turn-1' }
+    )
   })
 
   test('keeps continue-in-im action with workspace panel actions on web', () => {
