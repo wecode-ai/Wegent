@@ -457,6 +457,16 @@ function hoverDesktopControlElement(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
+function leaveDesktopControlElement(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const options = desktopControlEventOptions(element)
+  for (const type of ['pointerout', 'pointerleave', 'mouseout', 'mouseleave']) {
+    dispatchDesktopControlPointerEvent(element, type, options)
+  }
+  return element.textContent?.trim() ?? ''
+}
+
 function moveDesktopControlPointer(command: DesktopControlCommand): string {
   const selector = command.target ?? command.selector
   const element = findDesktopControlElements(selector)[0]
@@ -763,10 +773,24 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
+    case 'finishAnimations': {
+      let finishedCount = 0
+      for (const animation of document.getAnimations()) {
+        try {
+          animation.finish()
+          finishedCount += 1
+        } catch {
+          // Infinite animations cannot be finished and are unrelated to layout settling.
+        }
+      }
+      return String(finishedCount)
+    }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'hover':
       return hoverDesktopControlElement(command.selector)
+    case 'pointerLeave':
+      return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
     case 'navigate': {

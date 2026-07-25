@@ -666,6 +666,17 @@ async function waitForTopMetrics(control, selector, description, timeoutMs = 3_0
   )
 }
 
+async function waitForElementWidth(control, selector, predicate, description, timeoutMs = 1_500) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (predicate(metrics.width)) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description} remained ${metrics.width}px wide after ${timeoutMs}ms`)
+}
+
 function distanceFromBottom(metrics) {
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
 }
@@ -7535,6 +7546,7 @@ async function main() {
       restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
       'The browser tab was not restored after switching conversations'
     )
+    await control.command('finishAnimations', 'body')
     await captureVerificationScreenshot(control, 'workspace-panel-01-default-split.png')
 
     const expandedPanelToggleSelector =
@@ -7546,6 +7558,7 @@ async function main() {
       '[data-testid="restore-conversation-from-expanded-workspace-button"]',
       { timeoutMs: UI_TIMEOUT_MS }
     )
+    await control.command('finishAnimations', 'body')
     assert.equal(
       await control.command('getInlineStyle', rightPanelShellSelector, { value: 'width' }),
       '100%',
@@ -7569,17 +7582,46 @@ async function main() {
     await control.command('waitFor', '[data-testid="expand-sidebar-button"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('finishAnimations', 'body')
+    const collapsedSidebarMetrics = await waitForElementWidth(
+      control,
+      '[data-testid="desktop-sidebar"]',
+      width => width <= 1,
+      'The desktop sidebar'
+    )
+    assert.ok(
+      collapsedSidebarMetrics.width <= 1,
+      'The desktop sidebar remained visible after it was collapsed'
+    )
     assert.equal(
       await control.command('getInlineStyle', rightPanelShellSelector, { value: 'width' }),
       '100%',
       'The expanded right workspace panel changed width after the sidebar collapsed'
     )
+    const sidebarHiddenPanelMetrics = await getSingleElementMetrics(
+      control,
+      rightPanelShellSelector,
+      'The expanded right workspace panel'
+    )
+    assert.ok(
+      sidebarHiddenPanelMetrics.left <= 1,
+      `The expanded right workspace panel remained ${sidebarHiddenPanelMetrics.left}px from the left edge`
+    )
+    await control.command('pointerLeave', '[data-testid="desktop-sidebar-hover-edge"]')
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 350))
     await captureVerificationScreenshot(control, 'workspace-panel-03-expanded-sidebar-hidden.png')
 
     await control.command('click', '[data-testid="expand-sidebar-button"]')
     await control.command('waitFor', '[data-testid="collapse-sidebar-button"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('finishAnimations', 'body')
+    await waitForElementWidth(
+      control,
+      '[data-testid="desktop-sidebar"]',
+      width => width >= 239,
+      'The desktop sidebar'
+    )
     await control.command(
       'click',
       '[data-testid="restore-conversation-from-expanded-workspace-button"]'
@@ -7587,6 +7629,7 @@ async function main() {
     await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('finishAnimations', 'body')
     await captureVerificationScreenshot(control, 'workspace-panel-04-restored-split.png')
     await control.command('click', bottomWorkspaceTabCloseSelector)
     await control.command('click', rightBrowserTabCloseSelector)
