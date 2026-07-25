@@ -7578,6 +7578,22 @@ async function main() {
     )
     await captureVerificationScreenshot(control, 'workspace-panel-02-expanded.png')
 
+    await control.command(
+      'click',
+      '[data-testid="restore-conversation-from-expanded-workspace-button"]'
+    )
+    await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('finishAnimations', 'body')
+    await control.command('click', expandedPanelToggleSelector)
+    await control.command(
+      'waitFor',
+      '[data-testid="restore-conversation-from-expanded-workspace-button"]',
+      { timeoutMs: UI_TIMEOUT_MS }
+    )
+    await control.command('finishAnimations', 'body')
+
     await control.command('click', '[data-testid="collapse-sidebar-button"]')
     await control.command('waitFor', '[data-testid="expand-sidebar-button"]', {
       timeoutMs: UI_TIMEOUT_MS,
@@ -7622,10 +7638,7 @@ async function main() {
       width => width >= 239,
       'The desktop sidebar'
     )
-    await control.command(
-      'click',
-      '[data-testid="restore-conversation-from-expanded-workspace-button"]'
-    )
+    await control.command('click', expandedPanelToggleSelector)
     await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
