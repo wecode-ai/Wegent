@@ -44,6 +44,7 @@ import {
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { isImeEnterEvent } from '@/lib/ime'
@@ -161,7 +162,6 @@ interface MessageTextSelection {
   conversationKey?: string | number | null
 }
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
-const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
 const CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX = 'PLEASE IMPLEMENT THIS PLAN:'
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
@@ -918,7 +918,7 @@ function UserMessage({
     [message.content]
   )
   const displayContent = normalizeCodexUserMessageContent(
-    codexLocalFileMentions?.requestText ?? message.content
+    codexLocalFileMentions?.requestText ?? visibleRuntimeUserMessage(message.content)
   )
   const imageAttachments = useMemo(
     () => (message.attachments ?? []).filter(isImageAttachment),
@@ -1232,14 +1232,9 @@ function parseCodexLocalFileMentions(content: string): {
 } | null {
   if (!CODEX_FILE_MENTIONS_HEADER_PATTERN.test(content)) return null
 
-  const requestMarker = content.match(CODEX_REQUEST_MARKER_PATTERN)
-  const requestText =
-    requestMarker?.index === undefined
-      ? ''
-      : content.slice(requestMarker.index + requestMarker[0].length).trim()
-
-  const filesText =
-    requestMarker?.index === undefined ? content : content.slice(0, requestMarker.index)
+  const messageParts = splitRuntimeUserMessage(content)
+  const requestText = messageParts?.request ?? ''
+  const filesText = messageParts?.prefix ?? content
   const images: Array<{ filename: string; path: string }> = []
   const files: Array<{ filename: string; path: string }> = []
   for (const match of filesText.matchAll(CODEX_FILE_MENTION_LINE_PATTERN)) {

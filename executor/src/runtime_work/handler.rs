@@ -76,7 +76,10 @@ use super::{
         set_runtime_handle_messages,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{full_transcript_messages, transcript_messages},
+    transcript::{
+        full_transcript_messages, merge_missing_user_message_metadata,
+        normalized_user_request_content, transcript_messages,
+    },
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, execution_request, id_field,

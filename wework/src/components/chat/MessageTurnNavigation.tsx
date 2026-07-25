@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { cn } from '@/lib/utils'
 import type { RuntimeTurnNavigationItem } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
@@ -20,7 +21,6 @@ const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
 const NAVIGATION_VIEWPORT_PADDING_PX = 48
 const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [80, 160, 320, 640, 1000, 1600]
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
-const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
 interface MessageTurnNavigationProps {
   messages: WorkbenchMessage[]
@@ -448,6 +448,7 @@ export function MessageTurnNavigation({
                     isLoading && 'cursor-progress'
                   )}
                   data-active={isActive}
+                  data-turn-index={marker.turnIndex}
                   data-testid="message-turn-navigation-marker"
                   onClick={() => handleMarkerClick(marker)}
                   onFocus={() => setHoveredMarkerId(marker.id)}
@@ -475,6 +476,8 @@ export function MessageTurnNavigation({
             'pointer-events-none absolute left-8 z-30 w-[300px] max-w-[calc(100vw-56px)] -translate-y-1/2 rounded-md border border-border bg-background px-2.5 py-2 text-left shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition-opacity duration-150',
             hoveredMarkerId === marker.id ? 'opacity-100' : 'opacity-0'
           )}
+          data-testid="message-turn-navigation-preview"
+          data-turn-index={marker.turnIndex}
           style={{ top: `${getMarkerTopPx(index) - navigationScrollTop}px` }}
         >
           <p className="break-words text-xs font-semibold leading-4 text-text-primary">
@@ -546,27 +549,19 @@ function buildUserTurnsFromNavigation(
   messages: WorkbenchMessage[]
 ): UserTurn[] {
   const loadedTurns = buildUserTurns(messages)
-  const loadedMessagesByIndex = new Map(
-    messages
-      .filter(
-        (message): message is WorkbenchMessage & { runtimeMessageIndex: number } =>
-          message.role === 'user' && typeof message.runtimeMessageIndex === 'number'
-      )
-      .map(message => [message.runtimeMessageIndex, message])
-  )
-  const loadedMessagesById = new Map(messages.map(message => [message.id, message]))
+  const loadedTurnsByIndex = new Map(loadedTurns.map(turn => [turn.messageIndex, turn]))
+  const loadedTurnsById = new Map(loadedTurns.map(turn => [turn.id, turn]))
 
   const navigationTurns = navigation.map((item, index) => {
-    const loadedMessage =
-      loadedMessagesByIndex.get(item.messageIndex) ?? loadedMessagesById.get(item.id)
+    const loadedTurn = loadedTurnsByIndex.get(item.messageIndex) ?? loadedTurnsById.get(item.id)
     return {
-      id: loadedMessage?.id ?? item.id,
+      id: loadedTurn?.id ?? item.id,
       turnIndex: typeof item.turnIndex === 'number' ? item.turnIndex : index,
       messageIndex: item.messageIndex,
-      promptPreview: item.promptPreview,
-      responsePreview: item.responsePreview ?? '',
+      promptPreview: loadedTurn?.promptPreview ?? item.promptPreview,
+      responsePreview: loadedTurn?.responsePreview || item.responsePreview || '',
       cursor: item.cursor ?? `offset:${item.messageIndex}`,
-      loaded: Boolean(loadedMessage),
+      loaded: Boolean(loadedTurn),
     }
   })
   const navigationMessageIds = new Set(navigationTurns.map(turn => turn.id))
@@ -577,8 +572,7 @@ function buildUserTurnsFromNavigation(
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {
-  const codexRequest = extractCodexRequest(message.content)
-  return truncatePreview(codexRequest || message.content, USER_PREVIEW_LENGTH)
+  return truncatePreview(visibleRuntimeUserMessage(message.content), USER_PREVIEW_LENGTH)
 }
 
 function getAssistantPreview(message: WorkbenchMessage) {
@@ -599,13 +593,6 @@ function getFirstTextBlockContent(message: WorkbenchMessage) {
   }
 
   return ''
-}
-
-function extractCodexRequest(content: string) {
-  const requestMarker = content.match(CODEX_REQUEST_MARKER_PATTERN)
-  if (requestMarker?.index === undefined) return ''
-
-  return content.slice(requestMarker.index + requestMarker[0].length).trim()
 }
 
 function truncatePreview(text: string, maxLength: number) {

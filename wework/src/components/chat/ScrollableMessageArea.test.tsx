@@ -440,10 +440,34 @@ describe('ScrollableMessageArea', () => {
               '## notes.txt: /tmp/notes.txt',
               '',
               '## My request for Codex:',
+              '<application_context>',
+              '[wework.terminal.current]',
+              'Wework terminal context',
+              '</application_context>',
+              '',
               '第二条用户需求',
             ].join('\n'),
             status: 'done',
             createdAt: '2026-05-29T00:00:02.000Z',
+          },
+        ]}
+        turnNavigation={[
+          {
+            id: 'user-1',
+            turnIndex: 0,
+            messageIndex: 0,
+            cursor: 'offset:0',
+            promptPreview: '第一条用户需求',
+            responsePreview: '第一条回复摘要',
+          },
+          {
+            id: 'provider-user-2',
+            turnIndex: 1,
+            messageIndex: 2,
+            cursor: 'offset:2',
+            promptPreview:
+              '<application_context> [wework.terminal.current] Wework terminal context',
+            responsePreview: '',
           },
         ]}
       />
@@ -503,6 +527,8 @@ describe('ScrollableMessageArea', () => {
     fireEvent.blur(markers[0])
     expect(screen.getAllByText('第一条用户需求')).toHaveLength(2)
     expect(screen.getAllByText('第一条回复摘要')).toHaveLength(2)
+    expect(screen.getAllByText('第二条用户需求')).toHaveLength(2)
+    expect(screen.queryByText(/application_context/)).not.toBeInTheDocument()
   })
 
   test('renders message navigation in an overlay outside the external scroller', () => {
