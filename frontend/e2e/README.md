@@ -1,5 +1,7 @@
 # E2E Testing with Code Coverage
 
+<!-- CI rebuild trigger. -->
+
 This directory contains end-to-end tests for the Wegent frontend using Playwright.
 
 ## Running Tests
