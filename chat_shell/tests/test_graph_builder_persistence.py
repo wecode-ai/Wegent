@@ -346,14 +346,14 @@ async def test_tool_limit_recovery_persists_full_chain_without_instruction(monke
 
 
 @pytest.mark.asyncio
-async def test_truncation_retry_seeds_new_thread_with_ephemeral_instruction(
-    monkeypatch,
-):
+async def test_truncation_retry_uses_attempt_control_plane(monkeypatch):
+    """The retry seed carries only authoritative state; the truncation
+    instruction rides the attempt control plane (``_attempt_guidance``), so it
+    never enters the persisted ``messages`` channel."""
     from chat_shell.agents.graph_builder import (
         LangGraphAgentBuilder,
         ToolCallTruncatedError,
     )
-    from chat_shell.compression.summary_compactor import EPHEMERAL_CONTROL_FLAG
 
     # Authoritative state at the truncation point: a real user + partial reply.
     authoritative = [
@@ -376,10 +376,14 @@ async def test_truncation_retry_seeds_new_thread_with_ephemeral_instruction(
             calls["n"] += 1
             if calls["n"] == 1:
                 captured["root_thread"] = config["configurable"]["thread_id"]
+                # Root turn must carry no attempt guidance.
+                captured["root_guidance"] = list(builder._attempt_guidance)
                 raise ToolCallTruncatedError(reason="length", has_tool_calls=True)
-            # Second call = the retry: capture its seed + thread, then complete.
+            # Second call = the retry: capture its seed, thread, and the
+            # attempt-scoped guidance that the pre-model hook would inject.
             captured["retry_input"] = _input["messages"]
             captured["retry_thread"] = config["configurable"]["thread_id"]
+            captured["retry_guidance"] = list(builder._attempt_guidance)
             for _ in []:
                 yield
 
@@ -400,14 +404,43 @@ async def test_truncation_retry_seeds_new_thread_with_ephemeral_instruction(
     assert captured["retry_thread"] != captured["root_thread"]
     # The sanitized authoritative state was seeded into the retry.
     assert any(getattr(m, "content", "") == "analyze data" for m in retry_msgs)
-    # The truncation instruction rides as an ephemeral control message.
-    ephemeral = [
-        m
-        for m in retry_msgs
-        if getattr(m, "additional_kwargs", {}).get(EPHEMERAL_CONTROL_FLAG) is True
+    # The instruction is NOT in the persisted seed (messages channel).
+    assert all(
+        "[SYSTEM ERROR]" not in str(getattr(m, "content", "")) for m in retry_msgs
+    )
+    # The root turn had no attempt guidance; the retry carries exactly one.
+    assert captured["root_guidance"] == []
+    assert len(captured["retry_guidance"]) == 1
+    assert "[SYSTEM ERROR]" in captured["retry_guidance"][0].content
+
+
+def test_attempt_guidance_hook_appends_to_model_input_only():
+    """``_attempt_guidance_hook`` appends guidance to the model-visible list via
+    ``llm_input_messages`` and never touches the ``messages`` channel; it is a
+    no-op when no guidance is active."""
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+
+    # No guidance -> no-op (keeps whatever prior producer set).
+    assert builder._attempt_guidance_hook({"messages": [HumanMessage("hi")]}) == {}
+
+    # With guidance, it builds on a prior producer's llm_input_messages.
+    builder._attempt_guidance = [HumanMessage(content="[SYSTEM ERROR] retry")]
+    prior = [HumanMessage(content="compacted+guidance")]
+    update = builder._attempt_guidance_hook(
+        {"messages": [HumanMessage("raw")], "llm_input_messages": prior}
+    )
+    assert "messages" not in update  # never writes the persisted channel
+    out = update["llm_input_messages"]
+    assert [m.content for m in out] == ["compacted+guidance", "[SYSTEM ERROR] retry"]
+
+    # Falls back to messages when no prior llm_input_messages exists.
+    update = builder._attempt_guidance_hook({"messages": [HumanMessage("raw")]})
+    assert [m.content for m in update["llm_input_messages"]] == [
+        "raw",
+        "[SYSTEM ERROR] retry",
     ]
-    assert len(ephemeral) == 1
-    assert "[SYSTEM ERROR]" in ephemeral[0].content
 
 
 @pytest.mark.asyncio
@@ -565,3 +598,117 @@ async def test_nonstreaming_recovery_uses_current_state_and_deletes_thread(monke
         for m in recovery_seen
     )
     assert len(deleted) == 1  # non-streaming thread torn down
+
+
+@pytest.mark.asyncio
+async def test_truncation_retry_then_compaction_end_to_end(monkeypatch):
+    """Full combination path through a REAL agent:
+
+    root turn truncates -> fresh retry thread -> retry thread compacts ->
+    retry LLM succeeds. The truncation guidance must reach the retry LLM *after*
+    compaction while never entering the summary source, the checkpoint, or the
+    persisted ``messages_chain``, and both threads must be freed.
+    """
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    model_inputs: list[list] = []  # what each model call actually received
+    guard_inputs: list[list] = []  # what the compactor (guard) saw as messages
+
+    class _TruncateThenSucceedModel(BaseChatModel):
+        call_count: int = 0
+
+        @property
+        def _llm_type(self) -> str:
+            return "truncate-then-succeed"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            self.call_count += 1
+            model_inputs.append(list(messages))
+            if self.call_count == 1:
+                # Root turn: a tool call cut off by the token limit.
+                msg = AIMessage(
+                    content="partial",
+                    tool_calls=[{"name": "_probe", "args": {"query": "q"}, "id": "t1"}],
+                    response_metadata={"finish_reason": "length"},
+                )
+            else:
+                # Retry turn (after compaction): a clean final answer, no tools.
+                msg = AIMessage(content="final ok")
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    class _CompactOnRetry:
+        """Guard-like hook: no-op on the root call, drops ALL history for a bare
+        summary on the retry call. Dropping everything also proves the guidance
+        survives maximal over-budget trimming (it is appended afterwards)."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, state):
+            self.calls += 1
+            msgs = state["messages"]
+            guard_inputs.append(list(msgs))
+            if self.calls == 2:
+                summary = HumanMessage(
+                    content="[COMPACT SUMMARY] earlier work",
+                    additional_kwargs={SUMMARY_FLAG: True, "compacted": True},
+                    id="s-1",
+                )
+                removals = [RemoveMessage(id=m.id) for m in msgs if m.id]
+                return {"messages": [*removals, summary]}
+            return {}
+
+    builder = LangGraphAgentBuilder(llm=_TruncateThenSucceedModel())
+    builder.pre_model_hook = _CompactOnRetry()
+    monkeypatch.setattr(builder, "max_truncation_retries", 2)
+
+    # Build once so the request-local checkpointer exists; spy on thread deletes.
+    builder._build_agent()
+    saver = builder._checkpointer
+    deleted: list[str] = []
+    orig_delete = saver.adelete_thread
+
+    async def _spy_delete(thread_id):
+        deleted.append(thread_id)
+        return await orig_delete(thread_id)
+
+    saver.adelete_thread = _spy_delete
+
+    tokens: list[str] = []
+    async for token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "analyze data"}]
+    ):
+        tokens.append(token)
+
+    # The retry produced the successful final answer.
+    assert "".join(tokens) == "final ok"
+
+    # Two model calls happened: root (truncated) and retry (post-compaction).
+    assert len(model_inputs) == 2
+    retry_input_text = " ".join(str(getattr(m, "content", "")) for m in model_inputs[1])
+    # 1. The retry LLM saw the truncation guidance AFTER compaction...
+    assert "[SYSTEM ERROR]" in retry_input_text
+    # ...alongside the compaction summary (proves it survived maximal trimming).
+    assert "[COMPACT SUMMARY]" in retry_input_text
+
+    # 2. The summary source (what the guard/compactor saw) never had guidance.
+    assert guard_inputs, "compactor should have been invoked"
+    assert all(
+        "[SYSTEM ERROR]" not in str(getattr(m, "content", ""))
+        for seen in guard_inputs
+        for m in seen
+    )
+
+    chain = builder._last_messages_chain
+    # 5. Summary marker + post-compaction suffix are intact in the chain.
+    assert any(c.get("additional_kwargs", {}).get(SUMMARY_FLAG) for c in chain)
+    assert chain[-1]["role"] == "assistant"
+    assert chain[-1]["content"] == "final ok"
+    # 3 & 4. Guidance is absent from the persisted chain (checkpoint-derived).
+    assert all("[SYSTEM ERROR]" not in str(c.get("content", "")) for c in chain)
+
+    # 6. Both the parent turn and the retry thread were torn down.
+    assert len(set(deleted)) == 2

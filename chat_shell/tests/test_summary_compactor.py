@@ -178,45 +178,6 @@ def test_remove_oldest_history_items_keeps_at_least_one_without_current_user():
 
 
 @pytest.mark.asyncio
-async def test_ephemeral_control_message_not_treated_as_user_or_retained():
-    from chat_shell.compression.summary_compactor import EPHEMERAL_CONTROL_FLAG
-
-    llm = _FakeLLM([AIMessage(content="Current objective:\ngo")])
-    counter = TokenCounter(model_name="gpt-4")
-    compactor = SummaryCompactor(llm=llm, token_counter=counter)
-
-    real_user = HumanMessage(content="analyze my data")
-    ephemeral = HumanMessage(
-        content="[SYSTEM ERROR] truncated, retry",
-        additional_kwargs={EPHEMERAL_CONTROL_FLAG: True},
-    )
-    messages = [real_user, AIMessage(content="partial"), ephemeral]
-
-    result = await compactor.compact(messages, preserve_initial_context=False)
-
-    retained = [
-        message.content
-        for message in result.replacement_history
-        if isinstance(message, HumanMessage)
-        and message.additional_kwargs.get(SUMMARY_METADATA_FLAG) is not True
-    ]
-    assert "analyze my data" in retained  # real user retained as checkpoint
-    assert all(
-        "[SYSTEM ERROR]" not in content for content in retained
-    )  # not the control msg
-    # The control message was never handed to the summary LLM either.
-    summary_source = llm.calls[0]
-    assert all(
-        "[SYSTEM ERROR]" not in _content_text(message) for message in summary_source
-    )
-
-
-def _content_text(message) -> str:
-    content = getattr(message, "content", "")
-    return content if isinstance(content, str) else str(content)
-
-
-@pytest.mark.asyncio
 async def test_compact_builds_summary_message_with_compacted_metadata():
     llm = _FakeLLM([AIMessage(content="Current objective:\nship it")])
     counter = TokenCounter(model_name="gpt-4")

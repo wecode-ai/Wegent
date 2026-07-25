@@ -39,9 +39,9 @@ from opentelemetry import trace as otel_trace
 
 from shared.telemetry.decorators import add_span_event, trace_sync
 
-from ..compression.summary_compactor import EPHEMERAL_CONTROL_FLAG
 from ..compression.tool_sanitizer import sanitize_tool_pairs
 from ..core.config import settings
+from ..guard.composition import chain_pre_model_hooks
 from ..llm_logging import env_bool as _env_bool
 from ..llm_logging import log_direct_llm_request as _log_direct_llm_request
 from ..llm_logging import log_direct_llm_response as _log_direct_llm_response
@@ -784,6 +784,10 @@ class LangGraphAgentBuilder:
         # Request-local checkpointer, created unconditionally in _build_agent so
         # authoritative post-compaction state is readable on every exit path.
         self._checkpointer: InMemorySaver | None = None
+        # Attempt-scoped control plane: guidance injected into the model input
+        # (via llm_input_messages, after compaction) but never persisted. Set at
+        # the top of each stream_tokens level; empty on the root turn.
+        self._attempt_guidance: list[BaseMessage] = []
 
         # Provider metadata set by LangChainModelFactory for think-block handling
         self._provider: str = getattr(llm, "_wegent_provider", "unknown")
@@ -1255,6 +1259,23 @@ class LangGraphAgentBuilder:
             "agent.max_iterations": self.max_iterations,
         },
     )
+    def _attempt_guidance_hook(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Inject attempt-scoped control guidance into the model input only.
+
+        Runs last in the pre-model chain, so it appends to the post-compaction,
+        post-guidance model-visible list via ``llm_input_messages``. The guidance
+        is never written to the ``messages`` channel, so it never reaches the
+        checkpoint, the summary source, or the persisted ``messages_chain``.
+        Injected on every model call while set, so a retry that compacts still
+        shows the model the guidance after compaction. Returns ``{}`` (a no-op)
+        on the root turn when no guidance is active.
+        """
+        guidance = self._attempt_guidance
+        if not guidance:
+            return {}
+        base = state.get("llm_input_messages") or state.get("messages") or []
+        return {"llm_input_messages": [*base, *guidance]}
+
     def _build_agent(self):
         """Build the LangGraph ReAct agent lazily."""
         if self._agent is not None:
@@ -1287,6 +1308,15 @@ class LangGraphAgentBuilder:
             },
         )
 
+        # Chain the caller's hook (guard + user guidance) with the builder-owned
+        # attempt-guidance hook, so truncation-retry control reaches the model
+        # via llm_input_messages after compaction without ever being persisted.
+        effective_pre_model_hook = (
+            chain_pre_model_hooks(self.pre_model_hook, self._attempt_guidance_hook)
+            if self.pre_model_hook is not None
+            else chain_pre_model_hooks(self._attempt_guidance_hook)
+        )
+
         # Store all_tools for external access (e.g., for display_name lookup)
         self.all_tools = all_tools
         load_skill_tool = self._find_load_skill_tool()
@@ -1306,7 +1336,7 @@ class LangGraphAgentBuilder:
                 tools=tool_node_or_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
-                pre_model_hook=self.pre_model_hook,
+                pre_model_hook=effective_pre_model_hook,
             )
         else:
             self._agent = create_react_agent(
@@ -1314,7 +1344,7 @@ class LangGraphAgentBuilder:
                 tools=tool_node_or_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
-                pre_model_hook=self.pre_model_hook,
+                pre_model_hook=effective_pre_model_hook,
             )
         add_span_event("react_agent_created")
 
@@ -1343,52 +1373,6 @@ class LangGraphAgentBuilder:
             collect_all_events=False,
         )
         return result
-
-    async def stream_execute(
-        self,
-        messages: list[dict[str, Any]],
-        config: dict[str, Any] | None = None,
-        cancel_event: asyncio.Event | None = None,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream agent workflow execution.
-
-        Args:
-            messages: Initial conversation messages
-            config: Optional configuration (thread_id for checkpointing)
-            cancel_event: Optional cancellation event
-
-        Yields:
-            State updates as they occur
-        """
-        agent = self._build_agent()
-        lc_messages = _convert_validated_messages(
-            messages,
-            context="stream_execute input messages",
-            target_provider=self._provider,
-            target_model_id=self._model_id,
-            target_api_format=self._api_format,
-        )
-
-        exec_config = {"configurable": config} if config else None
-
-        _log_direct_llm_request(
-            messages=lc_messages,
-            tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
-            request_name="stream_execute",
-        )
-
-        async for event in agent.astream(
-            {"messages": lc_messages},
-            config={
-                **(exec_config or {}),
-                "recursion_limit": self.max_iterations * 2 + 1,
-            },
-        ):
-            # Check cancellation
-            if cancel_event and cancel_event.is_set():
-                logger.info("Streaming cancelled by user")
-                return
-            yield event
 
     def _finalize_turn_history(
         self,
@@ -1424,6 +1408,7 @@ class LangGraphAgentBuilder:
         on_tool_event: Callable[[str, dict], None] | None = None,
         _truncation_retry_count: int = 0,
         _parent_turn_ctx: "TurnExecutionContext | None" = None,
+        _attempt_guidance: list[BaseMessage] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from agent execution.
 
@@ -1441,6 +1426,11 @@ class LangGraphAgentBuilder:
             Content tokens as they are generated
         """
         add_span_event("stream_tokens_started", {"message_count": len(messages)})
+
+        # Attempt-scoped control guidance for this recursion level. The pre-model
+        # hook reads it and injects it into the model input after compaction; it
+        # is never persisted. Reset per level (empty on the root turn).
+        self._attempt_guidance = list(_attempt_guidance or [])
 
         add_span_event("building_agent_started")
         agent = self._build_agent()
@@ -2064,9 +2054,12 @@ class LangGraphAgentBuilder:
                 yield f"{TRUNCATED_MARKER_START}{e.reason}{TRUNCATED_MARKER_END}"
                 return
 
-            # Construct error message for LLM. It is an ephemeral CONTROL message:
-            # the model sees it this turn, but it must never be treated as a real
-            # user turn nor persisted (the compactor and serializer skip it).
+            # The truncation instruction is attempt-scoped CONTROL: the retry
+            # model must see it, but it must never be persisted nor compete with
+            # real user turns. It rides the attempt control plane (injected via
+            # llm_input_messages by _attempt_guidance_hook AFTER compaction), not
+            # the messages channel — so it survives the retry thread's own
+            # compaction while staying out of the summary/checkpoint/chain.
             error_message = TOOL_CALL_TRUNCATION_ERROR_TEMPLATE.format(
                 reason=e.reason,
                 attempt=_truncation_retry_count + 1,
@@ -2074,18 +2067,12 @@ class LangGraphAgentBuilder:
             )
 
             # Seed the retry from the CURRENT authoritative state (post-compaction,
-            # completed tool pairs), not the pre-run lc_messages. Re-submitting a
-            # sanitized list to the SAME thread would not delete the truncated tool
-            # call (add_messages merges by id), so the retry runs on a fresh thread
-            # while inheriting the root's original_input_ids via turn_ctx.
+            # completed tool pairs) only, not the pre-run lc_messages. Re-submitting
+            # a sanitized list to the SAME thread would not delete the truncated
+            # tool call (add_messages merges by id), so the retry runs on a fresh
+            # thread while inheriting the root's original_input_ids via turn_ctx.
             snapshot = await agent.aget_state({**exec_config})
             safe_state = sanitize_tool_pairs(snapshot.values.get("messages", []))
-            retry_seed = safe_state + [
-                HumanMessage(
-                    content=error_message,
-                    additional_kwargs={EPHEMERAL_CONTROL_FLAG: True},
-                )
-            ]
 
             logger.info(
                 "[stream_tokens] Retrying with truncation error context (attempt %d/%d)",
@@ -2100,13 +2087,14 @@ class LangGraphAgentBuilder:
                         if hasattr(msg, "model_dump")
                         else msg.dict() if hasattr(msg, "dict") else msg
                     )
-                    for msg in retry_seed
+                    for msg in safe_state
                 ],
                 config=config,
                 cancel_event=cancel_event,
                 on_tool_event=on_tool_event,
                 _truncation_retry_count=_truncation_retry_count + 1,
                 _parent_turn_ctx=turn_ctx,
+                _attempt_guidance=[HumanMessage(content=error_message)],
             ):
                 yield token
 

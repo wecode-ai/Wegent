@@ -143,11 +143,25 @@ async def test_remote_guidance_queue_client_uses_internal_chat_guidance_endpoint
     ]
 
 
-def test_langgraph_agent_builder_passes_pre_model_hook_to_create_react_agent():
-    pre_model_hook = MagicMock()
+@pytest.mark.asyncio
+async def test_langgraph_agent_builder_composes_caller_pre_model_hook():
+    """The caller's hook is chained (not passed by identity) so the builder can
+    append attempt-scoped guidance after it; the caller's hook still runs."""
+    calls: list = []
+
+    def pre_model_hook(state):
+        calls.append(state)
+        return {"llm_input_messages": [HumanMessage(content="hooked")]}
+
     builder = LangGraphAgentBuilder(llm=MagicMock(), pre_model_hook=pre_model_hook)
 
     with patch("chat_shell.agents.graph_builder.create_react_agent") as create_agent:
         builder._build_agent()
 
-    assert create_agent.call_args.kwargs["pre_model_hook"] is pre_model_hook
+    chained = create_agent.call_args.kwargs["pre_model_hook"]
+    assert chained is not pre_model_hook  # composed, not identity
+
+    result = await chained({"messages": [HumanMessage(content="hi")]})
+    assert calls  # the caller's hook was invoked inside the chain
+    # No attempt guidance active -> the caller's model input is preserved.
+    assert [m.content for m in result["llm_input_messages"]] == ["hooked"]

@@ -263,11 +263,17 @@ single finalizer, on every terminal path.
 - **Truncation retry** seeds a **fresh thread** with the sanitized authoritative
   state (re-submitting to the same thread would not delete the truncated tool call
   — `add_messages` merges by id) and **inherits the root `original_input_ids`**.
-  The truncation instruction is an **ephemeral control message**
-  (`ephemeral_control` marker): the compactor never treats it as the current user,
-  never retains it into the checkpoint, and never folds it into the summary, and
-  the serializer skips it — so it can never leak into persisted history or crowd
-  out the real user turn.
+  The truncation instruction rides a separate **attempt control plane**: it lives
+  only in `_attempt_guidance` and is injected into the model input via
+  `llm_input_messages` by the builder's own `_attempt_guidance_hook` (the last link
+  in the pre-model chain), **after** compaction. It never enters the `messages`
+  channel, so it stays out of the summary source, the checkpoint, and the persisted
+  `messages_chain`, and never competes with the real user turn for the recent-user
+  budget. Because it is appended after compaction, the retry thread's own
+  compaction cannot trim it away, and it is naturally discarded when the retry
+  attempt ends. `chain_pre_model_hooks` rolls `llm_input_messages` forward through
+  each hook so user guidance and attempt guidance stack instead of clobbering each
+  other.
 
 ### Lifecycle and observability
 
@@ -294,9 +300,10 @@ These modules are the best entry points for future maintenance:
 |---|---|
 | `chat_shell/guard/context_guard.py` | Unified governance entry point: source pass, summary compact, emergency pass |
 | `chat_shell/guard/tool_output.py` | Compact tool-output rendering and emergency re-truncation |
-| `chat_shell/compression/summary_compactor.py` | Summary compact core logic, O(n) trim, checkpoint-retain + ephemeral-control markers |
+| `chat_shell/compression/summary_compactor.py` | Summary compact core logic, O(n) trim, checkpoint-retain markers |
 | `chat_shell/compression/tool_sanitizer.py` | Shared `sanitize_tool_pairs` used by compaction, recovery, and the finalizer (Phase 2a) |
-| `chat_shell/agents/graph_builder.py` | Request-local exit-durability checkpointer, `_finalize_turn_history`, per-path terminal handling (Phase 2a) |
+| `chat_shell/guard/composition.py` | `chain_pre_model_hooks`: composes pre-model hooks, rolling `llm_input_messages` forward so producers stack |
+| `chat_shell/agents/graph_builder.py` | Request-local exit-durability checkpointer, `_finalize_turn_history`, attempt control plane (`_attempt_guidance_hook`), per-path terminal handling (Phase 2a) |
 | `chat_shell/agents/turn_context.py` | `TurnExecutionContext`: turn-invariant `original_input_ids` + per-level thread ownership (Phase 2a) |
 | `chat_shell/history/loader.py` | History reload; forwards `from_latest_compaction` |
 | `backend/app/services/chat/compaction_checkpoint.py` | Locate latest checkpoint + shared resolve→scope→limit pipeline (Phase 1) |
