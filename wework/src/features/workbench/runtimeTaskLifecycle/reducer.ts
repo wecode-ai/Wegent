@@ -21,13 +21,16 @@ export function reduceRuntimeTaskLifecycle(
             : snapshotRunning
               ? 'running'
               : 'idle'
+      const turnPhase =
+        snapshotRunning === false && !shouldIgnoreStaleSnapshot ? 'idle' : state.turnPhase
 
       return {
         ...state,
         address: mergeAddress(state.address, event.address),
         task: event.task,
         executionPhase,
-        goalStatus: event.task.goalStatus ?? null,
+        turnPhase,
+        goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
           snapshotRunning !== null &&
@@ -55,13 +58,18 @@ export function reduceRuntimeTaskLifecycle(
         expectedExecutorRunning: true,
       }
 
-    case 'send_rejected':
-      return {
-        ...state,
-        executionPhase: 'idle',
-        turnPhase: 'idle',
-        expectedExecutorRunning: false,
-      }
+    case 'send_rejected': {
+      const executorAlreadyConfirmed =
+        state.executionPhase === 'running' || state.turnPhase === 'streaming'
+      return executorAlreadyConfirmed
+        ? state
+        : {
+            ...state,
+            executionPhase: 'idle',
+            turnPhase: 'idle',
+            expectedExecutorRunning: false,
+          }
+    }
 
     case 'stop_requested':
       return {

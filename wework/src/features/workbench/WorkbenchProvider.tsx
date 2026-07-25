@@ -1580,7 +1580,7 @@ export function WorkbenchProvider({
     openRuntimeTask: runtimeTasks.openRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
-    subscribeRuntimeTaskStream: runtimeTasks.subscribeRuntimeTaskStream,
+    subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
     renameRuntimeTask: runtimeTasks.renameRuntimeTask,
     archiveRuntimeTask: runtimeTasks.archiveRuntimeTask,
     archiveProjectConversations: runtimeTasks.archiveProjectConversations,

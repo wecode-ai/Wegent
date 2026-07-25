@@ -55,7 +55,7 @@ describe('runtime pane status from task lifecycle machine', () => {
     expect(status.taskExecution.running).toBe(true)
     expect(status.isBusy).toBe(true)
     expect(status.isAssistantStreaming).toBe(false)
-    expect(status.isWaitingForAssistantIndicator).toBe(false)
+    expect(status.isWaitingForAssistantIndicator).toBe(true)
   })
 
   test('shows submitting immediately from the optimistic machine event', () => {
@@ -107,7 +107,7 @@ describe('runtime pane status from task lifecycle machine', () => {
     expect(status.isBusy).toBe(false)
   })
 
-  test('keeps an active Goal running between turns without showing thinking', () => {
+  test('keeps an active Goal visibly running between turns', () => {
     const machine = new RuntimeTaskMachine(runtimeAddress)
     machine.dispatch({
       type: 'executor_snapshot_received',
@@ -121,7 +121,7 @@ describe('runtime pane status from task lifecycle machine', () => {
 
     expect(status.taskExecution.running).toBe(true)
     expect(status.isAssistantStreaming).toBe(false)
-    expect(status.isWaitingForAssistantIndicator).toBe(false)
+    expect(status.isWaitingForAssistantIndicator).toBe(true)
     expect(status.isBusy).toBe(true)
     expect(status.canSendQueuedMessage).toBe(false)
   })

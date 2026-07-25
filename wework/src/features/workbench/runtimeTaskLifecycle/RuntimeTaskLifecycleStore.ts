@@ -27,6 +27,7 @@ export class RuntimeTaskLifecycleStore {
   private readonly listeners = new Set<Listener>()
   private readonly unreadStorageKey: string
   private currentTaskKey: string | null = null
+  private persistedUnreadSerialized: string | null = null
   private version = 0
   private snapshot = EMPTY_STORE_SNAPSHOT
 
@@ -113,10 +114,6 @@ export class RuntimeTaskLifecycleStore {
     const hasStreamingAssistant = transcript.messages.some(
       message => message.role === 'assistant' && message.status === 'streaming'
     )
-    const hasSettledAssistant = transcript.messages.some(
-      message => message.role === 'assistant' && message.status !== 'streaming'
-    )
-
     if (transcript.running === true) {
       this.executorStarted(address)
     } else if (transcript.running === false) {
@@ -125,7 +122,7 @@ export class RuntimeTaskLifecycleStore {
 
     if (hasStreamingAssistant && transcript.running !== false) {
       this.dispatch(address, { type: 'turn_recovered', streaming: true })
-    } else if (transcript.running === false || hasSettledAssistant) {
+    } else if (transcript.running === false) {
       this.turnSettled(address)
     }
   }
@@ -157,6 +154,12 @@ export class RuntimeTaskLifecycleStore {
       address: next,
       task: previousState.task ?? emptyRuntimeTaskSummary(next),
     })
+    if (previousState.goalStatus !== null) {
+      nextMachine.dispatch({
+        type: 'goal_status_received',
+        goalStatus: previousState.goalStatus,
+      })
+    }
     if (previousState.executionPhase === 'starting') {
       nextMachine.dispatch({ type: 'send_requested' })
     } else if (previousState.executionPhase === 'running') {
@@ -233,7 +236,11 @@ export class RuntimeTaskLifecycleStore {
     if (typeof window === 'undefined') return new Set()
     try {
       const value = JSON.parse(window.localStorage.getItem(this.unreadStorageKey) ?? '[]')
-      return new Set(Array.isArray(value) ? value.filter(item => typeof item === 'string') : [])
+      const keys = new Set<string>(
+        Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
+      )
+      this.persistedUnreadSerialized = serializeUnreadKeys(keys)
+      return keys
     } catch {
       return new Set()
     }
@@ -241,7 +248,14 @@ export class RuntimeTaskLifecycleStore {
 
   private persistUnreadKeys(keys: ReadonlySet<string>): void {
     if (typeof window === 'undefined') return
-    window.localStorage.setItem(this.unreadStorageKey, JSON.stringify([...keys].slice(-200)))
+    const serialized = serializeUnreadKeys(keys)
+    if (serialized === this.persistedUnreadSerialized) return
+    try {
+      window.localStorage.setItem(this.unreadStorageKey, serialized)
+      this.persistedUnreadSerialized = serialized
+    } catch (error) {
+      console.warn('Failed to persist runtime task unread state', error)
+    }
   }
 }
 
@@ -284,4 +298,8 @@ function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummar
     runtime: 'codex',
     runtimeHandle: address.runtimeHandle,
   }
+}
+
+function serializeUnreadKeys(keys: ReadonlySet<string>): string {
+  return JSON.stringify([...keys].slice(-200))
 }

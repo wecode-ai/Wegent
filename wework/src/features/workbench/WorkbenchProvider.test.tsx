@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createContext, StrictMode, useContext, useState } from 'react'
+import { createContext, StrictMode, useContext, useEffect, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -572,6 +572,31 @@ function RuntimeRunningTasksProbe() {
   const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const runningTaskIds = [...lifecycle.runningTaskKeys].map(key => key.split('\0')[1])
   return <span data-testid="runtime-running-task-ids">{runningTaskIds.join('|') || 'none'}</span>
+}
+
+const TOP_LEVEL_STREAM_ADDRESS: RuntimeTaskAddress = {
+  deviceId: 'device-1',
+  workspacePath: '/workspace/project-alpha',
+  taskId: 'runtime-a',
+}
+
+function RuntimeTopLevelStreamLifecycleProbe() {
+  const { subscribeRuntimeTaskStream } = useWorkbench()
+  const lifecycle = useRuntimeTaskLifecycle(TOP_LEVEL_STREAM_ADDRESS)
+
+  useEffect(
+    () =>
+      subscribeRuntimeTaskStream(TOP_LEVEL_STREAM_ADDRESS, {
+        onMessageAction: () => undefined,
+      }),
+    [subscribeRuntimeTaskStream]
+  )
+
+  return (
+    <span data-testid="top-level-runtime-stream-lifecycle">
+      {lifecycle?.derived.isRunning ? 'running' : 'idle'}:{lifecycle?.turn.phase ?? 'missing'}
+    </span>
+  )
 }
 
 function RemoteRuntimeCacheProbe() {
@@ -4615,6 +4640,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: address.taskId,
         workspacePath: address.workspacePath ?? '/workspace/project-alpha',
         runtime: 'claude_code',
+        running: false,
         messages: [
           {
             id: `${address.taskId}:user:1`,
@@ -8160,6 +8186,87 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
         'tool:exec_command:pending'
+      )
+    )
+  })
+
+  test('routes top-level runtime stream lifecycle events through the shared store', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (handlers.onChatStart) streamHandlers = handlers
+      return vi.fn()
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'done',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
+        'idle:idle'
+      )
+    )
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+
+    act(() => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+    })
+    expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
+      'running:streaming'
+    )
+
+    act(() => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
+        'idle:idle'
       )
     )
   })

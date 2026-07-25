@@ -158,7 +158,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     },
     [scopedSetInput]
   )
-  const [streamSettled, setStreamSettled] = useState(false)
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
   >(() => new Set())
@@ -625,13 +624,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         dispatchMessages(action)
       },
       onAssistantStart: () => {
-        setStreamSettled(false)
         setGoalContinuation(current =>
           updateRuntimeGoalContinuation(current, { type: 'assistant_started' })
         )
       },
       onAssistantSettled: () => {
-        setStreamSettled(true)
         setSubagentStatuses(markRuntimeSubagentsSettled)
         const requestedGoalRevision = goalRevisionRef.current
         void getRuntimeGoalRef
@@ -703,13 +700,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             lifecycleStore.syncTranscript(address, transcript)
             const transcriptTaskRunning =
               lifecycleStore.getTask(address)?.derived.isRunning ?? false
-            if (transcriptTaskRunning) {
-              setStreamSettled(false)
-            } else {
+            if (!transcriptTaskRunning) {
               if (hasUnsettledRuntimePaneState(nextMessages)) {
                 dispatchMessages({ type: 'assistant_cancelled' })
               }
-              setStreamSettled(true)
               setSubagentStatuses(markRuntimeSubagentsSettled)
             }
             console.info('[Wework] Runtime pane reconciled after transport replacement', {
@@ -728,7 +722,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             if (hasUnsettledRuntimePaneState(messagesRef.current)) {
               dispatchMessages({ type: 'assistant_cancelled' })
             }
-            setStreamSettled(true)
             setSubagentStatuses(markRuntimeSubagentsSettled)
             lifecycleStore.turnSettled(address)
           })
@@ -1027,7 +1020,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
-      setStreamSettled(false)
       lastSubmittedRetryMessageRef.current = createLocalUserMessage(
         message.content,
         message.attachments,
@@ -1088,7 +1080,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...messages.filter(item => item.id !== message.id),
         { ...message, status: 'sending', notice: '正在打断并发送' },
       ])
-      setStreamSettled(false)
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
@@ -1147,7 +1138,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       retryInFlightRef.current = true
       setError(null)
-      setStreamSettled(false)
       try {
         const currentMessages = messagesRef.current
         const failedMessageIndex = currentMessages.findIndex(
@@ -1405,20 +1395,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   useEffect(() => {
     if (queuedMessagesPaused) return
-    if (!paneStatus.canSendQueuedMessage && !streamSettled) return
+    if (!paneStatus.canSendQueuedMessage) return
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
 
     // This advances the next queued message once the pane becomes idle.
     void sendQueuedMessage(queuedMessage)
-  }, [
-    paneStatus.canSendQueuedMessage,
-    queuedMessages,
-    queuedMessagesPaused,
-    sendQueuedMessage,
-    streamSettled,
-  ])
+  }, [paneStatus.canSendQueuedMessage, queuedMessages, queuedMessagesPaused, sendQueuedMessage])
 
   const loadFullTranscriptForExport = useCallback(async () => {
     if (!runtimeTaskLoadTarget) return messagesRef.current
@@ -1612,6 +1596,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               status: 'active',
             })
             if (!response.accepted) {
+              setInput(submittedInput)
               setError(response.error || i18n.t('workbench.goal_set_failed'))
               return
             }

@@ -832,15 +832,17 @@ describe('DesktopWorkbenchLayout', () => {
   function DesktopWorkbenchLayout(props: LegacyDesktopWorkbenchLayoutProps) {
     const { authValue, workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
     paneSessionMockRef.current = paneSession
+    const lifecycleTaskRunning =
+      props.lifecycleTaskRunning ?? Boolean(workbenchValue.state.currentRuntimeTask)
     const lifecycleStore = useMemo(() => {
       const store = new RuntimeTaskLifecycleStore('desktop-workbench-layout-test')
       store.syncRuntimeWork(workbenchValue.state.runtimeWork)
-      if (props.lifecycleTaskRunning && workbenchValue.state.currentRuntimeTask) {
+      if (lifecycleTaskRunning && workbenchValue.state.currentRuntimeTask) {
         store.executorStarted(workbenchValue.state.currentRuntimeTask)
       }
       return store
     }, [
-      props.lifecycleTaskRunning,
+      lifecycleTaskRunning,
       workbenchValue.state.currentRuntimeTask,
       workbenchValue.state.runtimeWork,
     ])

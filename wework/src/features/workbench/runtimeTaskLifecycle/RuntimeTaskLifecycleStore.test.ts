@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
@@ -107,6 +107,49 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('submitting')
   })
 
+  test('does not clear an active send because a transcript contains historical settled output', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.syncTranscript(
+      address,
+      transcript({
+        messages: [
+          {
+            id: 'historical-assistant',
+            role: 'assistant',
+            content: 'Earlier response',
+            status: 'done',
+          },
+        ],
+      })
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('starting')
+    expect(store.getTask(address)?.turn.phase).toBe('submitting')
+  })
+
+  test('keeps an executor-confirmed stream when the original send transport rejects late', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.turnStarted(address)
+    store.sendRejected(address)
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('streaming')
+  })
+
+  test('returns an unconfirmed optimistic send to idle when its transport rejects', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.sendRejected(address)
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+  })
+
   test('treats explicit executor idle as authoritative over a stale streaming message', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
@@ -154,6 +197,15 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.shouldShowUnread).toBe(false)
   })
 
+  test('preserves a known Goal status when a later executor snapshot omits it', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: undefined })))
+
+    expect(store.getTask(address)?.goalStatus).toBe('active')
+  })
+
   test('ignores stale snapshots while an optimistic start awaits executor confirmation', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: false })))
@@ -162,9 +214,25 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     store.syncRuntimeWork(runtimeWork(task({ running: false })))
     expect(store.getTask(address)?.execution.running).toBe(true)
+    expect(store.getTask(address)?.turn.phase).toBe('awaiting')
 
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
     expect(store.getTask(address)?.execution.running).toBe(true)
+  })
+
+  test('settles the active turn when an authoritative terminal snapshot is idle', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
+    store.sendRequested(address)
+    store.sendAccepted(address)
+
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'failed' })))
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.derived.isBusy).toBe(false)
+    expect(snapshot?.derived.isThinking).toBe(false)
   })
 
   test('ignores stale running snapshots after a terminal transition until idle is confirmed', () => {
@@ -210,5 +278,48 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)).toBeNull()
     expect(store.getTask(resolved)?.execution.running).toBe(true)
     expect(store.getTask(resolved)?.turn.phase).toBe('awaiting')
+  })
+
+  test('migrates Goal status when the executor resolves a new task identity', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const resolved = { ...address, taskId: 'resolved-task' }
+    store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+
+    store.rename(address, resolved)
+
+    expect(store.getTask(address)).toBeNull()
+    expect(store.getTask(resolved)?.goalStatus).toBe('active')
+    expect(store.getTask(resolved)?.execution.running).toBe(true)
+  })
+
+  test('notifies subscribers even when unread persistence fails', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    const listener = vi.fn()
+    store.subscribe(listener)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage unavailable')
+    })
+
+    store.executorSettled(address)
+
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
+    expect(listener).toHaveBeenCalledOnce()
+    expect(warn).toHaveBeenCalledOnce()
+    setItem.mockRestore()
+    warn.mockRestore()
+  })
+
+  test('does not rewrite unchanged unread persistence on unrelated lifecycle events', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+
+    store.executorSettled(address)
+    store.goalStatusReceived(address, 'paused')
+
+    expect(setItem).toHaveBeenCalledOnce()
+    setItem.mockRestore()
   })
 })

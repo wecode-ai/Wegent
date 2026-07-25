@@ -62,7 +62,8 @@ export function deriveRuntimePaneStatus({
     isAssistantStreaming,
     isResponseActive,
     isBusy,
-    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant,
+    isWaitingForAssistantIndicator:
+      isSubmitting || isAwaitingAssistant || (running && !isAssistantStreaming),
     canSendQueuedMessage: Boolean(currentRuntimeTask) && continuable && !isBusy,
   }
 }

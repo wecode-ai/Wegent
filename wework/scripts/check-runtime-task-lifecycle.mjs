@@ -17,9 +17,12 @@ const forbiddenIdentifiers = [
   'runtime_task_settled',
   'runtimeTaskStatus',
   'setSendPhase',
+  'streamSettled',
 ]
 
 const rawRunningPattern = /\b(?:task|runtimeTask|summary|transcript)\.running\b/
+const rawStreamPublicationPattern =
+  /\bsubscribeRuntimeTaskStream\s*:\s*runtimeTasks\.subscribeRuntimeTaskStream\b/
 const rawRunningAllowedFiles = new Set([
   path.join(lifecycleRoot, 'reducer.ts'),
   path.join(lifecycleRoot, 'RuntimeTaskLifecycleStore.ts'),
@@ -41,6 +44,8 @@ for (const file of files) {
   if (!rawRunningAllowedFiles.has(file)) {
     addLineViolations(file, relative, lines, rawRunningPattern, violations)
   }
+
+  addLineViolations(file, relative, lines, rawStreamPublicationPattern, violations)
 
   if (
     file !== path.join(lifecycleRoot, 'reducer.ts') &&

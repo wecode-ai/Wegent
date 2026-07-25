@@ -14,7 +14,10 @@ export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
 }
 
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
-  return task.completedAt || task.updatedAt || task.createdAt || undefined
+  const candidates = [task.completedAt, task.updatedAt, task.createdAt]
+    .map(value => (value ? new Date(value).getTime() : Number.NaN))
+    .filter(value => !Number.isNaN(value))
+  return candidates.length > 0 ? Math.max(...candidates) : undefined
 }
 
 export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {
