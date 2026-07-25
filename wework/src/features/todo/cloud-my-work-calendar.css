@@ -1,0 +1,98 @@
+/* FullCalendar theme overrides so the my-work calendar follows the Wework
+   design tokens instead of the stock FullCalendar look. All sizes derive from
+   the shared typography variables to satisfy the typography lint. */
+
+.cloud-my-work-calendar .fc {
+  --fc-border-color: rgb(var(--color-border));
+  --fc-today-bg-color: rgb(var(--color-muted));
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: rgb(var(--color-muted));
+  --fc-list-event-hover-bg-color: rgb(var(--color-muted));
+  font-size: var(--text-xs);
+}
+
+.cloud-my-work-calendar .fc .fc-toolbar {
+  margin-bottom: 12px;
+}
+
+.cloud-my-work-calendar .fc .fc-toolbar-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: rgb(var(--color-text-primary));
+}
+
+.cloud-my-work-calendar .fc .fc-button {
+  background: rgb(var(--color-bg-base));
+  border: 1px solid rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-xs);
+  font-weight: 500;
+  font-family: inherit;
+  padding: 4px 10px;
+  border-radius: 8px;
+  box-shadow: none;
+  text-transform: none;
+}
+
+.cloud-my-work-calendar .fc .fc-button:hover {
+  background: rgb(var(--color-muted));
+}
+
+.cloud-my-work-calendar .fc .fc-button-primary:not(:disabled).fc-button-active,
+.cloud-my-work-calendar .fc .fc-button-primary:not(:disabled):active {
+  background: rgb(var(--color-text-primary));
+  border-color: rgb(var(--color-text-primary));
+  color: rgb(var(--color-bg-base));
+}
+
+.cloud-my-work-calendar .fc .fc-button:focus {
+  box-shadow: none;
+}
+
+.cloud-my-work-calendar .fc .fc-col-header-cell {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: rgb(var(--color-text-muted));
+  background: rgb(var(--color-muted) / 0.4);
+  padding: 6px 0;
+}
+
+.cloud-my-work-calendar .fc .fc-daygrid-day-number {
+  font-size: var(--text-xs);
+  color: rgb(var(--color-text-secondary));
+  padding: 6px 8px;
+}
+
+.cloud-my-work-calendar .fc .fc-day-today .fc-daygrid-day-number {
+  background: rgb(var(--color-text-primary));
+  color: rgb(var(--color-bg-base));
+  border-radius: 9999px;
+  min-width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.cloud-my-work-calendar .fc .fc-daygrid-event {
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: var(--text-xs);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.cloud-my-work-calendar .fc .fc-daygrid-event-dot {
+  display: none;
+}
+
+.cloud-my-work-calendar .fc .my-work-event-id {
+  font-family: var(--font-code);
+  font-size: var(--text-code-sm);
+  opacity: 0.75;
+}

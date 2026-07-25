@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import BinaryIO
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -27,13 +27,19 @@ from app.models.delivery import (
     LoopItemCollaborator,
     adapt_loop_node_values_for_dialect,
     loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.schemas.delivery import LoopItemCreate, LoopItemTaskBind, LoopItemUpdate
+from app.schemas.delivery import (
+    LoopItemCreate,
+    LoopItemReorder,
+    LoopItemTaskBind,
+    LoopItemUpdate,
+)
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.delivery.storage import delivery_storage
 from app.stores.tasks import task_store
@@ -146,13 +152,17 @@ class LoopItemService:
         )
         sequence = project.next_item_number
         project.next_item_number += 1
+        payload = values.model_dump()
+        tags = payload.pop("tags")
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
             sequence_number=sequence,
             created_by_user_id=user_id,
-            **values.model_dump(),
+            **payload,
         )
+        if tags:
+            item.metadata_json = {"tags": tags}
         if item.status == "completed":
             item.completed_at = self._now()
         db.add(item)
@@ -164,13 +174,67 @@ class LoopItemService:
         require_cloud_project_role(db, cloud_project_id, user_id)
         return (
             db.query(LoopItem)
-            .filter(LoopItem.cloud_project_id == cloud_project_id)
+            .filter(
+                LoopItem.cloud_project_id == cloud_project_id,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
             .order_by(LoopItem.sort_order, LoopItem.updated_at.desc())
             .all()
         )
 
+    def reorder(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        user_id: int,
+        values: LoopItemReorder,
+    ) -> list[LoopItem]:
+        """Persist the manual order of the TODOs in one board lane."""
+
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Developer)
+        if values.parent_id is None:
+            # MySQL stores unset parent ids as empty strings, so match both.
+            parent_filter = or_(LoopItem.parent_id.is_(None), LoopItem.parent_id == "")
+        else:
+            parent_filter = LoopItem.parent_id == values.parent_id
+        lane = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.cloud_project_id == cloud_project_id,
+                LoopItem.status == values.status,
+                parent_filter,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .order_by(LoopItem.sort_order, LoopItem.updated_at.desc())
+            .all()
+        )
+        by_id = {item.id: item for item in lane}
+        requested_ids = [item_id for item_id in values.item_ids if item_id in by_id]
+        if not requested_ids:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "TODO not found in lane"
+            )
+        # Lane members missing from the request (e.g. created concurrently)
+        # keep their relative order at the end of the lane.
+        ordered = [by_id[item_id] for item_id in requested_ids] + [
+            item for item in lane if item.id not in requested_ids
+        ]
+        for position, item in enumerate(ordered):
+            if item.sort_order != position:
+                item.sort_order = position
+                item.version += 1
+        db.commit()
+        return ordered
+
     def get(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        item = db.query(LoopItem).filter(LoopItem.id == item_id).first()
+        item = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == item_id,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .first()
+        )
         if item is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         require_cloud_project_role(db, item.cloud_project_id, user_id)
@@ -283,11 +347,20 @@ class LoopItemService:
         updates = values.model_dump(exclude={"version"}, exclude_unset=True)
         if "parent_id" in values.model_fields_set:
             self._validate_parent_change(db, item, values.parent_id)
+        if "tags" in values.model_fields_set:
+            # Tags live inside the metadata JSON column; merge so other
+            # metadata keys survive the update.
+            metadata = dict(item.metadata_json or {})
+            metadata["tags"] = updates.pop("tags") or []
+            updates["metadata_json"] = metadata
         next_status = updates.get("status")
         if next_status and next_status != item.status:
             updates["completed_at"] = (
                 self._now() if next_status == "completed" else None
             )
+            # Reset the manual lane position so the TODO lands at the top of
+            # its new lane instead of an arbitrary stale position.
+            updates["sort_order"] = 0
         updates = adapt_loop_node_values_for_dialect(
             updates, db.get_bind().dialect.name
         )
@@ -303,11 +376,57 @@ class LoopItemService:
         db.refresh(item)
         return item
 
+    def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
+        """Soft delete a TODO; the row is kept for the recycle bin."""
+
+        item = self.get(db, item_id, user_id)
+        require_cloud_project_role(
+            db, item.cloud_project_id, user_id, BaseRole.Developer
+        )
+        item.deleted_at = self._now()
+        item.version += 1
+        db.commit()
+        db.refresh(item)
+        return item
+
+    def restore(self, db: Session, item_id: str, user_id: int) -> LoopItem:
+        """Restore a soft-deleted TODO from the recycle bin."""
+
+        item = db.query(LoopItem).filter(LoopItem.id == item_id).first()
+        if item is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        require_cloud_project_role(
+            db, item.cloud_project_id, user_id, BaseRole.Developer
+        )
+        if loop_datetime_value_is_unset(item.deleted_at):
+            raise HTTPException(status.HTTP_409_CONFLICT, "TODO is not deleted")
+        item.deleted_at = None
+        item.version += 1
+        db.commit()
+        db.refresh(item)
+        return item
+
+    def list_deleted(
+        self, db: Session, cloud_project_id: int, user_id: int
+    ) -> list[LoopItem]:
+        """List soft-deleted TODOs of a project, most recently deleted first."""
+
+        require_cloud_project_role(db, cloud_project_id, user_id)
+        return (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.cloud_project_id == cloud_project_id,
+                ~loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .order_by(LoopItem.deleted_at.desc())
+            .all()
+        )
+
     def _require_parent(
         self, db: Session, parent_id: str, cloud_project_id: int
     ) -> LoopItem:
         parent = db.get(LoopItem, parent_id)
-        if parent is None:
+        if parent is None or not loop_datetime_value_is_unset(parent.deleted_at):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Parent TODO not found"
             )
@@ -614,6 +733,7 @@ class LoopItemService:
             db.query(LoopItem)
             .filter(
                 LoopItem.cloud_project_id.in_(project_by_id),
+                loop_datetime_is_unset(LoopItem.deleted_at),
                 (LoopItem.assignee_user_id == user_id)
                 | LoopItem.id.in_(active_task_items)
                 | LoopItem.id.in_(collaborator_items),

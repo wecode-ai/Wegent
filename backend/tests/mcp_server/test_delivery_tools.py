@@ -16,14 +16,25 @@ def test_delivery_tools_are_registered_with_safe_public_parameters() -> None:
     tools = get_registered_mcp_tools(server="delivery")
 
     assert set(tools) == {
+        "add_cloud_todo_collaborator",
+        "create_cloud_project",
+        "create_cloud_todo",
+        "delete_cloud_todo",
+        "get_cloud_todo",
         "list_cloud_projects",
+        "list_cloud_todo_attachments",
+        "list_cloud_todo_collaborators",
+        "list_cloud_todo_recycle_bin",
         "list_cloud_todos",
         "list_cloud_workspace",
         "list_loop_item_deliveries",
         "read_cloud_file",
         "read_delivery_markdown",
         "read_delivery_asset",
+        "remove_cloud_todo_collaborator",
         "resolve_cloud_reference",
+        "restore_cloud_todo",
+        "update_cloud_todo",
     }
     assert [
         parameter["name"]

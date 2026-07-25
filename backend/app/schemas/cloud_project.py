@@ -7,9 +7,17 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas.base_role import BaseRole
+from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
 
 SnowflakeId = Annotated[str, BeforeValidator(str)]
 
@@ -30,7 +38,13 @@ class CloudProjectCreate(BaseModel):
 class CloudProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
+    tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     version: int = Field(ge=1)
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_tag_list(cls, value: object) -> object:
+        return None if value is None else normalize_tags(value)
 
 
 class CloudProjectResponse(BaseModel):
@@ -43,9 +57,20 @@ class CloudProjectResponse(BaseModel):
     description: str
     created_by_user_id: int
     status: str
+    tags: list[str] = []
     version: int
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_tags(cls, value: object) -> object:
+        """Fill tags from the metadata JSON when the input has no tags key."""
+        if isinstance(value, dict) and "tags" not in value:
+            metadata = value.get("metadata_json")
+            tags = metadata.get("tags") if isinstance(metadata, dict) else None
+            return {**value, "tags": normalize_tags(tags)}
+        return value
 
 
 class CloudProjectListResponse(BaseModel):
