@@ -174,6 +174,70 @@ def test_loop_items_support_unbounded_hierarchy_and_reject_cycles(
     assert cycle.json()["detail"] == "TODO hierarchy cannot contain a cycle"
 
 
+def test_loop_item_reorder_orders_one_lane(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    headers = _auth(test_token)
+
+    def create(title: str, status: str = "inbox") -> dict[str, Any]:
+        response = test_client.post(
+            f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+            headers=headers,
+            json={"title": title, "status": status},
+        )
+        assert response.status_code == 201
+        return response.json()
+
+    first = create("First")
+    second = create("Second")
+    other_lane = create("Other lane", status="pending")
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items/reorder",
+        headers=headers,
+        json={
+            "parent_id": None,
+            "status": "inbox",
+            "item_ids": [second["id"], first["id"]],
+        },
+    )
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [
+        second["id"],
+        first["id"],
+    ]
+    assert [item["sort_order"] for item in response.json()["items"]] == [0, 1]
+
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items", headers=headers
+    ).json()["items"]
+    inbox_ids = [item["id"] for item in listed if item["status"] == "inbox"]
+    assert inbox_ids == [second["id"], first["id"]]
+    # The other lane keeps its own ordering state.
+    assert (
+        next(item for item in listed if item["id"] == other_lane["id"])["sort_order"]
+        == 0
+    )
+
+    # Moving a TODO to another lane resets its manual position to the top.
+    moved = test_client.patch(
+        f"/api/v1/loop-items/{second['id']}",
+        headers=headers,
+        json={"version": second["version"], "status": "pending"},
+    )
+    assert moved.status_code == 200
+    assert moved.json()["sort_order"] == 0
+
+    missing = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items/reorder",
+        headers=headers,
+        json={"parent_id": None, "status": "inbox", "item_ids": ["MISS-1"]},
+    )
+    assert missing.status_code == 422
+
+
 def test_loop_item_parent_must_be_in_same_project(
     test_client: TestClient,
     test_token: str,

@@ -38,6 +38,26 @@ if (typeof document.elementFromPoint === 'undefined') {
   document.elementFromPoint = () => null
 }
 
+// BlockNote's side menu hit-tests pointer targets on mouse move.
+if (typeof document.elementsFromPoint === 'undefined') {
+  document.elementsFromPoint = () => []
+}
+
+// Mantine (via BlockNote) queries the preferred color scheme on mount.
+if (typeof window.matchMedia === 'undefined') {
+  window.matchMedia = (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList
+}
+
 type StorageName = 'localStorage' | 'sessionStorage'
 
 function hasStorageApi(value: unknown): value is Storage {
@@ -109,4 +129,6 @@ beforeEach(() => {
     socketBaseUrl: window.location.origin,
     socketPath: '/socket.io',
   }
+  // Task-dialog drafts persist to localStorage; keep tests isolated.
+  localStorage.clear()
 })

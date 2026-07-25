@@ -58,6 +58,55 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_cloud_project_tag_registry(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "preg", "name": "Tag registry"},
+    )
+    assert created.status_code == 201
+    project = created.json()
+    assert project["tags"] == []
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "tags": [" 产品需求 ", "产品需求", "研发"],
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["tags"] == ["产品需求", "研发"]
+
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(test_token))
+    assert listed.status_code == 200
+    match = next(item for item in listed.json()["items"] if item["id"] == project["id"])
+    assert match["tags"] == ["产品需求", "研发"]
+
+    # Updating other fields leaves the registry untouched.
+    renamed = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={"version": updated.json()["version"], "name": "Renamed"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["tags"] == ["产品需求", "研发"]
+
+    cleared = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={"version": renamed.json()["version"], "tags": []},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["tags"] == []
+
+
 def test_cloud_project_generates_key_when_omitted(
     test_client: TestClient, test_token: str
 ) -> None:
@@ -209,6 +258,76 @@ def test_todo_lifecycle_and_multiple_local_tasks(
     )
     assert my_work.status_code == 200
     assert my_work.json()["items"][0]["has_active_task"] is True
+
+
+def test_loop_item_tags_roundtrip(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "tags", "name": "Tagged items"},
+    ).json()
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Tagged item",
+            "assignee_user_id": test_user.id,
+            "tags": [" 产品需求 ", "产品需求", "研发", ""],
+        },
+    )
+    assert created.status_code == 201
+    item = created.json()
+    # Tags are trimmed, deduped, and empties dropped.
+    assert item["tags"] == ["产品需求", "研发"]
+
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+    )
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["tags"] == ["产品需求", "研发"]
+
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+        json={"version": item["version"], "tags": ["线上问题"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["tags"] == ["线上问题"]
+
+    cleared = test_client.patch(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+        json={"version": updated.json()["version"], "tags": []},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["tags"] == []
+
+    my_work = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(test_token)
+    )
+    assert my_work.status_code == 200
+    assert my_work.json()["items"][0]["tags"] == []
+
+    # Updates that omit tags must leave existing tags untouched.
+    tagged = test_client.patch(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+        json={"version": cleared.json()["version"], "tags": ["产品需求"]},
+    )
+    assert tagged.status_code == 200
+    untouched = test_client.patch(
+        f"/api/v1/loop-items/{item['id']}",
+        headers=_auth(test_token),
+        json={"version": tagged.json()["version"], "title": "Retagged item"},
+    )
+    assert untouched.status_code == 200
+    assert untouched.json()["tags"] == ["产品需求"]
 
 
 def test_cloud_project_owner_can_manage_members(

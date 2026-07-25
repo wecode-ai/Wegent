@@ -106,6 +106,20 @@ fn streaming_patch_overrides_enable_freeform_apply_patch() {
 }
 
 #[test]
+fn persistent_app_server_enables_deferred_mcp_tool_search() {
+    let request_config = CodexLaunchConfig::default();
+
+    let config = persistent_codex_app_server_launch_config(&request_config);
+
+    assert!(config
+        .config_overrides
+        .contains(&"features.tool_search=true".to_owned()));
+    assert!(!config
+        .config_overrides
+        .contains(&"features.tool_search_always_defer_mcp_tools=false".to_owned()));
+}
+
+#[test]
 fn wework_codex_home_defaults_to_executor_home_codex() {
     let _lock = crate::test_env::lock();
     let home = unique_test_path("wework-codex-home-default");
