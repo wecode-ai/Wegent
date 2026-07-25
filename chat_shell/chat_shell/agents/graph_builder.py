@@ -39,6 +39,7 @@ from opentelemetry import trace as otel_trace
 
 from shared.telemetry.decorators import add_span_event, trace_sync
 
+from ..compression.summary_compactor import EPHEMERAL_CONTROL_FLAG
 from ..compression.tool_sanitizer import sanitize_tool_pairs
 from ..core.config import settings
 from ..llm_logging import env_bool as _env_bool
@@ -1434,6 +1435,7 @@ class LangGraphAgentBuilder:
         cancel_event: asyncio.Event | None = None,
         on_tool_event: Callable[[str, dict], None] | None = None,
         _truncation_retry_count: int = 0,
+        _parent_turn_ctx: "TurnExecutionContext | None" = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from agent execution.
 
@@ -1479,13 +1481,18 @@ class LangGraphAgentBuilder:
             msg.id for msg in lc_messages if msg.id
         )
 
-        # Request-local checkpointer needs a thread id; each turn owns a fresh
-        # one and reads authoritative state from it on exit (see TurnExecutionContext).
+        # Request-local checkpointer needs a thread id; each turn (and each
+        # truncation-retry level) owns a fresh one and reads authoritative state
+        # from it on exit. A retry INHERITS the root's original_input_ids so the
+        # checkpoint clones / summary / suffix are never mis-filtered.
         turn_thread_id = str(uuid4())
-        turn_ctx = TurnExecutionContext(
-            original_input_ids=_input_message_ids,
-            current_thread_id=turn_thread_id,
-        )
+        if _parent_turn_ctx is not None:
+            turn_ctx = _parent_turn_ctx.with_retry(turn_thread_id)
+        else:
+            turn_ctx = TurnExecutionContext(
+                original_input_ids=_input_message_ids,
+                current_thread_id=turn_thread_id,
+            )
         exec_config = {"configurable": {**(config or {}), "thread_id": turn_thread_id}}
 
         event_count = 0
@@ -2063,27 +2070,35 @@ class LangGraphAgentBuilder:
                 yield f"{TRUNCATED_MARKER_START}{e.reason}{TRUNCATED_MARKER_END}"
                 return
 
-            # Construct error message for LLM
+            # Construct error message for LLM. It is an ephemeral CONTROL message:
+            # the model sees it this turn, but it must never be treated as a real
+            # user turn nor persisted (the compactor and serializer skip it).
             error_message = TOOL_CALL_TRUNCATION_ERROR_TEMPLATE.format(
                 reason=e.reason,
                 attempt=_truncation_retry_count + 1,
                 max_attempts=self.max_truncation_retries,
             )
 
-            # Add error message to conversation history
-            recovery_messages = list(lc_messages) + [
-                HumanMessage(content=error_message)
+            # Seed the retry from the CURRENT authoritative state (post-compaction,
+            # completed tool pairs), not the pre-run lc_messages. Re-submitting a
+            # sanitized list to the SAME thread would not delete the truncated tool
+            # call (add_messages merges by id), so the retry runs on a fresh thread
+            # while inheriting the root's original_input_ids via turn_ctx.
+            snapshot = await agent.aget_state({**exec_config})
+            safe_state = sanitize_tool_pairs(snapshot.values.get("messages", []))
+            retry_seed = safe_state + [
+                HumanMessage(
+                    content=error_message,
+                    additional_kwargs={EPHEMERAL_CONTROL_FLAG: True},
+                )
             ]
 
-            # Retry with the error context
             logger.info(
                 "[stream_tokens] Retrying with truncation error context (attempt %d/%d)",
                 _truncation_retry_count + 1,
                 self.max_truncation_retries,
             )
 
-            # Recursively call stream_tokens with incremented retry count
-            # This allows LLM to adjust its strategy based on the error
             async for token in self.stream_tokens(
                 messages=[
                     (
@@ -2091,12 +2106,13 @@ class LangGraphAgentBuilder:
                         if hasattr(msg, "model_dump")
                         else msg.dict() if hasattr(msg, "dict") else msg
                     )
-                    for msg in recovery_messages
+                    for msg in retry_seed
                 ],
                 config=config,
                 cancel_event=cancel_event,
                 on_tool_event=on_tool_event,
                 _truncation_retry_count=_truncation_retry_count + 1,
+                _parent_turn_ctx=turn_ctx,
             ):
                 yield token
 

@@ -343,3 +343,68 @@ async def test_tool_limit_recovery_persists_full_chain_without_instruction(monke
         "Tool call limit" in str(getattr(m, "content", "")) for m in recovery_seen
     )
     assert builder._last_termination_reason == "graph_recursion_limit_recovery"
+
+
+@pytest.mark.asyncio
+async def test_truncation_retry_seeds_new_thread_with_ephemeral_instruction(
+    monkeypatch,
+):
+    from chat_shell.agents.graph_builder import (
+        LangGraphAgentBuilder,
+        ToolCallTruncatedError,
+    )
+    from chat_shell.compression.summary_compactor import EPHEMERAL_CONTROL_FLAG
+
+    # Authoritative state at the truncation point: a real user + partial reply.
+    authoritative = [
+        HumanMessage(content="analyze data", id="u-real"),
+        AIMessage(content="partial", id="a-partial"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    calls = {"n": 0}
+    captured: dict = {}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                captured["root_thread"] = config["configurable"]["thread_id"]
+                raise ToolCallTruncatedError(reason="length", has_tool_calls=True)
+            # Second call = the retry: capture its seed + thread, then complete.
+            captured["retry_input"] = _input["messages"]
+            captured["retry_thread"] = config["configurable"]["thread_id"]
+            for _ in []:
+                yield
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    monkeypatch.setattr(builder, "max_truncation_retries", 2)
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    retry_msgs = captured["retry_input"]
+    # The retry ran on a DIFFERENT thread than the root turn.
+    assert captured["retry_thread"] != captured["root_thread"]
+    # The sanitized authoritative state was seeded into the retry.
+    assert any(getattr(m, "content", "") == "analyze data" for m in retry_msgs)
+    # The truncation instruction rides as an ephemeral control message.
+    ephemeral = [
+        m
+        for m in retry_msgs
+        if getattr(m, "additional_kwargs", {}).get(EPHEMERAL_CONTROL_FLAG) is True
+    ]
+    assert len(ephemeral) == 1
+    assert "[SYSTEM ERROR]" in ephemeral[0].content

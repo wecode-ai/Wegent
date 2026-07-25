@@ -50,6 +50,11 @@ SUMMARY_METADATA_FLAG = "summary_compacted"
 # serializer persists messages carrying this flag (see graph_builder), so the
 # checkpoint chain is self-contained ([retained user] + [summary] + [suffix]).
 CHECKPOINT_RETAINED_FLAG = "checkpoint_retained"
+# Marks an internal control message (e.g. the truncation-retry instruction) that
+# is fed to the model in-turn but must never be treated as a real user turn:
+# never the current user, never retained into the checkpoint, never summarized,
+# never persisted.
+EPHEMERAL_CONTROL_FLAG = "ephemeral_control"
 SUMMARY_COMPACT_VERSION = 1
 DEFAULT_RECENT_USER_TOKEN_LIMIT = 20_000
 
@@ -125,6 +130,12 @@ def _is_summary_message(message: BaseMessage) -> bool:
     """
     kwargs = getattr(message, "additional_kwargs", {}) or {}
     return kwargs.get(SUMMARY_METADATA_FLAG) is True
+
+
+def _is_ephemeral_control(message: BaseMessage) -> bool:
+    """True for an internal control message that must never enter the checkpoint."""
+    kwargs = getattr(message, "additional_kwargs", {}) or {}
+    return kwargs.get(EPHEMERAL_CONTROL_FLAG) is True
 
 
 def _extract_text(message: BaseMessage) -> str:
@@ -233,7 +244,13 @@ class SummaryCompactor:
         while True:
             try:
                 summary_body = await self._generate_summary(
-                    self._sanitize_tool_message_sequence(working_messages)
+                    [
+                        message
+                        for message in self._sanitize_tool_message_sequence(
+                            working_messages
+                        )
+                        if not _is_ephemeral_control(message)
+                    ]
                 )
                 break
             except Exception as exc:
@@ -437,7 +454,7 @@ class SummaryCompactor:
         for message in reversed(messages):
             if not isinstance(message, HumanMessage):
                 continue
-            if _is_summary_message(message):
+            if _is_summary_message(message) or _is_ephemeral_control(message):
                 continue
             message_tokens = self._token_counter.count_messages(
                 [_message_to_counter_dict(message)]
@@ -495,7 +512,7 @@ class SummaryCompactor:
         for message in reversed(messages):
             if not isinstance(message, HumanMessage):
                 continue
-            if _is_summary_message(message):
+            if _is_summary_message(message) or _is_ephemeral_control(message):
                 continue
             return message
         return None
