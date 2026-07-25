@@ -49,6 +49,11 @@ sidebar_position: 31
 
 这比把长度控制分散在 `build_messages`、tool event、history serialization 等多处更稳。治理逻辑最终收敛到 `UnifiedContextGuard`，避免不同路径口径漂移。
 
+**覆盖边界（重要，别被“非流式”误导）。** `UnifiedContextGuard` 只在 **chat 执行引擎**构建 agent 时通过 `pre_model_hook` 挂载，所以要区分两种“非流式”：
+
+- **传输层非流式**（HTTP `stream=false` 追问）：只是把 SSE 事件缓冲后一次性返回，**底层执行引擎仍是 `stream_tokens`**，照常挂 guard、走压缩恢复与落库。它**受**治理。
+- **引擎级非流式**（`agent.execute` → `_collect_final_state_from_events`）：是否挂 guard 取决于调用方是否传入 `pre_model_hook`。当前唯一使用者是答案质检 `correction_service`，它**不传** `pre_model_hook`——这是一条 **guard 未覆盖的短路路径**：不做压缩治理、把待评估历史内嵌进 prompt、结果只写 `subtask.result.correction`（**不落 `messages_chain`**）、并自带 try/except 兜底。它是一次性质检器，不是对话/追问路径，与本上下文治理解耦。
+
 ### 区分“用户可见原始数据”和“模型可见紧凑数据”
 
 这是整个设计里最重要的边界之一。
@@ -191,11 +196,12 @@ Phase 2a 让**最后的权威 LangGraph state** 成为唯一收口的唯一来�
 - 所有**流式**终止路径都经它：正常结束、`completed_with_unexecuted_tool_calls`、
   工具上限 recovery、截断重试与重试耗尽、silent/deferred。旧的
   `_collected_state_messages` / 长度门槛权威判定已移除。
-- **非流式**路径（`_collect_final_state_from_events`）**不**构建 `messages_chain`：
-  它返回 LangGraph 最终 state（其调用方只消费 content/tool-results，`messages_chain`
-  仅在流式路径落库）。它仍复用 request-local checkpointer、exit durability、
-  recovery-from-current-state 与每轮 thread 释放，只是因为不产出持久化历史而没有
-  finalizer。
+- **引擎级非流式**路径（`agent.execute` → `_collect_final_state_from_events`）**不**
+  构建 `messages_chain`：它返回 LangGraph 最终 state（调用方只消费 content/tool-results，
+  `messages_chain` 仅在流式路径落库）。它仍复用 request-local checkpointer、exit
+  durability、recovery-from-current-state 与每轮 thread 释放，只是不产出持久化历史，
+  故没有 finalizer。**注意**：HTTP `stream=false` 的追问**不属于**此类——它底层仍是
+  `stream_tokens`，照常走 finalizer 与落库（见“统一入口”一节的覆盖边界）。
 
 ### recovery 与 retry 用当前状态，不用 `lc_messages`
 

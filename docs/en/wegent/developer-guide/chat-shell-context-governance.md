@@ -70,6 +70,23 @@ This is more reliable than spreading budget logic across `build_messages`, tool
 events, history serialization, and other side paths. In the final shape,
 budgeting converges on `UnifiedContextGuard`.
 
+**Coverage boundary (important — do not be misled by "non-streaming").**
+`UnifiedContextGuard` is attached via `pre_model_hook` only when the **chat
+execution engine** builds its agent, so distinguish two kinds of "non-streaming":
+
+- **Transport-level non-streaming** (HTTP `stream=false` follow-ups): only buffers
+  the SSE events and returns once — the **execution engine is still
+  `stream_tokens`**, so the guard, compaction recovery, and persistence all apply.
+  It **is** governed.
+- **Engine-level non-streaming** (`agent.execute` → `_collect_final_state_from_events`):
+  whether the guard attaches depends on whether the caller passes a
+  `pre_model_hook`. The only current user is the answer-audit `correction_service`,
+  which does **not** pass one — a **guard-bypassing short path**: no compaction
+  governance, the history under review is embedded into the prompt, the result is
+  written only to `subtask.result.correction` (**no `messages_chain`**), with its
+  own try/except fallback. It is a one-shot auditor, not a conversation/follow-up
+  path, and is decoupled from this context governance.
+
 ### Separate UI-visible raw data from model-visible compact data
 
 This is one of the most important boundaries in the design.
@@ -253,12 +270,15 @@ single finalizer, on every terminal path.
   `completed_with_unexecuted_tool_calls`, tool-limit recovery, truncation retry
   and retry-exhausted, and silent/deferred exit. The old
   `_collected_state_messages` / length-gate authority is gone.
-- The **non-streaming** path (`_collect_final_state_from_events`) does **not**
-  build a `messages_chain`: it returns the LangGraph final state (its callers
-  consume only content/tool-results, and `messages_chain` is persisted on the
-  streaming path alone). It still shares the request-local checkpointer, exit
-  durability, recovery-from-current-state, and per-turn thread teardown; it just
-  has no finalizer because it produces no persisted history.
+- The **engine-level non-streaming** path (`agent.execute` →
+  `_collect_final_state_from_events`) does **not** build a `messages_chain`: it
+  returns the LangGraph final state (its callers consume only content/tool-results,
+  and `messages_chain` is persisted on the streaming path alone). It still shares
+  the request-local checkpointer, exit durability, recovery-from-current-state, and
+  per-turn thread teardown; it just has no finalizer because it produces no
+  persisted history. **Note:** HTTP `stream=false` follow-ups are **not** this
+  case — they still run on `stream_tokens` and go through the finalizer and
+  persistence (see the coverage boundary under "single control point").
 
 ### Recovery and retry read the current state, not `lc_messages`
 
