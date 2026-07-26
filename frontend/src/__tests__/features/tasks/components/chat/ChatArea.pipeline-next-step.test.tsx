@@ -10,6 +10,7 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import type { Team } from '@/types/api'
 
 const mockSendMessage = jest.fn()
+const mockHandleSendMessage = jest.fn()
 const mockToast = jest.fn()
 const mockSetSelectedDeviceId = jest.fn()
 
@@ -171,7 +172,7 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
     isStreaming: false,
     isStopping: false,
     hasPendingUserMessage: false,
-    handleSendMessage: jest.fn(),
+    handleSendMessage: mockHandleSendMessage,
     handleSendMessageWithModel: jest.fn(),
     handleRetry: jest.fn(),
     handleCancelTask: jest.fn(),
@@ -379,6 +380,48 @@ describe('ChatArea pipeline next-step dialog', () => {
     ;(mockSelectedTeam.bots[0] as { contextPassing: string }).contextPassing = 'previous_bot'
     mockSendMessage.mockResolvedValue(42)
     setCompletedPipelineMessages()
+  })
+
+  it('consumes an Artifact prompt once through the normal send handler', async () => {
+    const request = {
+      requestId: 'request-1',
+      message: '解释过滤条件',
+      artifactContext: {
+        artifact_id: 'artifact-1',
+        node_id: 'node-2',
+      },
+    }
+    const onConsumed = jest.fn()
+    const { rerender } = render(
+      <ChatArea
+        teams={[mockSelectedTeam]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        externalPromptRequest={request}
+        onExternalPromptConsumed={onConsumed}
+      />
+    )
+
+    await waitFor(() =>
+      expect(mockHandleSendMessage).toHaveBeenCalledWith('解释过滤条件', {
+        artifactContext: {
+          artifact_id: 'artifact-1',
+          node_id: 'node-2',
+        },
+      })
+    )
+    rerender(
+      <ChatArea
+        teams={[mockSelectedTeam]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        externalPromptRequest={request}
+        onExternalPromptConsumed={onConsumed}
+      />
+    )
+
+    expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onConsumed).toHaveBeenCalledWith('request-1'))
   })
 
   it('opens the context picker and confirms the next pipeline step with selected context', async () => {

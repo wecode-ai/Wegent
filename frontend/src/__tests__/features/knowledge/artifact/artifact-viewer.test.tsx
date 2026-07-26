@@ -20,7 +20,19 @@ jest.mock('@/hooks/use-toast', () => ({
 }))
 
 jest.mock('@/components/common/EnhancedMarkdown', () => () => null)
-jest.mock('@/components/common/MermaidDiagram', () => () => null)
+jest.mock('@/components/common/MermaidDiagram', () => {
+  function MockMermaidDiagram() {
+    return <div data-testid="mermaid-diagram" />
+  }
+  return MockMermaidDiagram
+})
+jest.mock('@/features/knowledge/artifact/components/InteractiveMindMap', () => ({
+  InteractiveMindMap: ({ onAskNode }: { onAskNode: (nodeId: string) => void }) => (
+    <button data-testid="mock-mind-map-ask" onClick={() => onAskNode('child')}>
+      ask
+    </button>
+  ),
+}))
 jest.mock('@/features/knowledge/artifact/components/ArtifactSaveDialog', () => ({
   ArtifactSaveDialog: () => null,
 }))
@@ -70,4 +82,74 @@ it('allows read-only users to retry without exposing management actions', () => 
   expect(screen.queryByTestId('artifact-rename-button')).not.toBeInTheDocument()
   expect(screen.queryByTestId('artifact-delete-button')).not.toBeInTheDocument()
   expect(screen.queryByTestId('artifact-save-to-knowledge-button')).not.toBeInTheDocument()
+})
+
+it('sends a structured node question through the parent callback', () => {
+  const onAskNode = jest.fn()
+  const artifact: KnowledgeArtifact = {
+    ...failedArtifact,
+    artifact_type: 'mind_map',
+    status: 'succeeded',
+    content: JSON.stringify({
+      schema_version: 1,
+      root_id: 'root',
+      nodes: [
+        { id: 'root', parent_id: null, title: 'AB 实验' },
+        { id: 'child', parent_id: 'root', title: '过滤条件' },
+      ],
+    }),
+    error_code: null,
+    error_message: null,
+    can_retry: false,
+  }
+
+  render(
+    <ArtifactViewer
+      artifact={artifact}
+      canManage={false}
+      onClose={jest.fn()}
+      onRename={jest.fn()}
+      onRetry={jest.fn()}
+      onDelete={jest.fn()}
+      onAskNode={onAskNode}
+    />
+  )
+
+  fireEvent.click(screen.getByTestId('mock-mind-map-ask'))
+
+  expect(onAskNode).toHaveBeenCalledWith(
+    expect.objectContaining({
+      message: expect.stringContaining('AB 实验 > 过滤条件'),
+      artifactContext: {
+        artifact_id: 'artifact-1',
+        node_id: 'child',
+      },
+    })
+  )
+})
+
+it('keeps legacy Mermaid artifacts readable without interactive actions', () => {
+  const artifact: KnowledgeArtifact = {
+    ...failedArtifact,
+    artifact_type: 'mind_map',
+    status: 'succeeded',
+    content: 'mindmap\n  root((主题))',
+    error_code: null,
+    error_message: null,
+    can_retry: false,
+  }
+
+  render(
+    <ArtifactViewer
+      artifact={artifact}
+      canManage={false}
+      onClose={jest.fn()}
+      onRename={jest.fn()}
+      onRetry={jest.fn()}
+      onDelete={jest.fn()}
+    />
+  )
+
+  expect(screen.getByTestId('legacy-mind-map-hint')).toBeInTheDocument()
+  expect(screen.getByTestId('mermaid-diagram')).toBeInTheDocument()
 })

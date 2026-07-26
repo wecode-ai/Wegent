@@ -221,27 +221,41 @@ async def test_list_includes_available_document_count():
     assert response.processing_document_count == 2
 
 
-def test_parse_mind_map_accepts_exactly_one_mermaid_block():
-    content = "说明\n```mermaid\ngraph TD\nA --> B\n```\n结尾"
+def test_parse_mind_map_accepts_structured_json():
+    content = """
+    {
+      "schema_version": 1,
+      "root_id": "root",
+      "nodes": [
+        {"id": "root", "parent_id": null, "title": "主题"},
+        {"id": "child", "parent_id": "root", "title": "子主题"}
+      ]
+    }
+    """
 
     result = ArtifactService._parse_content(
         KnowledgeArtifactType.MIND_MAP,
         content,
     )
 
-    assert result == "graph TD\nA --> B"
+    assert '"root_id":"root"' in result
+    assert '"parent_id":"root"' in result
 
 
 @pytest.mark.parametrize(
     "content",
     [
         "graph TD\nA --> B",
-        "```mermaid\ngraph TD\nA --> B\n```\n```mermaid\ngraph LR\nC --> D\n```",
-        "```mermaid\n\n```",
+        '{"schema_version":1,"root_id":"missing","nodes":[]}',
+        (
+            '{"schema_version":1,"root_id":"root","nodes":['
+            '{"id":"root","parent_id":null,"title":"主题"},'
+            '{"id":"child","parent_id":"unknown","title":"子主题"}]}'
+        ),
     ],
 )
 def test_parse_mind_map_rejects_invalid_output(content: str):
-    with pytest.raises(ArtifactValidationError, match="exactly one Mermaid"):
+    with pytest.raises(ArtifactValidationError, match="valid interactive tree"):
         ArtifactService._parse_content(
             KnowledgeArtifactType.MIND_MAP,
             content,
@@ -254,7 +268,13 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
     artifact = build_artifact(artifact_type=KnowledgeArtifactType.MIND_MAP)
     subtask = SimpleNamespace(
         status="COMPLETED",
-        result={"value": "```mermaid\ngraph TD\nA --> B\n```"},
+        result={
+            "value": (
+                '{"schema_version":1,"root_id":"root","nodes":['
+                '{"id":"root","parent_id":null,"title":"主题"},'
+                '{"id":"child","parent_id":"root","title":"子主题"}]}'
+            )
+        },
         completed_at=datetime.now().astimezone(),
         error_message=None,
     )
@@ -263,8 +283,62 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
     reconciled = await service._reconcile(artifact)
 
     assert reconciled.status == KnowledgeArtifactStatus.SUCCEEDED
-    assert reconciled.content == "graph TD\nA --> B"
+    assert reconciled.content is not None
+    assert '"root_id":"root"' in reconciled.content
     repository.update_execution.assert_called_once_with(artifact)
+
+
+def test_parse_mind_map_rejects_cycles():
+    content = (
+        '{"schema_version":1,"root_id":"root","nodes":['
+        '{"id":"root","parent_id":null,"title":"主题"},'
+        '{"id":"a","parent_id":"b","title":"A"},'
+        '{"id":"b","parent_id":"a","title":"B"}]}'
+    )
+
+    with pytest.raises(ArtifactValidationError, match="valid interactive tree"):
+        ArtifactService._parse_content(KnowledgeArtifactType.MIND_MAP, content)
+
+
+def test_resolve_mind_map_node_uses_available_artifact_sources():
+    service, repository, _ = build_service()
+    artifact = build_artifact(
+        artifact_type=KnowledgeArtifactType.MIND_MAP,
+        status=KnowledgeArtifactStatus.SUCCEEDED,
+    )
+    artifact.content = (
+        '{"schema_version":1,"root_id":"root","nodes":['
+        '{"id":"root","parent_id":null,"title":"主题"},'
+        '{"id":"child","parent_id":"root","title":"子主题"}]}'
+    )
+    repository.get.return_value = artifact
+    service.db.query.return_value.filter.return_value.all.return_value = [(102,)]
+
+    with patch.object(service, "_require_read_access"):
+        node, document_ids = service.resolve_mind_map_node(
+            12,
+            "artifact-1",
+            "child",
+        )
+
+    assert node.title == "子主题"
+    assert document_ids == [102]
+
+
+def test_resolve_mind_map_node_rejects_legacy_mermaid():
+    service, repository, _ = build_service()
+    artifact = build_artifact(
+        artifact_type=KnowledgeArtifactType.MIND_MAP,
+        status=KnowledgeArtifactStatus.SUCCEEDED,
+    )
+    artifact.content = "mindmap\n  root((主题))"
+    repository.get.return_value = artifact
+
+    with (
+        patch.object(service, "_require_read_access"),
+        pytest.raises(ArtifactValidationError, match="does not support"),
+    ):
+        service.resolve_mind_map_node(12, "artifact-1", "root")
 
 
 @pytest.mark.asyncio

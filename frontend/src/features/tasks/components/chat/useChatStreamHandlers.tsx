@@ -41,6 +41,7 @@ import type {
   InteractiveFormAnswerPayload,
 } from '@/types/api'
 import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
+import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
@@ -151,7 +152,10 @@ export interface ChatStreamHandlers {
   // Actions
   handleSendMessage: (
     overrideMessage?: string,
-    options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+    options?: {
+      interactiveFormAnswer?: InteractiveFormAnswerPayload
+      artifactContext?: ArtifactNodeContext
+    }
   ) => Promise<void>
   /**
    * Send a message with a temporary model override (used for regeneration).
@@ -431,7 +435,10 @@ export function useChatStreamHandlers({
         GitRepoInfo,
         'git_url' | 'git_repo' | 'git_repo_id' | 'git_domain'
       > | null,
-      sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+      sendOptions?: {
+        interactiveFormAnswer?: InteractiveFormAnswerPayload
+        artifactContext?: ArtifactNodeContext
+      }
     ): PreparedChatSend => {
       const snapshotAttachments = [...attachments]
       const snapshotContexts = [...selectedContextsRef.current]
@@ -480,7 +487,7 @@ export function useChatStreamHandlers({
           }
         })
 
-      if (taskType === 'knowledge' && knowledgeBaseId) {
+      if (taskType === 'knowledge' && knowledgeBaseId && !sendOptions?.artifactContext) {
         const workspaceKnowledgeContext = {
           type: 'knowledge_base' as const,
           data: {
@@ -552,6 +559,7 @@ export function useChatStreamHandlers({
 
       if (
         taskType === 'knowledge' &&
+        !sendOptions?.artifactContext &&
         selectedDocumentIds &&
         selectedDocumentIds.length > 0 &&
         knowledgeBaseId
@@ -697,6 +705,7 @@ export function useChatStreamHandlers({
           : undefined,
         task_type: taskType,
         knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
+        artifact_context: sendOptions?.artifactContext,
         contexts: contextItems.length > 0 ? contextItems : undefined,
         device_id: effectiveDeviceId,
         // Project association for workspace project conversations
@@ -1037,7 +1046,10 @@ export function useChatStreamHandlers({
   const handleSendMessage = useCallback(
     async (
       overrideMessage?: string,
-      sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+      sendOptions?: {
+        interactiveFormAnswer?: InteractiveFormAnswerPayload
+        artifactContext?: ArtifactNodeContext
+      }
     ) => {
       const message =
         overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
@@ -1091,7 +1103,11 @@ export function useChatStreamHandlers({
           .reverse()
           .find(queuedMessage => queuedMessage.status === 'queued')
 
-        if (mergeTarget) {
+        if (
+          mergeTarget &&
+          !prepared.request.artifact_context &&
+          !mergeTarget.snapshot.request.artifact_context
+        ) {
           updateQueuedMessage(mergeTarget.id, queuedMessage => {
             const mergedPrepared = mergePreparedChatSend(queuedMessage.snapshot, prepared)
             return {

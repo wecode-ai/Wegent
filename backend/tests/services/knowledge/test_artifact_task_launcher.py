@@ -145,3 +145,14 @@ async def test_dispatch_drains_emitter_when_execution_finishes():
         await ArtifactTaskLauncher._dispatch_and_drain(request)
 
     emitter.collect.assert_awaited_once()
+
+
+def test_mind_map_prompt_requires_structured_json():
+    prompt = ArtifactTaskLauncher._build_prompt(
+        KnowledgeArtifactType.MIND_MAP,
+        None,
+    )
+
+    assert '"schema_version":1' in prompt
+    assert "不要使用 Markdown 代码围栏" in prompt
+    assert "mermaid" not in prompt.lower()

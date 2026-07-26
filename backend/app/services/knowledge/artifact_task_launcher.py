@@ -216,9 +216,15 @@ class ArtifactTaskLauncher:
                 f"补充要求：{extra}"
             )
         return (
-            "请严格基于已选择的知识库文档生成一张思维导图。"
-            "最终答案只能包含一个 mermaid 代码块，使用 mindmap 语法；"
-            "不要在代码块前后添加解释文字。\n\n"
+            "请严格基于已选择的知识库文档生成一张结构化思维导图。"
+            "最终答案只能包含一个 JSON 对象，不要使用 Markdown 代码围栏，"
+            "不要添加解释文字。JSON 格式必须为："
+            '{"schema_version":1,"root_id":"node-1","nodes":['
+            '{"id":"node-1","parent_id":null,"title":"根主题","summary":"简要说明"},'
+            '{"id":"node-2","parent_id":"node-1","title":"子主题","summary":"简要说明"}'
+            "]}。节点 ID 必须唯一；只能有一个根节点；所有其他节点必须引用已存在的"
+            "父节点；最多 200 个节点，层级不超过 6 层。"
+            "节点标题应简洁、具体，summary 用于补充该节点的含义。\n\n"
             f"补充要求：{extra}"
         )
 

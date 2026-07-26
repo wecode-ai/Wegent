@@ -14,13 +14,14 @@ import { ArtifactCreateDialog } from './ArtifactCreateDialog'
 import { ArtifactCard } from './ArtifactCard'
 import { ArtifactViewer } from './ArtifactViewer'
 import { useKnowledgeArtifacts } from '../hooks/useKnowledgeArtifacts'
-import type { KnowledgeArtifactType } from '@/types/knowledge-artifact'
+import type { ArtifactPromptRequest, KnowledgeArtifactType } from '@/types/knowledge-artifact'
 
 interface ArtifactPanelProps {
   knowledgeBaseId: number
   selectedDocumentIds: number[]
   onAdjustSources: (onApplied?: () => void) => void
   onAvailableDocumentCountChange?: (count: number | null) => void
+  onAskNode?: (request: ArtifactPromptRequest) => void
 }
 
 export function ArtifactPanel({
@@ -28,6 +29,7 @@ export function ArtifactPanel({
   selectedDocumentIds,
   onAdjustSources,
   onAvailableDocumentCountChange,
+  onAskNode,
 }: ArtifactPanelProps) {
   const { t } = useTranslation('knowledge')
   const { toast } = useToast()
@@ -240,6 +242,10 @@ export function ArtifactPanel({
           }
         }}
         onDelete={handleDelete}
+        onAskNode={request => {
+          setSelectedArtifactId(null)
+          onAskNode?.(request)
+        }}
       />
     </div>
   )

@@ -6,6 +6,30 @@ export type KnowledgeArtifactType = 'briefing' | 'mind_map'
 export type KnowledgeArtifactStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 export type KnowledgeArtifactExecutionHealth = 'healthy' | 'stalled'
 
+export interface MindMapNode {
+  id: string
+  parent_id: string | null
+  title: string
+  summary?: string | null
+}
+
+export interface MindMapContent {
+  schema_version: 1
+  root_id: string
+  nodes: MindMapNode[]
+}
+
+export interface ArtifactNodeContext {
+  artifact_id: string
+  node_id: string
+}
+
+export interface ArtifactPromptRequest {
+  requestId: string
+  message: string
+  artifactContext: ArtifactNodeContext
+}
+
 export interface KnowledgeArtifact {
   schema_version: number
   version: number

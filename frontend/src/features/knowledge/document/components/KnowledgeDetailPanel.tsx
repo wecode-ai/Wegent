@@ -36,6 +36,7 @@ import {
 import { getKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeBase, KnowledgeView } from '@/types/knowledge'
 import type { Team } from '@/types/api'
+import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 
 interface KnowledgeDetailPanelProps {
   /** Currently selected knowledge base */
@@ -87,6 +88,9 @@ export function KnowledgeDetailPanel({
   // Document panel collapsed state (for notebook mode)
   const [_isDocumentPanelCollapsed, setIsDocumentPanelCollapsed] = useState(false)
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<'chat' | 'workshop'>('chat')
+  const [artifactPromptRequest, setArtifactPromptRequest] = useState<ArtifactPromptRequest | null>(
+    null
+  )
 
   const namespaceRoleMap = useNamespaceRoleMap()
 
@@ -192,6 +196,7 @@ export function KnowledgeDetailPanel({
       setSelectedDocumentIds([])
       setIsDocumentPanelCollapsed(false)
       setMobileWorkspaceTab('chat')
+      setArtifactPromptRequest(null)
     }
 
     if (currentView === 'documents') {
@@ -256,6 +261,12 @@ export function KnowledgeDetailPanel({
             selectedDocumentIds={selectedDocumentIds}
             guidedQuestions={selectedKb.guided_questions}
             inputAlwaysAtBottom={true}
+            externalPromptRequest={artifactPromptRequest}
+            onExternalPromptConsumed={requestId => {
+              setArtifactPromptRequest(current =>
+                current?.requestId === requestId ? null : current
+              )
+            }}
             emptyStateContent={
               <KnowledgeBaseSummaryCard
                 knowledgeBase={selectedKb}
@@ -275,6 +286,10 @@ export function KnowledgeDetailPanel({
           selectedDocumentIds={selectedDocumentIds}
           onCollapsedChange={setIsDocumentPanelCollapsed}
           mobileVisible={mobileWorkspaceTab === 'workshop'}
+          onAskArtifactNode={request => {
+            setArtifactPromptRequest(request)
+            setMobileWorkspaceTab('chat')
+          }}
         />
       </div>
     )

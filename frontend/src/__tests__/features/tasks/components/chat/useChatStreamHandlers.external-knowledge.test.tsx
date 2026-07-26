@@ -233,6 +233,30 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
     ])
   })
 
+  it('sends Artifact node identity without trusting the current document selection', async () => {
+    const { result } = renderSendHook([], {
+      taskType: 'knowledge',
+      knowledgeBaseId: 12,
+      selectedDocumentIds: [999],
+    })
+
+    await act(async () => {
+      await result.current.handleSendMessage('解释这个节点', {
+        artifactContext: {
+          artifact_id: 'artifact-1',
+          node_id: 'node-2',
+        },
+      })
+    })
+
+    const request = mockContextSendMessage.mock.calls[0][0]
+    expect(request.artifact_context).toEqual({
+      artifact_id: 'artifact-1',
+      node_id: 'node-2',
+    })
+    expect(request.contexts).toBeUndefined()
+  })
+
   it('replaces the current-KB context with an explicit whole-KB scope', async () => {
     const existingContext: ContextItem = {
       type: 'knowledge_base',

@@ -6,7 +6,11 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ArtifactPanel } from '@/features/knowledge/artifact/components/ArtifactPanel'
 import { useKnowledgeArtifacts } from '@/features/knowledge/artifact/hooks/useKnowledgeArtifacts'
-import type { KnowledgeArtifactCreate } from '@/types/knowledge-artifact'
+import type {
+  ArtifactPromptRequest,
+  KnowledgeArtifact,
+  KnowledgeArtifactCreate,
+} from '@/types/knowledge-artifact'
 
 const createMock = jest.fn()
 const toastMock = jest.fn()
@@ -55,8 +59,28 @@ jest.mock('@/features/knowledge/artifact/components/ArtifactCreateDialog', () =>
 }))
 
 jest.mock('@/features/knowledge/artifact/components/ArtifactViewer', () => ({
-  ArtifactViewer: ({ artifact }: { artifact: unknown }) =>
-    artifact ? <div data-testid="mock-artifact-viewer" /> : null,
+  ArtifactViewer: ({
+    artifact,
+    onAskNode,
+  }: {
+    artifact: KnowledgeArtifact | null
+    onAskNode?: (request: ArtifactPromptRequest) => void
+  }) =>
+    artifact ? (
+      <button
+        data-testid="mock-artifact-viewer"
+        onClick={() =>
+          onAskNode?.({
+            requestId: 'request-1',
+            message: '解释节点',
+            artifactContext: {
+              artifact_id: artifact.artifact_id,
+              node_id: 'node-1',
+            },
+          })
+        }
+      />
+    ) : null,
 }))
 
 describe('ArtifactPanel AI Workshop', () => {
@@ -140,6 +164,54 @@ describe('ArtifactPanel AI Workshop', () => {
 
     expect(screen.getByTestId('artifact-type-briefing')).toBeEnabled()
     expect(screen.getByTestId('artifact-type-mind-map')).toBeEnabled()
+  })
+
+  it('closes the viewer and forwards a node question to the workspace', () => {
+    const onAskNode = jest.fn()
+    ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
+      items: [
+        {
+          artifact_id: 'artifact-1',
+          artifact_type: 'mind_map',
+          title: '主题导图',
+          status: 'succeeded',
+          source_document_ids: [101],
+          created_at: '2026-07-26T12:00:00+08:00',
+        },
+      ],
+      canManage: false,
+      availableDocumentCount: 1,
+      processingDocumentCount: 0,
+      isLoading: false,
+      error: null,
+      create: createMock,
+      rename: jest.fn(),
+      retry: jest.fn(),
+      remove: jest.fn(),
+      refresh: jest.fn(),
+    })
+
+    render(
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onAskNode={onAskNode}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('artifact-card-artifact-1'))
+    fireEvent.click(screen.getByTestId('mock-artifact-viewer'))
+
+    expect(onAskNode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactContext: {
+          artifact_id: 'artifact-1',
+          node_id: 'node-1',
+        },
+      })
+    )
+    expect(screen.queryByTestId('mock-artifact-viewer')).not.toBeInTheDocument()
   })
 
   it('explains why generation is unavailable while documents are processing', () => {

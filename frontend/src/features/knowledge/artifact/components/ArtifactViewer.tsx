@@ -21,8 +21,11 @@ import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import type { KnowledgeArtifact } from '@/types/knowledge-artifact'
+import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import { useToast } from '@/hooks/use-toast'
 import { ArtifactSaveDialog } from './ArtifactSaveDialog'
+import { InteractiveMindMap } from './InteractiveMindMap'
+import { buildMindMapQuestion, parseMindMapContent } from './mindMapContent'
 
 interface ArtifactViewerProps {
   artifact: KnowledgeArtifact | null
@@ -31,6 +34,14 @@ interface ArtifactViewerProps {
   onRename: (title: string) => Promise<void>
   onRetry: () => Promise<void>
   onDelete: () => Promise<void>
+  onAskNode?: (request: ArtifactPromptRequest) => void
+}
+
+let promptRequestSequence = 0
+
+function createPromptRequestId(artifactId: string, nodeId: string): string {
+  promptRequestSequence += 1
+  return globalThis.crypto?.randomUUID?.() ?? `${artifactId}-${nodeId}-${promptRequestSequence}`
 }
 
 export function ArtifactViewer({
@@ -40,6 +51,7 @@ export function ArtifactViewer({
   onRename,
   onRetry,
   onDelete,
+  onAskNode,
 }: ArtifactViewerProps) {
   const { t } = useTranslation('knowledge')
   const { theme } = useTheme()
@@ -55,6 +67,10 @@ export function ArtifactViewer({
   }, [artifact])
 
   if (!artifact) return null
+  const mindMapContent =
+    artifact.artifact_type === 'mind_map' && artifact.content
+      ? parseMindMapContent(artifact.content)
+      : null
 
   const handleRename = async () => {
     if (!title.trim()) return
@@ -117,7 +133,34 @@ export function ArtifactViewer({
         <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border p-5">
           {artifact.status === 'succeeded' && artifact.content ? (
             artifact.artifact_type === 'mind_map' ? (
-              <MermaidDiagram code={artifact.content} />
+              mindMapContent ? (
+                <InteractiveMindMap
+                  key={artifact.artifact_id}
+                  content={mindMapContent}
+                  onAskNode={nodeId => {
+                    const message = buildMindMapQuestion(mindMapContent, nodeId)
+                    if (!message || !onAskNode) return
+                    onAskNode({
+                      requestId: createPromptRequestId(artifact.artifact_id, nodeId),
+                      message,
+                      artifactContext: {
+                        artifact_id: artifact.artifact_id,
+                        node_id: nodeId,
+                      },
+                    })
+                  }}
+                />
+              ) : (
+                <div className="space-y-3">
+                  <p
+                    className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-text-secondary"
+                    data-testid="legacy-mind-map-hint"
+                  >
+                    {t('artifact.mindMap.legacyHint')}
+                  </p>
+                  <MermaidDiagram code={artifact.content} />
+                </div>
+              )
             ) : (
               <EnhancedMarkdown source={artifact.content} theme={theme} />
             )

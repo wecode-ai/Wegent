@@ -72,6 +72,7 @@ import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
+import type { ArtifactNodeContext, ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
 
 /**
@@ -109,6 +110,7 @@ type GenerateMode = 'video' | 'image'
 
 type SendMessageOptions = {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
+  artifactContext?: ArtifactNodeContext
 }
 
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
@@ -200,6 +202,9 @@ interface ChatAreaProps {
   emptyStateContent?: React.ReactNode
   /** Extension for team editing functionality (injected from parent to avoid module coupling) */
   extension?: ChatAreaExtension
+  /** One-shot prompt submitted through the normal chat send path. */
+  externalPromptRequest?: ArtifactPromptRequest | null
+  onExternalPromptConsumed?: (requestId: string) => void
 }
 
 /**
@@ -226,6 +231,8 @@ function ChatAreaContent({
   inputAlwaysAtBottom,
   emptyStateContent,
   extension,
+  externalPromptRequest,
+  onExternalPromptConsumed,
 }: ChatAreaProps) {
   const { t } = useTranslation('chat')
   const { toast } = useToast()
@@ -1041,6 +1048,22 @@ function ChatAreaContent({
       streamHandlers,
     ]
   )
+
+  const consumedExternalPromptRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (
+      !externalPromptRequest ||
+      consumedExternalPromptRef.current === externalPromptRequest.requestId
+    ) {
+      return
+    }
+    consumedExternalPromptRef.current = externalPromptRequest.requestId
+    void sendOrConfirmPendingReplacement(externalPromptRequest.message, {
+      artifactContext: externalPromptRequest.artifactContext,
+    }).finally(() => {
+      onExternalPromptConsumed?.(externalPromptRequest.requestId)
+    })
+  }, [externalPromptRequest, onExternalPromptConsumed, sendOrConfirmPendingReplacement])
 
   const handleConfirmPendingFormReplacement = useCallback(async () => {
     if (

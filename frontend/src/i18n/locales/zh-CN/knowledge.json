@@ -964,7 +964,13 @@
       "briefing": "简报",
       "briefingHint": "结构化 Markdown 摘要",
       "mindMap": "思维导图",
-      "mindMapHint": "可交互查看的 Mermaid 图"
+      "mindMapHint": "可浏览、展开并继续追问的知识导图"
+    },
+    "mindMap": {
+      "ask": "问 AI",
+      "expand": "展开节点",
+      "collapse": "收起节点",
+      "legacyHint": "这是旧版思维导图。重新生成后可使用节点追问。"
     },
     "status": {
       "queued": "等待生成",

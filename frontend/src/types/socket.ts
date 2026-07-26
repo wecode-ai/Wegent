@@ -126,6 +126,10 @@ export interface ChatSendPayload {
   task_type?: TaskType
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
+  artifact_context?: {
+    artifact_id: string
+    node_id: string
+  }
   // Local device execution
   device_id?: string // Local device ID for task execution (if undefined, use cloud executor)
   // Project association

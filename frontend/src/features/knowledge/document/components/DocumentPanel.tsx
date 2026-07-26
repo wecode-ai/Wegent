@@ -12,6 +12,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArtifactPanel } from '@/features/knowledge/artifact/components/ArtifactPanel'
 import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
+import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 
 // Helper function to get initial width from localStorage
 const getInitialWidth = (
@@ -61,6 +62,7 @@ interface DocumentPanelProps {
   onCollapsedChange?: (collapsed: boolean) => void
   /** Whether the AI Workshop is the active workspace surface on small screens. */
   mobileVisible?: boolean
+  onAskArtifactNode?: (request: ArtifactPromptRequest) => void
 }
 
 const MIN_WIDTH = 280
@@ -85,6 +87,7 @@ export function DocumentPanel({
   onNewChat,
   onCollapsedChange,
   mobileVisible = false,
+  onAskArtifactNode,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
   const { t: tCommon } = useTranslation('common')
@@ -319,6 +322,7 @@ export function DocumentPanel({
             selectedDocumentIds={selectedDocumentIds}
             onAdjustSources={openSourceDialog}
             onAvailableDocumentCountChange={setAvailableDocumentCount}
+            onAskNode={onAskArtifactNode}
           />
         </div>
       </div>

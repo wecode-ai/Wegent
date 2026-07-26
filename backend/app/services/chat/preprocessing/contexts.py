@@ -1014,6 +1014,15 @@ def _prepare_contexts_for_creation(
                     "document_count": document_count,
                     "scope_restricted": scope_restricted,
                 }
+                artifact_context = kb_data.get("artifact_context")
+                if isinstance(artifact_context, dict):
+                    artifact_id = artifact_context.get("artifact_id")
+                    node_id = artifact_context.get("node_id")
+                    if artifact_id and node_id:
+                        type_data_dict["artifact_context"] = {
+                            "artifact_id": str(artifact_id),
+                            "node_id": str(node_id),
+                        }
                 # Preserve explicit empty scoped ranges as document_ids=[].
                 if scope_restricted:
                     type_data_dict["document_ids"] = document_ids

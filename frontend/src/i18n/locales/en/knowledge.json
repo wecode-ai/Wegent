@@ -964,7 +964,13 @@
       "briefing": "Briefing",
       "briefingHint": "Structured Markdown summary",
       "mindMap": "Mind map",
-      "mindMapHint": "Interactive Mermaid diagram"
+      "mindMapHint": "Explore, expand, and ask follow-up questions"
+    },
+    "mindMap": {
+      "ask": "Ask AI",
+      "expand": "Expand node",
+      "collapse": "Collapse node",
+      "legacyHint": "This is a legacy mind map. Regenerate it to ask questions from nodes."
     },
     "status": {
       "queued": "Queued",
