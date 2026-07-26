@@ -1439,15 +1439,32 @@ async def prepare_contexts_for_chat(
     # with the returned table payload — if parsing fails, the flag stays False.
     has_table_context = len(parsed_tables) > 0
 
-    selected_document_ids = list(
-        dict.fromkeys(
-            document_id
-            for context in selected_docs_contexts
-            for document_id in _normalize_document_ids(
-                (context.type_data or {}).get("document_ids", [])
-            )
+    selected_document_ids_by_kb: dict[int, list[int]] = {}
+    for context in selected_docs_contexts:
+        type_data = context.type_data if isinstance(context.type_data, dict) else {}
+        try:
+            knowledge_base_id = int(type_data.get("knowledge_base_id"))
+        except (TypeError, ValueError):
+            continue
+        document_ids = selected_document_ids_by_kb.setdefault(knowledge_base_id, [])
+        for document_id in _normalize_document_ids(type_data.get("document_ids", [])):
+            if document_id not in document_ids:
+                document_ids.append(document_id)
+
+    selected_scopes = [
+        KnowledgeBaseScope(
+            knowledge_base_id=knowledge_base_id,
+            scope_restricted=True,
+            document_ids=document_ids,
         )
-    )
+        for knowledge_base_id, document_ids in selected_document_ids_by_kb.items()
+        if document_ids
+    ]
+    if selected_docs_contexts and not selected_scopes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected documents context has no valid documents",
+        )
 
     # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
     # and extra_tools (table prompt and selected_documents processing may have modified
@@ -1456,12 +1473,16 @@ async def prepare_contexts_for_chat(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt=kb_meta_prompt,
-        knowledge_base_ids=kb_result.knowledge_base_ids,
-        is_user_selected_kb=kb_result.is_user_selected_kb,
-        document_ids=selected_document_ids or kb_result.document_ids,
-        knowledge_base_scopes=(
-            [] if selected_document_ids else kb_result.knowledge_base_scopes
+        knowledge_base_ids=(
+            [scope.knowledge_base_id for scope in selected_scopes]
+            if selected_scopes
+            else kb_result.knowledge_base_ids
         ),
+        is_user_selected_kb=(
+            True if selected_scopes else kb_result.is_user_selected_kb
+        ),
+        document_ids=[] if selected_scopes else kb_result.document_ids,
+        knowledge_base_scopes=selected_scopes or kb_result.knowledge_base_scopes,
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(

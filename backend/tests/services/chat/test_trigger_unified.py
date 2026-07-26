@@ -9,7 +9,11 @@ import pytest
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from shared.models import ExecutionRequest
-from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
+from shared.models.knowledge import (
+    ChatContextsResult,
+    KnowledgeBaseScope,
+    KnowledgeBaseToolsResult,
+)
 
 
 def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
@@ -830,6 +834,58 @@ class TestProcessContextsAttachments:
         assert result.knowledge_base_ids == [1408]
         assert result.preload_skills == ["wegent-knowledge"]
         assert result.user_selected_skills == ["wegent-knowledge"]
+
+    @pytest.mark.asyncio
+    async def test_artifact_context_does_not_preload_knowledge_management_skill(self):
+        """Artifact generation must use scoped built-in knowledge tools only."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1263,
+            subtask_id=1697,
+            prompt="generate artifact",
+            system_prompt="system",
+            model_config={},
+            preload_skills=[],
+        )
+        scope = KnowledgeBaseScope(
+            knowledge_base_id=1408,
+            scope_restricted=True,
+            document_ids=[101],
+        )
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="meta",
+                knowledge_base_ids=[1408],
+                is_user_selected_kb=True,
+                knowledge_base_scopes=[scope],
+            ),
+        )
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=AsyncMock(return_value=ctx),
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                result = await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1696,
+                    user_id=2,
+                    preload_selected_kb_skill=False,
+                )
+
+        assert result.knowledge_base_scopes == [scope]
+        assert result.preload_skills == []
+        assert result.user_selected_skills == []
 
     @pytest.mark.asyncio
     async def test_explicit_subtask_kb_overrides_inherited_task_level_ids(self):

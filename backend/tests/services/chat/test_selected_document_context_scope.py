@@ -159,5 +159,12 @@ async def test_selected_documents_replace_whole_kb_scope_in_runtime_request():
             task_id=31,
         )
 
-    assert result.kb.document_ids == [101]
-    assert result.kb.knowledge_base_scopes == []
+    assert result.kb.knowledge_base_ids == [12]
+    assert result.kb.document_ids == []
+    assert result.kb.knowledge_base_scopes == [
+        KnowledgeBaseScope(
+            knowledge_base_id=12,
+            scope_restricted=True,
+            document_ids=[101],
+        )
+    ]
