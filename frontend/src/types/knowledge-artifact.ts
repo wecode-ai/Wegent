@@ -7,6 +7,8 @@ export type KnowledgeArtifactStatus = 'queued' | 'running' | 'succeeded' | 'fail
 
 export interface KnowledgeArtifact {
   schema_version: number
+  version: number
+  attempt: number
   artifact_id: string
   knowledge_base_id: number
   artifact_type: KnowledgeArtifactType

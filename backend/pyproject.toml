@@ -161,6 +161,7 @@ dev = [
     
     # Environment management
     "python-decouple>=3.8",
+    "ruff>=0.16.0",
 ]
 
 [tool.black]

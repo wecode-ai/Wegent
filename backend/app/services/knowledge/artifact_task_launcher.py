@@ -64,6 +64,7 @@ class ArtifactTaskLauncher:
         self,
         *,
         artifact_id: str,
+        attempt: int,
         artifact_type: KnowledgeArtifactType,
         title: str,
         knowledge_base_id: int,
@@ -78,7 +79,7 @@ class ArtifactTaskLauncher:
             title=title,
             task_type="knowledge",
             knowledge_base_id=knowledge_base_id,
-            task_name=f"knowledge-artifact-{artifact_id}",
+            task_name=f"knowledge-artifact-{artifact_id}-{attempt}",
             source="knowledge_artifact",
         )
         session = prepare_execution_session(
@@ -94,7 +95,7 @@ class ArtifactTaskLauncher:
                 "Artifact agent did not create an assistant subtask"
             )
 
-        self._mark_task_as_background(session.task, artifact_id)
+        self._mark_task_as_background(session.task, artifact_id, attempt)
         link_selected_documents_to_subtask(
             self.db,
             subtask_id=session.user_subtask.id,
@@ -146,7 +147,12 @@ class ArtifactTaskLauncher:
             )
         return team
 
-    def _mark_task_as_background(self, task, artifact_id: str) -> None:
+    def _mark_task_as_background(
+        self,
+        task,
+        artifact_id: str,
+        attempt: int,
+    ) -> None:
         task_crd = Task.model_validate(task.json)
         labels = task_crd.metadata.labels or {}
         labels.update(
@@ -155,6 +161,7 @@ class ArtifactTaskLauncher:
                 "taskType": "knowledge",
                 "source": "knowledge_artifact",
                 "artifactId": artifact_id,
+                "artifactAttempt": str(attempt),
             }
         )
         task_crd.metadata.labels = labels

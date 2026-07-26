@@ -24,8 +24,10 @@ from app.services.knowledge.artifact_service import (
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLaunchResult
 
 
-def build_service() -> tuple[ArtifactService, AsyncMock, AsyncMock]:
-    repository = AsyncMock()
+def build_service() -> tuple[ArtifactService, MagicMock, AsyncMock]:
+    repository = MagicMock()
+    repository.create.side_effect = lambda artifact: artifact
+    repository.update_execution.side_effect = lambda artifact: artifact
     launcher = AsyncMock()
     execution_lease = AsyncMock()
     service = ArtifactService(
@@ -82,8 +84,10 @@ async def test_create_persists_before_and_after_launch():
     assert artifact.task_id == 31
     assert artifact.assistant_subtask_id == 41
     assert artifact.generation_config == {"instruction": "突出风险"}
-    assert repository.save.await_count == 2
+    repository.create.assert_called_once()
+    repository.update_execution.assert_called_once()
     launcher.launch.assert_awaited_once()
+    assert launcher.launch.await_args.kwargs["attempt"] == 1
 
 
 @pytest.mark.asyncio
@@ -102,7 +106,7 @@ async def test_create_marks_artifact_failed_when_task_launch_fails():
     ):
         await service.create(12, request)
 
-    failed_artifact = repository.save.await_args_list[-1].args[0]
+    failed_artifact = repository.update_execution.call_args.args[0]
     assert failed_artifact.status == KnowledgeArtifactStatus.FAILED
     assert failed_artifact.error_message == "智能体不可用"
 
@@ -127,7 +131,7 @@ async def test_create_requires_document_management_permission():
     ):
         await service.create(12, request)
 
-    repository.save.assert_not_awaited()
+    repository.create.assert_not_called()
 
 
 def test_parse_mind_map_accepts_exactly_one_mermaid_block():
@@ -175,7 +179,7 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
 
     assert reconciled.status == KnowledgeArtifactStatus.SUCCEEDED
     assert reconciled.content == "graph TD\nA --> B"
-    repository.save.assert_awaited_once_with(artifact)
+    repository.update_execution.assert_called_once_with(artifact)
 
 
 @pytest.mark.asyncio
@@ -207,7 +211,7 @@ async def test_reconcile_marks_stale_running_execution_as_interrupted():
         "Artifact generation was interrupted. Please retry."
     )
     persist_result.assert_awaited_once()
-    repository.save.assert_awaited_once_with(artifact)
+    repository.update_execution.assert_called_once_with(artifact)
 
 
 @pytest.mark.asyncio
@@ -230,7 +234,7 @@ async def test_reconcile_keeps_stale_running_execution_with_active_lease():
     reconciled = await service._reconcile(artifact)
 
     assert reconciled.status == KnowledgeArtifactStatus.RUNNING
-    repository.save.assert_not_awaited()
+    repository.update_execution.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -240,6 +244,14 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
     artifact.error_code = "EXECUTION_INTERRUPTED"
     artifact.error_message = "模型调用失败"
     repository.get.return_value = artifact
+    claimed = artifact.model_copy(deep=True)
+    claimed.status = KnowledgeArtifactStatus.QUEUED
+    claimed.task_id = None
+    claimed.assistant_subtask_id = None
+    claimed.error_code = None
+    claimed.error_message = None
+    claimed.attempt = 2
+    repository.claim_retry.return_value = (claimed, True)
     launcher.launch.return_value = ArtifactTaskLaunchResult(
         task_id=32,
         assistant_subtask_id=42,
@@ -254,3 +266,5 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
     assert retried.assistant_subtask_id == 42
     assert retried.error_code is None
     assert retried.error_message is None
+    assert retried.attempt == 2
+    assert launcher.launch.await_args.kwargs["attempt"] == 2

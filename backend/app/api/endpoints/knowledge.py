@@ -64,10 +64,6 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
-from app.services.knowledge.artifact_repository import (
-    ArtifactStorageError,
-    RedisArtifactRepository,
-)
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
@@ -566,14 +562,6 @@ async def delete_knowledge_base(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Knowledge base not found or access denied",
-            )
-
-        try:
-            await RedisArtifactRepository().delete_by_knowledge_base(knowledge_base_id)
-        except ArtifactStorageError:
-            logger.exception(
-                "Knowledge base %s was deleted but Artifact cleanup failed",
-                knowledge_base_id,
             )
 
         add_span_event(

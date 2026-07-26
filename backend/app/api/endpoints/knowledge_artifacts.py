@@ -21,7 +21,7 @@ from app.schemas.knowledge_artifact import (
 )
 from app.services.knowledge.artifact_repository import (
     ArtifactStorageError,
-    RedisArtifactRepository,
+    KnowledgeArtifactRepository,
 )
 from app.services.knowledge.artifact_service import (
     ArtifactNotFoundError,
@@ -38,7 +38,7 @@ T = TypeVar("T")
 
 
 def _service(db: Session, user: User) -> ArtifactService:
-    return ArtifactService(db, user, RedisArtifactRepository())
+    return ArtifactService(db, user, KnowledgeArtifactRepository(db))
 
 
 async def _execute(operation: Callable[[], Awaitable[T]]) -> T:

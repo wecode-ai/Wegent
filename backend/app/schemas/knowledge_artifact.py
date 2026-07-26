@@ -63,6 +63,8 @@ class KnowledgeArtifact(BaseModel):
     """Persisted Artifact record and API response."""
 
     schema_version: int = 1
+    version: int = 1
+    attempt: int = 1
     artifact_id: str
     knowledge_base_id: int
     artifact_type: KnowledgeArtifactType

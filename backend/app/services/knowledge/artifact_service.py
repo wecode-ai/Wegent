@@ -25,8 +25,8 @@ from app.schemas.knowledge_artifact import (
 )
 from app.services.chat.trigger.lifecycle import persist_completed_result
 from app.services.knowledge.artifact_repository import (
+    KnowledgeArtifactRepository,
     RedisArtifactExecutionLease,
-    RedisArtifactRepository,
 )
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -58,13 +58,13 @@ class ArtifactValidationError(ValueError):
 
 
 class ArtifactService:
-    """Coordinate permissions, Redis persistence, and agent execution."""
+    """Coordinate permissions, durable persistence, and agent execution."""
 
     def __init__(
         self,
         db: Session,
         user: User,
-        repository: RedisArtifactRepository,
+        repository: KnowledgeArtifactRepository,
         *,
         launcher: ArtifactTaskLauncher | None = None,
         execution_lease: RedisArtifactExecutionLease | None = None,
@@ -103,8 +103,8 @@ class ArtifactService:
             created_at=now,
             updated_at=now,
         )
-        await self.repository.save(artifact)
-        return await self._launch(artifact)
+        persisted = self.repository.create(artifact)
+        return await self._launch(persisted)
 
     async def list(
         self,
@@ -114,10 +114,11 @@ class ArtifactService:
     ) -> KnowledgeArtifactListResponse:
         """List recent Artifacts and reconcile active generations."""
         self._require_read_access(knowledge_base_id)
-        artifacts = await self.repository.list_by_knowledge_base(knowledge_base_id)
-        artifacts.sort(key=lambda item: item.created_at, reverse=True)
-        items = artifacts[:limit]
-        reconciled = await self._reconcile_many(items)
+        artifacts = self.repository.list_by_knowledge_base(
+            knowledge_base_id,
+            limit=limit,
+        )
+        reconciled = await self._reconcile_many(artifacts)
         return KnowledgeArtifactListResponse(
             items=reconciled,
             can_manage=KnowledgeService.can_manage_knowledge_base_documents(
@@ -145,10 +146,13 @@ class ArtifactService:
     ) -> KnowledgeArtifact:
         """Rename one Artifact."""
         self._require_manage_access(knowledge_base_id)
-        artifact = await self._get_artifact(knowledge_base_id, artifact_id)
-        artifact.title = title.strip()
-        artifact.updated_at = datetime.now().astimezone()
-        await self.repository.save(artifact)
+        artifact = self.repository.rename(
+            knowledge_base_id,
+            artifact_id,
+            title.strip(),
+        )
+        if artifact is None:
+            raise ArtifactNotFoundError("Artifact not found")
         return artifact
 
     async def retry(
@@ -162,27 +166,27 @@ class ArtifactService:
         artifact = await self._reconcile(artifact)
         if artifact.status != KnowledgeArtifactStatus.FAILED:
             raise ArtifactValidationError("Only failed artifacts can be retried")
-        artifact.status = KnowledgeArtifactStatus.QUEUED
-        artifact.task_id = None
-        artifact.assistant_subtask_id = None
-        artifact.content = None
-        artifact.error_code = None
-        artifact.error_message = None
-        artifact.completed_at = None
-        artifact.updated_at = datetime.now().astimezone()
-        await self.repository.save(artifact)
-        return await self._launch(artifact)
+        claimed, did_claim = self.repository.claim_retry(
+            knowledge_base_id,
+            artifact_id,
+        )
+        if claimed is None:
+            raise ArtifactNotFoundError("Artifact not found")
+        if not did_claim:
+            raise ArtifactValidationError("Only failed artifacts can be retried")
+        return await self._launch(claimed)
 
     async def delete(self, knowledge_base_id: int, artifact_id: str) -> None:
         """Delete the Artifact record without deleting its Task."""
         self._require_manage_access(knowledge_base_id)
-        if not await self.repository.delete(knowledge_base_id, artifact_id):
+        if not self.repository.delete(knowledge_base_id, artifact_id):
             raise ArtifactNotFoundError("Artifact not found")
 
     async def _launch(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
         try:
             launch = await self.launcher.launch(
                 artifact_id=artifact.artifact_id,
+                attempt=artifact.attempt,
                 artifact_type=artifact.artifact_type,
                 title=artifact.title,
                 knowledge_base_id=artifact.knowledge_base_id,
@@ -194,15 +198,14 @@ class ArtifactService:
             artifact.error_message = str(exc) or "Failed to start artifact generation"
             artifact.completed_at = datetime.now().astimezone()
             artifact.updated_at = artifact.completed_at
-            await self.repository.save(artifact)
+            self.repository.update_execution(artifact)
             raise
 
         artifact.task_id = launch.task_id
         artifact.assistant_subtask_id = launch.assistant_subtask_id
         artifact.status = KnowledgeArtifactStatus.RUNNING
         artifact.updated_at = datetime.now().astimezone()
-        await self.repository.save(artifact)
-        return artifact
+        return self.repository.update_execution(artifact) or artifact
 
     async def _reconcile(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
         if artifact.status not in _ACTIVE_STATUSES:
@@ -229,7 +232,7 @@ class ArtifactService:
                 return await self._mark_interrupted(artifact)
             if execution_ids_changed:
                 artifact.updated_at = datetime.now().astimezone()
-                await self.repository.save(artifact)
+                artifact = self.repository.update_execution(artifact) or artifact
             return artifact
         if self._subtask_status(
             subtask
@@ -297,7 +300,7 @@ class ArtifactService:
                     continue
                 if artifact.artifact_id in repaired_ids:
                     artifact.updated_at = datetime.now().astimezone()
-                    await self.repository.save(artifact)
+                    artifact = self.repository.update_execution(artifact) or artifact
                 reconciled.append(artifact)
                 continue
             if (
@@ -349,7 +352,7 @@ class ArtifactService:
 
         if changed:
             artifact.updated_at = datetime.now().astimezone()
-            await self.repository.save(artifact)
+            return self.repository.update_execution(artifact) or artifact
         return artifact
 
     def _apply_completed_result(
@@ -391,14 +394,17 @@ class ArtifactService:
         artifact.error_message = _INTERRUPTED_ERROR_MESSAGE
         artifact.completed_at = now
         artifact.updated_at = now
-        await self.repository.save(artifact)
-        return artifact
+        return self.repository.update_execution(artifact) or artifact
 
     @staticmethod
     def _lease_grace_expired(artifact: KnowledgeArtifact) -> bool:
-        return (
-            datetime.now().astimezone() - artifact.updated_at >= _EXECUTION_LEASE_GRACE
+        aware_now = datetime.now().astimezone()
+        now = (
+            aware_now.replace(tzinfo=None)
+            if artifact.updated_at.tzinfo is None
+            else aware_now
         )
+        return now - artifact.updated_at >= _EXECUTION_LEASE_GRACE
 
     @staticmethod
     def _subtask_status(subtask: Subtask) -> str:
@@ -425,27 +431,17 @@ class ArtifactService:
         return matches[0].strip()
 
     def _repair_execution_ids(self, artifact: KnowledgeArtifact) -> None:
-        tasks = (
+        task = (
             self.db.query(TaskResource)
             .filter(
                 TaskResource.kind == "Task",
+                TaskResource.user_id == artifact.user_id,
+                TaskResource.name
+                == f"knowledge-artifact-{artifact.artifact_id}-{artifact.attempt}",
                 TaskResource.is_active == TaskResource.STATE_ACTIVE,
             )
             .order_by(TaskResource.id.desc())
-            .limit(200)
-            .all()
-        )
-        task = next(
-            (
-                item
-                for item in tasks
-                if (item.json or {})
-                .get("metadata", {})
-                .get("labels", {})
-                .get("artifactId")
-                == artifact.artifact_id
-            ),
-            None,
+            .first()
         )
         if task is None:
             return
@@ -471,6 +467,7 @@ class ArtifactService:
         query = self.db.query(KnowledgeDocument).filter(
             KnowledgeDocument.kind_id == knowledge_base_id,
             KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+            KnowledgeDocument.is_active.is_(True),
         )
         if requested_ids:
             documents = query.filter(KnowledgeDocument.id.in_(requested_ids)).all()
@@ -496,7 +493,7 @@ class ArtifactService:
         knowledge_base_id: int,
         artifact_id: str,
     ) -> KnowledgeArtifact:
-        artifact = await self.repository.get(knowledge_base_id, artifact_id)
+        artifact = self.repository.get(knowledge_base_id, artifact_id)
         if artifact is None:
             raise ArtifactNotFoundError("Artifact not found")
         return artifact

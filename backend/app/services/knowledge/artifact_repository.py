@@ -2,22 +2,30 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Redis persistence for knowledge artifacts."""
+"""Durable storage and ephemeral execution leases for knowledge Artifacts."""
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.schemas.knowledge_artifact import KnowledgeArtifact
+from app.models.knowledge_artifact import KnowledgeArtifactRecord
+from app.schemas.knowledge_artifact import (
+    KnowledgeArtifact,
+    KnowledgeArtifactStatus,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ArtifactStorageError(RuntimeError):
-    """Raised when permanent Artifact storage is unavailable or corrupt."""
+    """Raised when Artifact storage is unavailable."""
 
 
 class RedisArtifactExecutionLease:
@@ -65,7 +73,7 @@ class RedisArtifactExecutionLease:
                 "1",
                 ex=self._ttl_seconds,
             )
-        except Exception as exc:
+        except RedisError as exc:
             logger.exception(
                 "Failed to refresh Artifact execution lease for subtask %s",
                 assistant_subtask_id,
@@ -95,7 +103,7 @@ class RedisArtifactExecutionLease:
                 for subtask_id, value in zip(ordered_ids, values, strict=True)
                 if value is not None
             }
-        except Exception as exc:
+        except RedisError as exc:
             logger.exception("Failed to read Artifact execution leases")
             raise ArtifactStorageError(
                 "Artifact execution lease is unavailable"
@@ -108,7 +116,7 @@ class RedisArtifactExecutionLease:
         client = self._create_client()
         try:
             await client.delete(self.key_for(assistant_subtask_id))
-        except Exception as exc:
+        except RedisError as exc:
             logger.warning(
                 "Failed to release Artifact execution lease for subtask %s: %s",
                 assistant_subtask_id,
@@ -118,130 +126,252 @@ class RedisArtifactExecutionLease:
             await client.aclose()
 
 
-class RedisArtifactRepository:
-    """Store all artifacts for one knowledge base in one Redis Hash."""
+class KnowledgeArtifactRepository:
+    """Persist Artifacts in MySQL with race-safe, field-scoped updates."""
 
-    KEY_PREFIX = "knowledge-artifacts"
+    def __init__(self, db: Session) -> None:
+        self.db = db
 
-    def __init__(
-        self,
-        redis_url: str = settings.REDIS_URL,
-        *,
-        client_factory: Callable[[], Any] | None = None,
-    ) -> None:
-        self._redis_url = redis_url
-        self._client_factory = client_factory
-
-    def _create_client(self) -> Redis:
-        if self._client_factory is not None:
-            return self._client_factory()
-        return Redis.from_url(
-            self._redis_url,
-            encoding="utf-8",
-            decode_responses=True,
-            socket_timeout=5.0,
-            socket_connect_timeout=2.0,
-            retry_on_timeout=True,
+    def create(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
+        """Insert a new Artifact."""
+        record = KnowledgeArtifactRecord(
+            artifact_id=artifact.artifact_id,
+            knowledge_base_id=artifact.knowledge_base_id,
+            artifact_type=artifact.artifact_type.value,
+            title=artifact.title,
+            status=artifact.status.value,
+            task_id=artifact.task_id,
+            assistant_subtask_id=artifact.assistant_subtask_id,
+            content=artifact.content,
+            source_document_ids=artifact.source_document_ids,
+            generation_config=artifact.generation_config,
+            error_code=artifact.error_code,
+            error_message=artifact.error_message,
+            user_id=artifact.user_id,
+            schema_version=artifact.schema_version,
+            version=artifact.version,
+            attempt=artifact.attempt,
+            created_at=artifact.created_at,
+            updated_at=artifact.updated_at,
+            completed_at=artifact.completed_at,
         )
-
-    @classmethod
-    def key_for(cls, knowledge_base_id: int) -> str:
-        """Build the single Redis Hash key for a knowledge base."""
-        return f"{cls.KEY_PREFIX}:{knowledge_base_id}"
-
-    async def save(self, artifact: KnowledgeArtifact) -> None:
-        """Create or replace one Artifact JSON value."""
-        client = self._create_client()
         try:
-            await client.hset(
-                self.key_for(artifact.knowledge_base_id),
-                artifact.artifact_id,
-                artifact.model_dump_json(),
-            )
-        except Exception as exc:
-            logger.exception(
-                "Failed to save knowledge artifact %s", artifact.artifact_id
-            )
-            raise ArtifactStorageError("Artifact storage is unavailable") from exc
-        finally:
-            await client.aclose()
+            self.db.add(record)
+            self.db.commit()
+            self.db.refresh(record)
+            return self._to_schema(record)
+        except SQLAlchemyError as exc:
+            self._raise_storage_error("create", artifact.artifact_id, exc)
 
-    async def get(
+    def get(
         self,
         knowledge_base_id: int,
         artifact_id: str,
     ) -> KnowledgeArtifact | None:
-        """Read one Artifact."""
-        client = self._create_client()
+        """Read one Artifact within its knowledge-base boundary."""
         try:
-            raw = await client.hget(self.key_for(knowledge_base_id), artifact_id)
-            if raw is None:
-                return None
-            return self._deserialize(raw, artifact_id)
-        except ArtifactStorageError:
-            raise
-        except Exception as exc:
-            logger.exception("Failed to read knowledge artifact %s", artifact_id)
-            raise ArtifactStorageError("Artifact storage is unavailable") from exc
-        finally:
-            await client.aclose()
+            record = self._query(knowledge_base_id, artifact_id).first()
+            return self._to_schema(record) if record is not None else None
+        except SQLAlchemyError as exc:
+            self._raise_storage_error("read", artifact_id, exc)
 
-    async def list_by_knowledge_base(
+    def list_by_knowledge_base(
         self,
         knowledge_base_id: int,
+        *,
+        limit: int = 50,
     ) -> list[KnowledgeArtifact]:
-        """Read all Artifacts for one knowledge base."""
-        client = self._create_client()
+        """Read the newest Artifacts without loading the whole knowledge base."""
         try:
-            values = await client.hgetall(self.key_for(knowledge_base_id))
-            return [
-                self._deserialize(raw, artifact_id)
-                for artifact_id, raw in values.items()
-            ]
-        except ArtifactStorageError:
-            raise
-        except Exception as exc:
-            logger.exception(
-                "Failed to list knowledge artifacts for knowledge base %s",
-                knowledge_base_id,
+            records = (
+                self.db.query(KnowledgeArtifactRecord)
+                .filter(KnowledgeArtifactRecord.knowledge_base_id == knowledge_base_id)
+                .order_by(
+                    KnowledgeArtifactRecord.created_at.desc(),
+                    KnowledgeArtifactRecord.artifact_id.desc(),
+                )
+                .limit(limit)
+                .all()
             )
-            raise ArtifactStorageError("Artifact storage is unavailable") from exc
-        finally:
-            await client.aclose()
+            return [self._to_schema(record) for record in records]
+        except SQLAlchemyError as exc:
+            self._raise_storage_error("list", str(knowledge_base_id), exc)
 
-    async def delete(self, knowledge_base_id: int, artifact_id: str) -> bool:
-        """Delete one Artifact."""
-        client = self._create_client()
+    def rename(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+        title: str,
+    ) -> KnowledgeArtifact | None:
+        """Update only user-owned metadata."""
         try:
-            deleted = await client.hdel(self.key_for(knowledge_base_id), artifact_id)
-            return bool(deleted)
-        except Exception as exc:
-            logger.exception("Failed to delete knowledge artifact %s", artifact_id)
-            raise ArtifactStorageError("Artifact storage is unavailable") from exc
-        finally:
-            await client.aclose()
-
-    async def delete_by_knowledge_base(self, knowledge_base_id: int) -> bool:
-        """Delete the single Hash owned by a knowledge base."""
-        client = self._create_client()
-        try:
-            deleted = await client.delete(self.key_for(knowledge_base_id))
-            return bool(deleted)
-        except Exception as exc:
-            logger.exception(
-                "Failed to delete artifacts for knowledge base %s",
-                knowledge_base_id,
+            record = (
+                self._query(knowledge_base_id, artifact_id).with_for_update().first()
             )
-            raise ArtifactStorageError("Artifact storage is unavailable") from exc
-        finally:
-            await client.aclose()
+            if record is None:
+                self.db.rollback()
+                return None
+            record.title = title
+            record.version += 1
+            record.updated_at = datetime.now().astimezone()
+            self.db.commit()
+            self.db.refresh(record)
+            return self._to_schema(record)
+        except SQLAlchemyError as exc:
+            self._raise_storage_error("rename", artifact_id, exc)
+
+    def claim_retry(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+    ) -> tuple[KnowledgeArtifact | None, bool]:
+        """Atomically claim a new attempt for a failed Artifact."""
+        try:
+            record = (
+                self._query(knowledge_base_id, artifact_id).with_for_update().first()
+            )
+            if record is None:
+                self.db.rollback()
+                return None, False
+            if record.status != KnowledgeArtifactStatus.FAILED.value:
+                artifact = self._to_schema(record)
+                self.db.rollback()
+                return artifact, False
+
+            record.status = KnowledgeArtifactStatus.QUEUED.value
+            record.task_id = None
+            record.assistant_subtask_id = None
+            record.content = None
+            record.error_code = None
+            record.error_message = None
+            record.completed_at = None
+            record.attempt += 1
+            record.version += 1
+            record.updated_at = datetime.now().astimezone()
+            self.db.commit()
+            self.db.refresh(record)
+            return self._to_schema(record), True
+        except SQLAlchemyError as exc:
+            self._raise_storage_error("retry", artifact_id, exc)
+
+    def update_execution(
+        self,
+        artifact: KnowledgeArtifact,
+    ) -> KnowledgeArtifact | None:
+        """Update execution fields for a current attempt and legal transition."""
+        try:
+            (
+                self._query(artifact.knowledge_base_id, artifact.artifact_id)
+                .filter(
+                    KnowledgeArtifactRecord.attempt == artifact.attempt,
+                    KnowledgeArtifactRecord.status.in_(
+                        self._allowed_previous_statuses(artifact.status)
+                    ),
+                )
+                .update(
+                    {
+                        KnowledgeArtifactRecord.status: artifact.status.value,
+                        KnowledgeArtifactRecord.task_id: artifact.task_id,
+                        KnowledgeArtifactRecord.assistant_subtask_id: (
+                            artifact.assistant_subtask_id
+                        ),
+                        KnowledgeArtifactRecord.content: artifact.content,
+                        KnowledgeArtifactRecord.error_code: artifact.error_code,
+                        KnowledgeArtifactRecord.error_message: artifact.error_message,
+                        KnowledgeArtifactRecord.completed_at: artifact.completed_at,
+                        KnowledgeArtifactRecord.updated_at: artifact.updated_at,
+                        KnowledgeArtifactRecord.version: (
+                            KnowledgeArtifactRecord.version + 1
+                        ),
+                    },
+                    synchronize_session=False,
+                )
+            )
+            self.db.commit()
+            return self.get(artifact.knowledge_base_id, artifact.artifact_id)
+        except SQLAlchemyError as exc:
+            self._raise_storage_error("update", artifact.artifact_id, exc)
 
     @staticmethod
-    def _deserialize(raw: str | bytes, artifact_id: str) -> KnowledgeArtifact:
+    def _allowed_previous_statuses(
+        target: KnowledgeArtifactStatus,
+    ) -> tuple[str, ...]:
+        if target == KnowledgeArtifactStatus.QUEUED:
+            return (KnowledgeArtifactStatus.QUEUED.value,)
+        if target == KnowledgeArtifactStatus.RUNNING:
+            return (
+                KnowledgeArtifactStatus.QUEUED.value,
+                KnowledgeArtifactStatus.RUNNING.value,
+            )
+        return (
+            KnowledgeArtifactStatus.QUEUED.value,
+            KnowledgeArtifactStatus.RUNNING.value,
+        )
+
+    def delete(self, knowledge_base_id: int, artifact_id: str) -> bool:
+        """Physically delete an Artifact so stale executions cannot recreate it."""
         try:
-            return KnowledgeArtifact.model_validate_json(raw)
-        except Exception as exc:
-            logger.exception("Corrupt knowledge artifact payload: %s", artifact_id)
-            raise ArtifactStorageError(
-                "Artifact storage contains invalid data"
-            ) from exc
+            deleted = self._query(knowledge_base_id, artifact_id).delete(
+                synchronize_session=False
+            )
+            self.db.commit()
+            return bool(deleted)
+        except SQLAlchemyError as exc:
+            self._raise_storage_error("delete", artifact_id, exc)
+
+    def delete_by_knowledge_base(self, knowledge_base_id: int) -> bool:
+        """Delete every Artifact owned by a knowledge base."""
+        try:
+            deleted = (
+                self.db.query(KnowledgeArtifactRecord)
+                .filter(KnowledgeArtifactRecord.knowledge_base_id == knowledge_base_id)
+                .delete(synchronize_session=False)
+            )
+            self.db.commit()
+            return bool(deleted)
+        except SQLAlchemyError as exc:
+            self._raise_storage_error("delete all", str(knowledge_base_id), exc)
+
+    def _query(self, knowledge_base_id: int, artifact_id: str):
+        return self.db.query(KnowledgeArtifactRecord).filter(
+            KnowledgeArtifactRecord.knowledge_base_id == knowledge_base_id,
+            KnowledgeArtifactRecord.artifact_id == artifact_id,
+        )
+
+    @staticmethod
+    def _to_schema(record: KnowledgeArtifactRecord) -> KnowledgeArtifact:
+        return KnowledgeArtifact(
+            artifact_id=record.artifact_id,
+            knowledge_base_id=record.knowledge_base_id,
+            artifact_type=record.artifact_type,
+            title=record.title,
+            status=record.status,
+            task_id=record.task_id,
+            assistant_subtask_id=record.assistant_subtask_id,
+            content=record.content,
+            source_document_ids=list(record.source_document_ids or []),
+            generation_config=dict(record.generation_config or {}),
+            error_code=record.error_code,
+            error_message=record.error_message,
+            user_id=record.user_id,
+            schema_version=record.schema_version,
+            version=record.version,
+            attempt=record.attempt,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            completed_at=record.completed_at,
+        )
+
+    def _raise_storage_error(
+        self,
+        operation: str,
+        target: str,
+        exc: SQLAlchemyError,
+    ) -> None:
+        self.db.rollback()
+        logger.exception(
+            "Failed to %s knowledge Artifact %s",
+            operation,
+            target,
+        )
+        raise ArtifactStorageError("Artifact storage is unavailable") from exc

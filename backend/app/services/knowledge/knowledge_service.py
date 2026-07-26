@@ -22,6 +22,7 @@ from app.models.knowledge import (
     KnowledgeDocument,
     KnowledgeFolder,
 )
+from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.namespace import Namespace
 from app.models.resource_member import (
     APPROVED_MEMBER_STATUS_VALUES,
@@ -926,6 +927,11 @@ class KnowledgeService:
         # Folders have no FK constraint on kind_id, so they must be cleaned up explicitly.
         db.query(KnowledgeFolder).filter(
             KnowledgeFolder.kind_id == knowledge_base_id
+        ).delete(synchronize_session=False)
+
+        # Delete Artifacts in the same transaction as their owning knowledge base.
+        db.query(KnowledgeArtifactRecord).filter(
+            KnowledgeArtifactRecord.knowledge_base_id == knowledge_base_id
         ).delete(synchronize_session=False)
 
         # Delete all members for this KB

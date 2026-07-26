@@ -23,6 +23,8 @@ function buildArtifact(
 ): KnowledgeArtifact {
   return {
     schema_version: 1,
+    version: 1,
+    attempt: 1,
     artifact_id: `artifact-${knowledgeBaseId}`,
     knowledge_base_id: knowledgeBaseId,
     artifact_type: 'briefing',

@@ -35,7 +35,7 @@ async def test_launch_creates_lease_before_scheduling_execution():
             "app.services.knowledge.artifact_task_launcher.prepare_execution_session",
             return_value=session,
         ),
-        patch.object(launcher, "_mark_task_as_background"),
+        patch.object(launcher, "_mark_task_as_background") as mark_background,
         patch(
             "app.services.knowledge.artifact_task_launcher.link_selected_documents_to_subtask"
         ),
@@ -48,6 +48,7 @@ async def test_launch_creates_lease_before_scheduling_execution():
     ):
         result = await launcher.launch(
             artifact_id="artifact-1",
+            attempt=2,
             artifact_type=KnowledgeArtifactType.BRIEFING,
             title="项目简报",
             knowledge_base_id=12,
@@ -56,6 +57,7 @@ async def test_launch_creates_lease_before_scheduling_execution():
         )
 
     execution_lease.refresh.assert_awaited_once_with(41)
+    mark_background.assert_called_once_with(session.task, "artifact-1", 2)
     schedule_execution.assert_called_once_with(request)
     assert result.task_id == 31
     assert result.assistant_subtask_id == 41
