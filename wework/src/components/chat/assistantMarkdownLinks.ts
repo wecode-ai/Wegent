@@ -6,7 +6,13 @@ const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/downlo
 export type MarkdownLinkTarget =
   | { kind: 'external' }
   | { kind: 'none' }
-  | { kind: 'file'; path: string; lineStart?: number; lineEnd?: number }
+  | {
+      kind: 'file'
+      path: string
+      lineStart?: number
+      lineEnd?: number
+      isDirectory?: boolean
+    }
 
 const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i
 const LOCAL_TAURI_PATH_PREFIXES = ['/Users/', '/Volumes/', '/private/', '/tmp/', '/var/']
@@ -24,6 +30,17 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
   if (!value) return { kind: 'none' }
   if (/^(https?|mailto|tel):/i.test(value)) return { kind: 'external' }
   if (value.startsWith('#')) return { kind: 'none' }
+  if (value.startsWith('folder://')) {
+    try {
+      return {
+        kind: 'file',
+        path: decodeURIComponent(value.slice('folder://'.length)),
+        isDirectory: true,
+      }
+    } catch {
+      return { kind: 'none' }
+    }
+  }
   const localTauriPath = localPathFromTauriUrl(value)
   if (localTauriPath) {
     return { kind: 'file', ...splitMarkdownFileLineSuffix(localTauriPath) }

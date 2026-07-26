@@ -65,6 +65,7 @@ export interface WorkspaceTarget {
 export interface WorkspaceFileOpenOptions {
   lineStart?: number
   lineEnd?: number
+  isDirectory?: boolean
 }
 
 export interface WorkspaceFileOpenRequest extends WorkspaceFileOpenOptions {

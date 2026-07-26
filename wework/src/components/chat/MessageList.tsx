@@ -1723,7 +1723,12 @@ function renderUserContent(
         onClick={event => {
           event.preventDefault()
           if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
-          if (pathReference && !pathReference.directory) onOpenWorkspaceFile?.(pathReference.path)
+          if (pathReference) {
+            onOpenWorkspaceFile?.(
+              pathReference.path,
+              pathReference.directory ? { isDirectory: true } : undefined
+            )
+          }
         }}
       >
         {mentionKind === 'folder' ? (

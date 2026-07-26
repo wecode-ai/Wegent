@@ -1695,6 +1695,19 @@ fn local_path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+#[tauri::command]
+fn get_local_path_kind(path: String) -> Option<&'static str> {
+    let path = normalized_non_empty(path)?;
+    let metadata = std::fs::metadata(path).ok()?;
+    if metadata.is_dir() {
+        Some("directory")
+    } else if metadata.is_file() {
+        Some("file")
+    } else {
+        Some("other")
+    }
+}
+
 fn local_workspace_opener_app_name(opener: &str) -> Option<&'static str> {
     match opener {
         "vscode" => Some("Visual Studio Code"),
@@ -1781,8 +1794,8 @@ fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
 fn open_local_file(path: String) -> Result<(), String> {
     let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
 
-    if !std::path::Path::new(&path).is_file() {
-        return Err("Local file does not exist".to_string());
+    if !std::path::Path::new(&path).exists() {
+        return Err("Local path does not exist".to_string());
     }
 
     open_local_file_with_default_app(&path)
@@ -1791,8 +1804,8 @@ fn open_local_file(path: String) -> Result<(), String> {
 #[tauri::command]
 fn reveal_local_file(path: String) -> Result<(), String> {
     let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
-    if !std::path::Path::new(&path).is_file() {
-        return Err("Local file does not exist".to_string());
+    if !std::path::Path::new(&path).exists() {
+        return Err("Local path does not exist".to_string());
     }
 
     #[cfg(target_os = "macos")]
@@ -4225,6 +4238,7 @@ pub fn run() {
             download_local_file_to_downloads,
             save_text_file_to_downloads,
             local_path_exists,
+            get_local_path_kind,
             open_local_file,
             reveal_local_file,
             list_local_file_openers,
