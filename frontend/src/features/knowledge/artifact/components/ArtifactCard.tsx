@@ -4,7 +4,7 @@
 
 'use client'
 
-import { FileText, MoreHorizontal, Network, Trash2 } from 'lucide-react'
+import { FileText, MoreVertical, Network, Trash2 } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,7 +24,7 @@ export function ArtifactCard({ artifact, onOpen, onDelete }: ArtifactCardProps) 
   const { t, i18n } = useTranslation('knowledge')
 
   return (
-    <div className="group relative rounded-lg border border-border transition-colors hover:bg-hover">
+    <div className="relative rounded-lg border border-border transition-colors hover:bg-hover">
       <button
         type="button"
         className="w-full p-3 text-left"
@@ -39,8 +39,10 @@ export function ArtifactCard({ artifact, onOpen, onDelete }: ArtifactCardProps) 
               <FileText className="h-4 w-4" />
             )}
           </div>
-          <div className={`min-w-0 flex-1 ${artifact.can_delete ? 'pr-8' : ''}`}>
-            <div className="truncate text-sm font-medium">{artifact.title}</div>
+          <div className="min-w-0 flex-1">
+            <div className={`truncate text-sm font-medium ${artifact.can_delete ? 'pr-8' : ''}`}>
+              {artifact.title}
+            </div>
             <div className="mt-1 flex items-center justify-between gap-2 text-xs text-text-secondary">
               <span>
                 {t(
@@ -71,11 +73,11 @@ export function ArtifactCard({ artifact, onOpen, onDelete }: ArtifactCardProps) 
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="absolute right-1 top-1 flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text-primary md:h-8 md:w-8 md:opacity-0 md:transition-opacity md:group-focus-within:opacity-100 md:group-hover:opacity-100"
+              className="absolute right-1 top-1 flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text-primary md:h-8 md:w-8"
               aria-label={t('artifact.moreActions')}
               data-testid={`artifact-menu-${artifact.artifact_id}`}
             >
-              <MoreHorizontal className="h-4 w-4" />
+              <MoreVertical className="h-4 w-4" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
