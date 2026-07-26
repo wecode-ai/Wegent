@@ -4153,6 +4153,52 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
   })
 
+  test('uses the temporary chat composer as the only composer while expanded', async () => {
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Ready',
+          status: 'done',
+          createdAt: '2026-07-26T00:00:00.000Z',
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-expanded-button'))
+
+    const temporaryChat = screen.getByTestId('right-workspace-chat-panel')
+    const composerShell = within(temporaryChat).getByTestId('right-workspace-chat-composer-shell')
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(1)
+    expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
+    expect(composerShell).toHaveClass(
+      'z-critical',
+      'mx-auto',
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'max-w-[calc(100%_-_2rem)]'
+    )
+    expect(
+      within(temporaryChat).getByTestId('restore-conversation-from-expanded-workspace-button')
+    ).toBeInTheDocument()
+
+    await userEvent.click(
+      within(temporaryChat).getByTestId('restore-conversation-from-expanded-workspace-button')
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
+    })
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
+    expect(screen.getByTestId('desktop-floating-composer-card')).toBeInTheDocument()
+  })
+
   test('shows the workbench background through the right and bottom panels', async () => {
     localStorage.setItem(
       'wework.appearance',

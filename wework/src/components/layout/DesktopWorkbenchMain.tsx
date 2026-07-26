@@ -1105,6 +1105,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? permittedTabs
       : [...permittedTabs, rightPanelView]
   }, [openFileRequest?.target, rightPanelTabs, rightPanelView, workspaceProject])
+  const temporaryChatExpanded = rightPanelExpanded && rightPanelView.startsWith('chat:')
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
   const hasPersistentRightPanelResource = rightPanelTabs.some(
     tab => tab === 'terminal' || tab === 'browser'
@@ -2246,133 +2247,135 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   rightPanelExpanded && 'z-critical'
                 )}
                 stickyFooter={
-                  <>
-                    <div
-                      className={cn(
-                        DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
-                        hasMainBackground
-                          ? 'from-transparent via-transparent'
-                          : 'from-background via-background'
-                      )}
-                      data-testid="desktop-floating-composer-backdrop"
-                    />
-                    <div
-                      className={cn(
-                        DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
-                        chatContentResizing && 'transition-none',
-                        rightPanelExpanded && 'z-critical'
-                      )}
-                      data-testid="desktop-floating-composer-layer"
-                    >
+                  temporaryChatExpanded ? null : (
+                    <>
                       <div
-                        className="pointer-events-auto"
-                        data-testid="desktop-floating-composer-card"
+                        className={cn(
+                          DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
+                          hasMainBackground
+                            ? 'from-transparent via-transparent'
+                            : 'from-background via-background'
+                        )}
+                        data-testid="desktop-floating-composer-backdrop"
+                      />
+                      <div
+                        className={cn(
+                          DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
+                          chatContentResizing && 'transition-none',
+                          rightPanelExpanded && 'z-critical'
+                        )}
+                        data-testid="desktop-floating-composer-layer"
                       >
-                        {rightPanelExpanded && (
-                          <button
-                            type="button"
-                            data-testid="restore-conversation-from-expanded-workspace-button"
-                            className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
-                            onClick={() => setRightPanelExpanded(false)}
-                          >
-                            <span>{t('workbench.latest_conversation_turn')}</span>
-                            <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                          </button>
-                        )}
-                        {showConversationDeviceBanner ? (
-                          <ConversationDeviceOfflineBanner
-                            device={activeDevice}
-                            deviceId={activeDeviceId}
-                            className="mb-2"
-                          />
-                        ) : (
-                          <DeviceStatusPrompt
-                            devices={devices}
-                            upgradingDevices={upgradingDevices}
-                            onUpgradeDevice={upgradeDevice}
-                            onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                            activeDeviceId={activeDeviceId}
-                            requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                            hideAvailableUpdates
-                            className="mb-2"
-                          />
-                        )}
-                        {pendingRequestUserInput ? (
-                          <RequestUserInputCard
-                            key={
-                              requestUserInputPayloadKey(pendingRequestUserInput) ??
-                              'implementation-plan'
-                            }
-                            payload={pendingRequestUserInput}
-                            onSubmit={response => {
-                              const isImplementationPlanRequest =
-                                isImplementationPlanRequestUserInput(pendingRequestUserInput)
-                              const shouldImplementPlan =
-                                isImplementationPlanRequest &&
-                                isImplementationPlanConfirmationResponse(response)
-                              return paneSession.sendRequestUserInputResponse(response, {
-                                appendUserMessage: isImplementationPlanRequest,
-                                forceDefaultCollaborationMode: shouldImplementPlan,
-                              })
-                            }}
-                            onIgnore={() =>
-                              paneSession.ignoreRequestUserInput(pendingRequestUserInput)
-                            }
-                          />
-                        ) : (
-                          <BufferedChatInput
-                            insertion={conversationSelectionInsertion}
-                            value={paneSession.input}
-                            onChange={paneSession.setInput}
-                            onSubmit={submitPaneInput}
-                            disabled={composerDisabled}
-                            submitDisabled={paneSession.status.isSubmitting}
-                            error={paneSession.error}
-                            disabledReason={inlineComposerDisabledReason}
-                            placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                            variant="desktop"
-                            projectChat={projectChatWithModelSelectorSignal}
-                            projectWork={paneProjectWork}
-                            showProjectWorkBar={false}
-                            queuedMessages={paneQueuedMessages}
-                            guidanceMessages={paneGuidanceMessages}
-                            codeComments={paneSession.codeCommentContexts}
-                            cloudMentionCandidates={visibleCloudMentionCandidates}
-                            cloudProjectCandidates={cloudProjectMentionCandidates}
-                            cloudSpaceEnabled={Boolean(services?.deliveryApi)}
-                            onSelectCloudProject={handleSelectCloudProject}
-                            isStreaming={paneIsBusy}
-                            onPause={pauseCurrentResponse}
-                            onCompactContext={compactCurrentContext}
-                            goal={paneSession.goal}
-                            goalContinuing={paneSession.goalContinuing}
-                            taskPlan={paneSession.taskPlan}
-                            goalDraftActive={paneSession.goalDraftActive}
-                            onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
-                            onCancelGoalDraft={paneSession.cancelGoalDraft}
-                            onEditGoal={paneSession.editCurrentGoal}
-                            onPauseGoal={pauseCurrentGoal}
-                            onResumeGoal={resumeCurrentGoal}
-                            onClearGoal={clearCurrentGoal}
-                            onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                            onReorderQueuedMessages={paneSession.reorderQueuedMessages}
-                            queuePaused={paneSession.queuedMessagesPaused}
-                            onResumeQueue={paneSession.resumeQueuedMessages}
-                            onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
-                            onClearQueue={paneSession.clearQueuedMessages}
-                            onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                            onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
-                            onEditQueuedMessage={paneSession.editQueuedMessage}
-                            onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                            onClearCodeComments={paneSession.clearCodeComments}
-                            onOpenSkillFile={openLocalSkillFile}
-                            workspaceTarget={composerWorkspaceTarget}
-                            workspaceFileApi={workspaceFileApi}
-                          />
-                        )}
+                        <div
+                          className="pointer-events-auto"
+                          data-testid="desktop-floating-composer-card"
+                        >
+                          {rightPanelExpanded && (
+                            <button
+                              type="button"
+                              data-testid="restore-conversation-from-expanded-workspace-button"
+                              className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
+                              onClick={() => setRightPanelExpanded(false)}
+                            >
+                              <span>{t('workbench.latest_conversation_turn')}</span>
+                              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          )}
+                          {showConversationDeviceBanner ? (
+                            <ConversationDeviceOfflineBanner
+                              device={activeDevice}
+                              deviceId={activeDeviceId}
+                              className="mb-2"
+                            />
+                          ) : (
+                            <DeviceStatusPrompt
+                              devices={devices}
+                              upgradingDevices={upgradingDevices}
+                              onUpgradeDevice={upgradeDevice}
+                              onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                              activeDeviceId={activeDeviceId}
+                              requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                              hideAvailableUpdates
+                              className="mb-2"
+                            />
+                          )}
+                          {pendingRequestUserInput ? (
+                            <RequestUserInputCard
+                              key={
+                                requestUserInputPayloadKey(pendingRequestUserInput) ??
+                                'implementation-plan'
+                              }
+                              payload={pendingRequestUserInput}
+                              onSubmit={response => {
+                                const isImplementationPlanRequest =
+                                  isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                                const shouldImplementPlan =
+                                  isImplementationPlanRequest &&
+                                  isImplementationPlanConfirmationResponse(response)
+                                return paneSession.sendRequestUserInputResponse(response, {
+                                  appendUserMessage: isImplementationPlanRequest,
+                                  forceDefaultCollaborationMode: shouldImplementPlan,
+                                })
+                              }}
+                              onIgnore={() =>
+                                paneSession.ignoreRequestUserInput(pendingRequestUserInput)
+                              }
+                            />
+                          ) : (
+                            <BufferedChatInput
+                              insertion={conversationSelectionInsertion}
+                              value={paneSession.input}
+                              onChange={paneSession.setInput}
+                              onSubmit={submitPaneInput}
+                              disabled={composerDisabled}
+                              submitDisabled={paneSession.status.isSubmitting}
+                              error={paneSession.error}
+                              disabledReason={inlineComposerDisabledReason}
+                              placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
+                              variant="desktop"
+                              projectChat={projectChatWithModelSelectorSignal}
+                              projectWork={paneProjectWork}
+                              showProjectWorkBar={false}
+                              queuedMessages={paneQueuedMessages}
+                              guidanceMessages={paneGuidanceMessages}
+                              codeComments={paneSession.codeCommentContexts}
+                              cloudMentionCandidates={visibleCloudMentionCandidates}
+                              cloudProjectCandidates={cloudProjectMentionCandidates}
+                              cloudSpaceEnabled={Boolean(services?.deliveryApi)}
+                              onSelectCloudProject={handleSelectCloudProject}
+                              isStreaming={paneIsBusy}
+                              onPause={pauseCurrentResponse}
+                              onCompactContext={compactCurrentContext}
+                              goal={paneSession.goal}
+                              goalContinuing={paneSession.goalContinuing}
+                              taskPlan={paneSession.taskPlan}
+                              goalDraftActive={paneSession.goalDraftActive}
+                              onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
+                              onCancelGoalDraft={paneSession.cancelGoalDraft}
+                              onEditGoal={paneSession.editCurrentGoal}
+                              onPauseGoal={pauseCurrentGoal}
+                              onResumeGoal={resumeCurrentGoal}
+                              onClearGoal={clearCurrentGoal}
+                              onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                              onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                              queuePaused={paneSession.queuedMessagesPaused}
+                              onResumeQueue={paneSession.resumeQueuedMessages}
+                              onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                              onClearQueue={paneSession.clearQueuedMessages}
+                              onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                              onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
+                              onEditQueuedMessage={paneSession.editQueuedMessage}
+                              onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                              onClearCodeComments={paneSession.clearCodeComments}
+                              onOpenSkillFile={openLocalSkillFile}
+                              workspaceTarget={composerWorkspaceTarget}
+                              workspaceFileApi={workspaceFileApi}
+                            />
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </>
+                    </>
+                  )
                 }
                 scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                 devices={devices}
@@ -2561,6 +2564,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             <RightWorkspacePanel
               showWorkbenchBackground={hasMainBackground}
               visible={paneActive && workbenchVisible && rightPanelOpen}
+              expanded={rightPanelExpanded}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
@@ -2592,6 +2596,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+              onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
             />
           )}

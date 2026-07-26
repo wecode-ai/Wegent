@@ -76,6 +76,7 @@ interface RightWorkspaceReviewState {
 interface RightWorkspacePanelProps {
   showWorkbenchBackground?: boolean
   visible: boolean
+  expanded?: boolean
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   currentProject: ProjectWithTasks | null
@@ -107,12 +108,14 @@ interface RightWorkspacePanelProps {
   onSelectTab: (tab: RightWorkspacePanelTab) => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
   onRefreshReview?: () => void
+  onRestoreConversation?: () => void
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
 }
 
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   showWorkbenchBackground = false,
   visible,
+  expanded = false,
   activeView,
   openTabs,
   currentProject,
@@ -143,6 +146,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onSelectTab,
   onCloseTab,
   onRefreshReview,
+  onRestoreConversation,
   getChatInitialInput,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
@@ -409,6 +413,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               source={currentRuntimeTask}
               instanceId={tab}
               initialInput={getChatInitialInput?.(tab)}
+              expanded={expanded && activeView === tab}
+              onRestoreConversation={onRestoreConversation}
               testId={
                 activeView === tab
                   ? 'right-workspace-chat-panel'

@@ -2435,6 +2435,55 @@ async function verifySideChatAttachmentIsolation({ control, taskRowTestId }) {
     'Sending the side chat leaked an attachment into the main composer'
   )
   await captureVerificationScreenshot(control, '03-side-chat-sent-main-clean.png')
+
+  await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
+  await control.command(
+    'waitFor',
+    `${sideChatSelector} [data-testid="restore-conversation-from-expanded-workspace-button"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('finishAnimations', 'body')
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="project-chat-composer"]`
+      )
+    ),
+    1,
+    'Expanded temporary chat rendered more than its own composer'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
+      )
+    ),
+    0,
+    'The main task composer remained visible behind the expanded temporary chat'
+  )
+  await captureVerificationScreenshot(control, '04-side-chat-expanded-single-composer.png')
+
+  await control.command(
+    'click',
+    `${sideChatSelector} [data-testid="restore-conversation-from-expanded-workspace-button"]`
+  )
+  await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('finishAnimations', 'body')
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="project-chat-composer"]`
+      )
+    ),
+    2,
+    'Restoring the split view did not restore the two independent composers'
+  )
+  await captureVerificationScreenshot(control, '05-side-chat-restored-two-composers.png')
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
 
   const requests = control.scenarioRequests.get('side_chat_attachment') ?? []
