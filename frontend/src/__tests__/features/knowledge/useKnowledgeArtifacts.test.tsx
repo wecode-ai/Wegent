@@ -39,6 +39,7 @@ function buildArtifact(
     error_message: null,
     execution_health: 'healthy',
     can_retry: status === 'failed',
+    can_delete: status !== 'queued' && status !== 'running',
     user_id: 7,
     created_at: '2026-07-26T12:00:00+08:00',
     updated_at: '2026-07-26T12:00:00+08:00',

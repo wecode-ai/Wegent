@@ -26,6 +26,7 @@ export interface KnowledgeArtifact {
   error_message: string | null
   execution_health: KnowledgeArtifactExecutionHealth
   can_retry: boolean
+  can_delete: boolean
   user_id: number
   created_at: string
   updated_at: string

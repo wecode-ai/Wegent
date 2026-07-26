@@ -24,6 +24,8 @@ from app.schemas.knowledge_artifact import (
     KnowledgeArtifactListResponse,
     KnowledgeArtifactStatus,
     KnowledgeArtifactType,
+    MindMapContent,
+    MindMapNode,
 )
 from app.services.knowledge.artifact_repository import KnowledgeArtifactRepository
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
@@ -31,7 +33,7 @@ from app.services.knowledge.knowledge_service import KnowledgeService
 from app.stores.tasks import SubtaskStore, TaskStore, subtask_store, task_store
 from shared.models.db import Kind
 
-_MERMAID_BLOCK = re.compile(r"```mermaid\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+_JSON_BLOCK = re.compile(r"```json\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _ACTIVE_STATUSES = {
     KnowledgeArtifactStatus.QUEUED,
     KnowledgeArtifactStatus.RUNNING,
@@ -117,16 +119,19 @@ class ArtifactService:
             limit=limit,
         )
         reconciled = await self._reconcile_many(artifacts)
+        can_manage = KnowledgeService.can_manage_knowledge_base_documents(
+            self.db,
+            knowledge_base_id,
+            self.user.id,
+        )
+        for artifact in reconciled:
+            self._set_delete_capability(artifact, can_manage=can_manage)
         available_document_count, processing_document_count = (
             self._document_source_counts(knowledge_base_id)
         )
         return KnowledgeArtifactListResponse(
             items=reconciled,
-            can_manage=KnowledgeService.can_manage_knowledge_base_documents(
-                self.db,
-                knowledge_base_id,
-                self.user.id,
-            ),
+            can_manage=can_manage,
             available_document_count=available_document_count,
             processing_document_count=processing_document_count,
         )
@@ -139,7 +144,9 @@ class ArtifactService:
         """Get and reconcile one Artifact."""
         self._require_read_access(knowledge_base_id)
         artifact = await self._get_artifact(knowledge_base_id, artifact_id)
-        return await self._reconcile(artifact)
+        reconciled = await self._reconcile(artifact)
+        self._set_delete_capability(reconciled)
+        return reconciled
 
     async def rename(
         self,
@@ -190,9 +197,78 @@ class ArtifactService:
 
     async def delete(self, knowledge_base_id: int, artifact_id: str) -> None:
         """Delete the Artifact record without deleting its Task."""
-        self._require_manage_access(knowledge_base_id)
+        self._require_read_access(knowledge_base_id)
+        artifact = await self._get_artifact(knowledge_base_id, artifact_id)
+        artifact = await self._reconcile(artifact)
+        can_manage = KnowledgeService.can_manage_knowledge_base_documents(
+            self.db,
+            knowledge_base_id,
+            self.user.id,
+        )
+        if artifact.user_id != self.user.id and not can_manage:
+            raise ArtifactPermissionError("Artifact deletion is not allowed")
+        if (
+            artifact.status in _ACTIVE_STATUSES
+            and artifact.execution_health != KnowledgeArtifactExecutionHealth.STALLED
+        ):
+            raise ArtifactValidationError(
+                "Active artifacts cannot be deleted before generation finishes"
+            )
         if not self.repository.delete(knowledge_base_id, artifact_id):
             raise ArtifactNotFoundError("Artifact not found")
+
+    def resolve_mind_map_node(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+        node_id: str,
+    ) -> tuple[MindMapNode, list[int]]:
+        """Resolve one interactive node and its currently usable source scope."""
+        self._require_read_access(knowledge_base_id)
+        artifact = self.repository.get(knowledge_base_id, artifact_id)
+        if artifact is None:
+            raise ArtifactNotFoundError("Artifact not found")
+        if (
+            artifact.status != KnowledgeArtifactStatus.SUCCEEDED
+            or artifact.artifact_type != KnowledgeArtifactType.MIND_MAP
+            or not artifact.content
+        ):
+            raise ArtifactValidationError("Interactive mind map is not available")
+
+        try:
+            mind_map = MindMapContent.model_validate_json(artifact.content)
+        except ValueError as exc:
+            raise ArtifactValidationError(
+                "This mind map does not support interactive questions"
+            ) from exc
+
+        node = next((item for item in mind_map.nodes if item.id == node_id), None)
+        if node is None:
+            raise ArtifactValidationError("Mind map node not found")
+
+        available_ids = {
+            row[0]
+            for row in (
+                self.db.query(KnowledgeDocument.id)
+                .filter(
+                    KnowledgeDocument.kind_id == knowledge_base_id,
+                    KnowledgeDocument.id.in_(artifact.source_document_ids),
+                    KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+                    KnowledgeDocument.is_active.is_(True),
+                )
+                .all()
+            )
+        }
+        source_document_ids = [
+            document_id
+            for document_id in artifact.source_document_ids
+            if document_id in available_ids
+        ]
+        if not source_document_ids:
+            raise ArtifactValidationError(
+                "Mind map source documents are no longer available"
+            )
+        return node, source_document_ids
 
     async def _launch(
         self,
@@ -401,12 +477,20 @@ class ArtifactService:
             raise ArtifactValidationError("Generated result is empty")
         if artifact_type == KnowledgeArtifactType.BRIEFING:
             return content
-        matches = _MERMAID_BLOCK.findall(content)
-        if len(matches) != 1 or not matches[0].strip():
+        matches = _JSON_BLOCK.findall(content)
+        if matches:
+            if len(matches) != 1 or not matches[0].strip():
+                raise ArtifactValidationError(
+                    "Generated mind map must contain exactly one JSON object"
+                )
+            content = matches[0].strip()
+        try:
+            mind_map = MindMapContent.model_validate_json(content)
+        except ValueError as exc:
             raise ArtifactValidationError(
-                "Generated result must contain exactly one Mermaid code block"
-            )
-        return matches[0].strip()
+                "Generated mind map must be a valid interactive tree"
+            ) from exc
+        return mind_map.model_dump_json()
 
     def _repair_execution_ids(self, artifact: KnowledgeArtifact) -> None:
         task = self.task_store.get_owned_task_by_name(
@@ -518,6 +602,26 @@ class ArtifactService:
             self.user.id,
         ):
             raise ArtifactPermissionError("Artifact management is not allowed")
+
+    def _set_delete_capability(
+        self,
+        artifact: KnowledgeArtifact,
+        *,
+        can_manage: bool | None = None,
+    ) -> None:
+        if can_manage is None:
+            can_manage = KnowledgeService.can_manage_knowledge_base_documents(
+                self.db,
+                artifact.knowledge_base_id,
+                self.user.id,
+            )
+        is_active = (
+            artifact.status in _ACTIVE_STATUSES
+            and artifact.execution_health != KnowledgeArtifactExecutionHealth.STALLED
+        )
+        artifact.can_delete = (
+            artifact.user_id == self.user.id or can_manage
+        ) and not is_active
 
     @staticmethod
     def _default_title(request: KnowledgeArtifactCreate) -> str:

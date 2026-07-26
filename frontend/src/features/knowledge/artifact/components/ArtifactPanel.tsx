@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ArtifactCreateDialog } from './ArtifactCreateDialog'
+import { ArtifactCard } from './ArtifactCard'
 import { ArtifactViewer } from './ArtifactViewer'
 import { useKnowledgeArtifacts } from '../hooks/useKnowledgeArtifacts'
 import type { KnowledgeArtifactType } from '@/types/knowledge-artifact'
@@ -28,7 +29,7 @@ export function ArtifactPanel({
   onAdjustSources,
   onAvailableDocumentCountChange,
 }: ArtifactPanelProps) {
-  const { t, i18n } = useTranslation('knowledge')
+  const { t } = useTranslation('knowledge')
   const { toast } = useToast()
   const {
     items,
@@ -64,13 +65,26 @@ export function ArtifactPanel({
     })
   }
 
-  const handleDelete = async () => {
-    if (!selectedArtifact) return
+  const deleteArtifact = async (artifactId: string) => {
     try {
-      await remove(selectedArtifact.artifact_id)
-      setSelectedArtifactId(null)
+      await remove(artifactId)
+      if (selectedArtifactId === artifactId) {
+        setSelectedArtifactId(null)
+      }
     } catch (nextError) {
       showError(nextError)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (selectedArtifact) {
+      await deleteArtifact(selectedArtifact.artifact_id)
+    }
+  }
+
+  const confirmDelete = (artifactId: string) => {
+    if (window.confirm(t('artifact.deleteConfirm'))) {
+      void deleteArtifact(artifactId)
     }
   }
 
@@ -173,48 +187,12 @@ export function ArtifactPanel({
       ) : (
         <div className="min-h-0 flex-1 space-y-2 overflow-auto pb-4">
           {items.map(artifact => (
-            <button
+            <ArtifactCard
               key={artifact.artifact_id}
-              type="button"
-              className="w-full rounded-lg border border-border p-3 text-left transition-colors hover:bg-hover"
-              onClick={() => setSelectedArtifactId(artifact.artifact_id)}
-              data-testid={`artifact-card-${artifact.artifact_id}`}
-            >
-              <div className="flex items-start gap-3">
-                <div className="rounded-md bg-primary/10 p-2 text-primary">
-                  {artifact.artifact_type === 'mind_map' ? (
-                    <Network className="h-4 w-4" />
-                  ) : (
-                    <FileText className="h-4 w-4" />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{artifact.title}</div>
-                  <div className="mt-1 flex items-center justify-between gap-2 text-xs text-text-secondary">
-                    <span>
-                      {t(
-                        artifact.execution_health === 'stalled'
-                          ? 'artifact.status.stalled'
-                          : `artifact.status.${artifact.status}`
-                      )}
-                    </span>
-                    <span>
-                      {new Intl.DateTimeFormat(i18n.language, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      }).format(new Date(artifact.created_at))}
-                    </span>
-                  </div>
-                  <div className="mt-1 truncate text-xs text-text-muted">
-                    {t('artifact.sourceCount', {
-                      count: artifact.source_document_ids.length,
-                    })}
-                  </div>
-                </div>
-              </div>
-            </button>
+              artifact={artifact}
+              onOpen={() => setSelectedArtifactId(artifact.artifact_id)}
+              onDelete={() => confirmDelete(artifact.artifact_id)}
+            />
           ))}
         </div>
       )}

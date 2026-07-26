@@ -43,6 +43,7 @@ const failedArtifact: KnowledgeArtifact = {
   error_message: '模型调用失败',
   execution_health: 'healthy',
   can_retry: true,
+  can_delete: false,
   user_id: 7,
   created_at: '2026-07-26T12:00:00+08:00',
   updated_at: '2026-07-26T12:01:00+08:00',

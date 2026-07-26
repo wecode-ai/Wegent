@@ -6,9 +6,12 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+MAX_MIND_MAP_NODES = 200
+MAX_MIND_MAP_DEPTH = 6
 
 
 class KnowledgeArtifactType(str, Enum):
@@ -32,6 +35,78 @@ class KnowledgeArtifactExecutionHealth(str, Enum):
 
     HEALTHY = "healthy"
     STALLED = "stalled"
+
+
+class MindMapNode(BaseModel):
+    """One stable semantic node in an interactive mind map."""
+
+    id: str = Field(min_length=1, max_length=100)
+    parent_id: str | None = Field(default=None, max_length=100)
+    title: str = Field(min_length=1, max_length=200)
+    summary: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("id", "title")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        """Strip required node fields and reject whitespace-only values."""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value cannot be empty")
+        return normalized
+
+    @field_validator("parent_id", "summary")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        """Normalize optional node text."""
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class MindMapContent(BaseModel):
+    """Versioned tree data used by the interactive mind map viewer."""
+
+    schema_version: Literal[1] = 1
+    root_id: str = Field(min_length=1, max_length=100)
+    nodes: list[MindMapNode] = Field(
+        min_length=1,
+        max_length=MAX_MIND_MAP_NODES,
+    )
+
+    @model_validator(mode="after")
+    def validate_tree(self) -> "MindMapContent":
+        """Require one connected, acyclic tree within the supported depth."""
+        nodes_by_id = {node.id: node for node in self.nodes}
+        if len(nodes_by_id) != len(self.nodes):
+            raise ValueError("mind map node IDs must be unique")
+        if self.root_id not in nodes_by_id:
+            raise ValueError("mind map root_id must reference an existing node")
+
+        roots = [node for node in self.nodes if node.parent_id is None]
+        if len(roots) != 1 or roots[0].id != self.root_id:
+            raise ValueError("mind map must contain exactly one declared root")
+
+        for node in self.nodes:
+            if node.parent_id is not None and node.parent_id not in nodes_by_id:
+                raise ValueError(f"mind map parent does not exist: {node.parent_id}")
+
+        for node in self.nodes:
+            depth = 0
+            current = node
+            visited: set[str] = set()
+            while current.parent_id is not None:
+                if current.id in visited:
+                    raise ValueError("mind map must not contain cycles")
+                visited.add(current.id)
+                depth += 1
+                if depth > MAX_MIND_MAP_DEPTH:
+                    raise ValueError(
+                        f"mind map depth must not exceed {MAX_MIND_MAP_DEPTH}"
+                    )
+                current = nodes_by_id[current.parent_id]
+            if current.id != self.root_id:
+                raise ValueError("all mind map nodes must connect to the root")
+        return self
 
 
 class KnowledgeArtifactCreate(BaseModel):
@@ -88,6 +163,7 @@ class KnowledgeArtifact(BaseModel):
         KnowledgeArtifactExecutionHealth.HEALTHY
     )
     can_retry: bool = False
+    can_delete: bool = False
     user_id: int
     created_at: datetime
     updated_at: datetime

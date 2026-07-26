@@ -1,0 +1,166 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for knowledge Artifact deletion capabilities."""
+
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.schemas.knowledge_artifact import (
+    KnowledgeArtifact,
+    KnowledgeArtifactExecutionHealth,
+    KnowledgeArtifactStatus,
+    KnowledgeArtifactType,
+)
+from app.services.knowledge.artifact_service import (
+    ArtifactPermissionError,
+    ArtifactService,
+    ArtifactValidationError,
+)
+
+
+def _service() -> tuple[ArtifactService, MagicMock]:
+    repository = MagicMock()
+    service = ArtifactService(
+        MagicMock(),
+        SimpleNamespace(id=7),
+        repository,
+        launcher=AsyncMock(),
+        task_resource_store=MagicMock(),
+        subtask_resource_store=MagicMock(),
+    )
+    return service, repository
+
+
+def _artifact(
+    status: KnowledgeArtifactStatus,
+    *,
+    user_id: int = 7,
+) -> KnowledgeArtifact:
+    now = datetime.now().astimezone()
+    return KnowledgeArtifact(
+        artifact_id="artifact-1",
+        knowledge_base_id=12,
+        artifact_type=KnowledgeArtifactType.BRIEFING,
+        title="项目简报",
+        status=status,
+        task_id=31,
+        assistant_subtask_id=41,
+        source_document_ids=[101],
+        user_id=user_id,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_exposes_delete_capability_by_owner_and_execution_state():
+    service, repository = _service()
+    completed = _artifact(KnowledgeArtifactStatus.SUCCEEDED)
+    active = _artifact(KnowledgeArtifactStatus.RUNNING)
+    repository.list_by_knowledge_base.return_value = [completed, active]
+
+    with (
+        patch.object(
+            service,
+            "_reconcile_many",
+            AsyncMock(return_value=[completed, active]),
+        ),
+        patch.object(service, "_require_read_access"),
+        patch.object(service, "_document_source_counts", return_value=(4, 0)),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=False,
+        ),
+    ):
+        response = await service.list(12)
+
+    assert response.items[0].can_delete is True
+    assert response.items[1].can_delete is False
+
+
+@pytest.mark.asyncio
+async def test_delete_allows_owner_after_generation_finishes():
+    service, repository = _service()
+    artifact = _artifact(KnowledgeArtifactStatus.SUCCEEDED)
+    repository.get.return_value = artifact
+    repository.delete.return_value = True
+
+    with (
+        patch.object(service, "_require_read_access"),
+        patch.object(service, "_reconcile", AsyncMock(return_value=artifact)),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=False,
+        ),
+    ):
+        await service.delete(12, "artifact-1")
+
+    repository.delete.assert_called_once_with(12, "artifact-1")
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_active_artifact_and_other_readers():
+    service, repository = _service()
+    active = _artifact(KnowledgeArtifactStatus.RUNNING)
+    repository.get.return_value = active
+
+    with (
+        patch.object(service, "_require_read_access"),
+        patch.object(service, "_reconcile", AsyncMock(return_value=active)),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=False,
+        ),
+        pytest.raises(ArtifactValidationError, match="cannot be deleted"),
+    ):
+        await service.delete(12, "artifact-1")
+
+    other_user = _artifact(KnowledgeArtifactStatus.SUCCEEDED, user_id=8)
+    repository.get.return_value = other_user
+    with (
+        patch.object(service, "_require_read_access"),
+        patch.object(service, "_reconcile", AsyncMock(return_value=other_user)),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=False,
+        ),
+        pytest.raises(ArtifactPermissionError, match="deletion is not allowed"),
+    ):
+        await service.delete(12, "artifact-1")
+
+    repository.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_allows_manager_to_remove_another_users_artifact():
+    service, repository = _service()
+    artifact = _artifact(KnowledgeArtifactStatus.SUCCEEDED, user_id=8)
+    repository.get.return_value = artifact
+    repository.delete.return_value = True
+
+    with (
+        patch.object(service, "_require_read_access"),
+        patch.object(service, "_reconcile", AsyncMock(return_value=artifact)),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=True,
+        ),
+    ):
+        await service.delete(12, "artifact-1")
+
+    repository.delete.assert_called_once_with(12, "artifact-1")
+
+
+def test_stalled_artifact_is_deletable():
+    service, _ = _service()
+    artifact = _artifact(KnowledgeArtifactStatus.RUNNING)
+    artifact.execution_health = KnowledgeArtifactExecutionHealth.STALLED
+
+    service._set_delete_capability(artifact, can_manage=False)
+
+    assert artifact.can_delete is True
