@@ -66,6 +66,7 @@ describe('ArtifactPanel AI Workshop', () => {
       items: [],
       canManage: true,
       availableDocumentCount: 36,
+      processingDocumentCount: 0,
       isLoading: false,
       error: null,
       create: createMock,
@@ -119,11 +120,12 @@ describe('ArtifactPanel AI Workshop', () => {
     )
   })
 
-  it('keeps capabilities visible but unavailable to read-only users', () => {
+  it('allows read-only knowledge base users to generate artifacts', () => {
     ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
       items: [],
       canManage: false,
       availableDocumentCount: 36,
+      processingDocumentCount: 0,
       isLoading: false,
       error: null,
       create: createMock,
@@ -137,7 +139,30 @@ describe('ArtifactPanel AI Workshop', () => {
       <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
     )
 
+    expect(screen.getByTestId('artifact-type-briefing')).toBeEnabled()
+    expect(screen.getByTestId('artifact-type-mind-map')).toBeEnabled()
+  })
+
+  it('explains why generation is unavailable while documents are processing', () => {
+    ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
+      items: [],
+      canManage: false,
+      availableDocumentCount: 0,
+      processingDocumentCount: 1,
+      isLoading: false,
+      error: null,
+      create: createMock,
+      rename: jest.fn(),
+      retry: jest.fn(),
+      remove: jest.fn(),
+      refresh: jest.fn(),
+    })
+
+    render(
+      <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
+    )
+
+    expect(screen.getByText('artifact.documentsProcessingHint')).toBeInTheDocument()
     expect(screen.getByTestId('artifact-type-briefing')).toBeDisabled()
-    expect(screen.getByTestId('artifact-type-mind-map')).toBeDisabled()
   })
 })

@@ -25,7 +25,7 @@ from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
 from app.services.knowledge.folder_service import KnowledgeFolderService
@@ -571,7 +571,7 @@ def link_contexts_to_subtask(
         table_contexts_to_create,
         selected_docs_contexts_to_create,
         external_knowledge_contexts_to_create,
-    ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id)
+    ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id, db=db)
 
     # Combine all contexts to create
     all_contexts_to_create = (
@@ -664,6 +664,41 @@ def link_selected_documents_to_subtask(
         contexts=[context],
         task=task,
     )
+
+
+def _resolve_usable_selected_document_ids(
+    db: Session,
+    *,
+    knowledge_base_id: int,
+    document_ids: List[int],
+) -> List[int]:
+    """Validate selected documents against one usable knowledge-base scope."""
+    normalized_ids = _normalize_document_ids(document_ids)
+    if len(normalized_ids) != len(document_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected document IDs must be unique positive integers",
+        )
+
+    found_ids = {
+        row[0]
+        for row in (
+            db.query(KnowledgeDocument.id)
+            .filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+                KnowledgeDocument.id.in_(normalized_ids),
+                KnowledgeDocument.is_active.is_(True),
+                KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+            )
+            .all()
+        )
+    }
+    if found_ids != set(normalized_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Selected documents must belong to the knowledge base and be indexed",
+        )
+    return normalized_ids
 
 
 def _sync_kb_contexts_to_task(
@@ -907,6 +942,8 @@ def _prepare_contexts_for_creation(
     contexts: List[Any] | None,
     subtask_id: int,
     user_id: int,
+    *,
+    db: Session | None = None,
 ) -> tuple[
     List[SubtaskContext],
     List[SubtaskContext],
@@ -1021,6 +1058,15 @@ def _prepare_contexts_for_creation(
                 document_ids = docs_data.get("document_ids", [])
 
                 if knowledge_base_id and document_ids:
+                    if db is None:
+                        raise RuntimeError(
+                            "Database session is required for selected documents"
+                        )
+                    document_ids = _resolve_usable_selected_document_ids(
+                        db,
+                        knowledge_base_id=int(knowledge_base_id),
+                        document_ids=document_ids,
+                    )
                     # Create SubtaskContext object for selected documents
                     selected_docs_context = SubtaskContext(
                         subtask_id=subtask_id,
@@ -1038,6 +1084,8 @@ def _prepare_contexts_for_creation(
                         f"Prepared selected_documents context: kb_id={knowledge_base_id}, "
                         f"doc_ids={document_ids}"
                     )
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.warning(f"Failed to prepare selected_documents context: {e}")
                 continue

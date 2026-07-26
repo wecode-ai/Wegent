@@ -893,6 +893,7 @@
     "recentTasks": "最近任务",
     "runningCount": "{{count}} 个进行中",
     "noDocumentsHint": "知识库暂无文档，请先前往“文档管理”添加来源。",
+    "documentsProcessingHint": "文档正在处理中，完成后即可生成。",
     "create": "生成成果",
     "createFirst": "生成第一个成果",
     "createTitle": "生成知识成果",

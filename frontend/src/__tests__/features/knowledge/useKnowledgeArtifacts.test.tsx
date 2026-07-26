@@ -57,12 +57,14 @@ describe('useKnowledgeArtifacts', () => {
       items: KnowledgeArtifact[]
       can_manage: boolean
       available_document_count: number
+      processing_document_count: number
     }>(() => undefined)
     ;(knowledgeArtifactApi.list as jest.Mock)
       .mockResolvedValueOnce({
         items: [buildArtifact(12, 'succeeded')],
         can_manage: true,
         available_document_count: 3,
+        processing_document_count: 0,
       })
       .mockReturnValueOnce(pending)
 
@@ -85,11 +87,13 @@ describe('useKnowledgeArtifacts', () => {
         items: [buildArtifact(12, 'running')],
         can_manage: true,
         available_document_count: 3,
+        processing_document_count: 0,
       })
       .mockResolvedValueOnce({
         items: [buildArtifact(12, 'succeeded')],
         can_manage: true,
         available_document_count: 3,
+        processing_document_count: 0,
       })
 
     const { result } = renderHook(() => useKnowledgeArtifacts(12))
@@ -104,6 +108,38 @@ describe('useKnowledgeArtifacts', () => {
     })
 
     expect(result.current.items[0]?.status).toBe('succeeded')
+    expect(knowledgeArtifactApi.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('polls while documents are processing even without active artifacts', async () => {
+    jest.useFakeTimers()
+    ;(knowledgeArtifactApi.list as jest.Mock)
+      .mockResolvedValueOnce({
+        items: [],
+        can_manage: false,
+        available_document_count: 0,
+        processing_document_count: 1,
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        can_manage: false,
+        available_document_count: 1,
+        processing_document_count: 0,
+      })
+
+    const { result } = renderHook(() => useKnowledgeArtifacts(12))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(result.current.processingDocumentCount).toBe(1)
+
+    await act(async () => {
+      jest.advanceTimersByTime(5000)
+      await Promise.resolve()
+    })
+
+    expect(result.current.availableDocumentCount).toBe(1)
+    expect(result.current.processingDocumentCount).toBe(0)
     expect(knowledgeArtifactApi.list).toHaveBeenCalledTimes(2)
   })
 })

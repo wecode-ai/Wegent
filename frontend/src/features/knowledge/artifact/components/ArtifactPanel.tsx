@@ -34,6 +34,7 @@ export function ArtifactPanel({
     items,
     canManage,
     availableDocumentCount,
+    processingDocumentCount,
     isLoading,
     error,
     create,
@@ -88,7 +89,7 @@ export function ArtifactPanel({
             type="button"
             className="group rounded-xl border border-border bg-surface p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             onClick={() => openCreate('briefing')}
-            disabled={!canManage || effectiveAvailableDocumentCount === 0}
+            disabled={effectiveAvailableDocumentCount === 0}
             data-testid="artifact-type-briefing"
           >
             <div className="mb-3 inline-flex rounded-xl bg-primary/10 p-3 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
@@ -103,7 +104,7 @@ export function ArtifactPanel({
             type="button"
             className="group rounded-xl border border-border bg-surface p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             onClick={() => openCreate('mind_map')}
-            disabled={!canManage || effectiveAvailableDocumentCount === 0}
+            disabled={effectiveAvailableDocumentCount === 0}
             data-testid="artifact-type-mind-map"
           >
             <div className="mb-3 inline-flex rounded-xl bg-primary/10 p-3 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
@@ -117,7 +118,11 @@ export function ArtifactPanel({
         </div>
         {!isLoading && effectiveAvailableDocumentCount === 0 && (
           <p className="mt-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-text-secondary">
-            {t('artifact.noDocumentsHint')}
+            {t(
+              processingDocumentCount > 0
+                ? 'artifact.documentsProcessingHint'
+                : 'artifact.noDocumentsHint'
+            )}
           </p>
         )}
       </div>

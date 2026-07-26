@@ -19,6 +19,7 @@ from app.schemas.knowledge_artifact import (
     KnowledgeArtifactType,
 )
 from app.services.knowledge.artifact_service import (
+    ArtifactNotFoundError,
     ArtifactPermissionError,
     ArtifactService,
     ArtifactValidationError,
@@ -84,7 +85,7 @@ async def test_create_persists_before_and_after_launch():
     )
 
     with (
-        patch.object(service, "_require_manage_access"),
+        patch.object(service, "_require_read_access"),
         patch.object(service, "_resolve_document_ids", return_value=[101, 102]),
     ):
         artifact = await service.create(12, request)
@@ -112,7 +113,7 @@ async def test_create_marks_artifact_failed_when_task_launch_fails():
     )
 
     with (
-        patch.object(service, "_require_manage_access"),
+        patch.object(service, "_require_read_access"),
         patch.object(service, "_resolve_document_ids", return_value=[101]),
         pytest.raises(RuntimeError, match="智能体不可用"),
     ):
@@ -135,7 +136,7 @@ async def test_create_does_not_persist_when_preflight_fails():
     )
 
     with (
-        patch.object(service, "_require_manage_access"),
+        patch.object(service, "_require_read_access"),
         patch.object(service, "_resolve_document_ids", return_value=[101]),
         pytest.raises(
             ArtifactTaskConfigurationError,
@@ -150,8 +151,13 @@ async def test_create_does_not_persist_when_preflight_fails():
 
 
 @pytest.mark.asyncio
-async def test_create_requires_document_management_permission():
-    service, repository, _ = build_service()
+async def test_create_allows_user_with_read_access_without_management_permission():
+    service, repository, launcher = build_service()
+    launcher.preflight.return_value = MagicMock()
+    launcher.launch.return_value = ArtifactTaskLaunchResult(
+        task_id=31,
+        assistant_subtask_id=41,
+    )
     request = KnowledgeArtifactCreate(
         artifact_type=KnowledgeArtifactType.BRIEFING,
     )
@@ -164,8 +170,29 @@ async def test_create_requires_document_management_permission():
         patch(
             "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
             return_value=False,
+        ) as can_manage,
+        patch.object(service, "_resolve_document_ids", return_value=[101]),
+    ):
+        artifact = await service.create(12, request)
+
+    assert artifact.status == KnowledgeArtifactStatus.RUNNING
+    repository.create.assert_called_once()
+    can_manage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_user_without_read_access():
+    service, repository, _ = build_service()
+    request = KnowledgeArtifactCreate(
+        artifact_type=KnowledgeArtifactType.BRIEFING,
+    )
+
+    with (
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.get_knowledge_base",
+            return_value=(None, False),
         ),
-        pytest.raises(ArtifactPermissionError),
+        pytest.raises(ArtifactNotFoundError),
     ):
         await service.create(12, request)
 
@@ -180,7 +207,7 @@ async def test_list_includes_available_document_count():
     with (
         patch.object(service, "_require_read_access"),
         patch.object(service, "_reconcile_many", AsyncMock(return_value=[])),
-        patch.object(service, "_available_document_count", return_value=4),
+        patch.object(service, "_document_source_counts", return_value=(4, 2)),
         patch(
             "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
             return_value=True,
@@ -191,6 +218,7 @@ async def test_list_includes_available_document_count():
     assert response.items == []
     assert response.can_manage is True
     assert response.available_document_count == 4
+    assert response.processing_document_count == 2
 
 
 def test_parse_mind_map_accepts_exactly_one_mermaid_block():

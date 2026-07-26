@@ -5,7 +5,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { useChatStreamHandlers } from '@/features/tasks/components/chat/useChatStreamHandlers'
 import type { ContextItem } from '@/types/context'
-import type { TaskDetail } from '@/types/api'
+import type { TaskDetail, TaskType } from '@/types/api'
 
 const mockContextSendMessage = jest.fn()
 
@@ -89,7 +89,14 @@ jest.mock('@/hooks/useTraceAction', () => ({
   }),
 }))
 
-function renderSendHook(selectedContexts: ContextItem[]) {
+function renderSendHook(
+  selectedContexts: ContextItem[],
+  options: {
+    taskType?: TaskType
+    knowledgeBaseId?: number
+    selectedDocumentIds?: number[]
+  } = {}
+) {
   return renderHook(() =>
     useChatStreamHandlers({
       selectedTeam: { id: 5, name: 'Team', agent_type: 'chat' } as never,
@@ -109,10 +116,12 @@ function renderSendHook(selectedContexts: ContextItem[]) {
       attachments: [] as never,
       resetAttachment: jest.fn(),
       isAttachmentReadyToSend: true,
-      taskType: 'chat',
+      taskType: options.taskType ?? 'chat',
+      knowledgeBaseId: options.knowledgeBaseId,
       shouldHideChatInput: false,
       scrollToBottom: jest.fn(),
       selectedContexts,
+      selectedDocumentIds: options.selectedDocumentIds,
       resetContexts: jest.fn(),
       additionalSkills: [],
     })
@@ -192,5 +201,65 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
     const request = mockContextSendMessage.mock.calls[0][0]
     expect(request).not.toHaveProperty('externalKnowledgeRefs')
     expect(request).not.toHaveProperty('externalKnowledgeRefsReplace')
+  })
+
+  it('sends a strict current-KB scope with selected notebook documents', async () => {
+    const { result } = renderSendHook([], {
+      taskType: 'knowledge',
+      knowledgeBaseId: 12,
+      selectedDocumentIds: [101, 102],
+    })
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage.mock.calls[0][0].contexts).toEqual([
+      {
+        type: 'knowledge_base',
+        data: {
+          knowledge_id: 12,
+          document_ids: [101, 102],
+          scope_restricted: true,
+        },
+      },
+      {
+        type: 'selected_documents',
+        data: {
+          knowledge_base_id: 12,
+          document_ids: [101, 102],
+        },
+      },
+    ])
+  })
+
+  it('replaces the current-KB context with an explicit whole-KB scope', async () => {
+    const existingContext: ContextItem = {
+      type: 'knowledge_base',
+      id: 12,
+      name: 'Current KB',
+      document_ids: [101],
+      scope_restricted: true,
+    }
+    const { result } = renderSendHook([existingContext], {
+      taskType: 'knowledge',
+      knowledgeBaseId: 12,
+      selectedDocumentIds: [],
+    })
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage.mock.calls[0][0].contexts).toEqual([
+      {
+        type: 'knowledge_base',
+        data: {
+          knowledge_id: 12,
+          document_ids: [],
+          scope_restricted: false,
+        },
+      },
+    ])
   })
 })

@@ -14,6 +14,7 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
   const [items, setItems] = useState<KnowledgeArtifact[]>([])
   const [canManage, setCanManage] = useState(false)
   const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
+  const [processingDocumentCount, setProcessingDocumentCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const mountedRef = useRef(true)
@@ -27,6 +28,7 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
         setItems(response.items)
         setCanManage(response.can_manage)
         setAvailableDocumentCount(response.available_document_count)
+        setProcessingDocumentCount(response.processing_document_count)
         setError(null)
       } catch (nextError) {
         if (mountedRef.current) {
@@ -44,6 +46,7 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
     setItems([])
     setCanManage(false)
     setAvailableDocumentCount(null)
+    setProcessingDocumentCount(0)
     setError(null)
     void refresh(true)
     return () => {
@@ -54,12 +57,19 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
   const hasActiveArtifact = items.some(
     artifact => artifact.status === 'queued' || artifact.status === 'running'
   )
+  const shouldPoll = hasActiveArtifact || processingDocumentCount > 0
 
   useEffect(() => {
-    if (!hasActiveArtifact) return
+    if (!shouldPoll) return
     const timer = window.setInterval(() => void refresh(), POLL_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [hasActiveArtifact, refresh])
+  }, [refresh, shouldPoll])
+
+  useEffect(() => {
+    const handleFocus = () => void refresh()
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [refresh])
 
   const create = useCallback(
     async (request: KnowledgeArtifactCreate) => {
@@ -104,6 +114,7 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
     items,
     canManage,
     availableDocumentCount,
+    processingDocumentCount,
     isLoading,
     error,
     create,

@@ -21,7 +21,12 @@ describe('knowledgeArtifactApi', () => {
   })
 
   it('uses knowledge-base scoped CRUD routes', async () => {
-    ;(client.get as jest.Mock).mockResolvedValue({ items: [], can_manage: true })
+    ;(client.get as jest.Mock).mockResolvedValue({
+      items: [],
+      can_manage: true,
+      available_document_count: 1,
+      processing_document_count: 0,
+    })
     ;(client.post as jest.Mock).mockResolvedValue({ artifact_id: 'artifact-1' })
     ;(client.patch as jest.Mock).mockResolvedValue({ artifact_id: 'artifact-1' })
     ;(client.delete as jest.Mock).mockResolvedValue(undefined)

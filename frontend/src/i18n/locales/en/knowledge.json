@@ -893,6 +893,7 @@
     "recentTasks": "Recent tasks",
     "runningCount": "{{count}} in progress",
     "noDocumentsHint": "This knowledge base has no documents. Add sources in Document Management first.",
+    "documentsProcessingHint": "Documents are being processed. Generation will be available when they are ready.",
     "create": "Generate",
     "createFirst": "Generate first artifact",
     "createTitle": "Generate knowledge artifact",

@@ -10,6 +10,7 @@ import re
 from datetime import datetime
 from uuid import uuid4
 
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -35,6 +36,12 @@ _ACTIVE_STATUSES = {
     KnowledgeArtifactStatus.QUEUED,
     KnowledgeArtifactStatus.RUNNING,
 }
+_PROCESSING_DOCUMENT_STATUSES = (
+    DocumentIndexStatus.QUEUED,
+    DocumentIndexStatus.PENDING_CONVERSION,
+    DocumentIndexStatus.CONVERTING,
+    DocumentIndexStatus.INDEXING,
+)
 
 
 class ArtifactNotFoundError(LookupError):
@@ -75,7 +82,7 @@ class ArtifactService:
         request: KnowledgeArtifactCreate,
     ) -> KnowledgeArtifact:
         """Persist a queued Artifact and launch its background Task."""
-        self._require_manage_access(knowledge_base_id)
+        self._require_read_access(knowledge_base_id)
         document_ids = self._resolve_document_ids(
             knowledge_base_id,
             request.document_ids,
@@ -110,6 +117,9 @@ class ArtifactService:
             limit=limit,
         )
         reconciled = await self._reconcile_many(artifacts)
+        available_document_count, processing_document_count = (
+            self._document_source_counts(knowledge_base_id)
+        )
         return KnowledgeArtifactListResponse(
             items=reconciled,
             can_manage=KnowledgeService.can_manage_knowledge_base_documents(
@@ -117,7 +127,8 @@ class ArtifactService:
                 knowledge_base_id,
                 self.user.id,
             ),
-            available_document_count=self._available_document_count(knowledge_base_id),
+            available_document_count=available_document_count,
+            processing_document_count=processing_document_count,
         )
 
     async def get(
@@ -446,17 +457,39 @@ class ArtifactService:
             raise ArtifactValidationError("Knowledge base has no indexed documents")
         return document_ids
 
-    def _available_document_count(self, knowledge_base_id: int) -> int:
-        """Count documents that can participate in Artifact generation."""
-        return (
-            self.db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-                KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
-                KnowledgeDocument.is_active.is_(True),
+    def _document_source_counts(self, knowledge_base_id: int) -> tuple[int, int]:
+        """Count usable and processing documents for Artifact generation."""
+        available_count, processing_count = (
+            self.db.query(
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                KnowledgeDocument.is_active.is_(True),
+                                KnowledgeDocument.index_status
+                                == DocumentIndexStatus.SUCCESS,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
+                func.sum(
+                    case(
+                        (
+                            KnowledgeDocument.index_status.in_(
+                                _PROCESSING_DOCUMENT_STATUSES
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ),
             )
-            .count()
+            .filter(KnowledgeDocument.kind_id == knowledge_base_id)
+            .one()
         )
+        return int(available_count or 0), int(processing_count or 0)
 
     async def _get_artifact(
         self,

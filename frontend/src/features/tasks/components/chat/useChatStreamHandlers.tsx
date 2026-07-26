@@ -480,6 +480,26 @@ export function useChatStreamHandlers({
           }
         })
 
+      if (taskType === 'knowledge' && knowledgeBaseId) {
+        const workspaceKnowledgeContext = {
+          type: 'knowledge_base' as const,
+          data: {
+            knowledge_id: knowledgeBaseId,
+            document_ids: selectedDocumentIds ?? [],
+            scope_restricted: Boolean(selectedDocumentIds?.length),
+          },
+        }
+        const existingIndex = contextItems.findIndex(
+          item =>
+            item.type === 'knowledge_base' && Number(item.data.knowledge_id) === knowledgeBaseId
+        )
+        if (existingIndex >= 0) {
+          contextItems[existingIndex] = workspaceKnowledgeContext
+        } else {
+          contextItems.push(workspaceKnowledgeContext)
+        }
+      }
+
       snapshotContexts
         .filter(ctx => ctx.type === 'external_knowledge')
         .map(ctx => (ctx as ExternalKnowledgeContext).ref)
@@ -1520,7 +1540,6 @@ export function useChatStreamHandlers({
       showRepositorySelector,
       selectedRepo,
       selectedBranch,
-      selectedContexts,
       taskType,
       knowledgeBaseId,
       markTaskAsViewed,
