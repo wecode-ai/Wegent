@@ -133,10 +133,35 @@ describe('ProjectWorkBar', () => {
 
     expect(screen.getByTestId('project-work-button').parentElement).toHaveClass(
       'text-sm',
+      'font-normal',
+      'w-full'
+    )
+    expect(screen.getByTestId('project-work-button').parentElement?.parentElement).toHaveClass(
+      'min-w-0',
+      'max-w-[18rem]',
+      'shrink'
+    )
+    expect(screen.getByTestId('execution-mode-button')).toHaveClass(
+      'w-full',
+      'text-sm',
       'font-normal'
     )
-    expect(screen.getByTestId('execution-mode-button')).toHaveClass('text-sm', 'font-normal')
-    expect(screen.getByTestId('project-branch-button')).toHaveClass('text-sm', 'font-normal')
+    expect(screen.getByTestId('execution-mode-button').parentElement).toHaveClass(
+      'min-w-0',
+      'max-w-[10rem]',
+      'shrink'
+    )
+    expect(screen.getByTestId('project-branch-button')).toHaveClass(
+      'w-full',
+      'text-sm',
+      'font-normal'
+    )
+    expect(screen.getByTestId('project-branch-button').parentElement).toHaveClass(
+      'min-w-0',
+      'max-w-[18rem]',
+      'shrink'
+    )
+    expect(screen.getByTestId('project-branch-button')).toHaveAttribute('title', 'main')
   })
 
   test('shows empty project list and grouped project creation actions', async () => {
@@ -797,6 +822,8 @@ describe('ProjectWorkBar', () => {
     await userEvent.click(screen.getByTestId('project-branch-button'))
 
     const menu = await screen.findByTestId('project-branch-menu')
+    expect(menu).toHaveClass('right-0')
+    expect(menu).not.toHaveClass('left-0')
     await waitFor(() => expect(onListBranches).toHaveBeenCalledTimes(1))
     await userEvent.click(within(menu).getByText('develop'))
 
@@ -921,6 +948,8 @@ describe('ProjectWorkBar', () => {
     await userEvent.click(screen.getByTestId('project-worktree-branch-button'))
 
     const menu = await screen.findByTestId('project-worktree-branch-menu')
+    expect(menu).toHaveClass('right-0')
+    expect(menu).not.toHaveClass('left-0')
     await waitFor(() => expect(onListBranches).toHaveBeenCalledTimes(1))
     expect(within(menu).getByText('develop')).toBeInTheDocument()
 

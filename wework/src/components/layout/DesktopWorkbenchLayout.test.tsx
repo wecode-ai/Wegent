@@ -4110,7 +4110,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
-  test('expands the right workspace panel, keeps the composer available, and restores chat', async () => {
+  test('expands the right workspace panel without the composer and restores chat', async () => {
     renderWorkspacePanelLayout({
       mainWidth: 1000,
       messages: [
@@ -4138,7 +4138,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-chat-scroll-sticky-footer')).toHaveClass('z-critical')
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass('z-critical')
-    expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-chat-composer')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('restore-conversation-from-expanded-workspace-button')
+    ).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-expanded-button')).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -4156,6 +4159,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
     expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
+    expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
   })
 
   test('uses the temporary chat composer as the only composer while expanded', async () => {
@@ -4223,6 +4227,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-tabbar')).toHaveClass('bg-transparent')
     expect(screen.getByTestId('bottom-workspace-panel')).toHaveClass('bg-background/20')
     expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-transparent')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-expanded-button'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background')
+    expect(screen.getByTestId('right-workspace-panel-shell')).not.toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-background')
+    expect(screen.getByTestId('right-workspace-panel')).not.toHaveClass('bg-transparent')
   })
 
   test('opens the browser from the right workspace launcher row', async () => {

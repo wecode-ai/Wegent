@@ -7632,9 +7632,10 @@ async function main() {
       false,
       'The right workspace resize handle remained visible while expanded'
     )
-    assert.ok(
+    assert.equal(
       expandedWorkspaceSnapshot.testIds.includes('project-chat-composer'),
-      'The main composer disappeared while the right workspace panel was expanded'
+      false,
+      'The main composer remained visible while the non-chat workspace panel was expanded'
     )
     await captureVerificationScreenshot(control, 'workspace-panel-02-expanded.png')
 
