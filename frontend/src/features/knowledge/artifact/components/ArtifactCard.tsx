@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
 import { useTranslation } from '@/hooks/useTranslation'
+import { parseUTCDate } from '@/lib/utils'
 import type { KnowledgeArtifact } from '@/types/knowledge-artifact'
 
 interface ArtifactCardProps {
@@ -22,6 +23,7 @@ interface ArtifactCardProps {
 
 export function ArtifactCard({ artifact, onOpen, onDelete }: ArtifactCardProps) {
   const { t, i18n } = useTranslation('knowledge')
+  const createdAt = parseUTCDate(artifact.created_at)
 
   return (
     <div className="relative rounded-lg border border-border transition-colors hover:bg-hover">
@@ -52,12 +54,13 @@ export function ArtifactCard({ artifact, onOpen, onDelete }: ArtifactCardProps) 
                 )}
               </span>
               <span>
-                {new Intl.DateTimeFormat(i18n.language, {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                }).format(new Date(artifact.created_at))}
+                {createdAt &&
+                  new Intl.DateTimeFormat(i18n.language, {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }).format(createdAt)}
               </span>
             </div>
             <div className="mt-1 truncate text-xs text-text-muted">

@@ -5,7 +5,7 @@
 """Durable storage for knowledge Artifacts."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -110,7 +110,7 @@ class KnowledgeArtifactRepository:
                 return None
             record.title = title
             record.version += 1
-            record.updated_at = datetime.now().astimezone()
+            record.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             self.db.commit()
             self.db.refresh(record)
             return self._to_schema(record)
@@ -154,7 +154,7 @@ class KnowledgeArtifactRepository:
             record.completed_at = None
             record.attempt += 1
             record.version += 1
-            record.updated_at = datetime.now().astimezone()
+            record.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             self.db.commit()
             self.db.refresh(record)
             return self._to_schema(record), True

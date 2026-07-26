@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import and_, case, func
@@ -90,7 +90,7 @@ class ArtifactService:
             request.document_ids,
         )
         prepared_team = await self.launcher.preflight()
-        now = datetime.now().astimezone()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         artifact = KnowledgeArtifact(
             artifact_id=str(uuid4()),
             knowledge_base_id=knowledge_base_id,
@@ -299,7 +299,7 @@ class ArtifactService:
         except Exception as exc:
             artifact.status = KnowledgeArtifactStatus.FAILED
             artifact.error_message = str(exc) or "Failed to start artifact generation"
-            artifact.completed_at = datetime.now().astimezone()
+            artifact.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             artifact.updated_at = artifact.completed_at
             self.repository.update_execution(artifact)
             raise
@@ -307,7 +307,7 @@ class ArtifactService:
         artifact.task_id = launch.task_id
         artifact.assistant_subtask_id = launch.assistant_subtask_id
         artifact.status = KnowledgeArtifactStatus.RUNNING
-        artifact.updated_at = datetime.now().astimezone()
+        artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         return self.repository.update_execution(artifact) or artifact
 
     async def _reconcile(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
@@ -327,7 +327,7 @@ class ArtifactService:
         )
         if subtask is None:
             if execution_ids_changed:
-                artifact.updated_at = datetime.now().astimezone()
+                artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 artifact = self.repository.update_execution(artifact) or artifact
             return self._apply_execution_health(artifact)
         reconciled = await self._apply_subtask_status(
@@ -371,7 +371,9 @@ class ArtifactService:
             subtask = subtasks_by_id.get(artifact.assistant_subtask_id)
             if subtask is None:
                 if artifact.artifact_id in repaired_ids:
-                    artifact.updated_at = datetime.now().astimezone()
+                    artifact.updated_at = datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    )
                     artifact = self.repository.update_execution(artifact) or artifact
                 reconciled.append(self._apply_execution_health(artifact))
                 continue
@@ -411,11 +413,13 @@ class ArtifactService:
             artifact.error_message = (
                 subtask.error_message or "Artifact generation failed"
             )
-            artifact.completed_at = subtask.completed_at or datetime.now().astimezone()
+            artifact.completed_at = subtask.completed_at or datetime.now(
+                timezone.utc
+            ).replace(tzinfo=None)
             changed = True
 
         if changed:
-            artifact.updated_at = datetime.now().astimezone()
+            artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             return self.repository.update_execution(artifact) or artifact
         return artifact
 
@@ -437,7 +441,9 @@ class ArtifactService:
             artifact.status = KnowledgeArtifactStatus.FAILED
             artifact.error_code = "INVALID_GENERATED_RESULT"
             artifact.error_message = str(exc)
-        artifact.completed_at = subtask.completed_at or datetime.now().astimezone()
+        artifact.completed_at = subtask.completed_at or datetime.now(
+            timezone.utc
+        ).replace(tzinfo=None)
 
     def _apply_execution_health(
         self,
@@ -462,7 +468,7 @@ class ArtifactService:
         activity_at = artifact.updated_at
         if subtask is not None:
             activity_at = subtask.updated_at or subtask.created_at or activity_at
-        aware_now = datetime.now().astimezone()
+        aware_now = datetime.now(timezone.utc)
         now = (
             aware_now.replace(tzinfo=None) if activity_at.tzinfo is None else aware_now
         )

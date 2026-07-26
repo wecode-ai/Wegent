@@ -20,7 +20,6 @@ from app.schemas.knowledge_artifact import (
 )
 from app.services.knowledge.artifact_service import (
     ArtifactNotFoundError,
-    ArtifactPermissionError,
     ArtifactService,
     ArtifactValidationError,
 )
@@ -94,6 +93,8 @@ async def test_create_persists_before_and_after_launch():
     assert artifact.task_id == 31
     assert artifact.assistant_subtask_id == 41
     assert artifact.generation_config == {"instruction": "突出风险"}
+    assert artifact.created_at.tzinfo is None
+    assert artifact.updated_at.tzinfo is None
     repository.create.assert_called_once()
     repository.update_execution.assert_called_once()
     launcher.preflight.assert_awaited_once_with()
