@@ -4,7 +4,7 @@
 
 """Tests for knowledge Artifact orchestration."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -36,8 +36,10 @@ def build_service() -> tuple[ArtifactService, MagicMock, AsyncMock]:
     launcher = AsyncMock()
     task_resource_store = MagicMock()
     subtask_resource_store = MagicMock()
+    db = MagicMock()
+    db.get_bind.return_value.dialect.name = "mysql"
     service = ArtifactService(
-        MagicMock(),
+        db,
         SimpleNamespace(id=7),
         repository,
         launcher=launcher,
@@ -47,12 +49,18 @@ def build_service() -> tuple[ArtifactService, MagicMock, AsyncMock]:
     return service, repository, launcher
 
 
+def mysql_naive_now() -> datetime:
+    """Return the current time in the configured MySQL session timezone."""
+    mysql_timezone = timezone(timedelta(hours=8))
+    return datetime.now(timezone.utc).astimezone(mysql_timezone).replace(tzinfo=None)
+
+
 def build_artifact(
     *,
     artifact_type: KnowledgeArtifactType = KnowledgeArtifactType.BRIEFING,
     status: KnowledgeArtifactStatus = KnowledgeArtifactStatus.RUNNING,
 ) -> KnowledgeArtifact:
-    now = datetime.now().astimezone()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     return KnowledgeArtifact(
         artifact_id="artifact-1",
         knowledge_base_id=12,
@@ -267,6 +275,7 @@ def test_parse_mind_map_rejects_invalid_output(content: str):
 async def test_reconcile_completed_mind_map_saves_renderable_content():
     service, repository, _ = build_service()
     artifact = build_artifact(artifact_type=KnowledgeArtifactType.MIND_MAP)
+    completed_at = mysql_naive_now()
     subtask = SimpleNamespace(
         status="COMPLETED",
         result={
@@ -276,7 +285,7 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
                 '{"id":"child","parent_id":"root","title":"子主题"}]}'
             )
         },
-        completed_at=datetime.now().astimezone(),
+        completed_at=completed_at,
         error_message=None,
     )
     service.subtask_store.get_by_id_and_role.return_value = subtask
@@ -286,6 +295,7 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
     assert reconciled.status == KnowledgeArtifactStatus.SUCCEEDED
     assert reconciled.content is not None
     assert '"root_id":"root"' in reconciled.content
+    assert reconciled.completed_at == completed_at - timedelta(hours=8)
     repository.update_execution.assert_called_once_with(artifact)
 
 
@@ -346,8 +356,8 @@ def test_resolve_mind_map_node_rejects_legacy_mermaid():
 async def test_reconcile_derives_stalled_without_changing_running_execution():
     service, repository, _ = build_service()
     artifact = build_artifact()
-    stale_at = datetime.now().astimezone() - timedelta(minutes=11)
-    artifact.updated_at = stale_at
+    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    stale_at = mysql_naive_now() - timedelta(minutes=11)
     subtask = SimpleNamespace(
         id=41,
         status="RUNNING",
@@ -370,8 +380,8 @@ async def test_reconcile_derives_stalled_without_changing_running_execution():
 async def test_reconcile_keeps_recent_running_execution_healthy():
     service, repository, _ = build_service()
     artifact = build_artifact()
-    recent_at = datetime.now().astimezone() - timedelta(minutes=3)
-    artifact.updated_at = recent_at
+    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    recent_at = mysql_naive_now() - timedelta(minutes=3)
     subtask = SimpleNamespace(
         id=41,
         status="RUNNING",
@@ -438,8 +448,8 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
     service, repository, launcher = build_service()
     launcher.preflight.return_value = MagicMock()
     artifact = build_artifact()
-    stale_at = datetime.now().astimezone() - timedelta(minutes=11)
-    artifact.updated_at = stale_at
+    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    stale_at = mysql_naive_now() - timedelta(minutes=11)
     repository.get.return_value = artifact
     subtask = SimpleNamespace(
         id=41,

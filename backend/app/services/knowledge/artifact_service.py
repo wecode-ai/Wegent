@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
@@ -31,13 +32,13 @@ from app.services.knowledge.artifact_repository import KnowledgeArtifactReposito
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.stores.tasks import SubtaskStore, TaskStore, subtask_store, task_store
-from shared.models.db import Kind
 
 _JSON_BLOCK = re.compile(r"```json\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _ACTIVE_STATUSES = {
     KnowledgeArtifactStatus.QUEUED,
     KnowledgeArtifactStatus.RUNNING,
 }
+_MYSQL_SESSION_TIMEZONE = timezone(timedelta(hours=8))
 _PROCESSING_DOCUMENT_STATUSES = (
     DocumentIndexStatus.QUEUED,
     DocumentIndexStatus.PENDING_CONVERSION,
@@ -413,9 +414,11 @@ class ArtifactService:
             artifact.error_message = (
                 subtask.error_message or "Artifact generation failed"
             )
-            artifact.completed_at = subtask.completed_at or datetime.now(
-                timezone.utc
-            ).replace(tzinfo=None)
+            artifact.completed_at = (
+                self._subtask_datetime_as_utc(subtask.completed_at)
+                if subtask.completed_at
+                else datetime.now(timezone.utc).replace(tzinfo=None)
+            )
             changed = True
 
         if changed:
@@ -441,9 +444,11 @@ class ArtifactService:
             artifact.status = KnowledgeArtifactStatus.FAILED
             artifact.error_code = "INVALID_GENERATED_RESULT"
             artifact.error_message = str(exc)
-        artifact.completed_at = subtask.completed_at or datetime.now(
-            timezone.utc
-        ).replace(tzinfo=None)
+        artifact.completed_at = (
+            self._subtask_datetime_as_utc(subtask.completed_at)
+            if subtask.completed_at
+            else datetime.now(timezone.utc).replace(tzinfo=None)
+        )
 
     def _apply_execution_health(
         self,
@@ -460,20 +465,35 @@ class ArtifactService:
             artifact.can_retry = True
         return artifact
 
-    @staticmethod
     def _is_stalled(
+        self,
         artifact: KnowledgeArtifact,
         subtask: Subtask | None,
     ) -> bool:
-        activity_at = artifact.updated_at
-        if subtask is not None:
-            activity_at = subtask.updated_at or subtask.created_at or activity_at
-        aware_now = datetime.now(timezone.utc)
-        now = (
-            aware_now.replace(tzinfo=None) if activity_at.tzinfo is None else aware_now
-        )
+        activity_at = self._as_utc_naive(artifact.updated_at, timezone.utc)
+        if subtask is not None and (subtask.updated_at or subtask.created_at):
+            activity_at = self._subtask_datetime_as_utc(
+                subtask.updated_at or subtask.created_at
+            )
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         stall_seconds = max(1, settings.KNOWLEDGE_ARTIFACT_STALL_SECONDS)
         return (now - activity_at).total_seconds() >= stall_seconds
+
+    def _subtask_datetime_as_utc(self, value: datetime) -> datetime:
+        bind = self.db.get_bind()
+        naive_timezone = (
+            _MYSQL_SESSION_TIMEZONE
+            if bind is not None and bind.dialect.name == "mysql"
+            else timezone.utc
+        )
+        return self._as_utc_naive(value, naive_timezone)
+
+    @staticmethod
+    def _as_utc_naive(value: datetime, naive_timezone: timezone) -> datetime:
+        aware_value = (
+            value.replace(tzinfo=naive_timezone) if value.tzinfo is None else value
+        )
+        return aware_value.astimezone(timezone.utc).replace(tzinfo=None)
 
     @staticmethod
     def _subtask_status(subtask: Subtask) -> str:
