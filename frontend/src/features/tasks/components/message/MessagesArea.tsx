@@ -78,6 +78,11 @@ type SendMessageOptions = {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
 }
 
+interface KnowledgeDocumentViewTarget {
+  document: KnowledgeDocument
+  knowledgeBase: KnowledgeBaseWithGroupInfo
+}
+
 export function deriveSaveToKnowledgeTitle(
   messages: DisplayMessage[],
   aiMessageIndex: number,
@@ -326,11 +331,8 @@ function MessagesArea({
     title: string
     content: string
   } | null>(null)
-  const [createdKnowledgeDocument, setCreatedKnowledgeDocument] =
-    useState<KnowledgeDocument | null>(null)
-  const [createdDocumentKnowledgeBase, setCreatedDocumentKnowledgeBase] =
-    useState<KnowledgeBaseWithGroupInfo | null>(null)
-  const [showCreatedDocument, setShowCreatedDocument] = useState(false)
+  const [knowledgeDocumentToView, setKnowledgeDocumentToView] =
+    useState<KnowledgeDocumentViewTarget | null>(null)
 
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
@@ -1186,8 +1188,7 @@ function MessagesArea({
 
   const handleKnowledgeDocumentCreated = useCallback(
     (document: KnowledgeDocument, knowledgeBase: KnowledgeBaseWithGroupInfo) => {
-      setCreatedKnowledgeDocument(document)
-      setCreatedDocumentKnowledgeBase(knowledgeBase)
+      const viewTarget = { document, knowledgeBase }
       toast({
         title: t('chat:saveToKnowledge.successTitle'),
         description: t('chat:saveToKnowledge.successDescription', {
@@ -1196,7 +1197,7 @@ function MessagesArea({
         action: (
           <ToastAction
             altText={t('chat:saveToKnowledge.viewDocument')}
-            onClick={() => setShowCreatedDocument(true)}
+            onClick={() => setKnowledgeDocumentToView(viewTarget)}
             data-testid="save-to-knowledge-view-document-button"
           >
             {t('chat:saveToKnowledge.viewDocument')}
@@ -1470,17 +1471,19 @@ function MessagesArea({
         />
       )}
 
-      {createdKnowledgeDocument && createdDocumentKnowledgeBase && (
+      {knowledgeDocumentToView && (
         <DocumentDetailDialog
-          open={showCreatedDocument}
-          onOpenChange={setShowCreatedDocument}
-          document={createdKnowledgeDocument}
-          knowledgeBaseId={createdDocumentKnowledgeBase.id}
-          kbType={createdDocumentKnowledgeBase.kb_type}
+          open={true}
+          onOpenChange={open => {
+            if (!open) setKnowledgeDocumentToView(null)
+          }}
+          document={knowledgeDocumentToView.document}
+          knowledgeBaseId={knowledgeDocumentToView.knowledgeBase.id}
+          kbType={knowledgeDocumentToView.knowledgeBase.kb_type}
           canEdit={true}
-          knowledgeBaseName={createdDocumentKnowledgeBase.name}
-          knowledgeBaseNamespace={createdDocumentKnowledgeBase.namespace}
-          isOrganization={createdDocumentKnowledgeBase.group_type === 'organization'}
+          knowledgeBaseName={knowledgeDocumentToView.knowledgeBase.name}
+          knowledgeBaseNamespace={knowledgeDocumentToView.knowledgeBase.namespace}
+          isOrganization={knowledgeDocumentToView.knowledgeBase.group_type === 'organization'}
         />
       )}
 

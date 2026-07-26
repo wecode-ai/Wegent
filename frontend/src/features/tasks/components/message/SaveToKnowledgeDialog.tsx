@@ -74,14 +74,17 @@ export function getWritableKnowledgeBases(
 ): WritableKnowledgeBaseOption[] {
   const seen = new Set<number>()
   return flattenKnowledgeBases(data)
-    .filter(knowledgeBase => {
-      if (seen.has(knowledgeBase.id)) return false
-      seen.add(knowledgeBase.id)
-      return canManageKnowledgeBaseDocuments({
+    .filter(knowledgeBase =>
+      canManageKnowledgeBaseDocuments({
         currentUserId,
         knowledgeBase,
         knowledgeRole: knowledgeBase.my_role,
       })
+    )
+    .filter(knowledgeBase => {
+      if (seen.has(knowledgeBase.id)) return false
+      seen.add(knowledgeBase.id)
+      return true
     })
     .map(knowledgeBase => ({
       knowledgeBase,

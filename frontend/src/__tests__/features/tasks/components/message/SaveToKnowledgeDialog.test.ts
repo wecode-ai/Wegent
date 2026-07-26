@@ -81,4 +81,45 @@ describe('getWritableKnowledgeBases', () => {
 
     expect(options.map(option => option.knowledgeBase.id)).toEqual([1, 2, 4])
   })
+
+  it('keeps a later writable representation when a read-only duplicate appears first', () => {
+    const readOnly = knowledgeBase(7, 'Reporter')
+    const writable = knowledgeBase(7, 'Developer', {
+      namespace: 'engineering',
+      group_id: 'engineering',
+      group_name: 'engineering',
+      group_type: 'group',
+    })
+    const data: AllGroupedKnowledgeResponse = {
+      personal: {
+        created_by_me: [],
+        shared_with_me: [readOnly],
+      },
+      groups: [
+        {
+          group_name: 'engineering',
+          group_display_name: 'Engineering',
+          kb_count: 1,
+          knowledge_bases: [writable],
+        },
+      ],
+      organization: {
+        namespace: null,
+        display_name: 'Organization',
+        kb_count: 0,
+        knowledge_bases: [],
+      },
+      summary: {
+        total_count: 1,
+        personal_count: 1,
+        group_count: 1,
+        organization_count: 0,
+      },
+    }
+
+    const options = getWritableKnowledgeBases(data, 1, kb => kb.group_name)
+
+    expect(options).toHaveLength(1)
+    expect(options[0].knowledgeBase).toBe(writable)
+  })
 })
