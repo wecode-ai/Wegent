@@ -1439,6 +1439,16 @@ async def prepare_contexts_for_chat(
     # with the returned table payload — if parsing fails, the flag stays False.
     has_table_context = len(parsed_tables) > 0
 
+    selected_document_ids = list(
+        dict.fromkeys(
+            document_id
+            for context in selected_docs_contexts
+            for document_id in _normalize_document_ids(
+                (context.type_data or {}).get("document_ids", [])
+            )
+        )
+    )
+
     # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
     # and extra_tools (table prompt and selected_documents processing may have modified
     # them after kb_result was computed).
@@ -1448,8 +1458,10 @@ async def prepare_contexts_for_chat(
         kb_meta_prompt=kb_meta_prompt,
         knowledge_base_ids=kb_result.knowledge_base_ids,
         is_user_selected_kb=kb_result.is_user_selected_kb,
-        document_ids=kb_result.document_ids,
-        knowledge_base_scopes=kb_result.knowledge_base_scopes,
+        document_ids=selected_document_ids or kb_result.document_ids,
+        knowledge_base_scopes=(
+            [] if selected_document_ids else kb_result.knowledge_base_scopes
+        ),
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(
