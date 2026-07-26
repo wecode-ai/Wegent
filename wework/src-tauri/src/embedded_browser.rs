@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{
     async_runtime::Mutex as AsyncMutex,
-    webview::{DownloadEvent, PageLoadEvent},
+    webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
     Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Webview, WebviewUrl, Wry,
 };
 #[cfg(desktop)]
@@ -34,6 +34,7 @@ const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
 const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
+const EMBEDDED_BROWSER_POPUP_EVENT: &str = "wework:embedded-browser-popup";
 const EMBEDDED_BROWSER_NOT_READY_ERROR: &str = "Embedded browser is not ready";
 const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
@@ -41,9 +42,12 @@ const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
 const EMBEDDED_BROWSER_ACTION_SCRIPT: &str = include_str!("embedded_browser_action.js");
 const EMBEDDED_BROWSER_INSPECT_SCRIPT: &str = include_str!("embedded_browser_inspect.js");
+const EMBEDDED_BROWSER_WAIT_SCRIPT: &str = include_str!("embedded_browser_wait.js");
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_BRIDGE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_NATIVE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static EMBEDDED_BROWSER_SCREENSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static EMBEDDED_BROWSER_POPUP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Default)]
 pub struct EmbeddedBrowserState {
@@ -158,6 +162,21 @@ struct EmbeddedBrowserDownloadPayload {
     status: String,
     received_bytes: Option<u64>,
     total_bytes: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddedBrowserPopupPayload {
+    popup_id: String,
+    parent_label: String,
+    parent_native_label: String,
+    url: String,
+    origin: String,
+    kind: String,
+    strategy: String,
+    status: String,
+    created_at_unix_ms: u128,
+    warning: Option<String>,
 }
 
 #[derive(Clone)]
@@ -318,6 +337,85 @@ fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
         "http" | "https" => WebviewUrl::External(url),
         _ => WebviewUrl::CustomProtocol(url),
     }
+}
+
+fn popup_origin(url: &tauri::Url) -> String {
+    match (url.scheme(), url.host_str(), url.port()) {
+        (scheme, Some(host), Some(port)) => format!("{scheme}://{host}:{port}"),
+        (scheme, Some(host), None) => format!("{scheme}://{host}"),
+        (scheme, None, _) => scheme.to_string(),
+    }
+}
+
+fn classify_popup_url(url: &tauri::Url) -> (&'static str, &'static str, Option<String>) {
+    let scheme = url.scheme().to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return (
+            "external_scheme",
+            "user_confirmation_required",
+            Some("External schemes are not opened silently.".to_string()),
+        );
+    }
+
+    let combined = format!(
+        "{} {} {}",
+        url.host_str().unwrap_or_default(),
+        url.path(),
+        url.query().unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    if combined.contains("pay") || combined.contains("payment") || combined.contains("checkout") {
+        return (
+            "payment",
+            "controlled_popup_required",
+            Some(
+                "Payment-like popup should require user confirmation before production use."
+                    .to_string(),
+            ),
+        );
+    }
+    if [
+        "oauth",
+        "authorize",
+        "openid",
+        "sso",
+        "saml",
+        "cas",
+        "login",
+        "signin",
+        "auth",
+    ]
+    .iter()
+    .any(|marker| combined.contains(marker))
+    {
+        return ("oauth", "observe_and_allow", None);
+    }
+    ("unknown", "observe_and_allow", None)
+}
+
+fn emit_popup_observed(
+    app: &tauri::AppHandle,
+    parent_label: &str,
+    parent_native_label: &str,
+    url: tauri::Url,
+) {
+    let (kind, strategy, warning) = classify_popup_url(&url);
+    let payload = EmbeddedBrowserPopupPayload {
+        popup_id: format!(
+            "browser-popup-{}",
+            EMBEDDED_BROWSER_POPUP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
+        parent_label: parent_label.to_string(),
+        parent_native_label: parent_native_label.to_string(),
+        origin: popup_origin(&url),
+        url: url.to_string(),
+        kind: kind.to_string(),
+        strategy: strategy.to_string(),
+        status: "observed".to_string(),
+        created_at_unix_ms: current_unix_millis(),
+        warning,
+    };
+    let _ = app.emit(EMBEDDED_BROWSER_POPUP_EVENT, payload);
 }
 
 fn browser_label(label: Option<String>) -> String {
@@ -712,10 +810,6 @@ async fn eval_json_nonblocking(
     serde_json::from_str(&result).or(Ok(Value::String(result)))
 }
 
-fn json_string(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
-}
-
 fn script_expression(expression: &str) -> String {
     format!(
         r#"(() => {{
@@ -729,53 +823,108 @@ fn script_expression(expression: &str) -> String {
     )
 }
 
-fn script_press_key(key: &str) -> String {
-    format!(
-        r#"(async () => {{
-  const target = document.activeElement || document.body;
-  const key = {key};
-  for (const type of ["keydown", "keyup"]) {{
-    target.dispatchEvent(new KeyboardEvent(type, {{ key, bubbles: true, cancelable: true }}));
-  }}
-  return {{ ok: true }};
-}})()"#,
-        key = json_string(key)
-    )
+fn script_wait_for(request: &EmbeddedBrowserBridgeRequest, wait_id: &str) -> String {
+    let input = json!({
+        "waitId": wait_id,
+        "selector": request.selector,
+        "text": request.text,
+        "url": request.url,
+        "expression": request.expression,
+        "timeoutMs": request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        "options": request.options,
+    });
+    let encoded_input = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
+    EMBEDDED_BROWSER_WAIT_SCRIPT.replace("__WEWORK_WAIT_INPUT__", &encoded_input)
 }
 
-fn script_wait_for(request: &EmbeddedBrowserBridgeRequest) -> String {
-    let selector = request.selector.as_deref().map(json_string);
-    let text = request.text.as_deref().map(json_string);
-    let url = request.url.as_deref().map(json_string);
-    let expression = request.expression.as_deref().unwrap_or("true");
-    format!(
-        r#"(async () => {{
-  const deadline = Date.now() + {timeout};
-  const selector = {selector};
-  const text = {text};
-  const url = {url};
-  while (Date.now() <= deadline) {{
-    const selectorOk = !selector || Boolean(document.querySelector(selector));
-    const textOk = !text || document.body?.innerText?.includes(text);
-    const urlOk = !url || location.href.includes(url);
-    let expressionOk = true;
-    try {{
-      expressionOk = Boolean(await (async () => {{ return ({expression}); }})());
-    }} catch {{
-      expressionOk = false;
-    }}
-    if (selectorOk && textOk && urlOk && expressionOk) {{
-      return {{ ok: true }};
-    }}
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }}
-  return {{ ok: false, error: "Timed out waiting for embedded browser condition" }};
-}})()"#,
-        timeout = request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
-        selector = selector.unwrap_or_else(|| "null".to_string()),
-        text = text.unwrap_or_else(|| "null".to_string()),
-        url = url.unwrap_or_else(|| "null".to_string())
-    )
+fn wait_for_embedded_browser(
+    state: &EmbeddedBrowserState,
+    label: &str,
+    request: &EmbeddedBrowserBridgeRequest,
+) -> Result<Value, String> {
+    let timeout_ms = request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
+    let poll_ms = request
+        .options
+        .as_ref()
+        .and_then(|options| options.get("pollMs"))
+        .and_then(Value::as_u64)
+        .unwrap_or(100)
+        .clamp(50, 1_000);
+    let wait_id = format!(
+        "wk-wait-{}",
+        EMBEDDED_BROWSER_BRIDGE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(timeout_ms);
+    let mut last_result = json!({
+        "ok": false,
+        "kind": "browser.wait",
+        "backend": "wkwebview-js",
+        "reason": "not_started",
+    });
+
+    while Instant::now() <= deadline {
+        let remaining_ms = deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .try_into()
+            .unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
+        let eval_timeout_ms = remaining_ms.clamp(1, BRIDGE_EVAL_TIMEOUT_MS);
+        last_result = match eval_json(
+            state,
+            label,
+            script_wait_for(request, &wait_id),
+            eval_timeout_ms,
+        ) {
+            Ok(value) => value,
+            Err(error) => json!({
+                "ok": false,
+                "kind": "browser.wait",
+                "backend": "wkwebview-js",
+                "reason": "operation_failed",
+                "elapsedMs": started.elapsed().as_millis() as u64,
+                "observed": {},
+                "warnings": [],
+                "error": {
+                    "code": "wait_eval_failed",
+                    "message": error,
+                    "recoverable": true,
+                    "suggestedNextAction": "wait"
+                }
+            }),
+        };
+        if last_result
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Ok(last_result);
+        }
+        let sleep_ms = deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_millis(poll_ms));
+        if sleep_ms.is_zero() {
+            break;
+        }
+        thread::sleep(sleep_ms);
+    }
+
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    if let Some(object) = last_result.as_object_mut() {
+        object.insert("ok".to_string(), Value::Bool(false));
+        object.insert("reason".to_string(), Value::String("timeout".to_string()));
+        object.insert("elapsedMs".to_string(), Value::from(elapsed_ms));
+        object.insert(
+            "error".to_string(),
+            json!({
+                "code": "wait_timeout",
+                "message": "Timed out waiting for embedded browser condition.",
+                "recoverable": true,
+                "suggestedNextAction": "inspect"
+            }),
+        );
+    }
+    Ok(last_result)
 }
 
 fn script_browser_action(
@@ -786,11 +935,13 @@ fn script_browser_action(
         "action": action,
         "selector": request.selector,
         "text": request.text,
+        "key": request.key,
         "x": request.x,
         "y": request.y,
         "inspectId": request.inspect_id,
         "index": request.index,
         "ref": request.ref_,
+        "options": request.options,
     });
     let encoded_input = serde_json::to_string(&input)
         .map_err(|error| format!("Failed to encode embedded browser action input: {error}"))?;
@@ -810,6 +961,166 @@ fn inspect_embedded_browser(
     timeout_ms: u64,
 ) -> Result<Value, String> {
     eval_json(state, label, script_semantic_inspect(&options)?, timeout_ms)
+}
+
+fn embedded_browser_capabilities() -> Value {
+    json!({
+        "kind": "browser.capabilities",
+        "backend": "wkwebview",
+        "schemaVersion": 1,
+        "inspect": {
+            "structuredDom": true,
+            "indexRef": true,
+            "frame": "same-origin",
+            "shadowDom": "open-shadow-dom"
+        },
+        "actions": {
+            "syntheticDom": [
+                "click",
+                "type",
+                "fill",
+                "hover",
+                "focus",
+                "press",
+                "select",
+                "setChecked",
+                "scroll",
+                "scrollIntoView"
+            ],
+            "trustedNativeInput": "poc_only",
+            "appKitNativeInputProbe": true
+        },
+        "wait": {
+            "structured": true,
+            "conditions": [
+                "selectorAttached",
+                "selectorVisible",
+                "textVisible",
+                "urlIncludes",
+                "urlMatches",
+                "titleIncludes",
+                "revisionChanged",
+                "domStable",
+                "pageStable",
+                "inputValueChanged",
+                "elementGone",
+                "expression"
+            ]
+        },
+        "screenshot": {
+            "viewport": true,
+            "primaryBackend": "wkwebview-nsview-cache",
+            "fallbackBackend": "macos-screencapture-region",
+            "wkTakeSnapshot": false
+        },
+        "p2": {
+            "reparentApiAvailable": true,
+            "newWindowHookAvailable": true,
+            "popupObservation": true,
+            "controlledPopup": "not_productionized",
+            "macAxTreeProbe": "not_productionized"
+        },
+        "warnings": [
+            {
+                "code": "synthetic_input_limit",
+                "message": "Current production actions use DOM synthetic events; some pages may require trusted input."
+            },
+            {
+                "code": "p2_poc_not_default",
+                "message": "P2 native input, AX tree and WebView reparent are exposed as capability/probe surfaces, not production defaults."
+            }
+        ]
+    })
+}
+
+fn native_input_probe_result(request: &EmbeddedBrowserBridgeRequest) -> Value {
+    json!({
+        "ok": false,
+        "kind": "browser.nativeInputProbe",
+        "backend": "appkit-poc",
+        "probeKind": request.options
+            .as_ref()
+            .and_then(|value| value.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        "permissionRequired": false,
+        "eventTrusted": null,
+        "effect": {
+            "urlChanged": false,
+            "domChanged": false,
+            "focusChanged": false,
+            "valueChanged": false
+        },
+        "warnings": [
+            {
+                "code": "native_input_probe_not_executed",
+                "message": "Native AppKit event dispatch is not enabled as a production path; use DOM actions or user control."
+            },
+            {
+                "code": "requires_real_tauri_verification",
+                "message": "Trusted input must be verified in an isolated real Tauri session before enabling."
+            }
+        ],
+        "error": {
+            "code": "requires_trusted_input",
+            "message": "AppKit native input is only a PoC surface in this build.",
+            "recoverable": true,
+            "category": "capability",
+            "suggestedNextAction": "ask_user_to_take_control"
+        }
+    })
+}
+
+fn ax_probe_result() -> Value {
+    json!({
+        "ok": false,
+        "kind": "browser.axProbe",
+        "backend": "macos-ax-poc",
+        "permissionRequired": true,
+        "root": null,
+        "stats": {
+            "nodeCount": 0,
+            "durationMs": 0,
+            "roleCount": {}
+        },
+        "warnings": [
+            {
+                "code": "ax_tree_not_enabled",
+                "message": "macOS AX tree collection is not enabled by default because it may require Accessibility permission."
+            }
+        ],
+        "error": {
+            "code": "unsupported_browser_capability",
+            "message": "AX tree probing has not been productionized for WKWebView content.",
+            "recoverable": true,
+            "category": "capability",
+            "suggestedNextAction": "inspect"
+        }
+    })
+}
+
+fn present_probe_result(state: &EmbeddedBrowserState, label: &str) -> Result<Value, String> {
+    let entry = get_entry(state, label)?;
+    Ok(json!({
+        "ok": true,
+        "kind": "browser.presentProbe",
+        "backend": "tauri-webview",
+        "label": label,
+        "nativeLabel": entry.native_label,
+        "placement": {
+            "kind": "panel",
+            "surfaceEpoch": 1
+        },
+        "reparentApiAvailable": true,
+        "reparented": false,
+        "restoredByReload": false,
+        "warnings": [
+            {
+                "code": "popout_not_productionized",
+                "message": "Tauri exposes Webview::reparent, but panel/popout shell state has not been enabled as a production user flow."
+            }
+        ]
+    }))
 }
 
 fn script_resolve_inspect_target(request: &EmbeddedBrowserBridgeRequest) -> String {
@@ -846,6 +1157,63 @@ fn script_resolve_inspect_target(request: &EmbeddedBrowserBridgeRequest) -> Stri
 fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Result<Value, String> {
     let entry = get_entry(state, label)?;
     let webview = entry.ready_webview()?;
+    let screenshot_id = format!(
+        "wk-screenshot-{}",
+        EMBEDDED_BROWSER_SCREENSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let page = eval_json(
+        state,
+        label,
+        script_expression(
+            "({
+              url: location.href,
+              title: document.title || '',
+              readyState: document.readyState,
+              viewport: {
+                width: window.innerWidth,
+                height: window.innerHeight,
+                devicePixelRatio: window.devicePixelRatio || 1,
+                scrollX: window.scrollX,
+                scrollY: window.scrollY,
+                visualViewport: window.visualViewport ? {
+                  width: window.visualViewport.width,
+                  height: window.visualViewport.height,
+                  offsetLeft: window.visualViewport.offsetLeft,
+                  offsetTop: window.visualViewport.offsetTop,
+                  scale: window.visualViewport.scale
+                } : null
+              }
+            })",
+        ),
+        BRIDGE_EVAL_TIMEOUT_MS,
+    )
+    .ok()
+    .and_then(|value| value.get("value").cloned())
+    .unwrap_or_else(|| json!({}));
+    let path = screenshot_path(&screenshot_id)?;
+
+    match capture_webview_to_png_file(&webview, &path) {
+        Ok(capture) => {
+            return Ok(screenshot_result(
+                &screenshot_id,
+                "wkwebview-nsview-cache",
+                &path,
+                capture.width,
+                capture.height,
+                capture.scale_factor,
+                None,
+                page,
+                vec![json!({
+                    "code": "wk_take_snapshot_not_used",
+                    "message": "Screenshot uses native NSView cacheDisplay rather than WKWebView takeSnapshot."
+                })],
+            ));
+        }
+        Err(error) => {
+            log::warn!("Embedded browser native view snapshot failed: {error}");
+        }
+    }
+
     let window_position = webview
         .window()
         .inner_position()
@@ -865,7 +1233,6 @@ fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Res
     let y = ((window_position.y + webview_position.y) as f64 / scale_factor).round() as i32;
     let width = (webview_size.width.max(1) as f64 / scale_factor).round() as u32;
     let height = (webview_size.height.max(1) as f64 / scale_factor).round() as u32;
-    let path = screenshot_path()?;
     let region = format!("{x},{y},{width},{height}");
     let output = Command::new("screencapture")
         .args(["-x", "-R", &region])
@@ -873,11 +1240,21 @@ fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Res
         .output()
         .map_err(|error| format!("Failed to run macOS screencapture: {error}"))?;
     if output.status.success() {
-        return Ok(json!({
-            "path": path.to_string_lossy(),
-            "type": "png",
-            "region": { "x": x, "y": y, "width": width, "height": height },
-        }));
+        let (image_width, image_height) = png_dimensions(&path).unwrap_or((width, height));
+        return Ok(screenshot_result(
+            &screenshot_id,
+            "macos-screencapture-region",
+            &path,
+            image_width,
+            image_height,
+            scale_factor,
+            Some(json!({ "x": x, "y": y, "width": width, "height": height })),
+            page,
+            vec![json!({
+                "code": "native_view_snapshot_failed",
+                "message": "Screenshot used macOS region capture fallback; it may require screen-recording permission or include occlusion."
+            })],
+        ));
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -886,6 +1263,112 @@ fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Res
     } else {
         stderr
     })
+}
+
+#[cfg(target_os = "macos")]
+struct EmbeddedBrowserScreenshotCapture {
+    width: u32,
+    height: u32,
+    scale_factor: f64,
+}
+
+#[cfg(target_os = "macos")]
+fn capture_webview_to_png_file(
+    webview: &Webview<Wry>,
+    path: &Path,
+) -> Result<EmbeddedBrowserScreenshotCapture, String> {
+    let scale_factor = webview
+        .window()
+        .scale_factor()
+        .map_err(|error| format!("Failed to read Wework window scale factor: {error}"))?
+        .max(1.0);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    webview
+        .with_webview(move |platform_webview| {
+            let result = unsafe { capture_macos_webview_bytes(platform_webview) };
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("Failed to access embedded browser webview: {error}"))?;
+    let bytes = receiver
+        .recv_timeout(Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS))
+        .map_err(|_| "Timed out waiting for native embedded browser snapshot".to_string())??;
+    std::fs::write(path, &bytes)
+        .map_err(|error| format!("Failed to write embedded browser snapshot: {error}"))?;
+    let (width, height) = png_dimensions(path)?;
+    Ok(EmbeddedBrowserScreenshotCapture {
+        width,
+        height,
+        scale_factor,
+    })
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn capture_macos_webview_bytes(
+    platform_webview: tauri::webview::PlatformWebview,
+) -> Result<Vec<u8>, String> {
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSBitmapImageFileType, NSView};
+    use objc2_foundation::NSDictionary;
+
+    let webview: &NSView = &*platform_webview.inner().cast();
+    let bounds = webview.bounds();
+    let bitmap = webview
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .ok_or_else(|| "Failed to create bitmap for embedded browser".to_string())?;
+    webview.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+    let properties: objc2::rc::Retained<
+        NSDictionary<objc2_app_kit::NSBitmapImageRepPropertyKey, AnyObject>,
+    > = NSDictionary::new();
+    let png = bitmap
+        .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
+        .ok_or_else(|| "Failed to encode embedded browser snapshot as PNG".to_string())?;
+    Ok(ns_data_bytes(&png))
+}
+
+#[cfg(target_os = "macos")]
+fn ns_data_bytes(data: &objc2_foundation::NSData) -> Vec<u8> {
+    let mut bytes = vec![0; data.length()];
+    if let Some(buffer) = std::ptr::NonNull::new(bytes.as_mut_ptr().cast()) {
+        unsafe { data.getBytes_length(buffer, bytes.len()) };
+    }
+    bytes
+}
+
+fn screenshot_result(
+    screenshot_id: &str,
+    backend: &str,
+    path: &Path,
+    width: u32,
+    height: u32,
+    scale_factor: f64,
+    region: Option<Value>,
+    page: Value,
+    warnings: Vec<Value>,
+) -> Value {
+    json!({
+        "ok": true,
+        "kind": "browser.screenshot",
+        "schemaVersion": 1,
+        "screenshotId": screenshot_id,
+        "backend": backend,
+        "format": "png",
+        "scope": "viewport",
+        "path": path.to_string_lossy(),
+        "width": width,
+        "height": height,
+        "scale": scale_factor,
+        "region": region,
+        "page": page,
+        "capturedAtUnixMs": current_unix_millis(),
+        "warnings": warnings,
+    })
+}
+
+fn current_unix_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -897,16 +1380,23 @@ fn screenshot_embedded_browser(
 }
 
 #[cfg(target_os = "macos")]
-fn screenshot_path() -> Result<PathBuf, String> {
+fn screenshot_path(screenshot_id: &str) -> Result<PathBuf, String> {
     let directory = std::env::temp_dir().join("wework-embedded-browser");
     std::fs::create_dir_all(&directory).map_err(|error| {
         format!("Failed to create embedded browser screenshot directory: {error}")
     })?;
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("System time is before UNIX epoch: {error}"))?
-        .as_millis();
-    Ok(directory.join(format!("screenshot-{timestamp}.png")))
+    Ok(directory.join(format!("{screenshot_id}.png")))
+}
+
+fn png_dimensions(path: &Path) -> Result<(u32, u32), String> {
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("Failed to read embedded browser screenshot: {error}"))?;
+    if bytes.len() < 24 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err("Embedded browser screenshot is not a PNG file".to_string());
+    }
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    Ok((width, height))
 }
 
 fn bridge_success(data: Value) -> EmbeddedBrowserBridgeResponse {
@@ -938,6 +1428,7 @@ fn handle_bridge_request(
         })),
         "pageState" => serde_json::to_value(page_state_for_label(state, &label)?)
             .map_err(|error| format!("Failed to encode embedded browser page state: {error}")),
+        "capabilities" => Ok(embedded_browser_capabilities()),
         "navigate" | "open" => {
             let url = request
                 .url
@@ -1009,19 +1500,53 @@ fn handle_bridge_request(
             script_browser_action("fill", &request)?,
             request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
         ),
+        "hover" => eval_json(
+            state,
+            &label,
+            script_browser_action("hover", &request)?,
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
+        "focus" => eval_json(
+            state,
+            &label,
+            script_browser_action("focus", &request)?,
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
+        "select" => eval_json(
+            state,
+            &label,
+            script_browser_action("select", &request)?,
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
+        "setChecked" => eval_json(
+            state,
+            &label,
+            script_browser_action("setChecked", &request)?,
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
+        "scroll" => eval_json(
+            state,
+            &label,
+            script_browser_action("scroll", &request)?,
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
+        "scrollIntoView" => eval_json(
+            state,
+            &label,
+            script_browser_action("scrollIntoView", &request)?,
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
         "press" => eval_json(
             state,
             &label,
-            script_press_key(request.key.as_deref().unwrap_or("")),
+            script_browser_action("press", &request)?,
             request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
         ),
-        "waitFor" => eval_json(
-            state,
-            &label,
-            script_wait_for(&request),
-            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
-        ),
+        "waitFor" => wait_for_embedded_browser(state, &label, &request),
         "screenshot" => screenshot_embedded_browser(state, &label),
+        "nativeInputProbe" => Ok(native_input_probe_result(&request)),
+        "axProbe" => Ok(ax_probe_result()),
+        "present" => present_probe_result(state, &label),
         _ => Err(format!(
             "Unknown embedded browser bridge action: {}",
             request.action
@@ -1273,6 +1798,9 @@ pub async fn embedded_browser_open(
     );
     let native_label_for_load = native_label.clone();
     let native_label_for_title = native_label.clone();
+    let native_label_for_popup = native_label.clone();
+    let label_for_popup = label.clone();
+    let app_for_popup = app.clone();
     let data_directory = browser_data_directory(&app)?;
 
     let entry = EmbeddedBrowserEntry {
@@ -1310,6 +1838,22 @@ pub async fn embedded_browser_open(
                     &native_label_for_title,
                     |entry| entry.title = Some(title),
                 );
+            })
+            .on_new_window(move |url, _features| {
+                emit_popup_observed(
+                    &app_for_popup,
+                    &label_for_popup,
+                    &native_label_for_popup,
+                    url.clone(),
+                );
+                let (_kind, strategy, _warning) = classify_popup_url(&url);
+                if strategy == "user_confirmation_required"
+                    || strategy == "controlled_popup_required"
+                {
+                    NewWindowResponse::Deny
+                } else {
+                    NewWindowResponse::Allow
+                }
             });
 
     #[cfg(desktop)]

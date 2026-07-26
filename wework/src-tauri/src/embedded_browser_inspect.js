@@ -285,7 +285,7 @@
       .map(child => normalizeWhitespace(child.textContent || ''))
       .filter(Boolean)
       .join(' ')
-    if (text.length < 24) return
+    if (text.length < 2) return
     const rect = rectFor(element, context)
     const visibility = visibilityFor(element, rect, doc, context)
     if (!visibility.visible || !visibility.inViewport) return
@@ -323,6 +323,9 @@
       'table',
       'list',
       'listitem',
+      'status',
+      'alert',
+      'log',
       'text',
       'iframe',
     ].includes(node.role)
@@ -356,6 +359,7 @@
     if (tag === 'table') return 'table'
     if (tag === 'ul' || tag === 'ol') return 'list'
     if (tag === 'li') return 'listitem'
+    if (tag === 'output') return 'status'
     if (tag === 'iframe') return 'iframe'
     if (element.onclick || element.tabIndex >= 0) return 'button'
     return 'generic'
@@ -542,6 +546,7 @@
     if (focused) return 0
     if (actionable && visibility.inViewport) return 10
     if (['heading', 'main', 'navigation', 'banner', 'contentinfo', 'form'].includes(role)) return 30
+    if (['status', 'alert', 'log'].includes(role)) return 50
     if (actionable) return 40
     if (['table', 'list', 'listitem'].includes(role)) return 70
     return 100
@@ -672,10 +677,11 @@
     for (const node of values) {
       const label = node.name || node.text || ''
       const stateText = node.states?.length ? ` states=${node.states.join(',')}` : ''
+      const valueText = node.value ? ` value="${trimText(node.value, 120)}"` : ''
       const visibleText = node.visible ? '' : ' visible=false'
       const actionText = node.actionable ? '' : ' actionable=false'
       lines.push(
-        `[${node.index}] ${node.role} "${trimText(label, 120)}"${stateText}${visibleText}${actionText} rect=(${node.rect.x},${node.rect.y},${node.rect.width},${node.rect.height})`
+        `[${node.index}] ${node.role} "${trimText(label, 120)}"${stateText}${valueText}${visibleText}${actionText} rect=(${node.rect.x},${node.rect.y},${node.rect.width},${node.rect.height})`
       )
     }
     return lines.join('\n')
@@ -713,7 +719,8 @@
   }
 
   function textFor(element, role) {
-    if (!['heading', 'text', 'button', 'link', 'listitem'].includes(role)) return undefined
+    if (!['heading', 'text', 'button', 'link', 'listitem', 'status', 'alert', 'log'].includes(role))
+      return undefined
     return (
       trimText(redactText(element.innerText || element.textContent || ''), options.maxNameChars) ||
       undefined

@@ -188,6 +188,26 @@ async fn execute_tool(
             "expression": evaluate_expression(arguments)
         }),
         "browser_take_screenshot" => json!({ "action": "screenshot" }),
+        "browser_capabilities" => json!({ "action": "capabilities" }),
+        "browser_native_input_probe" => json!({
+            "action": "nativeInputProbe",
+            "x": optional_number_arg(arguments, "x"),
+            "y": optional_number_arg(arguments, "y"),
+            "key": optional_string_arg(arguments, "key"),
+            "text": optional_string_arg(arguments, "text"),
+            "options": {
+                "kind": optional_string_arg(arguments, "kind").unwrap_or_else(|| "unknown".to_owned()),
+                "screenshotId": optional_string_arg(arguments, "screenshotId")
+            }
+        }),
+        "browser_ax_probe" => json!({
+            "action": "axProbe",
+            "options": {
+                "mode": optional_string_arg(arguments, "mode").unwrap_or_else(|| "tree".to_owned()),
+                "maxNodes": optional_number_arg(arguments, "maxNodes").unwrap_or(1000.0)
+            }
+        }),
+        "browser_present_probe" => json!({ "action": "present" }),
         "browser_tab_list" => json!({ "action": "pageState" }),
         "browser_tab_select" => {
             return text_result(json!({ "ok": true, "targetId": "embedded" }), false)
@@ -213,14 +233,19 @@ async fn execute_tool(
         | "browser_wait_and_inspect" => {
             return execute_combined_tool(client, name, arguments, sequence, started).await
         }
-        "browser_press_key" => json!({ "action": "press", "key": string_arg(arguments, "key") }),
+        "browser_press_key" => action_target_payload("press", arguments),
         "browser_wait_for" => json!({
             "action": "waitFor",
             "text": optional_string_arg(arguments, "text"),
             "selector": optional_string_arg(arguments, "selector"),
             "url": optional_string_arg(arguments, "url"),
             "expression": optional_string_arg(arguments, "fn"),
-            "timeoutMs": optional_number_arg(arguments, "timeoutMs")
+            "timeoutMs": optional_u64_arg(arguments, "timeoutMs"),
+            "options": wait_options(arguments, WaitConditionOptions {
+                allow_flat_text: true,
+                allow_flat_selector: true,
+                allow_flat_url: true,
+            })
         }),
         "browser_resize" => {
             return text_result(
@@ -228,23 +253,22 @@ async fn execute_tool(
                 false,
             )
         }
-        "browser_hover" => evaluate_payload(
-            arguments,
-            "element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); true",
-        ),
-        "browser_scroll_into_view" => evaluate_payload(
-            arguments,
-            "element.scrollIntoView({ block: 'center', inline: 'center' }); true",
-        ),
+        "browser_hover" => action_target_payload("hover", arguments),
+        "browser_focus" => action_target_payload("focus", arguments),
+        "browser_scroll_into_view" => action_target_payload("scrollIntoView", arguments),
         "browser_scroll" => json!({
-            "action": "evaluate",
-            "expression": format!(
-                "window.scrollBy(0, {} * {}), true",
-                if string_arg(arguments, "direction") == "up" { -1 } else { 1 },
-                optional_number_arg(arguments, "amount").unwrap_or(500.0)
-            )
+            "action": "scroll",
+            "x": optional_number_arg(arguments, "x"),
+            "y": optional_number_arg(arguments, "y"),
+            "options": {
+                "direction": optional_string_arg(arguments, "direction").unwrap_or_else(|| "down".to_owned()),
+                "amount": optional_number_arg(arguments, "amount").unwrap_or(600.0),
+                "mode": optional_string_arg(arguments, "mode").unwrap_or_else(|| "smart".to_owned())
+            },
+            "timeoutMs": optional_u64_arg(arguments, "timeoutMs")
         }),
-        "browser_select_option" => select_payload(arguments),
+        "browser_select_option" => action_target_payload("select", arguments),
+        "browser_set_checked" => action_target_payload("setChecked", arguments),
         "browser_fill_form" => fill_form_payload(arguments),
         "browser_drag" => drag_payload(arguments),
         _ => return text_result(format!("Unknown tool: {name}"), true),
@@ -630,6 +654,7 @@ fn tools() -> Vec<Value> {
         ),
         tool("browser_press_key", "Press a keyboard key.", &["key"]),
         tool("browser_hover", "Hover an element.", &[]),
+        tool("browser_focus", "Focus an element.", &[]),
         tool("browser_scroll", "Scroll the current page.", &[]),
         tool(
             "browser_scroll_into_view",
@@ -637,6 +662,7 @@ fn tools() -> Vec<Value> {
             &[],
         ),
         tool("browser_select_option", "Select option values.", &[]),
+        tool("browser_set_checked", "Set checkbox or radio checked state.", &[]),
         tool("browser_drag", "Drag between two elements.", &[]),
         tool("browser_wait_for", "Wait for page state.", &[]),
         tool(
@@ -645,6 +671,26 @@ fn tools() -> Vec<Value> {
             &[],
         ),
         tool("browser_take_screenshot", "Capture a page screenshot.", &[]),
+        tool(
+            "browser_capabilities",
+            "Report current embedded WKWebView browser capabilities and limits.",
+            &[],
+        ),
+        tool(
+            "browser_native_input_probe",
+            "Probe AppKit native input availability for the embedded browser.",
+            &[],
+        ),
+        tool(
+            "browser_ax_probe",
+            "Probe macOS accessibility-tree availability for the embedded browser.",
+            &[],
+        ),
+        tool(
+            "browser_present_probe",
+            "Report panel/popout WebView presentation and reparent capability.",
+            &[],
+        ),
         tool("browser_evaluate", "Evaluate JavaScript in the page.", &[]),
         tool(
             "browser_tab_list",
@@ -674,12 +720,15 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
         "expression",
         "function",
         "fn",
+        "kind",
+        "screenshotId",
         "inspectId",
         "waitUntil",
         "urlIncludes",
         "urlMatches",
         "titleIncludes",
         "mode",
+        "by",
         "direction",
         "startRef",
         "endRef",
@@ -702,7 +751,12 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
     properties.insert("fields".to_owned(), json!({ "type": "array" }));
     properties.insert("condition".to_owned(), json!({ "type": "object" }));
     properties.insert("inspectOptions".to_owned(), json!({ "type": "object" }));
-    for key in ["interactiveOnly", "includeTextBlocks", "includeHidden"] {
+    for key in [
+        "interactiveOnly",
+        "includeTextBlocks",
+        "includeHidden",
+        "checked",
+    ] {
         properties.insert(key.to_owned(), json!({ "type": "boolean" }));
     }
     properties.insert(
@@ -828,19 +882,19 @@ fn optional_number_arg(value: &Value, key: &str) -> Option<f64> {
     value.get(key).and_then(Value::as_f64)
 }
 
-fn optional_bool_arg(value: &Value, key: &str) -> Option<bool> {
-    value.get(key).and_then(Value::as_bool)
+fn optional_u64_arg(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(|value| {
+        value.as_u64().or_else(|| {
+            value
+                .as_f64()
+                .filter(|number| *number >= 0.0)
+                .map(|number| number as u64)
+        })
+    })
 }
 
-fn selector_arg(value: &Value) -> String {
-    let selector = optional_string_arg(value, "ref")
-        .or_else(|| optional_string_arg(value, "element"))
-        .or_else(|| optional_string_arg(value, "selector"))
-        .unwrap_or_default();
-    selector
-        .strip_prefix("css=")
-        .unwrap_or(&selector)
-        .to_owned()
+fn optional_bool_arg(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
 }
 
 fn evaluate_expression(value: &Value) -> String {
@@ -864,17 +918,21 @@ fn inspect_payload(value: &Value) -> Value {
             "maxValueChars": optional_number_arg(value, "maxValueChars").unwrap_or(120.0),
             "viewportMargin": optional_number_arg(value, "viewportMargin").unwrap_or(600.0),
         },
-        "timeoutMs": optional_number_arg(value, "timeoutMs").unwrap_or(3000.0)
+        "timeoutMs": optional_u64_arg(value, "timeoutMs").unwrap_or(3000)
     })
 }
 
 fn action_target_payload(action: &str, value: &Value) -> Value {
     let mut payload = Map::new();
     payload.insert("action".to_owned(), Value::String(action.to_owned()));
+    let mut options = Map::new();
     if let Some(text) =
         optional_string_arg(value, "text").or_else(|| optional_string_arg(value, "value"))
     {
         payload.insert("text".to_owned(), Value::String(text));
+    }
+    if let Some(key) = optional_string_arg(value, "key") {
+        payload.insert("key".to_owned(), Value::String(key));
     }
     if let Some(ref_value) = optional_string_arg(value, "ref") {
         payload.insert("ref".to_owned(), Value::String(ref_value));
@@ -898,8 +956,31 @@ fn action_target_payload(action: &str, value: &Value) -> Value {
             ),
         );
     }
-    if let Some(timeout_ms) = optional_number_arg(value, "timeoutMs") {
+    if let Some(timeout_ms) = optional_u64_arg(value, "timeoutMs") {
         payload.insert("timeoutMs".to_owned(), json!(timeout_ms));
+    }
+    if let Some(values) = value.get("values").filter(|value| value.is_array()) {
+        options.insert("values".to_owned(), values.clone());
+    } else if let Some(value_arg) = optional_string_arg(value, "value") {
+        options.insert("value".to_owned(), Value::String(value_arg));
+    }
+    if let Some(by) = optional_string_arg(value, "by") {
+        options.insert("by".to_owned(), Value::String(by));
+    }
+    if let Some(checked) = optional_bool_arg(value, "checked") {
+        options.insert("checked".to_owned(), Value::Bool(checked));
+    }
+    if let Some(direction) = optional_string_arg(value, "direction") {
+        options.insert("direction".to_owned(), Value::String(direction));
+    }
+    if let Some(amount) = optional_number_arg(value, "amount") {
+        options.insert("amount".to_owned(), json!(amount));
+    }
+    if let Some(mode) = optional_string_arg(value, "mode") {
+        options.insert("mode".to_owned(), Value::String(mode));
+    }
+    if !options.is_empty() {
+        payload.insert("options".to_owned(), Value::Object(options));
     }
     Value::Object(payload)
 }
@@ -909,7 +990,7 @@ fn combined_action_payload(name: &str, arguments: &Value) -> Option<Value> {
         "browser_open_and_inspect" => Some(json!({
             "action": "open",
             "url": string_arg(arguments, "url"),
-            "timeoutMs": optional_number_arg(arguments, "timeoutMs")
+            "timeoutMs": optional_u64_arg(arguments, "timeoutMs")
         })),
         "browser_click_and_inspect" => Some(action_target_payload("click", arguments)),
         "browser_fill_and_inspect" => Some(action_target_payload("fill", arguments)),
@@ -922,7 +1003,7 @@ fn combined_action_payload(name: &str, arguments: &Value) -> Option<Value> {
 fn wait_payload(name: &str, arguments: &Value) -> Value {
     let mut payload = Map::new();
     payload.insert("action".to_owned(), Value::String("waitFor".to_owned()));
-    if let Some(timeout_ms) = optional_number_arg(arguments, "timeoutMs") {
+    if let Some(timeout_ms) = optional_u64_arg(arguments, "timeoutMs") {
         payload.insert("timeoutMs".to_owned(), json!(timeout_ms));
     }
     let allow_flat_wait_target =
@@ -935,6 +1016,17 @@ fn wait_payload(name: &str, arguments: &Value) -> Value {
             allow_flat_selector: name == "browser_wait_and_inspect",
             allow_flat_url: allow_flat_wait_target,
         },
+    );
+    payload.insert(
+        "options".to_owned(),
+        wait_options(
+            arguments,
+            WaitConditionOptions {
+                allow_flat_text: name == "browser_wait_and_inspect",
+                allow_flat_selector: name == "browser_wait_and_inspect",
+                allow_flat_url: allow_flat_wait_target,
+            },
+        ),
     );
     if name == "browser_open_and_inspect" && !payload.contains_key("url") {
         if let Some(url) = optional_string_arg(arguments, "url") {
@@ -955,6 +1047,79 @@ fn wait_payload(name: &str, arguments: &Value) -> Value {
         );
     }
     Value::Object(payload)
+}
+
+fn wait_options(arguments: &Value, options: WaitConditionOptions) -> Value {
+    let mut condition = arguments
+        .get("condition")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if options.allow_flat_text {
+        if let Some(text) = optional_string_arg(arguments, "text") {
+            condition
+                .entry("textVisible".to_owned())
+                .or_insert(Value::String(text));
+        }
+    }
+    if options.allow_flat_selector {
+        if let Some(selector) = optional_string_arg(arguments, "selector") {
+            condition
+                .entry("selectorAttached".to_owned())
+                .or_insert(Value::String(selector));
+        }
+    }
+    if options.allow_flat_url {
+        if let Some(url) = optional_string_arg(arguments, "url") {
+            condition
+                .entry("urlIncludes".to_owned())
+                .or_insert(Value::String(url));
+        }
+    }
+    if let Some(url) = optional_string_arg(arguments, "urlIncludes") {
+        condition
+            .entry("urlIncludes".to_owned())
+            .or_insert(Value::String(url));
+    }
+    if let Some(pattern) = optional_string_arg(arguments, "urlMatches") {
+        condition
+            .entry("urlMatches".to_owned())
+            .or_insert(Value::String(pattern));
+    }
+    if let Some(title) = optional_string_arg(arguments, "titleIncludes") {
+        condition
+            .entry("titleIncludes".to_owned())
+            .or_insert(Value::String(title));
+    }
+    if let Some(expression) = optional_string_arg(arguments, "fn")
+        .or_else(|| optional_string_arg(arguments, "expression"))
+        .or_else(|| optional_string_arg(arguments, "function"))
+    {
+        condition
+            .entry("expression".to_owned())
+            .or_insert(Value::String(expression));
+    }
+    if let Some(wait_until) = optional_string_arg(arguments, "waitUntil") {
+        condition
+            .entry("waitUntil".to_owned())
+            .or_insert(Value::String(wait_until));
+    }
+    if condition.is_empty() {
+        condition.insert(
+            "waitUntil".to_owned(),
+            Value::String("pageStable".to_owned()),
+        );
+    }
+
+    let mut options_map = Map::new();
+    options_map.insert("condition".to_owned(), Value::Object(condition));
+    if let Some(poll_ms) = optional_u64_arg(arguments, "pollMs") {
+        options_map.insert("pollMs".to_owned(), json!(poll_ms));
+    }
+    if let Some(quiet_ms) = optional_u64_arg(arguments, "quietMs") {
+        options_map.insert("quietMs".to_owned(), json!(quiet_ms));
+    }
+    Value::Object(options_map)
 }
 
 fn apply_wait_condition(
@@ -1022,6 +1187,7 @@ fn apply_wait_condition(
     }
 }
 
+#[derive(Clone, Copy)]
 struct WaitConditionOptions {
     allow_flat_text: bool,
     allow_flat_selector: bool,
@@ -1088,8 +1254,8 @@ fn combined_inspect_payload(arguments: &Value) -> Value {
         .filter(|value| value.is_object())
     {
         let mut options = options.clone();
-        if let Some(timeout_ms) = optional_number_arg(arguments, "inspectTimeoutMs")
-            .or_else(|| optional_number_arg(arguments, "timeoutMs"))
+        if let Some(timeout_ms) = optional_u64_arg(arguments, "inspectTimeoutMs")
+            .or_else(|| optional_u64_arg(arguments, "timeoutMs"))
         {
             if let Some(object) = options.as_object_mut() {
                 object.insert("timeoutMs".to_owned(), json!(timeout_ms));
@@ -1104,22 +1270,6 @@ fn collect_warnings(target: &mut Vec<Value>, warnings: Option<&Value>) {
     if let Some(items) = warnings.and_then(Value::as_array) {
         target.extend(items.iter().cloned());
     }
-}
-
-fn evaluate_payload(value: &Value, action: &str) -> Value {
-    let selector =
-        serde_json::to_string(&selector_arg(value)).unwrap_or_else(|_| "\"\"".to_owned());
-    json!({
-        "action": "evaluate",
-        "expression": format!("(() => {{ const element = document.querySelector({selector}); if (!element) return false; {action} }})()")
-    })
-}
-
-fn select_payload(value: &Value) -> Value {
-    let selector =
-        serde_json::to_string(&selector_arg(value)).unwrap_or_else(|_| "\"\"".to_owned());
-    let values = value.get("values").cloned().unwrap_or_else(|| json!([]));
-    json!({ "action": "evaluate", "expression": format!("(() => {{ const element = document.querySelector({selector}); const values = {values}; for (const option of element?.options || []) option.selected = values.includes(option.value); element?.dispatchEvent(new Event('change', {{ bubbles: true }})); return true; }})()") })
 }
 
 fn fill_form_payload(value: &Value) -> Value {
@@ -1162,12 +1312,18 @@ mod tests {
         assert!(names.contains(&"browser_navigate"));
         assert!(names.contains(&"browser_evaluate"));
         assert!(names.contains(&"browser_take_screenshot"));
-        assert_eq!(names.len(), 28);
-    }
-
-    #[test]
-    fn strips_css_ref_prefix() {
-        assert_eq!(selector_arg(&json!({ "ref": "css=#submit" })), "#submit");
+        assert!(names.contains(&"browser_capabilities"));
+        assert!(names.contains(&"browser_native_input_probe"));
+        assert!(names.contains(&"browser_ax_probe"));
+        assert!(names.contains(&"browser_present_probe"));
+        assert!(names.contains(&"browser_press_key"));
+        assert!(names.contains(&"browser_hover"));
+        assert!(names.contains(&"browser_focus"));
+        assert!(names.contains(&"browser_scroll"));
+        assert!(names.contains(&"browser_scroll_into_view"));
+        assert!(names.contains(&"browser_select_option"));
+        assert!(names.contains(&"browser_set_checked"));
+        assert_eq!(names.len(), 34);
     }
 
     #[test]
@@ -1185,7 +1341,7 @@ mod tests {
         assert_eq!(payload["options"]["includeTextBlocks"], false);
         assert_eq!(payload["options"]["maxNodes"], 25.0);
         assert_eq!(payload["options"]["maxTextChars"], 12000.0);
-        assert_eq!(payload["timeoutMs"], 4500.0);
+        assert_eq!(payload["timeoutMs"], 4500);
     }
 
     #[test]
@@ -1221,7 +1377,7 @@ mod tests {
         assert_eq!(payload["index"], 3.0);
         assert_eq!(payload["ref"], "wk-mvp:wk-inspect-1:main:3:abcd1234");
         assert_eq!(payload["selector"], "#fallback");
-        assert_eq!(payload["timeoutMs"], 5000.0);
+        assert_eq!(payload["timeoutMs"], 5000);
     }
 
     #[test]
@@ -1240,6 +1396,39 @@ mod tests {
     }
 
     #[test]
+    fn p1_action_payload_carries_options() {
+        let press = action_target_payload(
+            "press",
+            &json!({
+                "key": "Meta+Enter",
+                "ref": "wk-mvp:target"
+            }),
+        );
+        let select = action_target_payload(
+            "select",
+            &json!({
+                "selector": "#kind",
+                "values": ["finance"],
+                "by": "value"
+            }),
+        );
+        let checked = action_target_payload(
+            "setChecked",
+            &json!({
+                "index": 2,
+                "checked": true
+            }),
+        );
+
+        assert_eq!(press["action"], "press");
+        assert_eq!(press["key"], "Meta+Enter");
+        assert_eq!(press["ref"], "wk-mvp:target");
+        assert_eq!(select["options"]["values"], json!(["finance"]));
+        assert_eq!(select["options"]["by"], "value");
+        assert_eq!(checked["options"]["checked"], true);
+    }
+
+    #[test]
     fn combined_inspect_payload_uses_nested_options() {
         let payload = combined_inspect_payload(&json!({
             "text": "typed value",
@@ -1253,7 +1442,7 @@ mod tests {
         assert_eq!(payload["action"], "inspect");
         assert_eq!(payload["options"]["interactiveOnly"], true);
         assert_eq!(payload["options"]["maxNodes"], 10.0);
-        assert_eq!(payload["timeoutMs"], 9000.0);
+        assert_eq!(payload["timeoutMs"], 9000);
     }
 
     #[test]
@@ -1269,7 +1458,8 @@ mod tests {
 
         assert_eq!(payload["action"], "waitFor");
         assert_eq!(payload["text"], "Saved");
-        assert_eq!(payload["timeoutMs"], 4000.0);
+        assert_eq!(payload["options"]["condition"]["textVisible"], "Saved");
+        assert_eq!(payload["timeoutMs"], 4000);
     }
 
     #[test]
@@ -1284,6 +1474,7 @@ mod tests {
         assert_eq!(payload["action"], "waitFor");
         assert!(payload.get("text").is_none());
         assert!(payload.get("expression").is_some());
+        assert_eq!(payload["options"]["condition"]["waitUntil"], "pageStable");
     }
 
     #[test]
@@ -1298,6 +1489,7 @@ mod tests {
         assert_eq!(payload["action"], "waitFor");
         assert!(payload.get("selector").is_none());
         assert!(payload.get("expression").is_some());
+        assert_eq!(payload["options"]["condition"]["waitUntil"], "pageStable");
     }
 
     #[test]
@@ -1319,5 +1511,51 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("document.title.includes"));
+        assert_eq!(
+            url_payload["options"]["condition"]["urlMatches"],
+            "/dashboard"
+        );
+        assert_eq!(
+            title_payload["options"]["condition"]["titleIncludes"],
+            "Home"
+        );
+    }
+
+    #[test]
+    fn wait_options_maps_flat_fields_only_when_allowed() {
+        let fill_options = wait_options(
+            &json!({
+                "text": "typed value",
+                "selector": "#email",
+                "url": "https://example.com/result"
+            }),
+            WaitConditionOptions {
+                allow_flat_text: false,
+                allow_flat_selector: false,
+                allow_flat_url: false,
+            },
+        );
+        let wait_options = wait_options(
+            &json!({
+                "text": "Ready",
+                "selector": "#done",
+                "url": "https://example.com/result"
+            }),
+            WaitConditionOptions {
+                allow_flat_text: true,
+                allow_flat_selector: true,
+                allow_flat_url: true,
+            },
+        );
+
+        assert_eq!(fill_options["condition"]["waitUntil"], "pageStable");
+        assert!(fill_options["condition"].get("textVisible").is_none());
+        assert!(fill_options["condition"].get("selectorAttached").is_none());
+        assert_eq!(wait_options["condition"]["textVisible"], "Ready");
+        assert_eq!(wait_options["condition"]["selectorAttached"], "#done");
+        assert_eq!(
+            wait_options["condition"]["urlIncludes"],
+            "https://example.com/result"
+        );
     }
 }

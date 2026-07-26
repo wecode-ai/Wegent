@@ -1,4 +1,4 @@
-;(async () => {
+;(() => {
   const input = __WEWORK_ACTION_INPUT__
   const startedAt = performance.now()
   const warnings = []
@@ -11,7 +11,6 @@
 
     const before = observePage(target.element)
     target.element.scrollIntoView?.({ block: 'center', inline: 'center' })
-    await nextFrame()
 
     const preflight = inspectPreflight(target.element, action)
     warnings.push(...preflight.warnings)
@@ -21,7 +20,6 @@
     warnings.push(...execution.warnings)
     if (!execution.ok) return failure(action, execution, startedAt, warnings, target, before)
 
-    await settleAfterAction(agent, before)
     const after = observePage(target.element)
     const effect = effectFor(before, after)
     if (!hasObservableEffect(effect)) {
@@ -201,6 +199,22 @@
       }
     }
 
+    if (action === 'press') {
+      return {
+        ok: true,
+        element: document.activeElement || document.body || document.documentElement,
+        summary: { source: 'activeElement' },
+      }
+    }
+
+    if (action === 'scroll') {
+      return {
+        ok: true,
+        element: scrollOriginElement(request),
+        summary: { source: 'smartScroll' },
+      }
+    }
+
     if ((action === 'type' || action === 'fill') && isEditable(document.activeElement)) {
       return {
         ok: true,
@@ -261,6 +275,20 @@
         warning('actionability_heuristic', 'Click target actionability is heuristic.')
       )
     }
+    if (actionName === 'select' && !(element instanceof HTMLSelectElement)) {
+      return errorResult(
+        'unsupported_select_target',
+        'Select action requires a native select element.',
+        'inspect'
+      )
+    }
+    if (actionName === 'setChecked' && !isCheckable(element)) {
+      return errorResult(
+        'unsupported_select_target',
+        'setChecked action requires a checkbox or radio input.',
+        'inspect'
+      )
+    }
 
     return {
       ok: true,
@@ -305,6 +333,69 @@
       }
     }
 
+    if (actionName === 'hover') {
+      element.focus?.({ preventScroll: true })
+      const rect = rectFor(element)
+      const clientX = rect.x + rect.width / 2
+      const clientY = rect.y + rect.height / 2
+      for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove']) {
+        element.dispatchEvent(
+          new MouseEvent(type, {
+            bubbles: !['pointerenter', 'mouseenter'].includes(type),
+            cancelable: true,
+            clientX,
+            clientY,
+          })
+        )
+      }
+      return {
+        ok: true,
+        warnings: [
+          warning('synthetic_hover', 'Hover was dispatched with DOM synthetic events.'),
+          warning('css_hover_not_guaranteed', 'CSS :hover state may require trusted input.'),
+        ],
+      }
+    }
+
+    if (actionName === 'focus') {
+      element.focus?.({ preventScroll: true })
+      if (document.activeElement !== element && !element.contains(document.activeElement)) {
+        return {
+          ok: false,
+          error: errorObject('focus_rejected', 'Page did not keep focus on the target.', 'inspect'),
+          warnings: [],
+        }
+      }
+      return { ok: true, warnings: [] }
+    }
+
+    if (actionName === 'press') {
+      return pressKey(element, input.key || text)
+    }
+
+    if (actionName === 'select') {
+      return selectOption(element, input.options || {}, text)
+    }
+
+    if (actionName === 'setChecked') {
+      return setChecked(element, input.options || {})
+    }
+
+    if (actionName === 'scrollIntoView') {
+      const before = scrollStateFor(nearestScrollContainer(element))
+      element.scrollIntoView?.({ block: 'center', inline: 'nearest' })
+      const container = nearestScrollContainer(element)
+      const after = scrollStateFor(container)
+      return {
+        ok: true,
+        warnings: scrollWarnings(container, before, after),
+      }
+    }
+
+    if (actionName === 'scroll') {
+      return scrollSmart(element, input.options || {})
+    }
+
     const fill = actionName === 'fill'
     const written = writeText(element, text, fill)
     return {
@@ -314,6 +405,149 @@
         warning('synthetic_event', `${actionName} was dispatched with DOM synthetic events.`),
         ...written.warnings,
       ],
+    }
+  }
+
+  function pressKey(element, keyText) {
+    const key = normalizeKey(keyText)
+    if (!key) {
+      return {
+        ok: false,
+        error: errorObject('unsupported_key', 'Press action requires a key.', 'inspect'),
+        warnings: [],
+      }
+    }
+    const target = element || document.activeElement || document.body
+    target.focus?.({ preventScroll: true })
+    const eventInit = keyboardEventInit(key)
+    target.dispatchEvent(new KeyboardEvent('keydown', eventInit))
+    if (key.length === 1) {
+      target.dispatchEvent(new KeyboardEvent('keypress', eventInit))
+    }
+    target.dispatchEvent(new KeyboardEvent('keyup', eventInit))
+    return {
+      ok: true,
+      warnings: [
+        warning('synthetic_keyboard_event', 'Key press was dispatched with DOM synthetic events.'),
+        ...(eventInit.key === 'Tab'
+          ? [warning('tab_focus_not_guaranteed', 'Synthetic Tab may not move browser focus.')]
+          : []),
+        ...(eventInit.metaKey || eventInit.ctrlKey || eventInit.altKey
+          ? [warning('shortcut_may_be_ignored', 'Page or browser may ignore synthetic shortcut.')]
+          : []),
+      ],
+    }
+  }
+
+  function selectOption(element, options, fallbackText) {
+    const rawValues = Array.isArray(options.values)
+      ? options.values
+      : options.value !== undefined
+        ? [options.value]
+        : fallbackText
+          ? [fallbackText]
+          : []
+    const by = options.by || 'value'
+    const values = rawValues.map(value => String(value))
+    if (values.length === 0) {
+      return {
+        ok: false,
+        error: errorObject(
+          'option_not_found',
+          'Select action requires at least one value.',
+          'inspect'
+        ),
+        warnings: [],
+      }
+    }
+    const matched = []
+    for (const option of Array.from(element.options || [])) {
+      const candidate =
+        by === 'label'
+          ? normalizeWhitespace(option.label || option.textContent)
+          : by === 'index'
+            ? String(option.index)
+            : String(option.value)
+      const selected = values.includes(candidate)
+      option.selected = element.multiple ? selected : selected && matched.length === 0
+      if (selected) matched.push(candidate)
+    }
+    if (matched.length === 0) {
+      return {
+        ok: false,
+        error: errorObject(
+          'option_not_found',
+          'No select option matched the requested value.',
+          'inspect'
+        ),
+        warnings: [],
+      }
+    }
+    element.dispatchEvent(new Event('input', { bubbles: true }))
+    element.dispatchEvent(new Event('change', { bubbles: true }))
+    return {
+      ok: true,
+      warnings: [warning('synthetic_event', 'Select was changed with DOM synthetic events.')],
+    }
+  }
+
+  function setChecked(element, options) {
+    const desired = options.checked !== undefined ? Boolean(options.checked) : true
+    if (element.checked !== desired) {
+      element.focus?.({ preventScroll: true })
+      element.click()
+    }
+    if (element.checked !== desired) {
+      return {
+        ok: false,
+        error: errorObject(
+          'value_rejected',
+          'Checked state did not change as requested.',
+          'inspect'
+        ),
+        warnings: [],
+      }
+    }
+    return {
+      ok: true,
+      warnings: [
+        warning('synthetic_event', 'Checked state was changed with DOM synthetic events.'),
+      ],
+    }
+  }
+
+  function scrollSmart(element, options) {
+    const direction = String(options.direction || 'down')
+    const amount = Math.max(1, Number(options.amount || 600))
+    const axis = direction === 'left' || direction === 'right' ? 'x' : 'y'
+    const sign = direction === 'up' || direction === 'left' ? -1 : 1
+    const container = nearestScrollContainer(element, axis) || document.scrollingElement
+    if (!container) {
+      return {
+        ok: false,
+        error: errorObject(
+          'scroll_container_not_found',
+          'No scrollable container is available.',
+          'inspect'
+        ),
+        warnings: [],
+      }
+    }
+    const before = scrollStateFor(container)
+    if (axis === 'x') container.scrollLeft += sign * amount
+    else container.scrollTop += sign * amount
+    const after = scrollStateFor(container)
+    const scrolled = before.left !== after.left || before.top !== after.top
+    if (!scrolled) {
+      return {
+        ok: false,
+        error: errorObject('scroll_not_possible', 'Scroll position did not change.', 'inspect'),
+        warnings: scrollWarnings(container, before, after),
+      }
+    }
+    return {
+      ok: true,
+      warnings: scrollWarnings(container, before, after),
     }
   }
 
@@ -404,21 +638,6 @@
     else element.value = value
   }
 
-  async function settleAfterAction(current, before) {
-    await Promise.resolve()
-    await sleep(200)
-    const deadline = performance.now() + 800
-    while (performance.now() < deadline) {
-      const domStable = performance.now() - Number(current.lastDomMutationAt || 0) >= 200
-      const viewportStable = performance.now() - Number(current.lastViewportMutationAt || 0) >= 100
-      if (domStable && viewportStable) break
-      await sleep(100)
-    }
-    if (before.url !== location.href) {
-      await sleep(100)
-    }
-  }
-
   function observePage(element) {
     const active = document.activeElement
     return {
@@ -428,6 +647,7 @@
       documentToken: documentTokenFor(document),
       domRevision: Number(agent.domRevision || 0),
       viewportRevision: Number(agent.viewportRevision || 0),
+      bodyTextHash: hashText(document.body?.innerText || ''),
       focused: active ? summarizeElement(active) : undefined,
       targetValue: element && element.isConnected ? valueFor(element) : undefined,
       targetChecked:
@@ -451,7 +671,8 @@
     return {
       urlChanged: before.url !== after.url,
       titleChanged: before.title !== after.title,
-      domChanged: before.domRevision !== after.domRevision,
+      domChanged:
+        before.domRevision !== after.domRevision || before.bodyTextHash !== after.bodyTextHash,
       focusChanged:
         JSON.stringify(before.focused || null) !== JSON.stringify(after.focused || null),
       valueChanged: before.targetValue !== after.targetValue,
@@ -517,8 +738,51 @@
       code,
       message,
       recoverable: !['unsupported_file_input', 'requires_trusted_input'].includes(code),
+      category: errorCategory(code),
       suggestedNextAction: suggestedNextAction || 'inspect',
     }
+  }
+
+  function errorCategory(code) {
+    if (
+      [
+        'element_not_found',
+        'ambiguous_target',
+        'target_stale',
+        'stale_ref',
+        'stale_inspect',
+        'selector_invalid',
+      ].includes(code)
+    ) {
+      return 'target'
+    }
+    if (
+      [
+        'element_not_visible',
+        'element_occluded',
+        'surface_occluded',
+        'coordinate_out_of_viewport',
+      ].includes(code)
+    ) {
+      return 'visibility'
+    }
+    if (
+      [
+        'element_not_editable',
+        'value_rejected',
+        'unsupported_file_input',
+        'unsupported_select_target',
+        'option_not_found',
+        'unsupported_key',
+      ].includes(code)
+    ) {
+      return 'input'
+    }
+    if (['requires_trusted_input', 'unsupported_browser_capability'].includes(code)) {
+      return 'capability'
+    }
+    if (['operation_timed_out', 'wait_timeout'].includes(code)) return 'timeout'
+    return 'unknown'
   }
 
   function isEditable(element) {
@@ -551,6 +815,125 @@
       current = current.parentElement
     }
     return null
+  }
+
+  function scrollOriginElement(request) {
+    if (Number.isFinite(Number(request.x)) && Number.isFinite(Number(request.y))) {
+      return document.elementFromPoint(Number(request.x), Number(request.y)) || document.body
+    }
+    return document.activeElement || document.body || document.documentElement
+  }
+
+  function nearestScrollContainer(element, axis = 'y') {
+    let current = element
+    while (current && current !== document.documentElement) {
+      if (isScrollable(current, axis)) return current
+      current = current.parentElement || current.getRootNode?.().host
+    }
+    return document.scrollingElement || document.documentElement
+  }
+
+  function isScrollable(element, axis) {
+    if (!element || element === document.body || element === document.documentElement) return false
+    const style = getComputedStyle(element)
+    const overflow = axis === 'x' ? style.overflowX : style.overflowY
+    const canOverflow = /(auto|scroll|overlay)/.test(overflow)
+    const hasRoom =
+      axis === 'x'
+        ? element.scrollWidth > element.clientWidth + 1
+        : element.scrollHeight > element.clientHeight + 1
+    return canOverflow && hasRoom
+  }
+
+  function scrollStateFor(element) {
+    return {
+      tagName: element?.tagName?.toLowerCase() || 'document',
+      id: element?.id || undefined,
+      top: round(element?.scrollTop || 0),
+      left: round(element?.scrollLeft || 0),
+      height: round(element?.clientHeight || window.innerHeight),
+      width: round(element?.clientWidth || window.innerWidth),
+      scrollHeight: round(element?.scrollHeight || document.documentElement.scrollHeight),
+      scrollWidth: round(element?.scrollWidth || document.documentElement.scrollWidth),
+    }
+  }
+
+  function scrollWarnings(container, before, after) {
+    const result = []
+    if (container === document.scrollingElement || container === document.documentElement) {
+      result.push(warning('body_scroll_fallback', 'Scroll used the document scrolling element.'))
+    } else {
+      result.push(warning('nested_scroll_container_selected', 'Scroll used a nested container.'))
+    }
+    if (
+      (before.top === after.top && before.left === after.left) ||
+      after.top <= 0 ||
+      after.left <= 0 ||
+      after.top + after.height >= after.scrollHeight ||
+      after.left + after.width >= after.scrollWidth
+    ) {
+      result.push(warning('scroll_delta_clamped', 'Scroll delta was clamped by container bounds.'))
+    }
+    if (looksVirtualized(container)) {
+      result.push(
+        warning(
+          'virtualized_list_may_rerender',
+          'Scrollable container may rerender visible items; inspect again before acting.'
+        )
+      )
+    }
+    return result
+  }
+
+  function looksVirtualized(element) {
+    if (!element) return false
+    const marker = `${element.id || ''} ${element.className || ''}`.toLowerCase()
+    if (/virtual|infinite|react-window|virtualized/.test(marker)) return true
+    if (element.getAttribute?.('aria-rowcount')) return true
+    const children = Array.from(element.children || [])
+    return (
+      element.scrollHeight > element.clientHeight * 4 &&
+      children.length > 0 &&
+      children.length < 40 &&
+      children.some(child => /translate(?:3d|y)?\(/i.test(getComputedStyle(child).transform || ''))
+    )
+  }
+
+  function isCheckable(element) {
+    return (
+      element instanceof HTMLInputElement &&
+      ['checkbox', 'radio'].includes((element.getAttribute('type') || '').toLowerCase())
+    )
+  }
+
+  function normalizeKey(value) {
+    return String(value || '').trim()
+  }
+
+  function keyboardEventInit(keyText) {
+    const parts = keyText.split('+').filter(Boolean)
+    const key = parts.pop() || keyText
+    return {
+      key: normalizedKeyName(key),
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      metaKey: parts.includes('Meta') || parts.includes('Cmd') || parts.includes('Command'),
+      ctrlKey: parts.includes('Control') || parts.includes('Ctrl'),
+      shiftKey: parts.includes('Shift'),
+      altKey: parts.includes('Alt') || parts.includes('Option'),
+    }
+  }
+
+  function normalizedKeyName(key) {
+    const aliases = {
+      Space: ' ',
+      Esc: 'Escape',
+      Return: 'Enter',
+      Del: 'Delete',
+      Cmd: 'Meta',
+    }
+    return aliases[key] || key
   }
 
   function visibilityFor(element, rect) {
@@ -636,7 +1019,7 @@
       const value = element.getAttribute?.(attr)
       if (normalizeWhitespace(value)) return normalizeWhitespace(value)
     }
-    if (role === 'textbox') {
+    if (['textbox', 'checkbox', 'radio', 'combobox'].includes(role)) {
       const id = element.id
       if (id) {
         const label = document.querySelector(`label[for="${cssEscape(id)}"]`)
@@ -644,12 +1027,24 @@
           return normalizeWhitespace(label.innerText || label.textContent)
         }
       }
+      const wrappingLabel = element.closest?.('label')
+      if (
+        wrappingLabel &&
+        normalizeWhitespace(wrappingLabel.innerText || wrappingLabel.textContent)
+      ) {
+        return normalizeWhitespace(wrappingLabel.innerText || wrappingLabel.textContent)
+      }
     }
     return normalizeWhitespace(element.innerText || element.textContent || '')
   }
 
   function valueFor(element) {
     if (!element || !element.isConnected) return undefined
+    if (element instanceof HTMLSelectElement) {
+      return Array.from(element.selectedOptions || [])
+        .map(option => option.value)
+        .join(',')
+    }
     if (isValueElement(element)) {
       if (inputType(element) === 'password') return '[redacted]'
       return trimText(String(element.value || ''), 120)
@@ -714,11 +1109,12 @@
     return Math.round(performance.now() - start)
   }
 
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms))
-  }
-
-  function nextFrame() {
-    return new Promise(resolve => requestAnimationFrame(() => resolve()))
+  function hashText(value) {
+    const text = String(value || '')
+    let hash = 0
+    for (let index = 0; index < text.length; index += 1) {
+      hash = (hash * 31 + text.charCodeAt(index)) | 0
+    }
+    return String(hash >>> 0)
   }
 })()
