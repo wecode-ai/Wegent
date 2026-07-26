@@ -164,6 +164,7 @@
     "workspace_file_unsaved_title": "保存修改？",
     "workspace_file_unsaved_description": "当前文件有未保存的修改。保存后继续，或放弃这些修改。",
     "workspace_file_choose_opener": "选择应用",
+    "workspace_file_choose_root": "选择项目文件夹",
     "workspace_tab_open_file": "打开文件",
     "workspace_tab_review": "审查",
     "workspace_tab_files": "文件",

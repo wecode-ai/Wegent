@@ -164,6 +164,7 @@
     "workspace_file_unsaved_title": "Save changes?",
     "workspace_file_unsaved_description": "This file has unsaved changes. Save before continuing, or discard them.",
     "workspace_file_choose_opener": "Choose application",
+    "workspace_file_choose_root": "Choose project folder",
     "workspace_tab_open_file": "Open file",
     "workspace_tab_review": "Review",
     "workspace_tab_files": "Files",

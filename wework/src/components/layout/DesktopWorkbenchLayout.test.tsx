@@ -20,6 +20,7 @@ import type {
 import { openExternalUrl } from '@/lib/external-links'
 import {
   closeLocalTerminal,
+  getLocalPathKind,
   getLocalExecutorDeviceId,
   isLocalTerminalAvailable,
   localPathExists,
@@ -255,6 +256,7 @@ vi.mock('@/features/auth/useAuth', async importOriginal => ({
 
 vi.mock('@/lib/local-terminal', () => ({
   closeLocalTerminal: vi.fn(),
+  getLocalPathKind: vi.fn(),
   getLocalExecutorDeviceId: vi.fn(),
   isLocalTerminalAvailable: vi.fn(),
   localPathExists: vi.fn(),
@@ -434,6 +436,7 @@ const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const localPathExistsMock = vi.mocked(localPathExists)
+const getLocalPathKindMock = vi.mocked(getLocalPathKind)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
@@ -560,6 +563,7 @@ describe('DesktopWorkbenchLayout', () => {
     Element.prototype.scrollIntoView = vi.fn()
     Element.prototype.scrollTo = vi.fn()
     isLocalTerminalAvailableMock.mockReturnValue(false)
+    getLocalPathKindMock.mockResolvedValue('file')
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
@@ -5149,6 +5153,81 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getWorkspaceCodeViewText()).toContain('/workspace/project/README.md')
   })
 
+  test('switches folders in the file tab for a multi-root project', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: workspacePanelState.currentProject.id, name: 'workspace-project' },
+          deviceWorkspaces: [
+            {
+              id: 301,
+              deviceId: 'workspace-cloud-device',
+              workspacePath: '/workspace/web',
+              workspaceSource: 'local' as const,
+              available: true,
+              tasks: [],
+            },
+            {
+              id: 302,
+              deviceId: 'workspace-cloud-device',
+              workspacePath: '/workspace/api',
+              workspaceSource: 'local' as const,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const listWorkspaceEntries = vi.fn().mockImplementation((_deviceId, path) =>
+      Promise.resolve({
+        path,
+        entries: [],
+      })
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile: vi.fn(),
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          runtimeWork,
+          selectedDeviceWorkspaceId: 301,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+          selectedDeviceWorkspaceId: 301,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
+
+    expect(await screen.findByTestId('workspace-file-root-selector')).toHaveTextContent('web')
+    await user.click(screen.getByTestId('workspace-file-root-selector'))
+    await user.click(screen.getByTitle('/workspace/api'))
+
+    await waitFor(() =>
+      expect(listWorkspaceEntries).toHaveBeenCalledWith('workspace-cloud-device', '/workspace/api')
+    )
+    expect(screen.getByTestId('workspace-file-root-selector')).toHaveTextContent('api')
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent('/workspace/api')
+  })
+
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
@@ -5237,6 +5316,72 @@ describe('DesktopWorkbenchLayout', () => {
       'workspace-cloud-device',
       '/workspace/project/README.md'
     )
+  })
+
+  test('opens a markdown directory link in the workspace tree without reading it as a file', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    getLocalPathKindMock.mockResolvedValue('directory')
+    const listWorkspaceEntries = vi.fn().mockImplementation((_deviceId, path) =>
+      Promise.resolve({
+        path,
+        entries:
+          path === '/workspace/project'
+            ? [
+                {
+                  name: 'docs',
+                  path: '/workspace/project/docs',
+                  isDirectory: true,
+                  size: 0,
+                  modifiedAt: null,
+                },
+              ]
+            : [],
+      })
+    )
+    const readWorkspaceTextFile = vi.fn()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        messages={[
+          {
+            id: 'assistant-directory-link',
+            role: 'assistant',
+            content: '[docs](/workspace/project/docs)',
+            status: 'done',
+            createdAt: '2026-07-25T08:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('assistant-markdown-link'))
+
+    await waitFor(() =>
+      expect(listWorkspaceEntries).toHaveBeenCalledWith('local-device', '/workspace/project/docs')
+    )
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent('/workspace/project/docs')
+    expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
+      'w-[240px]',
+      'opacity-100'
+    )
+    expect(readWorkspaceTextFile).not.toHaveBeenCalled()
+    expect(screen.queryByText(/无法加载|Failed to load/i)).not.toBeInTheDocument()
   })
 
   test('opens a local image link on the local device while the project workspace is remote', async () => {
