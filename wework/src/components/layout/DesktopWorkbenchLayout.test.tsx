@@ -4719,6 +4719,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
+    expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
   })
 
   test('moves right workspace tabs into the titlebar in Tauri', async () => {

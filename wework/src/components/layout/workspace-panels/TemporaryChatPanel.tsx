@@ -240,6 +240,7 @@ export function TemporaryChatPanel({
 
       if (!targetAddress) {
         setAddress(null)
+        setSending(false)
         return
       }
       if (!address) {
