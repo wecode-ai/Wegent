@@ -4,6 +4,7 @@
 
 export type KnowledgeArtifactType = 'briefing' | 'mind_map'
 export type KnowledgeArtifactStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type KnowledgeArtifactExecutionHealth = 'healthy' | 'stalled'
 
 export interface KnowledgeArtifact {
   schema_version: number
@@ -23,6 +24,8 @@ export interface KnowledgeArtifact {
   }
   error_code: string | null
   error_message: string | null
+  execution_health: KnowledgeArtifactExecutionHealth
+  can_retry: boolean
   user_id: number
   created_at: string
   updated_at: string

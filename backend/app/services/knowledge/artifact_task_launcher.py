@@ -6,7 +6,6 @@
 
 import asyncio
 import logging
-from contextlib import suppress
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -22,17 +21,12 @@ from app.services.chat.trigger.lifecycle import prepare_execution_session
 from app.services.chat.trigger.unified import build_execution_request
 from app.services.execution import execution_dispatcher
 from app.services.execution.emitters import SSEResultEmitter
-from app.services.knowledge.artifact_repository import (
-    ArtifactStorageError,
-    RedisArtifactExecutionLease,
-)
 from app.services.readers import KindType, kindReader
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
 _running_artifact_tasks: set[asyncio.Task] = set()
-_LEASE_REFRESH_INTERVAL_SECONDS = 20
 
 
 class ArtifactTaskConfigurationError(RuntimeError):
@@ -54,12 +48,9 @@ class ArtifactTaskLauncher:
         self,
         db: Session,
         user: User,
-        *,
-        execution_lease: RedisArtifactExecutionLease | None = None,
     ) -> None:
         self.db = db
         self.user = user
-        self.execution_lease = execution_lease or RedisArtifactExecutionLease()
 
     async def launch(
         self,
@@ -117,7 +108,6 @@ class ArtifactTaskLauncher:
             enable_tools=True,
             enable_deep_thinking=True,
         )
-        await self.execution_lease.refresh(session.assistant_subtask.id)
         self._schedule_execution(request)
         return ArtifactTaskLaunchResult(
             task_id=session.task_id,
@@ -197,61 +187,31 @@ class ArtifactTaskLauncher:
 
     def _schedule_execution(self, request) -> None:
         task = asyncio.create_task(
-            self._dispatch_and_drain(request, self.execution_lease),
+            self._dispatch_and_drain(request),
             name=f"knowledge-artifact-{request.task_id}",
         )
         _running_artifact_tasks.add(task)
         task.add_done_callback(_running_artifact_tasks.discard)
 
     @staticmethod
-    async def _dispatch_and_drain(
-        request,
-        execution_lease: RedisArtifactExecutionLease,
-    ) -> None:
+    async def _dispatch_and_drain(request) -> None:
         emitter = SSEResultEmitter(
             task_id=request.task_id,
             subtask_id=request.subtask_id,
-        )
-        heartbeat_task = asyncio.create_task(
-            ArtifactTaskLauncher._refresh_execution_lease(
-                execution_lease,
-                request.subtask_id,
-            )
         )
         dispatch_task = asyncio.create_task(
             execution_dispatcher.dispatch(request, emitter=emitter)
         )
         collect_task = asyncio.create_task(emitter.collect())
-        try:
-            dispatch_result, _collect_result = await asyncio.gather(
-                dispatch_task,
-                collect_task,
-                return_exceptions=True,
+        dispatch_result, _collect_result = await asyncio.gather(
+            dispatch_task,
+            collect_task,
+            return_exceptions=True,
+        )
+        if isinstance(dispatch_result, BaseException):
+            logger.error(
+                "Artifact execution failed: task_id=%s, subtask_id=%s, error=%s",
+                request.task_id,
+                request.subtask_id,
+                dispatch_result,
             )
-            if isinstance(dispatch_result, BaseException):
-                logger.error(
-                    "Artifact execution failed: task_id=%s, subtask_id=%s, error=%s",
-                    request.task_id,
-                    request.subtask_id,
-                    dispatch_result,
-                )
-        finally:
-            heartbeat_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await heartbeat_task
-            await execution_lease.release(request.subtask_id)
-
-    @staticmethod
-    async def _refresh_execution_lease(
-        execution_lease: RedisArtifactExecutionLease,
-        assistant_subtask_id: int,
-    ) -> None:
-        while True:
-            await asyncio.sleep(_LEASE_REFRESH_INTERVAL_SECONDS)
-            try:
-                await execution_lease.refresh(assistant_subtask_id)
-            except ArtifactStorageError:
-                logger.warning(
-                    "Artifact execution lease refresh failed for subtask %s",
-                    assistant_subtask_id,
-                )

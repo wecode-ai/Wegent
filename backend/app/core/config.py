@@ -392,6 +392,7 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600  # 10 min
     KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS: int = 7200  # 120 min
     KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700  # 45 min
+    KNOWLEDGE_ARTIFACT_STALL_SECONDS: int = 600  # 10 min
 
     # --- Document Conversion Configuration ---
 

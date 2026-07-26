@@ -2,24 +2,23 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for Artifact agent execution leases."""
+"""Tests for Artifact agent execution scheduling."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.constants import CLIENT_ORIGIN_BACKGROUND
 from app.schemas.knowledge_artifact import KnowledgeArtifactType
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
 
 
 @pytest.mark.asyncio
-async def test_launch_creates_lease_before_scheduling_execution():
-    execution_lease = AsyncMock()
+async def test_launch_schedules_execution():
     launcher = ArtifactTaskLauncher(
         MagicMock(),
         SimpleNamespace(id=7),
-        execution_lease=execution_lease,
     )
     session = SimpleNamespace(
         task=MagicMock(),
@@ -34,7 +33,7 @@ async def test_launch_creates_lease_before_scheduling_execution():
         patch(
             "app.services.knowledge.artifact_task_launcher.prepare_execution_session",
             return_value=session,
-        ),
+        ) as prepare_session,
         patch.object(launcher, "_mark_task_as_background") as mark_background,
         patch(
             "app.services.knowledge.artifact_task_launcher.link_selected_documents_to_subtask"
@@ -56,7 +55,10 @@ async def test_launch_creates_lease_before_scheduling_execution():
             instruction=None,
         )
 
-    execution_lease.refresh.assert_awaited_once_with(41)
+    assert (
+        prepare_session.call_args.kwargs["task_params"].client_origin
+        == CLIENT_ORIGIN_BACKGROUND
+    )
     mark_background.assert_called_once_with(session.task, "artifact-1", 2)
     schedule_execution.assert_called_once_with(request)
     assert result.task_id == 31
@@ -64,8 +66,7 @@ async def test_launch_creates_lease_before_scheduling_execution():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_releases_lease_when_execution_finishes():
-    execution_lease = AsyncMock()
+async def test_dispatch_drains_emitter_when_execution_finishes():
     request = SimpleNamespace(task_id=31, subtask_id=41)
     emitter = MagicMock()
     emitter.collect = AsyncMock(return_value=("", None))
@@ -80,6 +81,6 @@ async def test_dispatch_releases_lease_when_execution_finishes():
             new_callable=AsyncMock,
         ),
     ):
-        await ArtifactTaskLauncher._dispatch_and_drain(request, execution_lease)
+        await ArtifactTaskLauncher._dispatch_and_drain(request)
 
-    execution_lease.release.assert_awaited_once_with(41)
+    emitter.collect.assert_awaited_once()

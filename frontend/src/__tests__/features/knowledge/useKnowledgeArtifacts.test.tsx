@@ -37,6 +37,8 @@ function buildArtifact(
     generation_config: {},
     error_code: null,
     error_message: null,
+    execution_health: 'healthy',
+    can_retry: status === 'failed',
     user_id: 7,
     created_at: '2026-07-26T12:00:00+08:00',
     updated_at: '2026-07-26T12:00:00+08:00',

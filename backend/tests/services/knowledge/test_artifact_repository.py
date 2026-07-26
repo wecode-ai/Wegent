@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for durable knowledge Artifact persistence and Redis leases."""
+"""Tests for durable knowledge Artifact persistence."""
 
 from datetime import datetime, timedelta
 
@@ -16,33 +16,7 @@ from app.schemas.knowledge_artifact import (
     KnowledgeArtifactStatus,
     KnowledgeArtifactType,
 )
-from app.services.knowledge.artifact_repository import (
-    KnowledgeArtifactRepository,
-    RedisArtifactExecutionLease,
-)
-
-
-class FakeRedis:
-    """Minimal Redis string implementation for execution-lease tests."""
-
-    def __init__(self) -> None:
-        self.strings: dict[str, str] = {}
-        self.expirations: dict[str, int] = {}
-
-    async def set(self, key: str, value: str, *, ex: int) -> bool:
-        self.strings[key] = value
-        self.expirations[key] = ex
-        return True
-
-    async def mget(self, keys: list[str]) -> list[str | None]:
-        return [self.strings.get(key) for key in keys]
-
-    async def delete(self, key: str) -> int:
-        self.expirations.pop(key, None)
-        return int(self.strings.pop(key, None) is not None)
-
-    async def aclose(self) -> None:
-        pass
+from app.services.knowledge.artifact_repository import KnowledgeArtifactRepository
 
 
 @pytest.fixture
@@ -148,8 +122,16 @@ def test_retry_claim_is_atomic_and_invalidates_old_attempt(db: Session):
     failed.status = KnowledgeArtifactStatus.FAILED
     old_attempt = repository.create(failed)
 
-    claimed, did_claim = repository.claim_retry(12, "artifact-1")
-    second_claim, second_did_claim = repository.claim_retry(12, "artifact-1")
+    claimed, did_claim = repository.claim_retry(
+        12,
+        "artifact-1",
+        expected_attempt=1,
+    )
+    second_claim, second_did_claim = repository.claim_retry(
+        12,
+        "artifact-1",
+        expected_attempt=1,
+    )
 
     assert did_claim is True
     assert claimed.status == KnowledgeArtifactStatus.QUEUED
@@ -171,19 +153,34 @@ def test_repository_deletes_all_artifacts_for_knowledge_base(db: Session):
     assert repository.list_by_knowledge_base(12) == []
 
 
-@pytest.mark.asyncio
-async def test_execution_lease_refresh_list_and_release():
-    client = FakeRedis()
-    lease = RedisArtifactExecutionLease(
-        ttl_seconds=45,
-        client_factory=lambda: client,
+def test_retry_claim_requires_explicit_active_permission_and_current_attempt(
+    db: Session,
+):
+    repository = KnowledgeArtifactRepository(db)
+    repository.create(build_artifact())
+
+    not_allowed, not_claimed = repository.claim_retry(
+        12,
+        "artifact-1",
+        expected_attempt=1,
+    )
+    stale_attempt, stale_claimed = repository.claim_retry(
+        12,
+        "artifact-1",
+        expected_attempt=2,
+        allow_active=True,
+    )
+    claimed, did_claim = repository.claim_retry(
+        12,
+        "artifact-1",
+        expected_attempt=1,
+        allow_active=True,
     )
 
-    await lease.refresh(41)
-
-    assert client.expirations["knowledge-artifact-execution:41"] == 45
-    assert await lease.active_subtask_ids({41, 42}) == {41}
-
-    await lease.release(41)
-
-    assert await lease.active_subtask_ids({41}) == set()
+    assert not_claimed is False
+    assert not_allowed.attempt == 1
+    assert stale_claimed is False
+    assert stale_attempt.attempt == 1
+    assert did_claim is True
+    assert claimed.attempt == 2
+    assert claimed.status == KnowledgeArtifactStatus.QUEUED

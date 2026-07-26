@@ -900,6 +900,8 @@
     "deleteConfirm": "Delete this artifact? Source documents will not be affected.",
     "retry": "Retry",
     "generating": "Generating artifact...",
+    "stalled": "Generation may have stalled",
+    "stalledHint": "This execution has not completed for a while. You can retry; results from the old attempt cannot overwrite the new one.",
     "failed": "Generation failed",
     "failedHint": "Please try again later.",
     "operationFailed": "Operation failed",
@@ -921,6 +923,7 @@
     "status": {
       "queued": "Queued",
       "running": "Generating",
+      "stalled": "May be stalled",
       "succeeded": "Completed",
       "failed": "Failed"
     }

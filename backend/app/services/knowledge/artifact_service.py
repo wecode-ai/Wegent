@@ -7,11 +7,12 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
@@ -19,15 +20,12 @@ from app.models.user import User
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
     KnowledgeArtifactCreate,
+    KnowledgeArtifactExecutionHealth,
     KnowledgeArtifactListResponse,
     KnowledgeArtifactStatus,
     KnowledgeArtifactType,
 )
-from app.services.chat.trigger.lifecycle import persist_completed_result
-from app.services.knowledge.artifact_repository import (
-    KnowledgeArtifactRepository,
-    RedisArtifactExecutionLease,
-)
+from app.services.knowledge.artifact_repository import KnowledgeArtifactRepository
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
 from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -36,13 +34,6 @@ _ACTIVE_STATUSES = {
     KnowledgeArtifactStatus.QUEUED,
     KnowledgeArtifactStatus.RUNNING,
 }
-_ACTIVE_SUBTASK_STATUSES = {
-    SubtaskStatus.PENDING.value,
-    SubtaskStatus.RUNNING.value,
-}
-_EXECUTION_LEASE_GRACE = timedelta(minutes=2)
-_INTERRUPTED_ERROR_CODE = "EXECUTION_INTERRUPTED"
-_INTERRUPTED_ERROR_MESSAGE = "Artifact generation was interrupted. Please retry."
 
 
 class ArtifactNotFoundError(LookupError):
@@ -67,17 +58,11 @@ class ArtifactService:
         repository: KnowledgeArtifactRepository,
         *,
         launcher: ArtifactTaskLauncher | None = None,
-        execution_lease: RedisArtifactExecutionLease | None = None,
     ) -> None:
         self.db = db
         self.user = user
         self.repository = repository
-        self.execution_lease = execution_lease or RedisArtifactExecutionLease()
-        self.launcher = launcher or ArtifactTaskLauncher(
-            db,
-            user,
-            execution_lease=self.execution_lease,
-        )
+        self.launcher = launcher or ArtifactTaskLauncher(db, user)
 
     async def create(
         self,
@@ -153,27 +138,35 @@ class ArtifactService:
         )
         if artifact is None:
             raise ArtifactNotFoundError("Artifact not found")
-        return artifact
+        return await self._reconcile(artifact)
 
     async def retry(
         self,
         knowledge_base_id: int,
         artifact_id: str,
     ) -> KnowledgeArtifact:
-        """Retry a failed Artifact without changing its stable ID."""
+        """Retry a failed or stalled Artifact without changing its stable ID."""
         self._require_manage_access(knowledge_base_id)
         artifact = await self._get_artifact(knowledge_base_id, artifact_id)
         artifact = await self._reconcile(artifact)
-        if artifact.status != KnowledgeArtifactStatus.FAILED:
-            raise ArtifactValidationError("Only failed artifacts can be retried")
+        if not artifact.can_retry:
+            raise ArtifactValidationError(
+                "Only failed or stalled artifacts can be retried"
+            )
         claimed, did_claim = self.repository.claim_retry(
             knowledge_base_id,
             artifact_id,
+            expected_attempt=artifact.attempt,
+            allow_active=(
+                artifact.execution_health == KnowledgeArtifactExecutionHealth.STALLED
+            ),
         )
         if claimed is None:
             raise ArtifactNotFoundError("Artifact not found")
         if not did_claim:
-            raise ArtifactValidationError("Only failed artifacts can be retried")
+            raise ArtifactValidationError(
+                "Only failed or stalled artifacts can be retried"
+            )
         return await self._launch(claimed)
 
     async def delete(self, knowledge_base_id: int, artifact_id: str) -> None:
@@ -209,14 +202,12 @@ class ArtifactService:
 
     async def _reconcile(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
         if artifact.status not in _ACTIVE_STATUSES:
-            return artifact
+            return self._apply_execution_health(artifact)
         execution_ids_changed = False
         if artifact.assistant_subtask_id is None:
             self._repair_execution_ids(artifact)
             if artifact.assistant_subtask_id is None:
-                if self._lease_grace_expired(artifact):
-                    return await self._mark_interrupted(artifact)
-                return artifact
+                return self._apply_execution_health(artifact)
             execution_ids_changed = True
 
         subtask = (
@@ -228,25 +219,16 @@ class ArtifactService:
             .first()
         )
         if subtask is None:
-            if self._lease_grace_expired(artifact):
-                return await self._mark_interrupted(artifact)
             if execution_ids_changed:
                 artifact.updated_at = datetime.now().astimezone()
                 artifact = self.repository.update_execution(artifact) or artifact
-            return artifact
-        if self._subtask_status(
-            subtask
-        ) in _ACTIVE_SUBTASK_STATUSES and self._lease_grace_expired(artifact):
-            active_ids = await self.execution_lease.active_subtask_ids(
-                {artifact.assistant_subtask_id}
-            )
-            if artifact.assistant_subtask_id not in active_ids:
-                return await self._mark_interrupted(artifact, subtask)
-        return await self._apply_subtask_status(
+            return self._apply_execution_health(artifact)
+        reconciled = await self._apply_subtask_status(
             artifact,
             subtask,
             changed=execution_ids_changed,
         )
+        return self._apply_execution_health(reconciled, subtask)
 
     async def _reconcile_many(
         self,
@@ -279,44 +261,24 @@ class ArtifactService:
             else []
         )
         subtasks_by_id = {subtask.id: subtask for subtask in subtasks}
-        active_subtask_ids = {
-            subtask.id
-            for subtask in subtasks
-            if self._subtask_status(subtask) in _ACTIVE_SUBTASK_STATUSES
-        }
-        leased_subtask_ids = await self.execution_lease.active_subtask_ids(
-            active_subtask_ids
-        )
-
         reconciled: list[KnowledgeArtifact] = []
         for artifact in artifacts:
             if artifact.status not in _ACTIVE_STATUSES:
-                reconciled.append(artifact)
+                reconciled.append(self._apply_execution_health(artifact))
                 continue
             subtask = subtasks_by_id.get(artifact.assistant_subtask_id)
             if subtask is None:
-                if self._lease_grace_expired(artifact):
-                    reconciled.append(await self._mark_interrupted(artifact))
-                    continue
                 if artifact.artifact_id in repaired_ids:
                     artifact.updated_at = datetime.now().astimezone()
                     artifact = self.repository.update_execution(artifact) or artifact
-                reconciled.append(artifact)
+                reconciled.append(self._apply_execution_health(artifact))
                 continue
-            if (
-                self._subtask_status(subtask) in _ACTIVE_SUBTASK_STATUSES
-                and artifact.assistant_subtask_id not in leased_subtask_ids
-                and self._lease_grace_expired(artifact)
-            ):
-                reconciled.append(await self._mark_interrupted(artifact, subtask))
-                continue
-            reconciled.append(
-                await self._apply_subtask_status(
-                    artifact,
-                    subtask,
-                    changed=artifact.artifact_id in repaired_ids,
-                )
+            current = await self._apply_subtask_status(
+                artifact,
+                subtask,
+                changed=artifact.artifact_id in repaired_ids,
             )
+            reconciled.append(self._apply_execution_health(current, subtask))
         return reconciled
 
     async def _apply_subtask_status(
@@ -375,36 +337,35 @@ class ArtifactService:
             artifact.error_message = str(exc)
         artifact.completed_at = subtask.completed_at or datetime.now().astimezone()
 
-    async def _mark_interrupted(
+    def _apply_execution_health(
         self,
         artifact: KnowledgeArtifact,
         subtask: Subtask | None = None,
     ) -> KnowledgeArtifact:
-        now = datetime.now().astimezone()
-        if subtask is not None and artifact.task_id is not None:
-            await persist_completed_result(
-                subtask_id=subtask.id,
-                task_id=artifact.task_id,
-                status=SubtaskStatus.FAILED.value,
-                result={"value": "", "error_type": _INTERRUPTED_ERROR_CODE},
-                error=_INTERRUPTED_ERROR_MESSAGE,
-            )
-        artifact.status = KnowledgeArtifactStatus.FAILED
-        artifact.error_code = _INTERRUPTED_ERROR_CODE
-        artifact.error_message = _INTERRUPTED_ERROR_MESSAGE
-        artifact.completed_at = now
-        artifact.updated_at = now
-        return self.repository.update_execution(artifact) or artifact
+        artifact.execution_health = KnowledgeArtifactExecutionHealth.HEALTHY
+        artifact.can_retry = artifact.status == KnowledgeArtifactStatus.FAILED
+        if artifact.status in _ACTIVE_STATUSES and self._is_stalled(
+            artifact,
+            subtask,
+        ):
+            artifact.execution_health = KnowledgeArtifactExecutionHealth.STALLED
+            artifact.can_retry = True
+        return artifact
 
     @staticmethod
-    def _lease_grace_expired(artifact: KnowledgeArtifact) -> bool:
+    def _is_stalled(
+        artifact: KnowledgeArtifact,
+        subtask: Subtask | None,
+    ) -> bool:
+        activity_at = artifact.updated_at
+        if subtask is not None:
+            activity_at = subtask.updated_at or subtask.created_at or activity_at
         aware_now = datetime.now().astimezone()
         now = (
-            aware_now.replace(tzinfo=None)
-            if artifact.updated_at.tzinfo is None
-            else aware_now
+            aware_now.replace(tzinfo=None) if activity_at.tzinfo is None else aware_now
         )
-        return now - artifact.updated_at >= _EXECUTION_LEASE_GRACE
+        stall_seconds = max(1, settings.KNOWLEDGE_ARTIFACT_STALL_SECONDS)
+        return (now - activity_at).total_seconds() >= stall_seconds
 
     @staticmethod
     def _subtask_status(subtask: Subtask) -> str:

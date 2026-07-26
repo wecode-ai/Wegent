@@ -124,7 +124,13 @@ export function ArtifactPanel({ knowledgeBaseId, selectedDocumentIds }: Artifact
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{artifact.title}</div>
                   <div className="mt-1 flex items-center justify-between gap-2 text-xs text-text-secondary">
-                    <span>{t(`artifact.status.${artifact.status}`)}</span>
+                    <span>
+                      {t(
+                        artifact.execution_health === 'stalled'
+                          ? 'artifact.status.stalled'
+                          : `artifact.status.${artifact.status}`
+                      )}
+                    </span>
                     <span>
                       {new Intl.DateTimeFormat(i18n.language, {
                         month: 'short',
@@ -134,11 +140,12 @@ export function ArtifactPanel({ knowledgeBaseId, selectedDocumentIds }: Artifact
                       }).format(new Date(artifact.created_at))}
                     </span>
                   </div>
-                  {(artifact.status === 'queued' || artifact.status === 'running') && (
-                    <div className="mt-2 h-1 overflow-hidden rounded-full bg-border">
-                      <div className="h-full w-2/3 animate-pulse rounded-full bg-primary" />
-                    </div>
-                  )}
+                  {(artifact.status === 'queued' || artifact.status === 'running') &&
+                    artifact.execution_health !== 'stalled' && (
+                      <div className="mt-2 h-1 overflow-hidden rounded-full bg-border">
+                        <div className="h-full w-2/3 animate-pulse rounded-full bg-primary" />
+                      </div>
+                    )}
                 </div>
               </div>
             </button>

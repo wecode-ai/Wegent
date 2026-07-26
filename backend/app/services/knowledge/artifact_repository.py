@@ -2,19 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Durable storage and ephemeral execution leases for knowledge Artifacts."""
+"""Durable storage for knowledge Artifacts."""
 
 import logging
-from collections.abc import Callable
 from datetime import datetime
-from typing import Any
 
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
@@ -26,104 +21,6 @@ logger = logging.getLogger(__name__)
 
 class ArtifactStorageError(RuntimeError):
     """Raised when Artifact storage is unavailable."""
-
-
-class RedisArtifactExecutionLease:
-    """Track whether an in-process Artifact execution is still alive."""
-
-    KEY_PREFIX = "knowledge-artifact-execution"
-    DEFAULT_TTL_SECONDS = 60
-
-    def __init__(
-        self,
-        redis_url: str = settings.REDIS_URL,
-        *,
-        ttl_seconds: int = DEFAULT_TTL_SECONDS,
-        client_factory: Callable[[], Any] | None = None,
-    ) -> None:
-        if ttl_seconds <= 0:
-            raise ValueError("ttl_seconds must be positive")
-        self._redis_url = redis_url
-        self._ttl_seconds = ttl_seconds
-        self._client_factory = client_factory
-
-    def _create_client(self) -> Redis:
-        if self._client_factory is not None:
-            return self._client_factory()
-        return Redis.from_url(
-            self._redis_url,
-            encoding="utf-8",
-            decode_responses=True,
-            socket_timeout=5.0,
-            socket_connect_timeout=2.0,
-            retry_on_timeout=True,
-        )
-
-    @classmethod
-    def key_for(cls, assistant_subtask_id: int) -> str:
-        """Build the ephemeral execution lease key."""
-        return f"{cls.KEY_PREFIX}:{assistant_subtask_id}"
-
-    async def refresh(self, assistant_subtask_id: int) -> None:
-        """Create or renew an execution lease."""
-        client = self._create_client()
-        try:
-            await client.set(
-                self.key_for(assistant_subtask_id),
-                "1",
-                ex=self._ttl_seconds,
-            )
-        except RedisError as exc:
-            logger.exception(
-                "Failed to refresh Artifact execution lease for subtask %s",
-                assistant_subtask_id,
-            )
-            raise ArtifactStorageError(
-                "Artifact execution lease is unavailable"
-            ) from exc
-        finally:
-            await client.aclose()
-
-    async def active_subtask_ids(
-        self,
-        assistant_subtask_ids: set[int],
-    ) -> set[int]:
-        """Return subtask IDs whose execution leases are still alive."""
-        if not assistant_subtask_ids:
-            return set()
-
-        ordered_ids = sorted(assistant_subtask_ids)
-        client = self._create_client()
-        try:
-            values = await client.mget(
-                [self.key_for(subtask_id) for subtask_id in ordered_ids]
-            )
-            return {
-                subtask_id
-                for subtask_id, value in zip(ordered_ids, values, strict=True)
-                if value is not None
-            }
-        except RedisError as exc:
-            logger.exception("Failed to read Artifact execution leases")
-            raise ArtifactStorageError(
-                "Artifact execution lease is unavailable"
-            ) from exc
-        finally:
-            await client.aclose()
-
-    async def release(self, assistant_subtask_id: int) -> None:
-        """Release an execution lease after the dispatcher terminates."""
-        client = self._create_client()
-        try:
-            await client.delete(self.key_for(assistant_subtask_id))
-        except RedisError as exc:
-            logger.warning(
-                "Failed to release Artifact execution lease for subtask %s: %s",
-                assistant_subtask_id,
-                exc,
-            )
-        finally:
-            await client.aclose()
 
 
 class KnowledgeArtifactRepository:
@@ -224,8 +121,11 @@ class KnowledgeArtifactRepository:
         self,
         knowledge_base_id: int,
         artifact_id: str,
+        *,
+        expected_attempt: int,
+        allow_active: bool = False,
     ) -> tuple[KnowledgeArtifact | None, bool]:
-        """Atomically claim a new attempt for a failed Artifact."""
+        """Atomically claim a new attempt for a failed or user-confirmed stall."""
         try:
             record = (
                 self._query(knowledge_base_id, artifact_id).with_for_update().first()
@@ -233,7 +133,14 @@ class KnowledgeArtifactRepository:
             if record is None:
                 self.db.rollback()
                 return None, False
-            if record.status != KnowledgeArtifactStatus.FAILED.value:
+            active_statuses = {
+                KnowledgeArtifactStatus.QUEUED.value,
+                KnowledgeArtifactStatus.RUNNING.value,
+            }
+            retryable = record.status == KnowledgeArtifactStatus.FAILED.value or (
+                allow_active and record.status in active_statuses
+            )
+            if record.attempt != expected_attempt or not retryable:
                 artifact = self._to_schema(record)
                 self.db.rollback()
                 return artifact, False

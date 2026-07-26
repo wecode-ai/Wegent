@@ -13,6 +13,7 @@ import pytest
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
     KnowledgeArtifactCreate,
+    KnowledgeArtifactExecutionHealth,
     KnowledgeArtifactStatus,
     KnowledgeArtifactType,
 )
@@ -29,13 +30,11 @@ def build_service() -> tuple[ArtifactService, MagicMock, AsyncMock]:
     repository.create.side_effect = lambda artifact: artifact
     repository.update_execution.side_effect = lambda artifact: artifact
     launcher = AsyncMock()
-    execution_lease = AsyncMock()
     service = ArtifactService(
         MagicMock(),
         SimpleNamespace(id=7),
         repository,
         launcher=launcher,
-        execution_lease=execution_lease,
     )
     return service, repository, launcher
 
@@ -183,57 +182,54 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
 
 
 @pytest.mark.asyncio
-async def test_reconcile_marks_stale_running_execution_as_interrupted():
+async def test_reconcile_derives_stalled_without_changing_running_execution():
     service, repository, _ = build_service()
     artifact = build_artifact()
-    artifact.updated_at = datetime.now().astimezone() - timedelta(minutes=3)
+    stale_at = datetime.now().astimezone() - timedelta(minutes=11)
+    artifact.updated_at = stale_at
     subtask = SimpleNamespace(
         id=41,
         status="RUNNING",
         result=None,
         completed_at=None,
         error_message=None,
+        created_at=stale_at,
+        updated_at=stale_at,
     )
     query = MagicMock()
     query.filter.return_value.first.return_value = subtask
     service.db.query.return_value = query
-    service.execution_lease.active_subtask_ids.return_value = set()
-
-    with patch(
-        "app.services.knowledge.artifact_service.persist_completed_result",
-        new_callable=AsyncMock,
-    ) as persist_result:
-        reconciled = await service._reconcile(artifact)
-
-    assert reconciled.status == KnowledgeArtifactStatus.FAILED
-    assert reconciled.error_code == "EXECUTION_INTERRUPTED"
-    assert reconciled.error_message == (
-        "Artifact generation was interrupted. Please retry."
-    )
-    persist_result.assert_awaited_once()
-    repository.update_execution.assert_called_once_with(artifact)
-
-
-@pytest.mark.asyncio
-async def test_reconcile_keeps_stale_running_execution_with_active_lease():
-    service, repository, _ = build_service()
-    artifact = build_artifact()
-    artifact.updated_at = datetime.now().astimezone() - timedelta(minutes=3)
-    subtask = SimpleNamespace(
-        id=41,
-        status="RUNNING",
-        result=None,
-        completed_at=None,
-        error_message=None,
-    )
-    query = MagicMock()
-    query.filter.return_value.first.return_value = subtask
-    service.db.query.return_value = query
-    service.execution_lease.active_subtask_ids.return_value = {41}
-
     reconciled = await service._reconcile(artifact)
 
     assert reconciled.status == KnowledgeArtifactStatus.RUNNING
+    assert reconciled.execution_health == KnowledgeArtifactExecutionHealth.STALLED
+    assert reconciled.can_retry is True
+    repository.update_execution.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_recent_running_execution_healthy():
+    service, repository, _ = build_service()
+    artifact = build_artifact()
+    recent_at = datetime.now().astimezone() - timedelta(minutes=3)
+    artifact.updated_at = recent_at
+    subtask = SimpleNamespace(
+        id=41,
+        status="RUNNING",
+        result=None,
+        completed_at=None,
+        error_message=None,
+        created_at=recent_at,
+        updated_at=recent_at,
+    )
+    query = MagicMock()
+    query.filter.return_value.first.return_value = subtask
+    service.db.query.return_value = query
+    reconciled = await service._reconcile(artifact)
+
+    assert reconciled.status == KnowledgeArtifactStatus.RUNNING
+    assert reconciled.execution_health == KnowledgeArtifactExecutionHealth.HEALTHY
+    assert reconciled.can_retry is False
     repository.update_execution.assert_not_called()
 
 
@@ -241,7 +237,7 @@ async def test_reconcile_keeps_stale_running_execution_with_active_lease():
 async def test_retry_reuses_artifact_identity_and_relaunches():
     service, repository, launcher = build_service()
     artifact = build_artifact(status=KnowledgeArtifactStatus.FAILED)
-    artifact.error_code = "EXECUTION_INTERRUPTED"
+    artifact.error_code = "MODEL_ERROR"
     artifact.error_message = "模型调用失败"
     repository.get.return_value = artifact
     claimed = artifact.model_copy(deep=True)
@@ -268,3 +264,52 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
     assert retried.error_message is None
     assert retried.attempt == 2
     assert launcher.launch.await_args.kwargs["attempt"] == 2
+    repository.claim_retry.assert_called_once_with(
+        12,
+        "artifact-1",
+        expected_attempt=1,
+        allow_active=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_claims_stalled_active_attempt_and_relaunches():
+    service, repository, launcher = build_service()
+    artifact = build_artifact()
+    stale_at = datetime.now().astimezone() - timedelta(minutes=11)
+    artifact.updated_at = stale_at
+    repository.get.return_value = artifact
+    subtask = SimpleNamespace(
+        id=41,
+        status="RUNNING",
+        result=None,
+        completed_at=None,
+        error_message=None,
+        created_at=stale_at,
+        updated_at=stale_at,
+    )
+    query = MagicMock()
+    query.filter.return_value.first.return_value = subtask
+    service.db.query.return_value = query
+    claimed = artifact.model_copy(deep=True)
+    claimed.status = KnowledgeArtifactStatus.QUEUED
+    claimed.task_id = None
+    claimed.assistant_subtask_id = None
+    claimed.attempt = 2
+    repository.claim_retry.return_value = (claimed, True)
+    launcher.launch.return_value = ArtifactTaskLaunchResult(
+        task_id=32,
+        assistant_subtask_id=42,
+    )
+
+    with patch.object(service, "_require_manage_access"):
+        retried = await service.retry(12, "artifact-1")
+
+    assert retried.status == KnowledgeArtifactStatus.RUNNING
+    assert retried.attempt == 2
+    repository.claim_retry.assert_called_once_with(
+        12,
+        "artifact-1",
+        expected_attempt=1,
+        allow_active=True,
+    )

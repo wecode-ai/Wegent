@@ -27,6 +27,13 @@ class KnowledgeArtifactStatus(str, Enum):
     FAILED = "failed"
 
 
+class KnowledgeArtifactExecutionHealth(str, Enum):
+    """Derived health of a non-terminal Artifact execution."""
+
+    HEALTHY = "healthy"
+    STALLED = "stalled"
+
+
 class KnowledgeArtifactCreate(BaseModel):
     """Create-artifact request."""
 
@@ -77,6 +84,10 @@ class KnowledgeArtifact(BaseModel):
     generation_config: dict[str, Any] = Field(default_factory=dict)
     error_code: str | None = None
     error_message: str | None = None
+    execution_health: KnowledgeArtifactExecutionHealth = (
+        KnowledgeArtifactExecutionHealth.HEALTHY
+    )
+    can_retry: bool = False
     user_id: int
     created_at: datetime
     updated_at: datetime

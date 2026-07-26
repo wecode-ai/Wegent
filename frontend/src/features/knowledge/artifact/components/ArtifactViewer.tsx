@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { BookPlus, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertCircle, BookPlus, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import MermaidDiagram from '@/components/common/MermaidDiagram'
 import { Button } from '@/components/ui/button'
@@ -128,6 +128,17 @@ export function ArtifactViewer({
                 {artifact.error_message || t('artifact.failedHint')}
               </p>
             </div>
+          ) : artifact.execution_health === 'stalled' ? (
+            <div
+              className="flex h-full flex-col items-center justify-center text-center"
+              data-testid="artifact-stalled-state"
+            >
+              <AlertCircle className="mb-3 h-8 w-8 text-warning" />
+              <p className="font-medium">{t('artifact.stalled')}</p>
+              <p className="mt-2 max-w-lg text-sm text-text-secondary">
+                {t('artifact.stalledHint')}
+              </p>
+            </div>
           ) : (
             <div className="flex h-full items-center justify-center text-text-secondary">
               <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
@@ -163,7 +174,7 @@ export function ArtifactViewer({
                     {t('artifact.saveToKnowledge')}
                   </Button>
                 )}
-              {artifact.status === 'failed' && (
+              {artifact.can_retry && (
                 <Button onClick={() => void onRetry()} data-testid="artifact-retry-button">
                   <RefreshCw className="mr-2 h-4 w-4" />
                   {t('artifact.retry')}

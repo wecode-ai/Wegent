@@ -900,6 +900,8 @@
     "deleteConfirm": "确定删除这个成果吗？该操作不会删除原始知识文档。",
     "retry": "重试",
     "generating": "正在生成成果...",
+    "stalled": "生成可能已中断",
+    "stalledHint": "执行长时间没有完成，可重试；旧任务结果不会覆盖新一轮生成。",
     "failed": "生成失败",
     "failedHint": "请稍后重试。",
     "operationFailed": "操作失败",
@@ -921,6 +923,7 @@
     "status": {
       "queued": "等待生成",
       "running": "生成中",
+      "stalled": "可能已中断",
       "succeeded": "已完成",
       "failed": "生成失败"
     }
