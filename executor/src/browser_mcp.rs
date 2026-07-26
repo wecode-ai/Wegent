@@ -175,9 +175,10 @@ async fn execute_tool(
     started: Instant,
 ) -> Value {
     let bridge_payload = match name {
-        "browser_navigate" | "browser_tab_new" => {
-            json!({ "action": "navigate", "url": string_arg(arguments, "url") })
+        "browser_open" | "browser_navigate" | "browser_tab_new" => {
+            json!({ "action": "open", "url": string_arg(arguments, "url") })
         }
+        "browser_inspect" => inspect_payload(arguments),
         "browser_snapshot" => json!({
             "action": "evaluate",
             "expression": "({ title: document.title, url: location.href, text: document.body?.innerText?.slice(0, 12000) || '' })"
@@ -438,13 +439,23 @@ fn non_empty_env(name: &str) -> Option<String> {
 fn tools() -> Vec<Value> {
     vec![
         tool(
+            "browser_open",
+            "Open or navigate the built-in browser in Wegent's Wework desktop app to a URL.",
+            &["url"],
+        ),
+        tool(
+            "browser_inspect",
+            "Inspect the current page and return a structured, indexable page tree.",
+            &[],
+        ),
+        tool(
             "browser_navigate",
-            "Navigate the built-in browser in Wegent's Wework desktop app to a URL.",
+            "Alias of browser_open for opening pages in Wegent's Wework desktop app.",
             &["url"],
         ),
         tool(
             "browser_snapshot",
-            "Capture a text snapshot of the current page.",
+            "Deprecated text-only page read. Use browser_inspect for structured page inspection and browser_take_screenshot for screenshots.",
             &[],
         ),
         tool(
@@ -508,6 +519,8 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
         "expression",
         "function",
         "fn",
+        "inspectId",
+        "mode",
         "direction",
         "startRef",
         "endRef",
@@ -528,6 +541,9 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
         properties.insert(key.to_owned(), json!({ "type": "number" }));
     }
     properties.insert("fields".to_owned(), json!({ "type": "array" }));
+    for key in ["interactiveOnly", "includeTextBlocks", "includeHidden"] {
+        properties.insert(key.to_owned(), json!({ "type": "boolean" }));
+    }
     properties.insert(
         "values".to_owned(),
         json!({ "type": "array", "items": { "type": "string" } }),
@@ -554,11 +570,26 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 
 fn text_result(data: impl Into<Value>, is_error: bool) -> Value {
     let data = data.into();
-    let text = data
-        .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| serde_json::to_string_pretty(&data).unwrap_or_default());
+    let text = inspect_text_result(&data).unwrap_or_else(|| {
+        data.as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| serde_json::to_string_pretty(&data).unwrap_or_default())
+    });
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
+}
+
+fn inspect_text_result(data: &Value) -> Option<String> {
+    if data.get("kind").and_then(Value::as_str) != Some("browser.inspect") {
+        return None;
+    }
+    let inspect_text = data.get("inspectText").and_then(Value::as_str)?;
+    let mut compact = data.clone();
+    if let Some(object) = compact.as_object_mut() {
+        object.remove("textPreview");
+        object.remove("inspectText");
+    }
+    let json_text = serde_json::to_string_pretty(&compact).unwrap_or_default();
+    Some(format!("{inspect_text}\n\nJSON:\n{json_text}"))
 }
 
 fn string_arg(value: &Value, key: &str) -> String {
@@ -577,6 +608,10 @@ fn optional_number_arg(value: &Value, key: &str) -> Option<f64> {
     value.get(key).and_then(Value::as_f64)
 }
 
+fn optional_bool_arg(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
+}
+
 fn selector_arg(value: &Value) -> String {
     let selector = optional_string_arg(value, "ref")
         .or_else(|| optional_string_arg(value, "element"))
@@ -593,6 +628,24 @@ fn evaluate_expression(value: &Value) -> String {
         .or_else(|| optional_string_arg(value, "function"))
         .or_else(|| optional_string_arg(value, "fn"))
         .unwrap_or_default()
+}
+
+fn inspect_payload(value: &Value) -> Value {
+    json!({
+        "action": "inspect",
+        "options": {
+            "mode": optional_string_arg(value, "mode").unwrap_or_else(|| "compact".to_owned()),
+            "interactiveOnly": optional_bool_arg(value, "interactiveOnly").unwrap_or(false),
+            "includeTextBlocks": optional_bool_arg(value, "includeTextBlocks").unwrap_or(true),
+            "includeHidden": optional_bool_arg(value, "includeHidden").unwrap_or(false),
+            "maxNodes": optional_number_arg(value, "maxNodes").unwrap_or(800.0),
+            "maxTextChars": optional_number_arg(value, "maxTextChars").unwrap_or(12000.0),
+            "maxNameChars": optional_number_arg(value, "maxNameChars").unwrap_or(120.0),
+            "maxValueChars": optional_number_arg(value, "maxValueChars").unwrap_or(120.0),
+            "viewportMargin": optional_number_arg(value, "viewportMargin").unwrap_or(600.0),
+        },
+        "timeoutMs": optional_number_arg(value, "timeoutMs").unwrap_or(3000.0)
+    })
 }
 
 fn evaluate_payload(value: &Value, action: &str) -> Value {
@@ -640,14 +693,49 @@ mod tests {
             .iter()
             .filter_map(|tool| tool["name"].as_str())
             .collect::<Vec<_>>();
+        assert!(names.contains(&"browser_open"));
+        assert!(names.contains(&"browser_inspect"));
         assert!(names.contains(&"browser_navigate"));
         assert!(names.contains(&"browser_evaluate"));
         assert!(names.contains(&"browser_take_screenshot"));
-        assert_eq!(names.len(), 20);
+        assert_eq!(names.len(), 22);
     }
 
     #[test]
     fn strips_css_ref_prefix() {
         assert_eq!(selector_arg(&json!({ "ref": "css=#submit" })), "#submit");
+    }
+
+    #[test]
+    fn inspect_payload_sets_defaults_and_overrides() {
+        let payload = inspect_payload(&json!({
+            "interactiveOnly": true,
+            "includeTextBlocks": false,
+            "maxNodes": 25,
+            "timeoutMs": 4500
+        }));
+
+        assert_eq!(payload["action"], "inspect");
+        assert_eq!(payload["options"]["mode"], "compact");
+        assert_eq!(payload["options"]["interactiveOnly"], true);
+        assert_eq!(payload["options"]["includeTextBlocks"], false);
+        assert_eq!(payload["options"]["maxNodes"], 25.0);
+        assert_eq!(payload["options"]["maxTextChars"], 12000.0);
+        assert_eq!(payload["timeoutMs"], 4500.0);
+    }
+
+    #[test]
+    fn inspect_text_result_prioritizes_agent_readable_tree() {
+        let text = inspect_text_result(&json!({
+            "kind": "browser.inspect",
+            "inspectText": "[0] button \"登录\"",
+            "textPreview": "large body text",
+            "nodes": [{ "index": 0, "role": "button", "name": "登录" }]
+        }))
+        .unwrap();
+
+        assert!(text.starts_with("[0] button \"登录\"\n\nJSON:"));
+        assert!(text.contains("\"role\": \"button\""));
+        assert!(!text.contains("large body text"));
     }
 }

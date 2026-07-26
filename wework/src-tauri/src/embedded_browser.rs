@@ -39,6 +39,7 @@ const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS 
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
+const EMBEDDED_BROWSER_INSPECT_SCRIPT: &str = include_str!("embedded_browser_inspect.js");
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_BRIDGE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_NATIVE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -123,6 +124,11 @@ struct EmbeddedBrowserBridgeRequest {
     y: Option<f64>,
     timeout_ms: Option<u64>,
     label: Option<String>,
+    options: Option<Value>,
+    inspect_id: Option<String>,
+    index: Option<u64>,
+    #[serde(rename = "ref")]
+    ref_: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -826,6 +832,51 @@ fn script_wait_for(request: &EmbeddedBrowserBridgeRequest) -> String {
     )
 }
 
+fn script_semantic_inspect(options: &Value) -> Result<String, String> {
+    let encoded_options = serde_json::to_string(options)
+        .map_err(|error| format!("Failed to encode embedded browser inspect options: {error}"))?;
+    Ok(EMBEDDED_BROWSER_INSPECT_SCRIPT.replace("__WEWORK_INSPECT_OPTIONS__", &encoded_options))
+}
+
+fn inspect_embedded_browser(
+    state: &EmbeddedBrowserState,
+    label: &str,
+    options: Value,
+    timeout_ms: u64,
+) -> Result<Value, String> {
+    eval_json(state, label, script_semantic_inspect(&options)?, timeout_ms)
+}
+
+fn script_resolve_inspect_target(request: &EmbeddedBrowserBridgeRequest) -> String {
+    let input = json!({
+        "inspectId": request.inspect_id,
+        "index": request.index,
+        "ref": request.ref_,
+    });
+    let encoded_input = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        r#"(() => {{
+  try {{
+    const resolver = window.__WEWORK_BROWSER_AGENT__?.resolveInspectTarget;
+    if (typeof resolver !== "function") {{
+      return {{
+        ok: false,
+        errorCode: "stale_inspect",
+        message: "No inspect registry is available."
+      }};
+    }}
+    return resolver({encoded_input});
+  }} catch (error) {{
+    return {{
+      ok: false,
+      errorCode: "resolve_failed",
+      message: String(error?.stack || error?.message || error)
+    }};
+  }}
+}})()"#
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Result<Value, String> {
     let entry = get_entry(state, label)?;
@@ -963,6 +1014,18 @@ fn handle_bridge_request(
                 request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
             )
         }
+        "inspect" => inspect_embedded_browser(
+            state,
+            &label,
+            request.options.unwrap_or_else(|| json!({})),
+            request.timeout_ms.unwrap_or(3_000),
+        ),
+        "resolveRef" => eval_json(
+            state,
+            &label,
+            script_resolve_inspect_target(&request),
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
         "click" => {
             let script = if let Some(selector) = request.selector.as_deref() {
                 script_selector_action(selector, "element.click();")
@@ -1100,6 +1163,10 @@ fn handle_bridge_connection(
                 y: None,
                 timeout_ms: None,
                 label: None,
+                options: None,
+                inspect_id: None,
+                index: None,
+                ref_: None,
             },
         );
         let response = match result {
@@ -1408,10 +1475,12 @@ mod tests {
         browser_open_action, browser_webview_url, download_event_owner,
         logical_owner_for_native_label, native_webview_label, ready_logical_entry,
         relabel_logical_entry, remove_logical_entry_if_native_matches,
+        script_resolve_inspect_target, script_semantic_inspect,
         update_logical_entry_if_native_matches, wait_for_browser_ready,
-        EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
-        EmbeddedBrowserReadiness, EMBEDDED_BROWSER_NOT_READY_ERROR,
+        EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
+        EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EMBEDDED_BROWSER_NOT_READY_ERROR,
     };
+    use serde_json::json;
     use tauri::WebviewUrl;
 
     #[test]
@@ -1521,6 +1590,68 @@ mod tests {
         let serialized = serde_json::to_value(state).unwrap();
 
         assert_eq!(serialized["nativeLabel"], "workspace-browser-native-41");
+    }
+
+    #[test]
+    fn bridge_request_deserializes_inspect_options_and_ref_target() {
+        let request: EmbeddedBrowserBridgeRequest = serde_json::from_value(json!({
+            "action": "resolveRef",
+            "inspectId": "wk-inspect-1",
+            "index": 4,
+            "ref": "wk-mvp:wk-inspect-1:main:4:abcd1234",
+            "options": { "maxNodes": 12 }
+        }))
+        .unwrap();
+
+        assert_eq!(request.action, "resolveRef");
+        assert_eq!(request.inspect_id.as_deref(), Some("wk-inspect-1"));
+        assert_eq!(request.index, Some(4));
+        assert_eq!(
+            request.ref_.as_deref(),
+            Some("wk-mvp:wk-inspect-1:main:4:abcd1234")
+        );
+        assert_eq!(request.options.unwrap()["maxNodes"], 12);
+    }
+
+    #[test]
+    fn inspect_script_embeds_options_as_json_data() {
+        let script = script_semantic_inspect(&json!({
+            "mode": "compact",
+            "maxNodes": 25,
+            "label": "quote \" and </script>"
+        }))
+        .unwrap();
+
+        assert!(script.contains("const rawOptions = {"));
+        assert!(script.contains("\"maxNodes\":25"));
+        assert!(script.contains("bridgeTrust: 'page_world'"));
+        assert!(!script.contains("__WEWORK_INSPECT_OPTIONS__"));
+    }
+
+    #[test]
+    fn resolve_ref_script_uses_opaque_ref_without_selector_parsing() {
+        let script = script_resolve_inspect_target(&EmbeddedBrowserBridgeRequest {
+            action: "resolveRef".to_string(),
+            url: None,
+            expression: None,
+            selector: None,
+            text: None,
+            key: None,
+            x: None,
+            y: None,
+            timeout_ms: None,
+            label: None,
+            options: None,
+            inspect_id: Some("wk-inspect-1".to_string()),
+            index: Some(7),
+            ref_: Some("wk-mvp:wk-inspect-1:main:7:abcd1234".to_string()),
+        });
+
+        assert!(script.contains("resolveInspectTarget"));
+        assert!(script.contains("\"inspectId\":\"wk-inspect-1\""));
+        assert!(script.contains("\"index\":7"));
+        assert!(script.contains("\"ref\":\"wk-mvp:wk-inspect-1:main:7:abcd1234\""));
+        assert!(!script.contains("document.querySelector"));
     }
 
     #[test]

@@ -75,7 +75,8 @@ Sub-agents are off-limits in this side conversation. Do not interact with any ex
 pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
 - "Wework" refers to Wegent's desktop workbench. Describe its browser as the Wework built-in browser.
 - For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
-- Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
+- Use `browser_open` to open pages in the Wework 内置浏览器, `browser_inspect` for structured page inspection, `browser_take_screenshot` for screenshots, and `browser_evaluate` only when direct JavaScript evaluation is needed.
+- `browser_navigate` is a compatibility alias for opening pages. Do not use `browser_snapshot` for structured inspection; snapshot wording is reserved for screenshots.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
 
