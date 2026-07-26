@@ -353,6 +353,13 @@ function getCopyableContentFromBlocks(blocks: MessageBlock[]): string {
     .trim()
 }
 
+function getSaveableMarkdown(
+  markdown: string,
+  annotations: GeminiAnnotation[] | undefined
+): string {
+  return processCitePatterns(markdown, annotations)
+}
+
 function getBlockRenderHash(blocks: MessageBlock[] | undefined): string {
   return (
     blocks
@@ -546,6 +553,14 @@ const MessageBubble = memo(
       () => msg.result?.blocks?.filter(block => block.type !== 'thinking') ?? [],
       [msg.result?.blocks]
     )
+    const blockSaveableMarkdown = React.useMemo(
+      () =>
+        getSaveableMarkdown(
+          getCopyableContentFromBlocks(msg.result?.blocks ?? []),
+          msg.result?.annotations
+        ),
+      [msg.result?.annotations, msg.result?.blocks]
+    )
     const hasToolBlocks = React.useMemo(
       () => msg.result?.blocks?.some(block => block.type === 'tool') ?? false,
       [msg.result?.blocks]
@@ -680,14 +695,12 @@ const MessageBubble = memo(
       const trimmed = (rawResult ?? '').trim()
       const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/)
       const rawMarkdownResult = fencedMatch ? fencedMatch[1] : trimmed
-      let normalizedResult = rawMarkdownResult
 
       // Process [cite: X, Y, Z] patterns to clickable markdown links
       // Only process when annotations are available from Gemini Deep Research
       const annotations = msg.result?.annotations
-      if (annotations && annotations.length > 0) {
-        normalizedResult = processCitePatterns(normalizedResult, annotations)
-      }
+      const normalizedResult = getSaveableMarkdown(rawMarkdownResult, annotations)
+      const saveableMarkdown = `${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`
 
       const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/)
       if (progressMatch) {
@@ -815,13 +828,13 @@ const MessageBubble = memo(
           {/* Hide BubbleTools during streaming */}
           {!isStreaming && (
             <BubbleTools
-              contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${rawMarkdownResult}`}
+              contentToCopy={saveableMarkdown}
               onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
               showSaveToKnowledge={
                 Boolean(onSaveToKnowledge) &&
                 !msg.isIncomplete &&
                 (msg.status === 'completed' || msg.subtaskStatus === 'COMPLETED') &&
-                rawMarkdownResult.trim().length > 0
+                saveableMarkdown.trim().length > 0
               }
               onSaveToKnowledge={onSaveToKnowledge}
               tools={[
@@ -830,7 +843,7 @@ const MessageBubble = memo(
                   title: t('messages.download') || 'Download',
                   icon: <Download className="h-4 w-4 text-text-muted" />,
                   onClick: () => {
-                    const blob = new Blob([`${rawMarkdownResult}`], {
+                    const blob = new Blob([saveableMarkdown], {
                       type: 'text/plain;charset=utf-8',
                     })
                     const url = URL.createObjectURL(blob)
@@ -1554,13 +1567,13 @@ const MessageBubble = memo(
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (
                         <BubbleTools
-                          contentToCopy={getCopyableContentFromBlocks(msg.result?.blocks ?? [])}
+                          contentToCopy={blockSaveableMarkdown}
                           onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                           showSaveToKnowledge={
                             Boolean(onSaveToKnowledge) &&
                             !msg.isIncomplete &&
                             (msg.status === 'completed' || msg.subtaskStatus === 'COMPLETED') &&
-                            getCopyableContentFromBlocks(msg.result?.blocks ?? []).length > 0
+                            blockSaveableMarkdown.length > 0
                           }
                           onSaveToKnowledge={onSaveToKnowledge}
                           tools={[
@@ -1569,12 +1582,9 @@ const MessageBubble = memo(
                               title: t('messages.download') || 'Download',
                               icon: <Download className="h-4 w-4 text-text-muted" />,
                               onClick: () => {
-                                const blob = new Blob(
-                                  [getCopyableContentFromBlocks(msg.result?.blocks ?? [])],
-                                  {
-                                    type: 'text/plain;charset=utf-8',
-                                  }
-                                )
+                                const blob = new Blob([blockSaveableMarkdown], {
+                                  type: 'text/plain;charset=utf-8',
+                                })
                                 const url = URL.createObjectURL(blob)
                                 const a = document.createElement('a')
                                 a.href = url

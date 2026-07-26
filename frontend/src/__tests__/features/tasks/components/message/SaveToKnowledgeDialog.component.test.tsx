@@ -162,6 +162,9 @@ describe('SaveToKnowledgeDialog', () => {
     await waitFor(() =>
       expect(screen.getByRole('combobox', { name: 'knowledge-base-target' })).toHaveValue('2')
     )
+    expect(
+      screen.getByRole('dialog', { description: 'saveToKnowledge.description' })
+    ).toBeInTheDocument()
     fireEvent.change(screen.getByTestId('save-to-knowledge-title-input'), {
       target: { value: '  Edited title  ' },
     })
@@ -207,9 +210,9 @@ describe('SaveToKnowledgeDialog', () => {
 
   it('preserves edits and clears the target after a permission failure', async () => {
     const writable = knowledgeBase(5, 'Developer')
-    ;(knowledgeBaseApi.getAllGrouped as jest.Mock).mockResolvedValue(
-      groupedKnowledgeBases([writable])
-    )
+    ;(knowledgeBaseApi.getAllGrouped as jest.Mock)
+      .mockResolvedValueOnce(groupedKnowledgeBases([writable]))
+      .mockResolvedValueOnce(groupedKnowledgeBases([]))
     ;(createTextKnowledgeDocument as jest.Mock).mockRejectedValue(new ApiError('Forbidden', 403))
 
     render(
@@ -237,7 +240,11 @@ describe('SaveToKnowledgeDialog', () => {
     await waitFor(() =>
       expect(screen.getByText('saveToKnowledge.errors.permissionChanged')).toBeInTheDocument()
     )
+    await waitFor(() => expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(2))
     expect(screen.getByRole('combobox', { name: 'knowledge-base-target' })).toHaveValue('')
+    expect(
+      screen.queryByRole('option', { name: 'saveToKnowledge.scope.shared / kb-5' })
+    ).not.toBeInTheDocument()
     expect(screen.getByTestId('save-to-knowledge-title-input')).toHaveValue('Edited title')
     expect(screen.getByTestId('mock-markdown-editor')).toHaveValue('# Edited')
   })

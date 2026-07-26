@@ -736,6 +736,7 @@
   "saveToKnowledge": {
     "action": "保存到知识库",
     "title": "保存到知识库",
+    "description": "将当前回答保存为知识库文档，并遵循目标知识库的现有访问权限。",
     "targetLabel": "目标知识库",
     "targetPlaceholder": "请选择知识库",
     "loadingTargets": "正在加载知识库...",

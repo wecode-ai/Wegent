@@ -197,6 +197,44 @@ describe('MessageBubble', () => {
     )
   })
 
+  it('preserves Deep Research citation links in regular messages', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$Research result [cite: 1]',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+      result: {
+        annotations: [
+          {
+            start_index: 16,
+            end_index: 25,
+            source: 'https://example.com/source',
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentToCopy: 'Research result (参考来源: [1](https://example.com/source))',
+        showSaveToKnowledge: true,
+      })
+    )
+  })
+
   it.each([
     {
       name: 'streaming',
@@ -295,6 +333,65 @@ describe('MessageBubble', () => {
       expect.objectContaining({
         contentToCopy: 'First paragraph\n\nSecond paragraph',
         onSaveToKnowledge,
+        showSaveToKnowledge: true,
+      })
+    )
+  })
+
+  it('preserves Deep Research citation links in blocks messages', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: 'Second result [cite: 2]',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      status: 'completed',
+      subtaskStatus: 'COMPLETED',
+      result: {
+        blocks: [
+          {
+            id: 'text-1',
+            type: 'text',
+            status: 'done',
+            content: 'First result [cite: 1]',
+          },
+          {
+            id: 'text-2',
+            type: 'text',
+            status: 'done',
+            content: 'Second result [cite: 2]',
+          },
+        ],
+        annotations: [
+          {
+            start_index: 13,
+            end_index: 22,
+            source: 'https://example.com/first',
+          },
+          {
+            start_index: 37,
+            end_index: 46,
+            source: 'https://example.com/second',
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentToCopy:
+          'First result (参考来源: [1](https://example.com/first))\n\n' +
+          'Second result (参考来源: [2](https://example.com/second))',
         showSaveToKnowledge: true,
       })
     )

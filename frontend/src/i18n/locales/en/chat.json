@@ -736,6 +736,7 @@
   "saveToKnowledge": {
     "action": "Save to knowledge base",
     "title": "Save to knowledge base",
+    "description": "Save the current response as a knowledge base document under the target knowledge base's existing access permissions.",
     "targetLabel": "Target knowledge base",
     "targetPlaceholder": "Select a knowledge base",
     "loadingTargets": "Loading knowledge bases...",

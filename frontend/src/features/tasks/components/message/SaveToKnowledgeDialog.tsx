@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -191,6 +192,7 @@ export function SaveToKnowledgeDialog({
       if (error instanceof ApiError && error.status === 403) {
         setSelectedKnowledgeBaseId(undefined)
         setSubmitError(t('saveToKnowledge.errors.permissionChanged'))
+        void loadKnowledgeBases()
       } else if (error instanceof ApiError && error.status === 404) {
         setSelectedKnowledgeBaseId(undefined)
         setSubmitError(t('saveToKnowledge.errors.targetMissing'))
@@ -213,6 +215,7 @@ export function SaveToKnowledgeDialog({
       >
         <DialogHeader>
           <DialogTitle>{t('saveToKnowledge.title')}</DialogTitle>
+          <DialogDescription>{t('saveToKnowledge.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 space-y-4 overflow-y-auto py-2">
