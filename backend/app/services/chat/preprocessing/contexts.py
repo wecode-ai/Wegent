@@ -16,6 +16,7 @@ eliminating the need to pass separate attachment_ids and knowledge_base_ids.
 """
 
 import logging
+from types import SimpleNamespace
 from typing import Any, List, Optional
 
 from fastapi import HTTPException, status
@@ -634,6 +635,35 @@ def link_contexts_to_subtask(
         raise
 
     return linked_context_ids
+
+
+def link_selected_documents_to_subtask(
+    db: Session,
+    *,
+    subtask_id: int,
+    user_id: int,
+    knowledge_base_id: int,
+    document_ids: List[int],
+    task: Optional["TaskResource"] = None,
+) -> List[int]:
+    """Create the notebook selected-documents context without an API payload."""
+    if not document_ids:
+        return []
+
+    context = SimpleNamespace(
+        type=ContextType.SELECTED_DOCUMENTS.value,
+        data={
+            "knowledge_base_id": knowledge_base_id,
+            "document_ids": document_ids,
+        },
+    )
+    return link_contexts_to_subtask(
+        db=db,
+        subtask_id=subtask_id,
+        user_id=user_id,
+        contexts=[context],
+        task=task,
+    )
 
 
 def _sync_kb_contexts_to_task(

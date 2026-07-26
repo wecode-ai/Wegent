@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PanelRightClose, PanelRightOpen, FileText, Shield, Plus } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, FileText, Shield, Plus, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
@@ -13,6 +13,7 @@ import { PermissionManagementTab } from '@/features/knowledge/permission/compone
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ArtifactPanel } from '@/features/knowledge/artifact/components/ArtifactPanel'
 
 // Helper function to get initial width from localStorage
 const getInitialWidth = (
@@ -60,6 +61,8 @@ interface DocumentPanelProps {
   onRefreshKnowledgeBase?: () => void
   /** Callback when document selection changes */
   onDocumentSelectionChange?: (documentIds: number[]) => void
+  /** Current document selection used as Artifact source scope */
+  selectedDocumentIds?: number[]
   /** Callback when new chat button is clicked */
   onNewChat?: () => void
   /** Callback when collapsed state changes */
@@ -94,6 +97,7 @@ export function DocumentPanel({
   canManagePermissions = false,
   onRefreshKnowledgeBase,
   onDocumentSelectionChange,
+  selectedDocumentIds = [],
   onNewChat,
   onCollapsedChange,
   groupInfo,
@@ -104,7 +108,7 @@ export function DocumentPanel({
   const { t: tCommon } = useTranslation('common')
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
+  const [activeTab, setActiveTab] = useState<'documents' | 'artifacts' | 'permissions'>('documents')
 
   // Initialize state with localStorage values
   const [panelWidth, setPanelWidth] = useState(() =>
@@ -244,86 +248,44 @@ export function DocumentPanel({
         <div className="absolute inset-y-0 -left-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
 
-      {/* Content area with tabs */}
-      {canManagePermissions ? (
-        <Tabs
-          value={activeTab}
-          onValueChange={value => setActiveTab(value as 'documents' | 'permissions')}
-          className="flex-1 flex flex-col overflow-hidden"
-        >
-          {/* Header row with tabs and action buttons */}
-          <div className="flex items-center justify-between px-4 pt-3">
-            <TabsList className="grid w-auto grid-cols-2">
-              <TabsTrigger value="documents" className="gap-1.5">
-                <FileText className="w-4 h-4" />
-                {t('chatPage.documents')}
-              </TabsTrigger>
-              <TabsTrigger value="permissions" className="gap-1.5">
-                <Shield className="w-4 h-4" />
+      {/* Content area with lightweight Studio tabs */}
+      <Tabs
+        value={activeTab}
+        onValueChange={value => setActiveTab(value as 'documents' | 'artifacts' | 'permissions')}
+        className="flex flex-1 flex-col overflow-hidden"
+      >
+        <div className="flex items-center justify-between gap-2 px-4 pt-3">
+          <TabsList
+            className={`grid w-auto ${canManagePermissions ? 'grid-cols-3' : 'grid-cols-2'}`}
+          >
+            <TabsTrigger
+              value="documents"
+              className="gap-1.5"
+              data-testid="knowledge-documents-tab"
+            >
+              <FileText className="h-4 w-4" />
+              {t('chatPage.documents')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="artifacts"
+              className="gap-1.5"
+              data-testid="knowledge-artifacts-tab"
+            >
+              <Sparkles className="h-4 w-4" />
+              {t('artifact.tab')}
+            </TabsTrigger>
+            {canManagePermissions && (
+              <TabsTrigger
+                value="permissions"
+                className="gap-1.5"
+                data-testid="knowledge-permissions-tab"
+              >
+                <Shield className="h-4 w-4" />
                 {t('document.permission.management')}
               </TabsTrigger>
-            </TabsList>
-            <div className="flex items-center gap-1">
-              {/* New chat button */}
-              {onNewChat && (
-                <TooltipProvider>
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onNewChat}
-                        className="h-8 w-8 p-0"
-                        data-testid="new-chat-button"
-                      >
-                        <Plus className="w-4 h-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      <p>{tCommon('tasks.new_conversation')}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
-              {/* Collapse button */}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={toggleCollapsed}
-                className="h-8 w-8 p-0"
-                title={t('chatPage.hideDocuments')}
-              >
-                <PanelRightClose className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-          <TabsContent value="documents" className="flex-1 overflow-auto p-4 mt-0">
-            <DocumentList
-              knowledgeBase={knowledgeBase}
-              canUpload={canUpload}
-              canManageAllDocuments={canManageAllDocuments}
-              compact={true}
-              paginationEnabled={true}
-              onRefreshKnowledgeBase={onRefreshKnowledgeBase}
-              onSelectionChange={onDocumentSelectionChange}
-              groupInfo={groupInfo}
-              onGroupClick={onGroupClick}
-              initialDocPath={initialDocPath}
-            />
-          </TabsContent>
-          <TabsContent value="permissions" className="flex-1 overflow-auto mt-0">
-            <PermissionManagementTab
-              kbId={knowledgeBase.id}
-              kbNamespace={knowledgeBase.namespace}
-            />
-          </TabsContent>
-        </Tabs>
-      ) : (
-        /* Document List only - no permission management */
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Header row with action buttons */}
-          <div className="flex items-center justify-end px-4 pt-3 gap-1">
-            {/* New chat button */}
+            )}
+          </TabsList>
+          <div className="flex items-center gap-1">
             {onNewChat && (
               <TooltipProvider>
                 <Tooltip delayDuration={300}>
@@ -335,7 +297,7 @@ export function DocumentPanel({
                       className="h-8 w-8 p-0"
                       data-testid="new-chat-button"
                     >
-                      <Plus className="w-4 h-4" />
+                      <Plus className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">
@@ -344,33 +306,47 @@ export function DocumentPanel({
                 </Tooltip>
               </TooltipProvider>
             )}
-            {/* Collapse button */}
             <Button
               variant="ghost"
               size="sm"
               onClick={toggleCollapsed}
               className="h-8 w-8 p-0"
               title={t('chatPage.hideDocuments')}
+              data-testid="knowledge-panel-collapse-button"
             >
-              <PanelRightClose className="w-4 h-4" />
+              <PanelRightClose className="h-4 w-4" />
             </Button>
           </div>
-          <div className="flex-1 overflow-auto p-4">
-            <DocumentList
-              knowledgeBase={knowledgeBase}
-              canUpload={canUpload}
-              canManageAllDocuments={canManageAllDocuments}
-              compact={true}
-              paginationEnabled={true}
-              onRefreshKnowledgeBase={onRefreshKnowledgeBase}
-              onSelectionChange={onDocumentSelectionChange}
-              groupInfo={groupInfo}
-              onGroupClick={onGroupClick}
-              initialDocPath={initialDocPath}
-            />
-          </div>
         </div>
-      )}
+        <TabsContent value="documents" className="mt-0 flex-1 overflow-auto p-4">
+          <DocumentList
+            knowledgeBase={knowledgeBase}
+            canUpload={canUpload}
+            canManageAllDocuments={canManageAllDocuments}
+            compact={true}
+            paginationEnabled={true}
+            onRefreshKnowledgeBase={onRefreshKnowledgeBase}
+            onSelectionChange={onDocumentSelectionChange}
+            groupInfo={groupInfo}
+            onGroupClick={onGroupClick}
+            initialDocPath={initialDocPath}
+          />
+        </TabsContent>
+        <TabsContent value="artifacts" className="mt-0 flex-1 overflow-hidden p-4">
+          <ArtifactPanel
+            knowledgeBaseId={knowledgeBase.id}
+            selectedDocumentIds={selectedDocumentIds}
+          />
+        </TabsContent>
+        {canManagePermissions && (
+          <TabsContent value="permissions" className="mt-0 flex-1 overflow-auto">
+            <PermissionManagementTab
+              kbId={knowledgeBase.id}
+              kbNamespace={knowledgeBase.namespace}
+            />
+          </TabsContent>
+        )}
+      </Tabs>
 
       {/* Overlay while resizing */}
       {isResizing && (

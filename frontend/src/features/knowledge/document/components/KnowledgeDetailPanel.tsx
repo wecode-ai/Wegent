@@ -245,6 +245,7 @@ export function KnowledgeDetailPanel({
           canManagePermissions={canManagePermissions}
           onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
           onDocumentSelectionChange={setSelectedDocumentIds}
+          selectedDocumentIds={selectedDocumentIds}
           onCollapsedChange={setIsDocumentPanelCollapsed}
           groupInfo={groupInfo}
           onGroupClick={onGroupClick}

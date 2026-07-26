@@ -59,6 +59,10 @@ _EXPORT_MAP = {
         "app.services.knowledge.task_knowledge_base_service",
         "TaskKnowledgeBaseService",
     ),
+    "ArtifactService": (
+        "app.services.knowledge.artifact_service",
+        "ArtifactService",
+    ),
 }
 
 

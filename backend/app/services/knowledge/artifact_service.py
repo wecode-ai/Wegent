@@ -1,0 +1,444 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Business logic for knowledge-base generated artifacts."""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy.orm import Session
+
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
+from app.models.user import User
+from app.schemas.knowledge_artifact import (
+    KnowledgeArtifact,
+    KnowledgeArtifactCreate,
+    KnowledgeArtifactListResponse,
+    KnowledgeArtifactStatus,
+    KnowledgeArtifactType,
+)
+from app.services.knowledge.artifact_repository import RedisArtifactRepository
+from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
+from app.services.knowledge.knowledge_service import KnowledgeService
+
+_MERMAID_BLOCK = re.compile(r"```mermaid\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+_ACTIVE_STATUSES = {
+    KnowledgeArtifactStatus.QUEUED,
+    KnowledgeArtifactStatus.RUNNING,
+}
+
+
+class ArtifactNotFoundError(LookupError):
+    """The knowledge base or Artifact is not accessible."""
+
+
+class ArtifactPermissionError(PermissionError):
+    """The user cannot mutate Artifacts in this knowledge base."""
+
+
+class ArtifactValidationError(ValueError):
+    """The request or generated output does not meet the Artifact contract."""
+
+
+class ArtifactService:
+    """Coordinate permissions, Redis persistence, and agent execution."""
+
+    def __init__(
+        self,
+        db: Session,
+        user: User,
+        repository: RedisArtifactRepository,
+        *,
+        launcher: ArtifactTaskLauncher | None = None,
+    ) -> None:
+        self.db = db
+        self.user = user
+        self.repository = repository
+        self.launcher = launcher or ArtifactTaskLauncher(db, user)
+
+    async def create(
+        self,
+        knowledge_base_id: int,
+        request: KnowledgeArtifactCreate,
+    ) -> KnowledgeArtifact:
+        """Persist a queued Artifact and launch its background Task."""
+        self._require_manage_access(knowledge_base_id)
+        document_ids = self._resolve_document_ids(
+            knowledge_base_id,
+            request.document_ids,
+        )
+        now = datetime.now().astimezone()
+        artifact = KnowledgeArtifact(
+            artifact_id=str(uuid4()),
+            knowledge_base_id=knowledge_base_id,
+            artifact_type=request.artifact_type,
+            title=self._default_title(request),
+            status=KnowledgeArtifactStatus.QUEUED,
+            source_document_ids=document_ids,
+            generation_config={"instruction": request.instruction},
+            user_id=self.user.id,
+            created_at=now,
+            updated_at=now,
+        )
+        await self.repository.save(artifact)
+        return await self._launch(artifact)
+
+    async def list(
+        self,
+        knowledge_base_id: int,
+        *,
+        limit: int = 50,
+    ) -> KnowledgeArtifactListResponse:
+        """List recent Artifacts and reconcile active generations."""
+        self._require_read_access(knowledge_base_id)
+        artifacts = await self.repository.list_by_knowledge_base(knowledge_base_id)
+        artifacts.sort(key=lambda item: item.created_at, reverse=True)
+        items = artifacts[:limit]
+        reconciled = await self._reconcile_many(items)
+        return KnowledgeArtifactListResponse(
+            items=reconciled,
+            can_manage=KnowledgeService.can_manage_knowledge_base_documents(
+                self.db,
+                knowledge_base_id,
+                self.user.id,
+            ),
+        )
+
+    async def get(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+    ) -> KnowledgeArtifact:
+        """Get and reconcile one Artifact."""
+        self._require_read_access(knowledge_base_id)
+        artifact = await self._get_artifact(knowledge_base_id, artifact_id)
+        return await self._reconcile(artifact)
+
+    async def rename(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+        title: str,
+    ) -> KnowledgeArtifact:
+        """Rename one Artifact."""
+        self._require_manage_access(knowledge_base_id)
+        artifact = await self._get_artifact(knowledge_base_id, artifact_id)
+        artifact.title = title.strip()
+        artifact.updated_at = datetime.now().astimezone()
+        await self.repository.save(artifact)
+        return artifact
+
+    async def retry(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+    ) -> KnowledgeArtifact:
+        """Retry a failed Artifact without changing its stable ID."""
+        self._require_manage_access(knowledge_base_id)
+        artifact = await self._get_artifact(knowledge_base_id, artifact_id)
+        artifact = await self._reconcile(artifact)
+        if artifact.status != KnowledgeArtifactStatus.FAILED:
+            raise ArtifactValidationError("Only failed artifacts can be retried")
+        artifact.status = KnowledgeArtifactStatus.QUEUED
+        artifact.task_id = None
+        artifact.assistant_subtask_id = None
+        artifact.content = None
+        artifact.error_message = None
+        artifact.completed_at = None
+        artifact.updated_at = datetime.now().astimezone()
+        await self.repository.save(artifact)
+        return await self._launch(artifact)
+
+    async def delete(self, knowledge_base_id: int, artifact_id: str) -> None:
+        """Delete the Artifact record without deleting its Task."""
+        self._require_manage_access(knowledge_base_id)
+        if not await self.repository.delete(knowledge_base_id, artifact_id):
+            raise ArtifactNotFoundError("Artifact not found")
+
+    async def _launch(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
+        try:
+            launch = await self.launcher.launch(
+                artifact_id=artifact.artifact_id,
+                artifact_type=artifact.artifact_type,
+                title=artifact.title,
+                knowledge_base_id=artifact.knowledge_base_id,
+                document_ids=artifact.source_document_ids,
+                instruction=artifact.generation_config.get("instruction"),
+            )
+        except Exception as exc:
+            artifact.status = KnowledgeArtifactStatus.FAILED
+            artifact.error_message = str(exc) or "Failed to start artifact generation"
+            artifact.completed_at = datetime.now().astimezone()
+            artifact.updated_at = artifact.completed_at
+            await self.repository.save(artifact)
+            raise
+
+        artifact.task_id = launch.task_id
+        artifact.assistant_subtask_id = launch.assistant_subtask_id
+        artifact.status = KnowledgeArtifactStatus.RUNNING
+        artifact.updated_at = datetime.now().astimezone()
+        await self.repository.save(artifact)
+        return artifact
+
+    async def _reconcile(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
+        if artifact.status not in _ACTIVE_STATUSES:
+            return artifact
+        execution_ids_changed = False
+        if artifact.assistant_subtask_id is None:
+            self._repair_execution_ids(artifact)
+            if artifact.assistant_subtask_id is None:
+                return artifact
+            execution_ids_changed = True
+
+        subtask = (
+            self.db.query(Subtask)
+            .filter(
+                Subtask.id == artifact.assistant_subtask_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+            )
+            .first()
+        )
+        if subtask is None:
+            if execution_ids_changed:
+                artifact.updated_at = datetime.now().astimezone()
+                await self.repository.save(artifact)
+            return artifact
+        return await self._apply_subtask_status(
+            artifact,
+            subtask,
+            changed=execution_ids_changed,
+        )
+
+    async def _reconcile_many(
+        self,
+        artifacts: list[KnowledgeArtifact],
+    ) -> list[KnowledgeArtifact]:
+        repaired_ids: set[str] = set()
+        for artifact in artifacts:
+            if (
+                artifact.status in _ACTIVE_STATUSES
+                and artifact.assistant_subtask_id is None
+            ):
+                self._repair_execution_ids(artifact)
+                if artifact.assistant_subtask_id is not None:
+                    repaired_ids.add(artifact.artifact_id)
+
+        subtask_ids = {
+            artifact.assistant_subtask_id
+            for artifact in artifacts
+            if artifact.status in _ACTIVE_STATUSES
+            and artifact.assistant_subtask_id is not None
+        }
+        subtasks = (
+            self.db.query(Subtask)
+            .filter(
+                Subtask.id.in_(subtask_ids),
+                Subtask.role == SubtaskRole.ASSISTANT,
+            )
+            .all()
+            if subtask_ids
+            else []
+        )
+        subtasks_by_id = {subtask.id: subtask for subtask in subtasks}
+
+        reconciled: list[KnowledgeArtifact] = []
+        for artifact in artifacts:
+            if artifact.status not in _ACTIVE_STATUSES:
+                reconciled.append(artifact)
+                continue
+            subtask = subtasks_by_id.get(artifact.assistant_subtask_id)
+            if subtask is None:
+                if artifact.artifact_id in repaired_ids:
+                    artifact.updated_at = datetime.now().astimezone()
+                    await self.repository.save(artifact)
+                reconciled.append(artifact)
+                continue
+            reconciled.append(
+                await self._apply_subtask_status(
+                    artifact,
+                    subtask,
+                    changed=artifact.artifact_id in repaired_ids,
+                )
+            )
+        return reconciled
+
+    async def _apply_subtask_status(
+        self,
+        artifact: KnowledgeArtifact,
+        subtask: Subtask,
+        *,
+        changed: bool,
+    ) -> KnowledgeArtifact:
+        status = (
+            subtask.status.value
+            if isinstance(subtask.status, SubtaskStatus)
+            else str(subtask.status)
+        ).upper()
+        if status == SubtaskStatus.PENDING.value:
+            changed = changed or artifact.status != KnowledgeArtifactStatus.QUEUED
+            artifact.status = KnowledgeArtifactStatus.QUEUED
+        elif status == SubtaskStatus.RUNNING.value:
+            changed = changed or artifact.status != KnowledgeArtifactStatus.RUNNING
+            artifact.status = KnowledgeArtifactStatus.RUNNING
+        elif status == SubtaskStatus.COMPLETED.value:
+            self._apply_completed_result(artifact, subtask)
+            changed = True
+        elif status in {
+            SubtaskStatus.FAILED.value,
+            SubtaskStatus.CANCELLED.value,
+            SubtaskStatus.DELETE.value,
+        }:
+            artifact.status = KnowledgeArtifactStatus.FAILED
+            artifact.error_message = (
+                subtask.error_message or "Artifact generation failed"
+            )
+            artifact.completed_at = subtask.completed_at or datetime.now().astimezone()
+            changed = True
+
+        if changed:
+            artifact.updated_at = datetime.now().astimezone()
+            await self.repository.save(artifact)
+        return artifact
+
+    def _apply_completed_result(
+        self,
+        artifact: KnowledgeArtifact,
+        subtask: Subtask,
+    ) -> None:
+        result = subtask.result if isinstance(subtask.result, dict) else {}
+        raw_content = result.get("value")
+        content = raw_content.strip() if isinstance(raw_content, str) else ""
+        try:
+            artifact.content = self._parse_content(artifact.artifact_type, content)
+            artifact.status = KnowledgeArtifactStatus.SUCCEEDED
+            artifact.error_message = None
+        except ArtifactValidationError as exc:
+            artifact.content = None
+            artifact.status = KnowledgeArtifactStatus.FAILED
+            artifact.error_message = str(exc)
+        artifact.completed_at = subtask.completed_at or datetime.now().astimezone()
+
+    @staticmethod
+    def _parse_content(
+        artifact_type: KnowledgeArtifactType,
+        content: str,
+    ) -> str:
+        if not content:
+            raise ArtifactValidationError("Generated result is empty")
+        if artifact_type == KnowledgeArtifactType.BRIEFING:
+            return content
+        matches = _MERMAID_BLOCK.findall(content)
+        if len(matches) != 1 or not matches[0].strip():
+            raise ArtifactValidationError(
+                "Generated result must contain exactly one Mermaid code block"
+            )
+        return matches[0].strip()
+
+    def _repair_execution_ids(self, artifact: KnowledgeArtifact) -> None:
+        tasks = (
+            self.db.query(TaskResource)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .order_by(TaskResource.id.desc())
+            .limit(200)
+            .all()
+        )
+        task = next(
+            (
+                item
+                for item in tasks
+                if (item.json or {})
+                .get("metadata", {})
+                .get("labels", {})
+                .get("artifactId")
+                == artifact.artifact_id
+            ),
+            None,
+        )
+        if task is None:
+            return
+        assistant = (
+            self.db.query(Subtask)
+            .filter(
+                Subtask.task_id == task.id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+            )
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+        if assistant is None:
+            return
+        artifact.task_id = task.id
+        artifact.assistant_subtask_id = assistant.id
+
+    def _resolve_document_ids(
+        self,
+        knowledge_base_id: int,
+        requested_ids: list[int],
+    ) -> list[int]:
+        query = self.db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kind_id == knowledge_base_id,
+            KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+        )
+        if requested_ids:
+            documents = query.filter(KnowledgeDocument.id.in_(requested_ids)).all()
+            found_ids = {document.id for document in documents}
+            if found_ids != set(requested_ids):
+                raise ArtifactValidationError(
+                    "Documents must belong to this knowledge base and be indexed"
+                )
+            return requested_ids
+
+        document_ids = [
+            row[0]
+            for row in query.order_by(KnowledgeDocument.id.asc()).with_entities(
+                KnowledgeDocument.id
+            )
+        ]
+        if not document_ids:
+            raise ArtifactValidationError("Knowledge base has no indexed documents")
+        return document_ids
+
+    async def _get_artifact(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+    ) -> KnowledgeArtifact:
+        artifact = await self.repository.get(knowledge_base_id, artifact_id)
+        if artifact is None:
+            raise ArtifactNotFoundError("Artifact not found")
+        return artifact
+
+    def _require_read_access(self, knowledge_base_id: int) -> None:
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+            self.db,
+            knowledge_base_id,
+            self.user.id,
+        )
+        if knowledge_base is None or not has_access:
+            raise ArtifactNotFoundError("Knowledge base not found")
+
+    def _require_manage_access(self, knowledge_base_id: int) -> None:
+        self._require_read_access(knowledge_base_id)
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            self.db,
+            knowledge_base_id,
+            self.user.id,
+        ):
+            raise ArtifactPermissionError("Artifact management is not allowed")
+
+    @staticmethod
+    def _default_title(request: KnowledgeArtifactCreate) -> str:
+        if request.title and request.title.strip():
+            return request.title.strip()
+        if request.artifact_type == KnowledgeArtifactType.MIND_MAP:
+            return "知识库思维导图"
+        return "知识库简报"
