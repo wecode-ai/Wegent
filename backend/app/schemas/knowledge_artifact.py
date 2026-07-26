@@ -73,6 +73,7 @@ class KnowledgeArtifact(BaseModel):
     content: str | None = None
     source_document_ids: list[int] = Field(default_factory=list)
     generation_config: dict[str, Any] = Field(default_factory=dict)
+    error_code: str | None = None
     error_message: str | None = None
     user_id: int
     created_at: datetime

@@ -33,6 +33,7 @@ function buildArtifact(
     content: status === 'succeeded' ? '# 结论' : null,
     source_document_ids: [101],
     generation_config: {},
+    error_code: null,
     error_message: null,
     user_id: 7,
     created_at: '2026-07-26T12:00:00+08:00',

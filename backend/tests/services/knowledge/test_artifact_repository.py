@@ -15,6 +15,7 @@ from app.schemas.knowledge_artifact import (
 )
 from app.services.knowledge.artifact_repository import (
     ArtifactStorageError,
+    RedisArtifactExecutionLease,
     RedisArtifactRepository,
 )
 
@@ -24,6 +25,8 @@ class FakeRedis:
 
     def __init__(self) -> None:
         self.values: dict[str, dict[str, str]] = {}
+        self.strings: dict[str, str] = {}
+        self.expirations: dict[str, int] = {}
         self.closed = False
 
     async def hset(self, key: str, field: str, value: str) -> int:
@@ -39,8 +42,19 @@ class FakeRedis:
     async def hdel(self, key: str, field: str) -> int:
         return int(self.values.get(key, {}).pop(field, None) is not None)
 
+    async def set(self, key: str, value: str, *, ex: int) -> bool:
+        self.strings[key] = value
+        self.expirations[key] = ex
+        return True
+
+    async def mget(self, keys: list[str]) -> list[str | None]:
+        return [self.strings.get(key) for key in keys]
+
     async def delete(self, key: str) -> int:
-        return int(self.values.pop(key, None) is not None)
+        hash_deleted = self.values.pop(key, None) is not None
+        string_deleted = self.strings.pop(key, None) is not None
+        self.expirations.pop(key, None)
+        return int(hash_deleted or string_deleted)
 
     async def aclose(self) -> None:
         self.closed = True
@@ -108,3 +122,21 @@ async def test_repository_exposes_redis_write_failure():
 
     with pytest.raises(ArtifactStorageError, match="unavailable"):
         await repository.save(build_artifact())
+
+
+@pytest.mark.asyncio
+async def test_execution_lease_refresh_list_and_release():
+    client = FakeRedis()
+    lease = RedisArtifactExecutionLease(
+        ttl_seconds=45,
+        client_factory=lambda: client,
+    )
+
+    await lease.refresh(41)
+
+    assert client.expirations["knowledge-artifact-execution:41"] == 45
+    assert await lease.active_subtask_ids({41, 42}) == {41}
+
+    await lease.release(41)
+
+    assert await lease.active_subtask_ids({41}) == set()

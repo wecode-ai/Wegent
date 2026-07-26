@@ -19,6 +19,7 @@ export interface KnowledgeArtifact {
   generation_config: {
     instruction?: string | null
   }
+  error_code: string | null
   error_message: string | null
   user_id: number
   created_at: string

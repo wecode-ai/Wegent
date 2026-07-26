@@ -20,6 +20,104 @@ class ArtifactStorageError(RuntimeError):
     """Raised when permanent Artifact storage is unavailable or corrupt."""
 
 
+class RedisArtifactExecutionLease:
+    """Track whether an in-process Artifact execution is still alive."""
+
+    KEY_PREFIX = "knowledge-artifact-execution"
+    DEFAULT_TTL_SECONDS = 60
+
+    def __init__(
+        self,
+        redis_url: str = settings.REDIS_URL,
+        *,
+        ttl_seconds: int = DEFAULT_TTL_SECONDS,
+        client_factory: Callable[[], Any] | None = None,
+    ) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        self._redis_url = redis_url
+        self._ttl_seconds = ttl_seconds
+        self._client_factory = client_factory
+
+    def _create_client(self) -> Redis:
+        if self._client_factory is not None:
+            return self._client_factory()
+        return Redis.from_url(
+            self._redis_url,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_timeout=5.0,
+            socket_connect_timeout=2.0,
+            retry_on_timeout=True,
+        )
+
+    @classmethod
+    def key_for(cls, assistant_subtask_id: int) -> str:
+        """Build the ephemeral execution lease key."""
+        return f"{cls.KEY_PREFIX}:{assistant_subtask_id}"
+
+    async def refresh(self, assistant_subtask_id: int) -> None:
+        """Create or renew an execution lease."""
+        client = self._create_client()
+        try:
+            await client.set(
+                self.key_for(assistant_subtask_id),
+                "1",
+                ex=self._ttl_seconds,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to refresh Artifact execution lease for subtask %s",
+                assistant_subtask_id,
+            )
+            raise ArtifactStorageError(
+                "Artifact execution lease is unavailable"
+            ) from exc
+        finally:
+            await client.aclose()
+
+    async def active_subtask_ids(
+        self,
+        assistant_subtask_ids: set[int],
+    ) -> set[int]:
+        """Return subtask IDs whose execution leases are still alive."""
+        if not assistant_subtask_ids:
+            return set()
+
+        ordered_ids = sorted(assistant_subtask_ids)
+        client = self._create_client()
+        try:
+            values = await client.mget(
+                [self.key_for(subtask_id) for subtask_id in ordered_ids]
+            )
+            return {
+                subtask_id
+                for subtask_id, value in zip(ordered_ids, values, strict=True)
+                if value is not None
+            }
+        except Exception as exc:
+            logger.exception("Failed to read Artifact execution leases")
+            raise ArtifactStorageError(
+                "Artifact execution lease is unavailable"
+            ) from exc
+        finally:
+            await client.aclose()
+
+    async def release(self, assistant_subtask_id: int) -> None:
+        """Release an execution lease after the dispatcher terminates."""
+        client = self._create_client()
+        try:
+            await client.delete(self.key_for(assistant_subtask_id))
+        except Exception as exc:
+            logger.warning(
+                "Failed to release Artifact execution lease for subtask %s: %s",
+                assistant_subtask_id,
+                exc,
+            )
+        finally:
+            await client.aclose()
+
+
 class RedisArtifactRepository:
     """Store all artifacts for one knowledge base in one Redis Hash."""
 

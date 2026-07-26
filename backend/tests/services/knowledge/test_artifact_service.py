@@ -4,7 +4,7 @@
 
 """Tests for knowledge Artifact orchestration."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,11 +27,13 @@ from app.services.knowledge.artifact_task_launcher import ArtifactTaskLaunchResu
 def build_service() -> tuple[ArtifactService, AsyncMock, AsyncMock]:
     repository = AsyncMock()
     launcher = AsyncMock()
+    execution_lease = AsyncMock()
     service = ArtifactService(
         MagicMock(),
         SimpleNamespace(id=7),
         repository,
         launcher=launcher,
+        execution_lease=execution_lease,
     )
     return service, repository, launcher
 
@@ -177,9 +179,65 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
 
 
 @pytest.mark.asyncio
+async def test_reconcile_marks_stale_running_execution_as_interrupted():
+    service, repository, _ = build_service()
+    artifact = build_artifact()
+    artifact.updated_at = datetime.now().astimezone() - timedelta(minutes=3)
+    subtask = SimpleNamespace(
+        id=41,
+        status="RUNNING",
+        result=None,
+        completed_at=None,
+        error_message=None,
+    )
+    query = MagicMock()
+    query.filter.return_value.first.return_value = subtask
+    service.db.query.return_value = query
+    service.execution_lease.active_subtask_ids.return_value = set()
+
+    with patch(
+        "app.services.knowledge.artifact_service.persist_completed_result",
+        new_callable=AsyncMock,
+    ) as persist_result:
+        reconciled = await service._reconcile(artifact)
+
+    assert reconciled.status == KnowledgeArtifactStatus.FAILED
+    assert reconciled.error_code == "EXECUTION_INTERRUPTED"
+    assert reconciled.error_message == (
+        "Artifact generation was interrupted. Please retry."
+    )
+    persist_result.assert_awaited_once()
+    repository.save.assert_awaited_once_with(artifact)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_stale_running_execution_with_active_lease():
+    service, repository, _ = build_service()
+    artifact = build_artifact()
+    artifact.updated_at = datetime.now().astimezone() - timedelta(minutes=3)
+    subtask = SimpleNamespace(
+        id=41,
+        status="RUNNING",
+        result=None,
+        completed_at=None,
+        error_message=None,
+    )
+    query = MagicMock()
+    query.filter.return_value.first.return_value = subtask
+    service.db.query.return_value = query
+    service.execution_lease.active_subtask_ids.return_value = {41}
+
+    reconciled = await service._reconcile(artifact)
+
+    assert reconciled.status == KnowledgeArtifactStatus.RUNNING
+    repository.save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_retry_reuses_artifact_identity_and_relaunches():
     service, repository, launcher = build_service()
     artifact = build_artifact(status=KnowledgeArtifactStatus.FAILED)
+    artifact.error_code = "EXECUTION_INTERRUPTED"
     artifact.error_message = "模型调用失败"
     repository.get.return_value = artifact
     launcher.launch.return_value = ArtifactTaskLaunchResult(
@@ -194,4 +252,5 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
     assert retried.status == KnowledgeArtifactStatus.RUNNING
     assert retried.task_id == 32
     assert retried.assistant_subtask_id == 42
+    assert retried.error_code is None
     assert retried.error_message is None
