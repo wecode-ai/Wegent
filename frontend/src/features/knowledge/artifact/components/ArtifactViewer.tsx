@@ -7,7 +7,6 @@
 import { useEffect, useState } from 'react'
 import { AlertCircle, BookPlus, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
-import MermaidDiagram from '@/components/common/MermaidDiagram'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -151,14 +150,12 @@ export function ArtifactViewer({
                   }}
                 />
               ) : (
-                <div className="space-y-3">
-                  <p
-                    className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-text-secondary"
-                    data-testid="legacy-mind-map-hint"
-                  >
-                    {t('artifact.mindMap.legacyHint')}
-                  </p>
-                  <MermaidDiagram code={artifact.content} />
+                <div
+                  className="flex h-full flex-col items-center justify-center text-center"
+                  data-testid="invalid-mind-map-state"
+                >
+                  <AlertCircle className="mb-3 h-8 w-8 text-error" />
+                  <p className="font-medium text-error">{t('artifact.mindMap.invalid')}</p>
                 </div>
               )
             ) : (

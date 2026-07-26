@@ -23,12 +23,6 @@ jest.mock('@/hooks/use-toast', () => ({
 }))
 
 jest.mock('@/components/common/EnhancedMarkdown', () => () => null)
-jest.mock('@/components/common/MermaidDiagram', () => {
-  function MockMermaidDiagram() {
-    return <div data-testid="mermaid-diagram" />
-  }
-  return MockMermaidDiagram
-})
 jest.mock('@/features/knowledge/artifact/components/InteractiveMindMap', () => ({
   InteractiveMindMap: ({ onAskNode }: { onAskNode: (nodeId: string) => void }) => (
     <button data-testid="mock-mind-map-ask" onClick={() => onAskNode('child')}>
@@ -131,7 +125,7 @@ it('sends a structured node question through the parent callback', () => {
   )
 })
 
-it('keeps legacy Mermaid artifacts readable without interactive actions', () => {
+it('rejects mind maps outside the structured data contract', () => {
   const artifact: KnowledgeArtifact = {
     ...failedArtifact,
     artifact_type: 'mind_map',
@@ -153,6 +147,6 @@ it('keeps legacy Mermaid artifacts readable without interactive actions', () => 
     />
   )
 
-  expect(screen.getByTestId('legacy-mind-map-hint')).toBeInTheDocument()
-  expect(screen.getByTestId('mermaid-diagram')).toBeInTheDocument()
+  expect(screen.getByTestId('invalid-mind-map-state')).toBeInTheDocument()
+  expect(screen.queryByTestId('mock-mind-map-ask')).not.toBeInTheDocument()
 })
