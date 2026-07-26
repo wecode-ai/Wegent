@@ -39,6 +39,7 @@ const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS 
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
+const EMBEDDED_BROWSER_ACTION_SCRIPT: &str = include_str!("embedded_browser_action.js");
 const EMBEDDED_BROWSER_INSPECT_SCRIPT: &str = include_str!("embedded_browser_inspect.js");
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_BRIDGE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -728,61 +729,6 @@ fn script_expression(expression: &str) -> String {
     )
 }
 
-fn script_selector_action(selector: &str, action: &str) -> String {
-    format!(
-        r#"(async () => {{
-  const element = document.querySelector({selector});
-  if (!element) {{
-    return {{ ok: false, error: "Element not found" }};
-  }}
-  element.scrollIntoView({{ block: "center", inline: "center" }});
-  {action}
-  return {{ ok: true }};
-}})()"#,
-        selector = json_string(selector)
-    )
-}
-
-fn script_click_at(x: f64, y: f64) -> String {
-    format!(
-        r#"(async () => {{
-  const element = document.elementFromPoint({x}, {y});
-  if (!element) {{
-    return {{ ok: false, error: "Element not found at coordinates" }};
-  }}
-  element.dispatchEvent(new MouseEvent("mousedown", {{ bubbles: true, clientX: {x}, clientY: {y} }}));
-  element.dispatchEvent(new MouseEvent("mouseup", {{ bubbles: true, clientX: {x}, clientY: {y} }}));
-  element.click();
-  return {{ ok: true }};
-}})()"#
-    )
-}
-
-fn script_type_text(selector: Option<&str>, text: &str) -> String {
-    let element = selector
-        .map(|selector| format!("document.querySelector({})", json_string(selector)))
-        .unwrap_or_else(|| "document.activeElement".to_string());
-    format!(
-        r#"(async () => {{
-  const element = {element};
-  if (!element) {{
-    return {{ ok: false, error: "Element not found" }};
-  }}
-  element.focus();
-  const text = {text};
-  if ("value" in element) {{
-    element.value = `${{element.value ?? ""}}${{text}}`;
-    element.dispatchEvent(new InputEvent("input", {{ bubbles: true, inputType: "insertText", data: text }}));
-    element.dispatchEvent(new Event("change", {{ bubbles: true }}));
-  }} else {{
-    document.execCommand("insertText", false, text);
-  }}
-  return {{ ok: true }};
-}})()"#,
-        text = json_string(text)
-    )
-}
-
 fn script_press_key(key: &str) -> String {
     format!(
         r#"(async () => {{
@@ -830,6 +776,25 @@ fn script_wait_for(request: &EmbeddedBrowserBridgeRequest) -> String {
         text = text.unwrap_or_else(|| "null".to_string()),
         url = url.unwrap_or_else(|| "null".to_string())
     )
+}
+
+fn script_browser_action(
+    action: &str,
+    request: &EmbeddedBrowserBridgeRequest,
+) -> Result<String, String> {
+    let input = json!({
+        "action": action,
+        "selector": request.selector,
+        "text": request.text,
+        "x": request.x,
+        "y": request.y,
+        "inspectId": request.inspect_id,
+        "index": request.index,
+        "ref": request.ref_,
+    });
+    let encoded_input = serde_json::to_string(&input)
+        .map_err(|error| format!("Failed to encode embedded browser action input: {error}"))?;
+    Ok(EMBEDDED_BROWSER_ACTION_SCRIPT.replace("__WEWORK_ACTION_INPUT__", &encoded_input))
 }
 
 fn script_semantic_inspect(options: &Value) -> Result<String, String> {
@@ -1026,26 +991,22 @@ fn handle_bridge_request(
             script_resolve_inspect_target(&request),
             request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
         ),
-        "click" => {
-            let script = if let Some(selector) = request.selector.as_deref() {
-                script_selector_action(selector, "element.click();")
-            } else {
-                script_click_at(request.x.unwrap_or(0.0), request.y.unwrap_or(0.0))
-            };
-            eval_json(
-                state,
-                &label,
-                script,
-                request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
-            )
-        }
+        "click" => eval_json(
+            state,
+            &label,
+            script_browser_action("click", &request)?,
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
         "typeText" => eval_json(
             state,
             &label,
-            script_type_text(
-                request.selector.as_deref(),
-                request.text.as_deref().unwrap_or(""),
-            ),
+            script_browser_action("type", &request)?,
+            request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
+        ),
+        "fill" => eval_json(
+            state,
+            &label,
+            script_browser_action("fill", &request)?,
             request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
         ),
         "press" => eval_json(
@@ -1474,7 +1435,7 @@ mod tests {
     use super::{
         browser_open_action, browser_webview_url, download_event_owner,
         logical_owner_for_native_label, native_webview_label, ready_logical_entry,
-        relabel_logical_entry, remove_logical_entry_if_native_matches,
+        relabel_logical_entry, remove_logical_entry_if_native_matches, script_browser_action,
         script_resolve_inspect_target, script_semantic_inspect,
         update_logical_entry_if_native_matches, wait_for_browser_ready,
         EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
@@ -1652,6 +1613,38 @@ mod tests {
         assert!(script.contains("\"index\":7"));
         assert!(script.contains("\"ref\":\"wk-mvp:wk-inspect-1:main:7:abcd1234\""));
         assert!(!script.contains("document.querySelector"));
+    }
+
+    #[test]
+    fn browser_action_script_embeds_target_input_as_json_data() {
+        let script = script_browser_action(
+            "fill",
+            &EmbeddedBrowserBridgeRequest {
+                action: "fill".to_string(),
+                url: None,
+                expression: None,
+                selector: Some("#name".to_string()),
+                text: Some("Alice \" Admin".to_string()),
+                key: None,
+                x: None,
+                y: None,
+                timeout_ms: None,
+                label: None,
+                options: None,
+                inspect_id: Some("wk-inspect-1".to_string()),
+                index: Some(2),
+                ref_: None,
+            },
+        )
+        .unwrap();
+
+        assert!(script.contains("const input = {"));
+        assert!(script.contains("\"action\":\"fill\""));
+        assert!(script.contains("\"selector\":\"#name\""));
+        assert!(script.contains("\"text\":\"Alice \\\" Admin\""));
+        assert!(script.contains("\"inspectId\":\"wk-inspect-1\""));
+        assert!(script.contains("\"index\":2"));
+        assert!(!script.contains("__WEWORK_ACTION_INPUT__"));
     }
 
     #[test]

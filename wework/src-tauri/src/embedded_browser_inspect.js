@@ -119,6 +119,7 @@
     current.inspectRegistries = Array.isArray(current.inspectRegistries)
       ? current.inspectRegistries
       : []
+    current.resolveInspectElement = resolveInspectElement
     current.resolveInspectTarget = resolveInspectTarget
     window.__WEWORK_BROWSER_AGENT__ = current
     if (!current.cleanupInstalled) {
@@ -572,7 +573,7 @@
     }
   }
 
-  function resolveInspectTarget(input) {
+  function resolveInspectElement(input) {
     const current = window.__WEWORK_BROWSER_AGENT__
     if (!current || !Array.isArray(current.inspectRegistries)) {
       return { ok: false, errorCode: 'stale_inspect', message: 'No inspect registry is available.' }
@@ -646,7 +647,16 @@
       rect,
       visible: true,
       actionable: true,
+      element,
+      record,
     }
+  }
+
+  function resolveInspectTarget(input) {
+    const result = resolveInspectElement(input)
+    if (!result.ok) return result
+    const { element, record, ...serializable } = result
+    return serializable
   }
 
   function buildInspectText(values, viewport) {

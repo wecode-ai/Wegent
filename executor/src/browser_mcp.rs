@@ -198,17 +198,21 @@ async fn execute_tool(
                 true,
             )
         }
-        "browser_click" => json!({ "action": "click", "selector": selector_arg(arguments) }),
+        "browser_click" => action_target_payload("click", arguments),
         "browser_click_coordinates" => json!({
             "action": "click",
             "x": number_arg(arguments, "x"),
             "y": number_arg(arguments, "y")
         }),
-        "browser_type" => json!({
-            "action": "typeText",
-            "selector": selector_arg(arguments),
-            "text": string_arg(arguments, "text")
-        }),
+        "browser_type" => action_target_payload("typeText", arguments),
+        "browser_fill" => action_target_payload("fill", arguments),
+        "browser_open_and_inspect"
+        | "browser_click_and_inspect"
+        | "browser_fill_and_inspect"
+        | "browser_type_and_inspect"
+        | "browser_wait_and_inspect" => {
+            return execute_combined_tool(client, name, arguments, sequence, started).await
+        }
         "browser_press_key" => json!({ "action": "press", "key": string_arg(arguments, "key") }),
         "browser_wait_for" => json!({
             "action": "waitFor",
@@ -277,6 +281,122 @@ async fn execute_tool(
         None,
     );
     result
+}
+
+async fn execute_combined_tool(
+    client: &reqwest::Client,
+    name: &str,
+    arguments: &Value,
+    sequence: u64,
+    started: Instant,
+) -> Value {
+    let combined_started = Instant::now();
+    let tool = name.strip_prefix("browser_").unwrap_or(name);
+    let mut action = None;
+    let mut warnings = Vec::new();
+    let mut error = None;
+
+    if let Some(payload) = combined_action_payload(name, arguments) {
+        let result = call_bridge(client, payload, sequence, name, started).await;
+        match result {
+            Ok(value) => {
+                collect_warnings(&mut warnings, value.get("warnings"));
+                if value.get("ok").and_then(Value::as_bool) == Some(false) {
+                    error = value.get("error").cloned();
+                }
+                action = Some(value);
+            }
+            Err(message) => {
+                error = Some(json!({ "code": "bridge_action_failed", "message": message }));
+            }
+        }
+    }
+
+    let wait = match call_bridge(
+        client,
+        wait_payload(name, arguments),
+        sequence,
+        name,
+        started,
+    )
+    .await
+    {
+        Ok(value) => normalize_wait_result(
+            arguments,
+            &value,
+            WaitConditionOptions {
+                allow_flat_text: name == "browser_wait_and_inspect",
+                allow_flat_selector: name == "browser_wait_and_inspect",
+                allow_flat_url: name == "browser_wait_and_inspect"
+                    || name == "browser_open_and_inspect",
+            },
+        ),
+        Err(message) => json!({
+            "ok": false,
+            "reason": "operation_failed",
+            "elapsedMs": 0,
+            "observed": {},
+            "warnings": [],
+            "error": { "code": "bridge_wait_failed", "message": message }
+        }),
+    };
+    collect_warnings(&mut warnings, wait.get("warnings"));
+    if wait.get("ok").and_then(Value::as_bool) == Some(false) && error.is_none() {
+        error = wait.get("error").cloned();
+    }
+
+    let inspect = match call_bridge(
+        client,
+        combined_inspect_payload(arguments),
+        sequence,
+        name,
+        started,
+    )
+    .await
+    {
+        Ok(value) => {
+            collect_warnings(&mut warnings, value.get("warnings"));
+            Some(value)
+        }
+        Err(message) => {
+            if error.is_none() {
+                error = Some(json!({ "code": "bridge_inspect_failed", "message": message }));
+            }
+            None
+        }
+    };
+
+    let action_ok = action
+        .as_ref()
+        .and_then(|value| value.get("ok"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let wait_ok = wait.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let ok = action_ok && wait_ok && inspect.is_some() && error.is_none();
+
+    let mut result = Map::new();
+    result.insert(
+        "kind".to_owned(),
+        Value::String("browser.combined".to_owned()),
+    );
+    result.insert("ok".to_owned(), Value::Bool(ok));
+    result.insert("tool".to_owned(), Value::String(tool.to_owned()));
+    if let Some(action) = action {
+        result.insert("action".to_owned(), action);
+    }
+    result.insert("wait".to_owned(), wait);
+    if let Some(inspect) = inspect {
+        result.insert("inspect".to_owned(), inspect);
+    }
+    result.insert(
+        "elapsedMs".to_owned(),
+        json!(combined_started.elapsed().as_millis()),
+    );
+    result.insert("warnings".to_owned(), Value::Array(warnings));
+    if let Some(error) = error {
+        result.insert("error".to_owned(), error);
+    }
+    text_result(Value::Object(result), false)
 }
 
 async fn call_bridge(
@@ -460,7 +580,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "browser_click",
-            "Click an element by CSS selector or snapshot ref.",
+            "Click an element by inspect index/ref or CSS selector.",
             &[],
         ),
         tool(
@@ -468,7 +588,41 @@ fn tools() -> Vec<Value> {
             "Click viewport coordinates.",
             &["x", "y"],
         ),
-        tool("browser_type", "Type text into an element.", &["text"]),
+        tool(
+            "browser_type",
+            "Append text into an editable element by inspect index/ref, CSS selector, or the focused element.",
+            &["text"],
+        ),
+        tool(
+            "browser_fill",
+            "Fill a single editable element by inspect index/ref or CSS selector.",
+            &["text"],
+        ),
+        tool(
+            "browser_open_and_inspect",
+            "Open a URL, wait briefly for the page, then return a structured page inspection.",
+            &["url"],
+        ),
+        tool(
+            "browser_click_and_inspect",
+            "Click an element by inspect index/ref or CSS selector, then return a fresh structured page inspection.",
+            &[],
+        ),
+        tool(
+            "browser_fill_and_inspect",
+            "Fill a single editable element, then return a fresh structured page inspection.",
+            &["text"],
+        ),
+        tool(
+            "browser_type_and_inspect",
+            "Append text into an editable element, then return a fresh structured page inspection.",
+            &["text"],
+        ),
+        tool(
+            "browser_wait_and_inspect",
+            "Wait for page state, then return a fresh structured page inspection.",
+            &[],
+        ),
         tool(
             "browser_fill_form",
             "Fill multiple form fields.",
@@ -514,12 +668,17 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
         "ref",
         "element",
         "text",
+        "value",
         "key",
         "selector",
         "expression",
         "function",
         "fn",
         "inspectId",
+        "waitUntil",
+        "urlIncludes",
+        "urlMatches",
+        "titleIncludes",
         "mode",
         "direction",
         "startRef",
@@ -541,6 +700,8 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
         properties.insert(key.to_owned(), json!({ "type": "number" }));
     }
     properties.insert("fields".to_owned(), json!({ "type": "array" }));
+    properties.insert("condition".to_owned(), json!({ "type": "object" }));
+    properties.insert("inspectOptions".to_owned(), json!({ "type": "object" }));
     for key in ["interactiveOnly", "includeTextBlocks", "includeHidden"] {
         properties.insert(key.to_owned(), json!({ "type": "boolean" }));
     }
@@ -570,12 +731,71 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 
 fn text_result(data: impl Into<Value>, is_error: bool) -> Value {
     let data = data.into();
-    let text = inspect_text_result(&data).unwrap_or_else(|| {
-        data.as_str()
-            .map(str::to_owned)
-            .unwrap_or_else(|| serde_json::to_string_pretty(&data).unwrap_or_default())
-    });
+    let text = combined_text_result(&data)
+        .or_else(|| inspect_text_result(&data))
+        .unwrap_or_else(|| {
+            data.as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| serde_json::to_string_pretty(&data).unwrap_or_default())
+        });
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
+}
+
+fn combined_text_result(data: &Value) -> Option<String> {
+    if data.get("kind").and_then(Value::as_str) != Some("browser.combined") {
+        return None;
+    }
+    let tool = data
+        .get("tool")
+        .and_then(Value::as_str)
+        .unwrap_or("combined");
+    let ok = data.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let mut sections = vec![format!("Combined: {tool} ok={ok}")];
+    if let Some(action) = data.get("action") {
+        let action_name = action
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("action");
+        let action_ok = action.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        sections.push(format!("Action: {action_name} ok={action_ok}"));
+        if let Some(effect) = action.get("effect") {
+            sections.push(format!(
+                "Effect: {}",
+                serde_json::to_string(effect).unwrap_or_default()
+            ));
+        }
+    }
+    if let Some(wait) = data.get("wait") {
+        let reason = wait
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let wait_ok = wait.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        sections.push(format!("Wait: {reason} ok={wait_ok}"));
+    }
+    if let Some(error) = data.get("error") {
+        sections.push(format!(
+            "Error: {}",
+            serde_json::to_string(error).unwrap_or_default()
+        ));
+    }
+    if let Some(inspect_text) = data
+        .pointer("/inspect/inspectText")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+    {
+        sections.push(format!("Inspect:\n{inspect_text}"));
+    }
+    let mut compact = data.clone();
+    if let Some(object) = compact.as_object_mut() {
+        if let Some(inspect) = object.get_mut("inspect").and_then(Value::as_object_mut) {
+            inspect.remove("textPreview");
+            inspect.remove("inspectText");
+        }
+    }
+    let json_text = serde_json::to_string_pretty(&compact).unwrap_or_default();
+    sections.push(format!("JSON:\n{json_text}"));
+    Some(sections.join("\n\n"))
 }
 
 fn inspect_text_result(data: &Value) -> Option<String> {
@@ -648,6 +868,244 @@ fn inspect_payload(value: &Value) -> Value {
     })
 }
 
+fn action_target_payload(action: &str, value: &Value) -> Value {
+    let mut payload = Map::new();
+    payload.insert("action".to_owned(), Value::String(action.to_owned()));
+    if let Some(text) =
+        optional_string_arg(value, "text").or_else(|| optional_string_arg(value, "value"))
+    {
+        payload.insert("text".to_owned(), Value::String(text));
+    }
+    if let Some(ref_value) = optional_string_arg(value, "ref") {
+        payload.insert("ref".to_owned(), Value::String(ref_value));
+    }
+    if let Some(inspect_id) = optional_string_arg(value, "inspectId") {
+        payload.insert("inspectId".to_owned(), Value::String(inspect_id));
+    }
+    if let Some(index) = optional_number_arg(value, "index") {
+        payload.insert("index".to_owned(), json!(index));
+    }
+    if let Some(selector) =
+        optional_string_arg(value, "selector").or_else(|| optional_string_arg(value, "element"))
+    {
+        payload.insert(
+            "selector".to_owned(),
+            Value::String(
+                selector
+                    .strip_prefix("css=")
+                    .unwrap_or(&selector)
+                    .to_owned(),
+            ),
+        );
+    }
+    if let Some(timeout_ms) = optional_number_arg(value, "timeoutMs") {
+        payload.insert("timeoutMs".to_owned(), json!(timeout_ms));
+    }
+    Value::Object(payload)
+}
+
+fn combined_action_payload(name: &str, arguments: &Value) -> Option<Value> {
+    match name {
+        "browser_open_and_inspect" => Some(json!({
+            "action": "open",
+            "url": string_arg(arguments, "url"),
+            "timeoutMs": optional_number_arg(arguments, "timeoutMs")
+        })),
+        "browser_click_and_inspect" => Some(action_target_payload("click", arguments)),
+        "browser_fill_and_inspect" => Some(action_target_payload("fill", arguments)),
+        "browser_type_and_inspect" => Some(action_target_payload("typeText", arguments)),
+        "browser_wait_and_inspect" => None,
+        _ => None,
+    }
+}
+
+fn wait_payload(name: &str, arguments: &Value) -> Value {
+    let mut payload = Map::new();
+    payload.insert("action".to_owned(), Value::String("waitFor".to_owned()));
+    if let Some(timeout_ms) = optional_number_arg(arguments, "timeoutMs") {
+        payload.insert("timeoutMs".to_owned(), json!(timeout_ms));
+    }
+    let allow_flat_wait_target =
+        name == "browser_wait_and_inspect" || name == "browser_open_and_inspect";
+    apply_wait_condition(
+        &mut payload,
+        arguments,
+        WaitConditionOptions {
+            allow_flat_text: name == "browser_wait_and_inspect",
+            allow_flat_selector: name == "browser_wait_and_inspect",
+            allow_flat_url: allow_flat_wait_target,
+        },
+    );
+    if name == "browser_open_and_inspect" && !payload.contains_key("url") {
+        if let Some(url) = optional_string_arg(arguments, "url") {
+            payload.insert("url".to_owned(), Value::String(url));
+        }
+    }
+    if !payload.contains_key("text")
+        && !payload.contains_key("selector")
+        && !payload.contains_key("url")
+        && !payload.contains_key("expression")
+    {
+        payload.insert(
+            "expression".to_owned(),
+            Value::String(
+                "document.readyState === 'interactive' || document.readyState === 'complete'"
+                    .to_owned(),
+            ),
+        );
+    }
+    Value::Object(payload)
+}
+
+fn apply_wait_condition(
+    payload: &mut Map<String, Value>,
+    arguments: &Value,
+    options: WaitConditionOptions,
+) {
+    let condition = arguments
+        .get("condition")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let flat_text = options
+        .allow_flat_text
+        .then(|| optional_string_arg(arguments, "text"))
+        .flatten();
+    if let Some(text) = flat_text.or_else(|| condition_string(&condition, "textVisible")) {
+        payload.insert("text".to_owned(), Value::String(text));
+    }
+    let flat_selector = options
+        .allow_flat_selector
+        .then(|| optional_string_arg(arguments, "selector"))
+        .flatten();
+    if let Some(selector) = flat_selector
+        .or_else(|| condition_string(&condition, "selectorVisible"))
+        .or_else(|| condition_string(&condition, "selectorAttached"))
+    {
+        payload.insert("selector".to_owned(), Value::String(selector));
+    }
+    let flat_url = options
+        .allow_flat_url
+        .then(|| optional_string_arg(arguments, "url"))
+        .flatten();
+    if let Some(url) = optional_string_arg(arguments, "urlIncludes")
+        .or(flat_url)
+        .or_else(|| condition_string(&condition, "urlIncludes"))
+    {
+        payload.insert("url".to_owned(), Value::String(url));
+    }
+    if let Some(expression) = optional_string_arg(arguments, "fn")
+        .or_else(|| optional_string_arg(arguments, "expression"))
+        .or_else(|| optional_string_arg(arguments, "function"))
+    {
+        payload.insert("expression".to_owned(), Value::String(expression));
+    } else if let Some(pattern) = optional_string_arg(arguments, "urlMatches")
+        .or_else(|| condition_string(&condition, "urlMatches"))
+    {
+        payload.insert(
+            "expression".to_owned(),
+            Value::String(format!(
+                "new RegExp({}).test(location.href)",
+                serde_json::to_string(&pattern).unwrap_or_else(|_| "\"\"".to_owned())
+            )),
+        );
+    } else if let Some(title) = optional_string_arg(arguments, "titleIncludes")
+        .or_else(|| condition_string(&condition, "titleIncludes"))
+    {
+        payload.insert(
+            "expression".to_owned(),
+            Value::String(format!(
+                "document.title.includes({})",
+                serde_json::to_string(&title).unwrap_or_else(|_| "\"\"".to_owned())
+            )),
+        );
+    }
+}
+
+struct WaitConditionOptions {
+    allow_flat_text: bool,
+    allow_flat_selector: bool,
+    allow_flat_url: bool,
+}
+
+fn condition_string(condition: &Map<String, Value>, key: &str) -> Option<String> {
+    condition
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn normalize_wait_result(arguments: &Value, value: &Value, options: WaitConditionOptions) -> Value {
+    let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(true);
+    json!({
+        "ok": ok,
+        "reason": if ok { wait_success_reason(arguments, options) } else { "timeout" },
+        "elapsedMs": value.get("elapsedMs").cloned().unwrap_or_else(|| json!(0)),
+        "observed": value.get("observed").cloned().unwrap_or_else(|| json!({})),
+        "warnings": value.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        "error": value.get("error").cloned()
+            .or_else(|| value.get("errorCode").map(|code| json!({ "code": code })))
+    })
+}
+
+fn wait_success_reason(arguments: &Value, options: WaitConditionOptions) -> &'static str {
+    let condition = arguments.get("condition").and_then(Value::as_object);
+    if (options.allow_flat_text && optional_string_arg(arguments, "text").is_some())
+        || condition
+            .and_then(|value| value.get("textVisible"))
+            .is_some()
+    {
+        return "text_visible";
+    }
+    if (options.allow_flat_selector && optional_string_arg(arguments, "selector").is_some())
+        || condition
+            .and_then(|value| value.get("selectorVisible"))
+            .is_some()
+    {
+        return "selector_visible";
+    }
+    if (options.allow_flat_url && optional_string_arg(arguments, "url").is_some())
+        || optional_string_arg(arguments, "urlIncludes").is_some()
+        || optional_string_arg(arguments, "urlMatches").is_some()
+        || condition
+            .and_then(|value| value.get("urlIncludes"))
+            .is_some()
+        || condition
+            .and_then(|value| value.get("urlMatches"))
+            .is_some()
+    {
+        return "url_matched";
+    }
+    if optional_string_arg(arguments, "waitUntil").as_deref() == Some("domStable") {
+        return "dom_stable";
+    }
+    "load_finished"
+}
+
+fn combined_inspect_payload(arguments: &Value) -> Value {
+    if let Some(options) = arguments
+        .get("inspectOptions")
+        .filter(|value| value.is_object())
+    {
+        let mut options = options.clone();
+        if let Some(timeout_ms) = optional_number_arg(arguments, "inspectTimeoutMs")
+            .or_else(|| optional_number_arg(arguments, "timeoutMs"))
+        {
+            if let Some(object) = options.as_object_mut() {
+                object.insert("timeoutMs".to_owned(), json!(timeout_ms));
+            }
+        }
+        return inspect_payload(&options);
+    }
+    inspect_payload(arguments)
+}
+
+fn collect_warnings(target: &mut Vec<Value>, warnings: Option<&Value>) {
+    if let Some(items) = warnings.and_then(Value::as_array) {
+        target.extend(items.iter().cloned());
+    }
+}
+
 fn evaluate_payload(value: &Value, action: &str) -> Value {
     let selector =
         serde_json::to_string(&selector_arg(value)).unwrap_or_else(|_| "\"\"".to_owned());
@@ -695,10 +1153,16 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(names.contains(&"browser_open"));
         assert!(names.contains(&"browser_inspect"));
+        assert!(names.contains(&"browser_fill"));
+        assert!(names.contains(&"browser_open_and_inspect"));
+        assert!(names.contains(&"browser_click_and_inspect"));
+        assert!(names.contains(&"browser_fill_and_inspect"));
+        assert!(names.contains(&"browser_type_and_inspect"));
+        assert!(names.contains(&"browser_wait_and_inspect"));
         assert!(names.contains(&"browser_navigate"));
         assert!(names.contains(&"browser_evaluate"));
         assert!(names.contains(&"browser_take_screenshot"));
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 28);
     }
 
     #[test]
@@ -737,5 +1201,123 @@ mod tests {
         assert!(text.starts_with("[0] button \"登录\"\n\nJSON:"));
         assert!(text.contains("\"role\": \"button\""));
         assert!(!text.contains("large body text"));
+    }
+
+    #[test]
+    fn action_target_payload_prefers_inspect_target_fields() {
+        let payload = action_target_payload(
+            "click",
+            &json!({
+                "inspectId": "wk-inspect-1",
+                "index": 3,
+                "ref": "wk-mvp:wk-inspect-1:main:3:abcd1234",
+                "selector": "css=#fallback",
+                "timeoutMs": 5000
+            }),
+        );
+
+        assert_eq!(payload["action"], "click");
+        assert_eq!(payload["inspectId"], "wk-inspect-1");
+        assert_eq!(payload["index"], 3.0);
+        assert_eq!(payload["ref"], "wk-mvp:wk-inspect-1:main:3:abcd1234");
+        assert_eq!(payload["selector"], "#fallback");
+        assert_eq!(payload["timeoutMs"], 5000.0);
+    }
+
+    #[test]
+    fn fill_payload_maps_value_to_text() {
+        let payload = action_target_payload(
+            "fill",
+            &json!({
+                "selector": "#email",
+                "value": "user@example.com"
+            }),
+        );
+
+        assert_eq!(payload["action"], "fill");
+        assert_eq!(payload["selector"], "#email");
+        assert_eq!(payload["text"], "user@example.com");
+    }
+
+    #[test]
+    fn combined_inspect_payload_uses_nested_options() {
+        let payload = combined_inspect_payload(&json!({
+            "text": "typed value",
+            "inspectOptions": {
+                "interactiveOnly": true,
+                "maxNodes": 10
+            },
+            "timeoutMs": 9000
+        }));
+
+        assert_eq!(payload["action"], "inspect");
+        assert_eq!(payload["options"]["interactiveOnly"], true);
+        assert_eq!(payload["options"]["maxNodes"], 10.0);
+        assert_eq!(payload["timeoutMs"], 9000.0);
+    }
+
+    #[test]
+    fn wait_payload_uses_condition_text_for_fill_combined() {
+        let payload = wait_payload(
+            "browser_fill_and_inspect",
+            &json!({
+                "text": "alice@example.com",
+                "condition": { "textVisible": "Saved" },
+                "timeoutMs": 4000
+            }),
+        );
+
+        assert_eq!(payload["action"], "waitFor");
+        assert_eq!(payload["text"], "Saved");
+        assert_eq!(payload["timeoutMs"], 4000.0);
+    }
+
+    #[test]
+    fn wait_payload_does_not_treat_fill_text_as_wait_text() {
+        let payload = wait_payload(
+            "browser_fill_and_inspect",
+            &json!({
+                "text": "alice@example.com"
+            }),
+        );
+
+        assert_eq!(payload["action"], "waitFor");
+        assert!(payload.get("text").is_none());
+        assert!(payload.get("expression").is_some());
+    }
+
+    #[test]
+    fn wait_payload_does_not_treat_action_selector_as_wait_selector() {
+        let payload = wait_payload(
+            "browser_click_and_inspect",
+            &json!({
+                "selector": "#submit"
+            }),
+        );
+
+        assert_eq!(payload["action"], "waitFor");
+        assert!(payload.get("selector").is_none());
+        assert!(payload.get("expression").is_some());
+    }
+
+    #[test]
+    fn wait_payload_maps_url_and_title_conditions() {
+        let url_payload = wait_payload(
+            "browser_wait_and_inspect",
+            &json!({ "condition": { "urlMatches": "/dashboard" } }),
+        );
+        let title_payload = wait_payload(
+            "browser_wait_and_inspect",
+            &json!({ "condition": { "titleIncludes": "Home" } }),
+        );
+
+        assert!(url_payload["expression"]
+            .as_str()
+            .unwrap()
+            .contains("location.href"));
+        assert!(title_payload["expression"]
+            .as_str()
+            .unwrap()
+            .contains("document.title.includes"));
     }
 }
