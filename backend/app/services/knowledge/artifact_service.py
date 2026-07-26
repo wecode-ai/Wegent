@@ -510,6 +510,11 @@ class ArtifactService:
                     "Generated mind map must contain exactly one JSON object"
                 )
             content = matches[0].strip()
+        else:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start >= 0 and end > start:
+                content = content[start : end + 1]
         try:
             mind_map = MindMapContent.model_validate_json(content)
         except ValueError as exc:

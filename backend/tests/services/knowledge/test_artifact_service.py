@@ -251,6 +251,27 @@ def test_parse_mind_map_accepts_structured_json():
     assert '"parent_id":"root"' in result
 
 
+def test_parse_mind_map_accepts_explanatory_text_around_json():
+    content = """
+    已根据所选文档生成思维导图：
+
+    {"schema_version":1,"root_id":"root","nodes":[
+      {"id":"root","parent_id":null,"title":"主题"},
+      {"id":"child","parent_id":"root","title":"子主题"}
+    ]}
+
+    以上是完整结果。
+    """
+
+    result = ArtifactService._parse_content(
+        KnowledgeArtifactType.MIND_MAP,
+        content,
+    )
+
+    assert '"root_id":"root"' in result
+    assert '"parent_id":"root"' in result
+
+
 @pytest.mark.parametrize(
     "content",
     [
