@@ -67,6 +67,54 @@ def _create_document(
     )
 
 
+def test_open_create_text_document_accepts_jwt_session(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_token: str,
+    monkeypatch,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "save-chat-answer-kb")
+    document = _create_document(
+        test_db,
+        kb_id,
+        test_user.id,
+        "Saved answer",
+    )
+    captured: dict = {}
+
+    def fake_create_document_with_content(**kwargs):
+        captured.update(kwargs)
+        return document
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.knowledge_orchestrator.create_document_with_content",
+        fake_create_document_with_content,
+    )
+
+    response = test_client.post(
+        "/api/knowledge/documents",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={
+            "knowledge_base_id": kb_id,
+            "name": "Saved answer",
+            "source_type": "text",
+            "content": "# Saved answer",
+            "file_extension": "md",
+            "folder_id": 0,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["id"] == document.id
+    assert captured["user"].id == test_user.id
+    assert captured["knowledge_base_id"] == kb_id
+    assert captured["source_type"] == "text"
+    assert captured["content"] == "# Saved answer"
+    assert captured["file_extension"] == "md"
+    assert captured["folder_id"] == 0
+
+
 def test_open_search_folder_ids_zero_resolves_root_documents_only(
     test_client: TestClient,
     test_db: Session,

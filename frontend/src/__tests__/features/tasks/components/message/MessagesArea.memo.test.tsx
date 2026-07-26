@@ -4,7 +4,9 @@
 
 import React from 'react'
 import { act, render, screen } from '@testing-library/react'
-import MessagesArea from '@/features/tasks/components/message/MessagesArea'
+import MessagesArea, {
+  deriveSaveToKnowledgeTitle,
+} from '@/features/tasks/components/message/MessagesArea'
 import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
 import type { TaskStateSnapshot } from '@wegent/chat-core'
 
@@ -171,6 +173,37 @@ jest.mock('@/features/tasks/components/CorrectionResultPanel', () => ({
 jest.mock('@/features/inbox/components/ForwardMessageDialog', () => ({
   ForwardMessageDialog: () => null,
 }))
+
+jest.mock('@/features/tasks/components/message/SaveToKnowledgeDialog', () => ({
+  SaveToKnowledgeDialog: () => null,
+}))
+
+jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () => ({
+  DocumentDetailDialog: () => null,
+}))
+
+describe('deriveSaveToKnowledgeTitle', () => {
+  it('uses the nearest previous user message first line', () => {
+    const messages: DisplayMessage[] = [
+      {
+        id: 'user-title',
+        type: 'user',
+        content: '\n  Deployment guide  \nwith details',
+        timestamp: 1,
+        status: 'completed',
+      },
+      {
+        id: 'ai-answer',
+        type: 'ai',
+        content: 'answer',
+        timestamp: 2,
+        status: 'completed',
+      },
+    ]
+
+    expect(deriveSaveToKnowledgeTitle(messages, 1, 'fallback')).toBe('Deployment guide')
+  })
+})
 
 describe('MessagesArea memoization', () => {
   beforeEach(() => {

@@ -41,9 +41,14 @@ jest.mock('@/features/tasks/components/message/ContextBadgeList', () => ({
   default: () => null,
 }))
 
+const mockBubbleTools = jest.fn()
+
 jest.mock('@/features/tasks/components/message/BubbleTools', () => ({
   __esModule: true,
-  default: () => null,
+  default: (props: unknown) => {
+    mockBubbleTools(props)
+    return null
+  },
   CopyButton: () => null,
   EditButton: () => null,
 }))
@@ -158,6 +163,38 @@ describe('MessageBubble', () => {
     mockMixedContentView.mockClear()
     mockThinkingDisplay.mockClear()
     mockStreamingWaitIndicator.mockClear()
+    mockBubbleTools.mockClear()
+  })
+
+  it('offers saving completed AI Markdown to a knowledge base', () => {
+    const onSaveToKnowledge = jest.fn()
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$# Final answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={onSaveToKnowledge}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentToCopy: '# Final answer',
+        onSaveToKnowledge,
+        showSaveToKnowledge: true,
+      })
+    )
   })
 
   it('shows the selected agent displayName for AI message headers', () => {

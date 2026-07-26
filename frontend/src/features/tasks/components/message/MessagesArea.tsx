@@ -69,9 +69,30 @@ import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
 import { TaskRuntimeGlyph } from './TaskRuntimeGlyph'
 import { MessageLoadingStage } from './MessageLoadingStage'
+import { SaveToKnowledgeDialog } from './SaveToKnowledgeDialog'
+import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
+import { ToastAction } from '@/components/ui/toast'
+import type { KnowledgeBaseWithGroupInfo, KnowledgeDocument } from '@/types/knowledge'
 
 type SendMessageOptions = {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
+}
+
+export function deriveSaveToKnowledgeTitle(
+  messages: DisplayMessage[],
+  aiMessageIndex: number,
+  fallbackTitle: string
+): string {
+  for (let index = aiMessageIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.type !== 'user') continue
+    const firstLine = message.content
+      .split('\n')
+      .map(line => line.trim())
+      .find(Boolean)
+    if (firstLine) return firstLine.slice(0, 255)
+  }
+  return fallbackTitle
 }
 
 /**
@@ -223,6 +244,8 @@ interface MessagesAreaProps {
   onReEdit?: (msg: Message) => void
   /** Optional override for the in-message waiting indicator text */
   waitingMessage?: string
+  /** Writable current knowledge base to preselect in notebook mode. */
+  defaultSaveKnowledgeBaseId?: number
 }
 
 function MessagesArea({
@@ -247,6 +270,7 @@ function MessagesArea({
   onUseAsReference,
   onReEdit,
   waitingMessage,
+  defaultSaveKnowledgeBaseId,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -297,6 +321,16 @@ function MessagesArea({
   const [forwardInitialSubtaskId, setForwardInitialSubtaskId] = useState<number | undefined>(
     undefined
   )
+
+  const [saveKnowledgeDraft, setSaveKnowledgeDraft] = useState<{
+    title: string
+    content: string
+  } | null>(null)
+  const [createdKnowledgeDocument, setCreatedKnowledgeDocument] =
+    useState<KnowledgeDocument | null>(null)
+  const [createdDocumentKnowledgeBase, setCreatedDocumentKnowledgeBase] =
+    useState<KnowledgeBaseWithGroupInfo | null>(null)
+  const [showCreatedDocument, setShowCreatedDocument] = useState(false)
 
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
@@ -1136,6 +1170,43 @@ function MessagesArea({
     setIsForwardDialogOpen(true)
   }, [])
 
+  const handleSaveToKnowledge = useCallback(
+    (messageIndex: number, content: string) => {
+      setSaveKnowledgeDraft({
+        title: deriveSaveToKnowledgeTitle(
+          messages,
+          messageIndex,
+          t('chat:saveToKnowledge.fallbackTitle')
+        ),
+        content,
+      })
+    },
+    [messages, t]
+  )
+
+  const handleKnowledgeDocumentCreated = useCallback(
+    (document: KnowledgeDocument, knowledgeBase: KnowledgeBaseWithGroupInfo) => {
+      setCreatedKnowledgeDocument(document)
+      setCreatedDocumentKnowledgeBase(knowledgeBase)
+      toast({
+        title: t('chat:saveToKnowledge.successTitle'),
+        description: t('chat:saveToKnowledge.successDescription', {
+          name: knowledgeBase.name,
+        }),
+        action: (
+          <ToastAction
+            altText={t('chat:saveToKnowledge.viewDocument')}
+            onClick={() => setShowCreatedDocument(true)}
+            data-testid="save-to-knowledge-view-document-button"
+          >
+            {t('chat:saveToKnowledge.viewDocument')}
+          </ToastAction>
+        ),
+      })
+    },
+    [t, toast]
+  )
+
   // Handle ask_user_question form submission - send the pre-formatted message as a new conversation
   // AskUserForm already formats the message with question text and option labels
   const handleAskUserSubmit = useCallback(
@@ -1280,6 +1351,7 @@ function MessagesArea({
                     onReEdit={onReEdit}
                     waitingMessage={waitingMessage}
                     taskType={selectedTaskDetail?.task_type}
+                    onSaveToKnowledge={content => handleSaveToKnowledge(index, content)}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -1355,6 +1427,7 @@ function MessagesArea({
                   waitingMessage={waitingMessage}
                   taskType={selectedTaskDetail?.task_type}
                   onForwardClick={handleForwardClick}
+                  onSaveToKnowledge={content => handleSaveToKnowledge(index, content)}
                 />
               </div>
             )
@@ -1381,6 +1454,33 @@ function MessagesArea({
             selectedTaskDetail?.title || selectedTaskDetail?.prompt?.slice(0, 50) || 'Chat Export'
           }
           exportFormat={exportFormat}
+        />
+      )}
+
+      {saveKnowledgeDraft && (
+        <SaveToKnowledgeDialog
+          open={true}
+          onOpenChange={open => {
+            if (!open) setSaveKnowledgeDraft(null)
+          }}
+          initialTitle={saveKnowledgeDraft.title}
+          initialContent={saveKnowledgeDraft.content}
+          defaultKnowledgeBaseId={defaultSaveKnowledgeBaseId}
+          onCreated={handleKnowledgeDocumentCreated}
+        />
+      )}
+
+      {createdKnowledgeDocument && createdDocumentKnowledgeBase && (
+        <DocumentDetailDialog
+          open={showCreatedDocument}
+          onOpenChange={setShowCreatedDocument}
+          document={createdKnowledgeDocument}
+          knowledgeBaseId={createdDocumentKnowledgeBase.id}
+          kbType={createdDocumentKnowledgeBase.kb_type}
+          canEdit={true}
+          knowledgeBaseName={createdDocumentKnowledgeBase.name}
+          knowledgeBaseNamespace={createdDocumentKnowledgeBase.namespace}
+          isOrganization={createdDocumentKnowledgeBase.group_type === 'organization'}
         />
       )}
 

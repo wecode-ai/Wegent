@@ -221,6 +221,8 @@ export interface MessageBubbleProps {
   taskType?: TaskType
   /** Callback when user clicks forward button - receives the subtaskId of the message to forward */
   onForwardClick?: (subtaskId: number) => void
+  /** Callback when user saves the displayed AI Markdown to a knowledge base. */
+  onSaveToKnowledge?: (content: string) => void
 }
 
 // Component for rendering a paragraph with hover action button
@@ -410,6 +412,7 @@ const MessageBubble = memo(
     shareToken,
     taskType,
     onForwardClick,
+    onSaveToKnowledge,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -814,6 +817,13 @@ const MessageBubble = memo(
             <BubbleTools
               contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${rawMarkdownResult}`}
               onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
+              showSaveToKnowledge={
+                Boolean(onSaveToKnowledge) &&
+                !msg.isIncomplete &&
+                (msg.status === 'completed' || msg.subtaskStatus === 'COMPLETED') &&
+                rawMarkdownResult.trim().length > 0
+              }
+              onSaveToKnowledge={onSaveToKnowledge}
               tools={[
                 {
                   key: 'download',
@@ -1546,6 +1556,13 @@ const MessageBubble = memo(
                         <BubbleTools
                           contentToCopy={getCopyableContentFromBlocks(msg.result?.blocks ?? [])}
                           onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
+                          showSaveToKnowledge={
+                            Boolean(onSaveToKnowledge) &&
+                            !msg.isIncomplete &&
+                            (msg.status === 'completed' || msg.subtaskStatus === 'COMPLETED') &&
+                            getCopyableContentFromBlocks(msg.result?.blocks ?? []).length > 0
+                          }
+                          onSaveToKnowledge={onSaveToKnowledge}
                           tools={[
                             {
                               key: 'download',
