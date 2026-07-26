@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
@@ -28,6 +27,7 @@ from app.schemas.knowledge_artifact import (
 from app.services.knowledge.artifact_repository import KnowledgeArtifactRepository
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.stores.tasks import SubtaskStore, TaskStore, subtask_store, task_store
 
 _MERMAID_BLOCK = re.compile(r"```mermaid\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _ACTIVE_STATUSES = {
@@ -58,11 +58,15 @@ class ArtifactService:
         repository: KnowledgeArtifactRepository,
         *,
         launcher: ArtifactTaskLauncher | None = None,
+        task_resource_store: TaskStore = task_store,
+        subtask_resource_store: SubtaskStore = subtask_store,
     ) -> None:
         self.db = db
         self.user = user
         self.repository = repository
         self.launcher = launcher or ArtifactTaskLauncher(db, user)
+        self.task_store = task_resource_store
+        self.subtask_store = subtask_resource_store
 
     async def create(
         self,
@@ -210,13 +214,10 @@ class ArtifactService:
                 return self._apply_execution_health(artifact)
             execution_ids_changed = True
 
-        subtask = (
-            self.db.query(Subtask)
-            .filter(
-                Subtask.id == artifact.assistant_subtask_id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-            )
-            .first()
+        subtask = self.subtask_store.get_by_id_and_role(
+            self.db,
+            subtask_id=artifact.assistant_subtask_id,
+            role=SubtaskRole.ASSISTANT,
         )
         if subtask is None:
             if execution_ids_changed:
@@ -250,15 +251,10 @@ class ArtifactService:
             if artifact.status in _ACTIVE_STATUSES
             and artifact.assistant_subtask_id is not None
         }
-        subtasks = (
-            self.db.query(Subtask)
-            .filter(
-                Subtask.id.in_(subtask_ids),
-                Subtask.role == SubtaskRole.ASSISTANT,
-            )
-            .all()
-            if subtask_ids
-            else []
+        subtasks = self.subtask_store.list_by_ids_and_role(
+            self.db,
+            subtask_ids=list(subtask_ids),
+            role=SubtaskRole.ASSISTANT,
         )
         subtasks_by_id = {subtask.id: subtask for subtask in subtasks}
         reconciled: list[KnowledgeArtifact] = []
@@ -392,28 +388,19 @@ class ArtifactService:
         return matches[0].strip()
 
     def _repair_execution_ids(self, artifact: KnowledgeArtifact) -> None:
-        task = (
-            self.db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.user_id == artifact.user_id,
-                TaskResource.name
-                == f"knowledge-artifact-{artifact.artifact_id}-{artifact.attempt}",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .order_by(TaskResource.id.desc())
-            .first()
+        task = self.task_store.get_owned_task_by_name(
+            self.db,
+            user_id=artifact.user_id,
+            name=f"knowledge-artifact-{artifact.artifact_id}-{artifact.attempt}",
+            namespace="default",
         )
         if task is None:
             return
-        assistant = (
-            self.db.query(Subtask)
-            .filter(
-                Subtask.task_id == task.id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-            )
-            .order_by(Subtask.id.desc())
-            .first()
+        assistant = self.subtask_store.get_latest_assistant_by_statuses(
+            self.db,
+            task_id=task.id,
+            statuses=list(SubtaskStatus),
+            owner_user_id=artifact.user_id,
         )
         if assistant is None:
             return

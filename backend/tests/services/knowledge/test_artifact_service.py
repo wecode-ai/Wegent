@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.subtask import SubtaskStatus
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
     KnowledgeArtifactCreate,
@@ -30,11 +31,15 @@ def build_service() -> tuple[ArtifactService, MagicMock, AsyncMock]:
     repository.create.side_effect = lambda artifact: artifact
     repository.update_execution.side_effect = lambda artifact: artifact
     launcher = AsyncMock()
+    task_resource_store = MagicMock()
+    subtask_resource_store = MagicMock()
     service = ArtifactService(
         MagicMock(),
         SimpleNamespace(id=7),
         repository,
         launcher=launcher,
+        task_resource_store=task_resource_store,
+        subtask_resource_store=subtask_resource_store,
     )
     return service, repository, launcher
 
@@ -170,9 +175,7 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
         completed_at=datetime.now().astimezone(),
         error_message=None,
     )
-    query = MagicMock()
-    query.filter.return_value.first.return_value = subtask
-    service.db.query.return_value = query
+    service.subtask_store.get_by_id_and_role.return_value = subtask
 
     reconciled = await service._reconcile(artifact)
 
@@ -196,9 +199,7 @@ async def test_reconcile_derives_stalled_without_changing_running_execution():
         created_at=stale_at,
         updated_at=stale_at,
     )
-    query = MagicMock()
-    query.filter.return_value.first.return_value = subtask
-    service.db.query.return_value = query
+    service.subtask_store.get_by_id_and_role.return_value = subtask
     reconciled = await service._reconcile(artifact)
 
     assert reconciled.status == KnowledgeArtifactStatus.RUNNING
@@ -222,9 +223,7 @@ async def test_reconcile_keeps_recent_running_execution_healthy():
         created_at=recent_at,
         updated_at=recent_at,
     )
-    query = MagicMock()
-    query.filter.return_value.first.return_value = subtask
-    service.db.query.return_value = query
+    service.subtask_store.get_by_id_and_role.return_value = subtask
     reconciled = await service._reconcile(artifact)
 
     assert reconciled.status == KnowledgeArtifactStatus.RUNNING
@@ -288,9 +287,7 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
         created_at=stale_at,
         updated_at=stale_at,
     )
-    query = MagicMock()
-    query.filter.return_value.first.return_value = subtask
-    service.db.query.return_value = query
+    service.subtask_store.get_by_id_and_role.return_value = subtask
     claimed = artifact.model_copy(deep=True)
     claimed.status = KnowledgeArtifactStatus.QUEUED
     claimed.task_id = None
@@ -313,3 +310,31 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
         expected_attempt=1,
         allow_active=True,
     )
+
+
+def test_repair_execution_ids_uses_task_store_boundaries():
+    service, _, _ = build_service()
+    artifact = build_artifact()
+    artifact.task_id = None
+    artifact.assistant_subtask_id = None
+    service.task_store.get_owned_task_by_name.return_value = SimpleNamespace(id=31)
+    service.subtask_store.get_latest_assistant_by_statuses.return_value = (
+        SimpleNamespace(id=41)
+    )
+
+    service._repair_execution_ids(artifact)
+
+    service.task_store.get_owned_task_by_name.assert_called_once_with(
+        service.db,
+        user_id=7,
+        name="knowledge-artifact-artifact-1-1",
+        namespace="default",
+    )
+    service.subtask_store.get_latest_assistant_by_statuses.assert_called_once_with(
+        service.db,
+        task_id=31,
+        statuses=list(SubtaskStatus),
+        owner_user_id=7,
+    )
+    assert artifact.task_id == 31
+    assert artifact.assistant_subtask_id == 41
