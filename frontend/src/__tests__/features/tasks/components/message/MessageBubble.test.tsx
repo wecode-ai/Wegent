@@ -197,6 +197,109 @@ describe('MessageBubble', () => {
     )
   })
 
+  it.each([
+    {
+      name: 'streaming',
+      overrides: { status: 'streaming' as const, subtaskStatus: 'RUNNING' },
+    },
+    {
+      name: 'error',
+      overrides: { status: 'error' as const, subtaskStatus: 'FAILED' },
+    },
+    {
+      name: 'incomplete',
+      overrides: {
+        status: 'completed' as const,
+        subtaskStatus: 'COMPLETED',
+        isIncomplete: true,
+      },
+    },
+    {
+      name: 'empty',
+      overrides: {
+        status: 'completed' as const,
+        subtaskStatus: 'COMPLETED',
+        content: '${$$}$',
+      },
+    },
+  ])('does not offer saving $name AI messages', ({ overrides }) => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$Answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      ...overrides,
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools.mock.calls.some(call => call[0].showSaveToKnowledge === true)).toBe(
+      false
+    )
+  })
+
+  it('saves only text blocks from a completed blocks message', () => {
+    const onSaveToKnowledge = jest.fn()
+    const msg: Message = {
+      type: 'ai',
+      content: 'Second paragraph',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      status: 'completed',
+      subtaskStatus: 'COMPLETED',
+      result: {
+        blocks: [
+          {
+            id: 'thinking-1',
+            type: 'thinking',
+            status: 'done',
+            content: 'Private reasoning',
+          },
+          {
+            id: 'text-1',
+            type: 'text',
+            status: 'done',
+            content: 'First paragraph',
+          },
+          {
+            id: 'text-2',
+            type: 'text',
+            status: 'done',
+            content: 'Second paragraph',
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={onSaveToKnowledge}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentToCopy: 'First paragraph\n\nSecond paragraph',
+        onSaveToKnowledge,
+        showSaveToKnowledge: true,
+      })
+    )
+  })
+
   it('shows the selected agent displayName for AI message headers', () => {
     const msg: Message = {
       type: 'ai',
