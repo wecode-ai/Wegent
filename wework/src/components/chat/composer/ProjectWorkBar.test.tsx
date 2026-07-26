@@ -136,6 +136,7 @@ describe('ProjectWorkBar', () => {
       'font-normal',
       'w-full'
     )
+    expect(screen.getByTestId('project-work-button')).toHaveClass('w-full')
     expect(screen.getByTestId('project-work-button').parentElement?.parentElement).toHaveClass(
       'min-w-0',
       'max-w-[18rem]',

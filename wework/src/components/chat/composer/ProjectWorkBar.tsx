@@ -917,7 +917,7 @@ export function ProjectWorkBar({
               onClick={handleToggleMenu}
               title={t('workbench.change_project', '更改项目')}
               className={cn(
-                'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                'flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
                 open && 'bg-background/70 text-text-primary',
                 buttonClassName
               )}
