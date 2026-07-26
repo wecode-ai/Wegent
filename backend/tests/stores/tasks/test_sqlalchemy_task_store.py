@@ -6,7 +6,11 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
+from app.core.constants import (
+    CLIENT_ORIGIN_BACKGROUND,
+    CLIENT_ORIGIN_FRONTEND,
+    CLIENT_ORIGIN_WEWORK,
+)
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -276,6 +280,49 @@ def test_list_personal_task_ids_filters_client_origin(test_db: Session) -> None:
 
     assert task_ids == [frontend_task.id]
     assert total == 1
+
+
+def test_task_list_queries_exclude_background_origin_before_pagination(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemyTaskStore()
+    visible_task = _task(task_id=31, user_id=20)
+    background_task = _task(
+        task_id=32,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_BACKGROUND,
+    )
+    test_db.add_all([visible_task, background_task])
+    test_db.commit()
+
+    accessible_ids, accessible_total = store.list_accessible_task_ids(
+        test_db,
+        user_id=20,
+        skip=0,
+        limit=1,
+        extra_limit=0,
+    )
+    owned_ids, owned_total = store.list_owned_task_ids(
+        test_db,
+        user_id=20,
+        skip=0,
+        limit=1,
+        extra_limit=0,
+    )
+    personal_ids, personal_total = store.list_personal_task_ids(
+        test_db,
+        user_id=20,
+        skip=0,
+        limit=1,
+        extra_limit=0,
+    )
+
+    assert accessible_ids == [visible_task.id]
+    assert accessible_total == 1
+    assert owned_ids == [visible_task.id]
+    assert owned_total == 1
+    assert personal_ids == [visible_task.id]
+    assert personal_total == 1
 
 
 def test_list_personal_task_ids_returns_projectless_tasks(

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.constants import CLIENT_ORIGIN_BACKGROUND
 from app.models.user import User
 from app.schemas.kind import Task
 from app.schemas.knowledge_artifact import KnowledgeArtifactType
@@ -80,6 +81,7 @@ class ArtifactTaskLauncher:
             task_type="knowledge",
             knowledge_base_id=knowledge_base_id,
             task_name=f"knowledge-artifact-{artifact_id}-{attempt}",
+            client_origin=CLIENT_ORIGIN_BACKGROUND,
             source="knowledge_artifact",
         )
         session = prepare_execution_session(

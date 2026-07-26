@@ -70,4 +70,6 @@ TRIGGER_TYPE_EVENT = "event"
 
 CLIENT_ORIGIN_FRONTEND = "frontend"
 CLIENT_ORIGIN_WEWORK = "wework"
+# Internal background tasks are executable resources, not user-facing task-list items.
+CLIENT_ORIGIN_BACKGROUND = "background"
 SUPPORTED_CLIENT_ORIGINS = (CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK)

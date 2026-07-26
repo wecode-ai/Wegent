@@ -13,6 +13,7 @@ from sqlalchemy import exists, func, text, tuple_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.constants import CLIENT_ORIGIN_BACKGROUND
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -32,6 +33,7 @@ _ACCESSIBLE_COUNT_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
+    AND k.client_origin != :background_client_origin
     AND (k.user_id = :user_id OR tm.id IS NOT NULL)
 """
 )
@@ -48,6 +50,7 @@ _ACCESSIBLE_IDS_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
+    AND k.client_origin != :background_client_origin
     AND (k.user_id = :user_id OR tm.id IS NOT NULL)
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
@@ -61,6 +64,7 @@ _OWNED_COUNT_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
+    AND k.client_origin != :background_client_origin
     AND k.user_id = :user_id
 """
 )
@@ -72,6 +76,7 @@ _OWNED_IDS_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
+    AND k.client_origin != :background_client_origin
     AND k.user_id = :user_id
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
@@ -85,6 +90,7 @@ _PERSONAL_STANDALONE_COUNT_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
+    AND k.client_origin != :background_client_origin
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.project_id = 0
@@ -98,6 +104,7 @@ _PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
+    AND k.client_origin != :background_client_origin
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
@@ -112,6 +119,7 @@ _PERSONAL_STANDALONE_IDS_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
+    AND k.client_origin != :background_client_origin
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.project_id = 0
@@ -127,6 +135,7 @@ _PERSONAL_STANDALONE_IDS_BY_ORIGIN_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
+    AND k.client_origin != :background_client_origin
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
@@ -944,6 +953,7 @@ class SqlAlchemyTaskStore:
                 "user_id": user_id,
                 "entity_id": str(user_id),
                 "is_active": TaskResource.STATE_ACTIVE,
+                "background_client_origin": CLIENT_ORIGIN_BACKGROUND,
             },
             "accessible_total",
         )
@@ -954,6 +964,7 @@ class SqlAlchemyTaskStore:
                 "user_id": user_id,
                 "entity_id": str(user_id),
                 "is_active": TaskResource.STATE_ACTIVE,
+                "background_client_origin": CLIENT_ORIGIN_BACKGROUND,
                 "limit": limit + extra_limit,
                 "skip": skip,
             },
@@ -970,6 +981,7 @@ class SqlAlchemyTaskStore:
             {
                 "user_id": user_id,
                 "is_active": TaskResource.STATE_ACTIVE,
+                "background_client_origin": CLIENT_ORIGIN_BACKGROUND,
             },
             "owned_total",
         )
@@ -979,6 +991,7 @@ class SqlAlchemyTaskStore:
             {
                 "user_id": user_id,
                 "is_active": TaskResource.STATE_ACTIVE,
+                "background_client_origin": CLIENT_ORIGIN_BACKGROUND,
                 "limit": limit + extra_limit,
                 "skip": skip,
             },
@@ -1009,6 +1022,7 @@ class SqlAlchemyTaskStore:
         params: dict[str, object] = {
             "user_id": user_id,
             "is_active": TaskResource.STATE_ACTIVE,
+            "background_client_origin": CLIENT_ORIGIN_BACKGROUND,
             "limit": limit + extra_limit,
             "skip": skip,
         }

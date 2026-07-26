@@ -544,8 +544,8 @@ def update_knowledge_base(
 
 
 @router.delete("/{knowledge_base_id}", status_code=status.HTTP_204_NO_CONTENT)
-@trace_async("delete_knowledge_base", "knowledge.api")
-async def delete_knowledge_base(
+@trace_sync("delete_knowledge_base", "knowledge.api")
+def delete_knowledge_base(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
