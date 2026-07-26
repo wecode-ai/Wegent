@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, FileText, Network } from 'lucide-react'
+import { AlertCircle, ChevronRight, FileText, Network } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
@@ -83,36 +83,43 @@ export function ArtifactPanel({
   return (
     <div className="flex h-full flex-col" data-testid="artifact-panel">
       <div className="mb-5">
-        <h3 className="mb-3 text-sm font-semibold">{t('artifact.commonCapabilities')}</h3>
         <div className="grid grid-cols-2 gap-3">
           <button
             type="button"
-            className="group rounded-xl border border-border bg-surface p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+            className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             onClick={() => openCreate('briefing')}
             disabled={effectiveAvailableDocumentCount === 0}
             data-testid="artifact-type-briefing"
           >
-            <div className="mb-3 inline-flex rounded-xl bg-primary/10 p-3 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
-              <FileText className="h-6 w-6" />
+            <div className="flex w-full items-center justify-between">
+              <div className="rounded-lg bg-primary/10 p-2 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div className="rounded-full bg-base p-2 text-text-muted transition-colors group-hover:text-primary">
+                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </div>
             </div>
-            <div className="font-medium">{t('artifact.action.briefing')}</div>
-            <div className="mt-1 text-xs leading-5 text-text-secondary">
-              {t('artifact.type.briefingHint')}
+            <div className="mt-2 text-sm font-medium leading-5">
+              {t('artifact.action.briefing')}
             </div>
           </button>
           <button
             type="button"
-            className="group rounded-xl border border-border bg-surface p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+            className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             onClick={() => openCreate('mind_map')}
             disabled={effectiveAvailableDocumentCount === 0}
             data-testid="artifact-type-mind-map"
           >
-            <div className="mb-3 inline-flex rounded-xl bg-primary/10 p-3 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
-              <Network className="h-6 w-6" />
+            <div className="flex w-full items-center justify-between">
+              <div className="rounded-lg bg-primary/10 p-2 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
+                <Network className="h-5 w-5" />
+              </div>
+              <div className="rounded-full bg-base p-2 text-text-muted transition-colors group-hover:text-primary">
+                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </div>
             </div>
-            <div className="font-medium">{t('artifact.action.mind_map')}</div>
-            <div className="mt-1 text-xs leading-5 text-text-secondary">
-              {t('artifact.type.mindMapHint')}
+            <div className="mt-2 text-sm font-medium leading-5">
+              {t('artifact.action.mind_map')}
             </div>
           </button>
         </div>

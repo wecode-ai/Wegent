@@ -889,7 +889,6 @@
     "aiWorkshopHint": "选择一种智能能力，处理当前知识和数据",
     "showWorkshop": "显示 AI 工坊",
     "hideWorkshop": "收起 AI 工坊",
-    "commonCapabilities": "常用能力",
     "recentTasks": "最近任务",
     "runningCount": "{{count}} 个进行中",
     "noDocumentsHint": "知识库暂无文档，请先前往“文档管理”添加来源。",

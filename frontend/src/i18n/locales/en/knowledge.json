@@ -889,7 +889,6 @@
     "aiWorkshopHint": "Choose an AI capability to work with your knowledge and data",
     "showWorkshop": "Show AI Workshop",
     "hideWorkshop": "Collapse AI Workshop",
-    "commonCapabilities": "Common capabilities",
     "recentTasks": "Recent tasks",
     "runningCount": "{{count}} in progress",
     "noDocumentsHint": "This knowledge base has no documents. Add sources in Document Management first.",

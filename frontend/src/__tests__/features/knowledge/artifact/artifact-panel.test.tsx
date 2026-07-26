@@ -78,12 +78,11 @@ describe('ArtifactPanel AI Workshop', () => {
     createMock.mockResolvedValue({ artifact_id: 'artifact-1' })
   })
 
-  it('shows large capability cards and creates from the whole knowledge base by default', async () => {
+  it('shows compact capability cards and creates from the whole knowledge base by default', async () => {
     render(
       <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
     )
 
-    expect(screen.getByText('artifact.commonCapabilities')).toBeInTheDocument()
     expect(screen.getByText('artifact.action.briefing')).toBeInTheDocument()
     expect(screen.getByText('artifact.action.mind_map')).toBeInTheDocument()
 
