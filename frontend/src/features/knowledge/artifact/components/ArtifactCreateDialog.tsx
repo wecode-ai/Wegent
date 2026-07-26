@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
-import { FileText, Network } from 'lucide-react'
+import { useState } from 'react'
+import { Database, FileText, Network, Settings2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -23,30 +23,26 @@ import type { KnowledgeArtifactCreate, KnowledgeArtifactType } from '@/types/kno
 interface ArtifactCreateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  artifactType: KnowledgeArtifactType
   selectedDocumentIds: number[]
+  knowledgeBaseDocumentCount: number
+  onAdjustSources: () => void
   onCreate: (request: KnowledgeArtifactCreate) => Promise<void>
 }
 
 export function ArtifactCreateDialog({
   open,
   onOpenChange,
+  artifactType,
   selectedDocumentIds,
+  knowledgeBaseDocumentCount,
+  onAdjustSources,
   onCreate,
 }: ArtifactCreateDialogProps) {
   const { t } = useTranslation('knowledge')
-  const [artifactType, setArtifactType] = useState<KnowledgeArtifactType>('briefing')
   const [title, setTitle] = useState('')
   const [instruction, setInstruction] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-
-  useEffect(() => {
-    if (!open) {
-      setArtifactType('briefing')
-      setTitle('')
-      setInstruction('')
-      setIsSubmitting(false)
-    }
-  }, [open])
 
   const handleCreate = async () => {
     setIsSubmitting(true)
@@ -69,43 +65,53 @@ export function ArtifactCreateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg" data-testid="artifact-create-dialog">
         <DialogHeader>
-          <DialogTitle>{t('artifact.createTitle')}</DialogTitle>
+          <DialogTitle>{t(`artifact.action.${artifactType}`)}</DialogTitle>
           <DialogDescription>{t('artifact.createDescription')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              className={`rounded-lg border p-4 text-left transition-colors ${
-                artifactType === 'briefing'
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border hover:bg-hover'
-              }`}
-              onClick={() => setArtifactType('briefing')}
-              data-testid="artifact-type-briefing"
-            >
-              <FileText className="mb-2 h-5 w-5 text-primary" />
-              <div className="font-medium">{t('artifact.type.briefing')}</div>
-              <div className="mt-1 text-xs text-text-secondary">
-                {t('artifact.type.briefingHint')}
+          <div className="flex items-start gap-3 rounded-xl border border-border bg-surface p-4">
+            <div className="rounded-lg bg-primary/10 p-2 text-primary">
+              {artifactType === 'mind_map' ? (
+                <Network className="h-5 w-5" />
+              ) : (
+                <FileText className="h-5 w-5" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">
+                {t(`artifact.type.${artifactType === 'mind_map' ? 'mindMap' : 'briefing'}`)}
+              </p>
+              <p className="mt-1 text-sm text-text-secondary">
+                {t(`artifact.type.${artifactType === 'mind_map' ? 'mindMapHint' : 'briefingHint'}`)}
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border p-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-primary/10 p-2 text-primary">
+                <Database className="h-5 w-5" />
               </div>
-            </button>
-            <button
-              type="button"
-              className={`rounded-lg border p-4 text-left transition-colors ${
-                artifactType === 'mind_map'
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border hover:bg-hover'
-              }`}
-              onClick={() => setArtifactType('mind_map')}
-              data-testid="artifact-type-mind-map"
-            >
-              <Network className="mb-2 h-5 w-5 text-primary" />
-              <div className="font-medium">{t('artifact.type.mindMap')}</div>
-              <div className="mt-1 text-xs text-text-secondary">
-                {t('artifact.type.mindMapHint')}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{t('artifact.source')}</p>
+                <p className="mt-1 text-sm text-text-secondary">
+                  {selectedDocumentIds.length > 0
+                    ? t('artifact.selectedDocuments', { count: selectedDocumentIds.length })
+                    : t('artifact.wholeKnowledgeBase', {
+                        count: knowledgeBaseDocumentCount,
+                      })}
+                </p>
               </div>
-            </button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onAdjustSources}
+                data-testid="artifact-create-adjust-sources"
+              >
+                <Settings2 className="mr-1.5 h-4 w-4" />
+                {t('artifact.adjustSources')}
+              </Button>
+            </div>
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium" htmlFor="artifact-title">
@@ -134,11 +140,6 @@ export function ArtifactCreateDialog({
               data-testid="artifact-instruction-input"
             />
           </div>
-          <p className="text-xs text-text-secondary">
-            {selectedDocumentIds.length > 0
-              ? t('artifact.selectedDocuments', { count: selectedDocumentIds.length })
-              : t('artifact.allDocuments')}
-          </p>
         </div>
         <DialogFooter>
           <Button
@@ -153,7 +154,7 @@ export function ArtifactCreateDialog({
             disabled={isSubmitting}
             data-testid="artifact-create-submit"
           >
-            {isSubmitting ? t('artifact.creating') : t('artifact.create')}
+            {isSubmitting ? t('artifact.creating') : t('artifact.start')}
           </Button>
         </DialogFooter>
       </DialogContent>

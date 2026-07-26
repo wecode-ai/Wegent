@@ -5,15 +5,13 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PanelRightClose, PanelRightOpen, FileText, Shield, Plus, Sparkles } from 'lucide-react'
+import { Bot, Database, PanelRightClose, PanelRightOpen, Plus, Settings2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { DocumentList, type KbGroupInfo } from './DocumentList'
-import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArtifactPanel } from '@/features/knowledge/artifact/components/ArtifactPanel'
+import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
 
 // Helper function to get initial width from localStorage
 const getInitialWidth = (
@@ -53,12 +51,6 @@ const getInitialCollapsed = (storageKey: string, defaultCollapsed: boolean): boo
 
 interface DocumentPanelProps {
   knowledgeBase: KnowledgeBase
-  canUpload?: boolean
-  canManageAllDocuments?: boolean
-  /** Whether the user can manage permissions (is creator or has manage permission) */
-  canManagePermissions?: boolean
-  /** Callback to refresh knowledge base details after summary changes */
-  onRefreshKnowledgeBase?: () => void
   /** Callback when document selection changes */
   onDocumentSelectionChange?: (documentIds: number[]) => void
   /** Current document selection used as Artifact source scope */
@@ -67,12 +59,8 @@ interface DocumentPanelProps {
   onNewChat?: () => void
   /** Callback when collapsed state changes */
   onCollapsedChange?: (collapsed: boolean) => void
-  /** Group info for breadcrumb display */
-  groupInfo?: KbGroupInfo
-  /** Callback when group name is clicked */
-  onGroupClick?: (groupId: string, groupType?: string) => void
-  /** Initial document path to auto-open (from virtual URL path segments) */
-  initialDocPath?: string
+  /** Whether the AI Workshop is the active workspace surface on small screens. */
+  mobileVisible?: boolean
 }
 
 const MIN_WIDTH = 280
@@ -92,23 +80,18 @@ const STORAGE_KEY_COLLAPSED = 'kb-document-panel-collapsed'
  */
 export function DocumentPanel({
   knowledgeBase,
-  canUpload = true,
-  canManageAllDocuments = false,
-  canManagePermissions = false,
-  onRefreshKnowledgeBase,
   onDocumentSelectionChange,
   selectedDocumentIds = [],
   onNewChat,
   onCollapsedChange,
-  groupInfo,
-  onGroupClick,
-  initialDocPath,
+  mobileVisible = false,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
   const { t: tCommon } = useTranslation('common')
 
-  // Tab state
-  const [activeTab, setActiveTab] = useState<'documents' | 'artifacts' | 'permissions'>('documents')
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
+  const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
+  const sourceApplyContinuationRef = useRef<(() => void) | null>(null)
 
   // Initialize state with localStorage values
   const [panelWidth, setPanelWidth] = useState(() =>
@@ -164,6 +147,20 @@ export function DocumentPanel({
     })
   }, [saveCollapsed])
 
+  const openSourceDialog = useCallback((onApplied?: () => void) => {
+    sourceApplyContinuationRef.current = onApplied ?? null
+    setSourceDialogOpen(true)
+  }, [])
+
+  const handleSourceDialogOpenChange = useCallback((open: boolean) => {
+    setSourceDialogOpen(open)
+    if (!open) {
+      const continuation = sourceApplyContinuationRef.current
+      sourceApplyContinuationRef.current = null
+      continuation?.()
+    }
+  }, [])
+
   // Handle mouse down on resizer
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -206,7 +203,7 @@ export function DocumentPanel({
 
   // When collapsed, return null (the expand button is rendered as a portal-like fixed element)
   // This ensures the collapsed state doesn't affect the parent flex layout
-  if (isCollapsed) {
+  if (isCollapsed && !mobileVisible) {
     return (
       <>
         {/* Fixed expand button - positioned outside the flex flow */}
@@ -219,13 +216,13 @@ export function DocumentPanel({
                   size="sm"
                   onClick={toggleCollapsed}
                   className="h-8 w-8 p-0 rounded-full shadow-md bg-base"
-                  aria-label={t('chatPage.showDocuments')}
+                  aria-label={t('artifact.showWorkshop')}
                 >
                   <PanelRightOpen className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="left">
-                <p>{t('chatPage.showDocuments')}</p>
+                <p>{t('artifact.showWorkshop')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -237,54 +234,28 @@ export function DocumentPanel({
   return (
     <div
       ref={panelRef}
-      className={`hidden lg:flex relative flex-col h-full border-l border-border bg-base ${isInitialized ? 'transition-all duration-200' : ''}`}
+      className={`${mobileVisible ? 'flex' : 'hidden'} max-lg:!w-full lg:flex relative flex-col h-full border-l max-lg:border-l-0 border-border bg-base ${isInitialized ? 'transition-all duration-200' : ''}`}
       style={{ width: `${panelWidth}px` }}
     >
       {/* Resizer handle - on the left edge */}
       <div
-        className="absolute top-0 left-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 transition-colors group z-10"
+        className="absolute top-0 left-0 bottom-0 hidden w-1 cursor-col-resize hover:bg-primary/30 transition-colors group z-10 lg:block"
         onMouseDown={handleMouseDown}
       >
         <div className="absolute inset-y-0 -left-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
 
-      {/* Content area with lightweight Studio tabs */}
-      <Tabs
-        value={activeTab}
-        onValueChange={value => setActiveTab(value as 'documents' | 'artifacts' | 'permissions')}
-        className="flex flex-1 flex-col overflow-hidden"
-      >
-        <div className="flex items-center justify-between gap-2 px-4 pt-3">
-          <TabsList
-            className={`grid w-auto ${canManagePermissions ? 'grid-cols-3' : 'grid-cols-2'}`}
-          >
-            <TabsTrigger
-              value="documents"
-              className="gap-1.5"
-              data-testid="knowledge-documents-tab"
-            >
-              <FileText className="h-4 w-4" />
-              {t('chatPage.documents')}
-            </TabsTrigger>
-            <TabsTrigger
-              value="artifacts"
-              className="gap-1.5"
-              data-testid="knowledge-artifacts-tab"
-            >
-              <Sparkles className="h-4 w-4" />
-              {t('artifact.tab')}
-            </TabsTrigger>
-            {canManagePermissions && (
-              <TabsTrigger
-                value="permissions"
-                className="gap-1.5"
-                data-testid="knowledge-permissions-tab"
-              >
-                <Shield className="h-4 w-4" />
-                {t('document.permission.management')}
-              </TabsTrigger>
-            )}
-          </TabsList>
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex items-start justify-between gap-2 px-4 pt-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="rounded-xl bg-primary/10 p-2.5 text-primary">
+              <Bot className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-semibold">{t('artifact.aiWorkshop')}</h2>
+              <p className="mt-0.5 text-xs text-text-secondary">{t('artifact.aiWorkshopHint')}</p>
+            </div>
+          </div>
           <div className="flex items-center gap-1">
             {onNewChat && (
               <TooltipProvider>
@@ -310,43 +281,61 @@ export function DocumentPanel({
               variant="ghost"
               size="sm"
               onClick={toggleCollapsed}
-              className="h-8 w-8 p-0"
-              title={t('chatPage.hideDocuments')}
+              className="hidden h-8 w-8 p-0 lg:inline-flex"
+              title={t('artifact.hideWorkshop')}
               data-testid="knowledge-panel-collapse-button"
             >
               <PanelRightClose className="h-4 w-4" />
             </Button>
           </div>
         </div>
-        <TabsContent value="documents" className="mt-0 flex-1 overflow-auto p-4">
-          <DocumentList
-            knowledgeBase={knowledgeBase}
-            canUpload={canUpload}
-            canManageAllDocuments={canManageAllDocuments}
-            compact={true}
-            paginationEnabled={true}
-            onRefreshKnowledgeBase={onRefreshKnowledgeBase}
-            onSelectionChange={onDocumentSelectionChange}
-            groupInfo={groupInfo}
-            onGroupClick={onGroupClick}
-            initialDocPath={initialDocPath}
-          />
-        </TabsContent>
-        <TabsContent value="artifacts" className="mt-0 flex-1 overflow-hidden p-4">
+
+        <button
+          type="button"
+          className="mx-4 mt-4 flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-3 text-left transition-colors hover:border-primary hover:bg-hover"
+          onClick={() => openSourceDialog()}
+          data-testid="artifact-source-summary"
+        >
+          <div className="rounded-lg bg-primary/10 p-2 text-primary">
+            <Database className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-text-muted">{t('artifact.source')}</p>
+            <p className="truncate text-sm font-medium">
+              {selectedDocumentIds.length > 0
+                ? t('artifact.selectedDocuments', { count: selectedDocumentIds.length })
+                : t('artifact.wholeKnowledgeBase', {
+                    count: availableDocumentCount ?? knowledgeBase.document_count,
+                  })}
+            </p>
+            <p className="mt-0.5 text-xs text-text-muted">{t('artifact.sourceUsageHint')}</p>
+          </div>
+          <Settings2 className="h-4 w-4 text-text-muted" />
+        </button>
+
+        <div className="min-h-0 flex-1 overflow-hidden p-4">
           <ArtifactPanel
             knowledgeBaseId={knowledgeBase.id}
             selectedDocumentIds={selectedDocumentIds}
+            onAdjustSources={openSourceDialog}
+            onAvailableDocumentCountChange={setAvailableDocumentCount}
           />
-        </TabsContent>
-        {canManagePermissions && (
-          <TabsContent value="permissions" className="mt-0 flex-1 overflow-auto">
-            <PermissionManagementTab
-              kbId={knowledgeBase.id}
-              kbNamespace={knowledgeBase.namespace}
-            />
-          </TabsContent>
-        )}
-      </Tabs>
+        </div>
+      </div>
+
+      <ArtifactSourceDialog
+        knowledgeBaseId={knowledgeBase.id}
+        open={sourceDialogOpen}
+        selectedDocumentIds={selectedDocumentIds}
+        availableDocumentCount={availableDocumentCount}
+        onOpenChange={handleSourceDialogOpenChange}
+        onApply={documentIds => {
+          const continuation = sourceApplyContinuationRef.current
+          onDocumentSelectionChange?.(documentIds)
+          sourceApplyContinuationRef.current = null
+          continuation?.()
+        }}
+      />
 
       {/* Overlay while resizing */}
       {isResizing && (

@@ -117,6 +117,7 @@ class ArtifactService:
                 knowledge_base_id,
                 self.user.id,
             ),
+            available_document_count=self._available_document_count(knowledge_base_id),
         )
 
     async def get(
@@ -444,6 +445,18 @@ class ArtifactService:
         if not document_ids:
             raise ArtifactValidationError("Knowledge base has no indexed documents")
         return document_ids
+
+    def _available_document_count(self, knowledge_base_id: int) -> int:
+        """Count documents that can participate in Artifact generation."""
+        return (
+            self.db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+                KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+                KnowledgeDocument.is_active.is_(True),
+            )
+            .count()
+        )
 
     async def _get_artifact(
         self,

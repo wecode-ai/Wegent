@@ -56,11 +56,13 @@ describe('useKnowledgeArtifacts', () => {
     const pending = new Promise<{
       items: KnowledgeArtifact[]
       can_manage: boolean
+      available_document_count: number
     }>(() => undefined)
     ;(knowledgeArtifactApi.list as jest.Mock)
       .mockResolvedValueOnce({
         items: [buildArtifact(12, 'succeeded')],
         can_manage: true,
+        available_document_count: 3,
       })
       .mockReturnValueOnce(pending)
 
@@ -82,10 +84,12 @@ describe('useKnowledgeArtifacts', () => {
       .mockResolvedValueOnce({
         items: [buildArtifact(12, 'running')],
         can_manage: true,
+        available_document_count: 3,
       })
       .mockResolvedValueOnce({
         items: [buildArtifact(12, 'succeeded')],
         can_manage: true,
+        available_document_count: 3,
       })
 
     const { result } = renderHook(() => useKnowledgeArtifacts(12))

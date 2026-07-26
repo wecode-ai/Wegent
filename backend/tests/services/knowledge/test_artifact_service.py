@@ -172,6 +172,27 @@ async def test_create_requires_document_management_permission():
     repository.create.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_list_includes_available_document_count():
+    service, repository, _ = build_service()
+    repository.list_by_knowledge_base.return_value = []
+
+    with (
+        patch.object(service, "_require_read_access"),
+        patch.object(service, "_reconcile_many", AsyncMock(return_value=[])),
+        patch.object(service, "_available_document_count", return_value=4),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=True,
+        ),
+    ):
+        response = await service.list(12)
+
+    assert response.items == []
+    assert response.can_manage is True
+    assert response.available_document_count == 4
+
+
 def test_parse_mind_map_accepts_exactly_one_mermaid_block():
     content = "说明\n```mermaid\ngraph TD\nA --> B\n```\n结尾"
 

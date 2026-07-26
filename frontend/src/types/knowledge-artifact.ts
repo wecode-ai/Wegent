@@ -35,6 +35,7 @@ export interface KnowledgeArtifact {
 export interface KnowledgeArtifactListResponse {
   items: KnowledgeArtifact[]
   can_manage: boolean
+  available_document_count: number
 }
 
 export interface KnowledgeArtifactCreate {

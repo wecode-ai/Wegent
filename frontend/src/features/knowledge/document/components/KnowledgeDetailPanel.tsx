@@ -14,7 +14,8 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Library, FileText, Shield } from 'lucide-react'
+import { Bot, Library, FileText, MessageSquare, Shield } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -85,6 +86,7 @@ export function KnowledgeDetailPanel({
 
   // Document panel collapsed state (for notebook mode)
   const [_isDocumentPanelCollapsed, setIsDocumentPanelCollapsed] = useState(false)
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<'chat' | 'workshop'>('chat')
 
   const namespaceRoleMap = useNamespaceRoleMap()
 
@@ -182,16 +184,21 @@ export function KnowledgeDetailPanel({
   // - On initial mount: preserve task if taskId is in URL (user navigating from history)
   // - On KB switch: always clear task (the old taskId belongs to a different KB)
   useEffect(() => {
-    setActiveTab('documents')
-    setSelectedDocumentIds([])
-    setIsDocumentPanelCollapsed(false)
+    const isKbSwitch = prevKbIdRef.current !== null && prevKbIdRef.current !== selectedKb?.id
+    const isInitialKnowledgeBase = prevKbIdRef.current === null && selectedKb?.id != null
+
+    if (isInitialKnowledgeBase || isKbSwitch) {
+      setActiveTab('documents')
+      setSelectedDocumentIds([])
+      setIsDocumentPanelCollapsed(false)
+      setMobileWorkspaceTab('chat')
+    }
 
     if (currentView === 'documents') {
       selectTask(null)
     }
 
     if (currentView === 'notebook') {
-      const isKbSwitch = prevKbIdRef.current !== null && prevKbIdRef.current !== selectedKb?.id
       if (isKbSwitch || !taskIdFromUrlRef.current) {
         selectTask(null)
       }
@@ -206,9 +213,33 @@ export function KnowledgeDetailPanel({
   // Simplified layout: direct left-right split without extra header bars
   if (selectedKb && currentView === 'notebook') {
     return (
-      <div className="flex-1 flex bg-base overflow-hidden" data-testid="knowledge-detail-notebook">
+      <div
+        className="flex flex-1 flex-col overflow-hidden bg-base lg:flex-row"
+        data-testid="knowledge-detail-notebook"
+      >
+        <div className="grid grid-cols-2 border-b border-border p-2 lg:hidden">
+          <Button
+            variant={mobileWorkspaceTab === 'chat' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setMobileWorkspaceTab('chat')}
+          >
+            <MessageSquare className="mr-1.5 h-4 w-4" />
+            {t('artifact.mobile.chat')}
+          </Button>
+          <Button
+            variant={mobileWorkspaceTab === 'workshop' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setMobileWorkspaceTab('workshop')}
+          >
+            <Bot className="mr-1.5 h-4 w-4" />
+            {t('artifact.aiWorkshop')}
+          </Button>
+        </div>
+
         {/* Chat area - left side */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        <div
+          className={`${mobileWorkspaceTab === 'chat' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col lg:flex`}
+        >
           <ChatArea
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
@@ -240,16 +271,10 @@ export function KnowledgeDetailPanel({
         {/* Right panel - Document context selection */}
         <DocumentPanel
           knowledgeBase={selectedKb}
-          canUpload={canUploadDocuments}
-          canManageAllDocuments={canManageKb}
-          canManagePermissions={canManagePermissions}
-          onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
           onDocumentSelectionChange={setSelectedDocumentIds}
           selectedDocumentIds={selectedDocumentIds}
           onCollapsedChange={setIsDocumentPanelCollapsed}
-          groupInfo={groupInfo}
-          onGroupClick={onGroupClick}
-          initialDocPath={initialDocPath}
+          mobileVisible={mobileWorkspaceTab === 'workshop'}
         />
       </div>
     )

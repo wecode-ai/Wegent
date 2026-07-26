@@ -99,3 +99,4 @@ class KnowledgeArtifactListResponse(BaseModel):
 
     items: list[KnowledgeArtifact]
     can_manage: bool
+    available_document_count: int

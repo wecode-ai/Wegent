@@ -13,6 +13,7 @@ const POLL_INTERVAL_MS = 5000
 export function useKnowledgeArtifacts(knowledgeBaseId: number) {
   const [items, setItems] = useState<KnowledgeArtifact[]>([])
   const [canManage, setCanManage] = useState(false)
+  const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const mountedRef = useRef(true)
@@ -25,6 +26,7 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
         if (!mountedRef.current) return
         setItems(response.items)
         setCanManage(response.can_manage)
+        setAvailableDocumentCount(response.available_document_count)
         setError(null)
       } catch (nextError) {
         if (mountedRef.current) {
@@ -41,6 +43,7 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
     mountedRef.current = true
     setItems([])
     setCanManage(false)
+    setAvailableDocumentCount(null)
     setError(null)
     void refresh(true)
     return () => {
@@ -100,6 +103,7 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
   return {
     items,
     canManage,
+    availableDocumentCount,
     isLoading,
     error,
     create,
