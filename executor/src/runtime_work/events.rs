@@ -18,8 +18,9 @@ use super::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
     notification_mapping::{
-        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        log_dropped_notification, log_stream_text_mapping, log_text_mapping,
+        log_text_mapping_metadata, map_text_chunk, map_tool_output_delta, notification_item_id,
+        TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -808,15 +809,34 @@ impl CodexNotificationEventMapper {
                 );
                 true
             }
-            Ok(Some(TextChunkMapping::FinalCompleted)) => {
-                log_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "ignore_completed_final_snapshot",
-                    resolved_phase,
-                    params,
-                    "",
-                );
+            Ok(Some(TextChunkMapping::FinalCompleted { text })) => {
+                if self.final_text_offset == 0 {
+                    log_text_mapping_metadata(
+                        emit_context.local_task_id,
+                        method,
+                        "emit_completed_final_without_delta",
+                        resolved_phase,
+                        params,
+                        text.len(),
+                    );
+                    emit_response_event(
+                        emit_context.event_tx,
+                        emit_context.device_id,
+                        "response.output_text.delta",
+                        emit_context.local_task_id,
+                        emit_context.request,
+                        json!({"delta": text, "offset": 0}),
+                    );
+                } else {
+                    log_text_mapping(
+                        emit_context.local_task_id,
+                        method,
+                        "ignore_completed_final_snapshot",
+                        resolved_phase,
+                        params,
+                        "",
+                    );
+                }
                 self.final_text_offset = 0;
                 true
             }
@@ -2703,15 +2723,29 @@ mod tests {
     }
 
     #[test]
-    fn ignores_legacy_final_agent_message_snapshots_for_live_delta_stream() {
+    fn ignores_legacy_final_agent_message_snapshots_after_live_delta_stream() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
+        let mut mapper = CodexNotificationEventMapper::default();
 
-        map_codex_notification(
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": "Done."
+                }
+            }),
+        );
+        mapper.map(
             &Some(event_tx),
             "device-1",
             "local-1",
@@ -2726,6 +2760,12 @@ mod tests {
             }),
         );
 
+        let event = event_rx
+            .try_recv()
+            .expect("live final delta should be emitted");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(event["payload"]["data"]["delta"], "Done.");
+        assert_eq!(event["payload"]["data"]["offset"], 0);
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -3215,6 +3255,46 @@ mod tests {
         let event = event_rx.try_recv().expect("event should be emitted");
         assert_eq!(event["payload"]["data"]["agent_id"], "thread-worker");
         assert!(event["payload"]["data"].get("agent_name").is_none());
+    }
+
+    #[test]
+    fn emits_completed_final_agent_message_when_no_delta_was_received() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Completed without a streaming delta."
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("final text event should be emitted");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(
+            event["payload"]["data"]["delta"],
+            "Completed without a streaming delta."
+        );
+        assert_eq!(event["payload"]["data"]["offset"], 0);
+        assert!(event_rx.try_recv().is_err());
     }
 
     #[test]

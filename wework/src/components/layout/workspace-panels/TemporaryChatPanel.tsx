@@ -235,9 +235,13 @@ export function TemporaryChatPanel({
           source,
           attachments: currentAttachments,
           onError: handleError,
+          onRuntimeTaskOptimisticOpen: setAddress,
         }))
 
-      if (!targetAddress) return
+      if (!targetAddress) {
+        setAddress(null)
+        return
+      }
       if (!address) {
         setAddress(targetAddress)
         sideChatProjectChat.resetAttachments()

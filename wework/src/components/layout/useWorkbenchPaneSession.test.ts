@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import type { WorkbenchMessage } from '@/types/workbench'
-import { reconcileRuntimeConversationMessages } from './useWorkbenchPaneSession'
+import {
+  reconcileRuntimeConversationMessages,
+  transcriptSettlesLatestSeededTurn,
+} from './useWorkbenchPaneSession'
 
 function message(overrides: Partial<WorkbenchMessage>): WorkbenchMessage {
   return {
@@ -38,5 +41,27 @@ describe('reconcileRuntimeConversationMessages', () => {
     ]
 
     expect(reconcileRuntimeConversationMessages(transcript, cached, true)).toBe(cached)
+  })
+})
+
+describe('transcriptSettlesLatestSeededTurn', () => {
+  test('does not settle a live turn from an older turn with duplicate user content', () => {
+    const transcript = [
+      message({ id: 'older-user', role: 'user', content: 'Continue' }),
+      message({ id: 'older-assistant', content: 'Older completed response' }),
+    ]
+    const seeded = [message({ id: 'live-user', role: 'user', content: 'Continue' })]
+
+    expect(transcriptSettlesLatestSeededTurn(transcript, seeded)).toBe(false)
+  })
+
+  test('settles the seeded turn only after its client message id appears', () => {
+    const seeded = [message({ id: 'live-user', role: 'user', content: 'Continue' })]
+    const transcript = [
+      message({ id: 'live-user', role: 'user', content: 'Continue' }),
+      message({ id: 'live-assistant', content: 'Current completed response' }),
+    ]
+
+    expect(transcriptSettlesLatestSeededTurn(transcript, seeded)).toBe(true)
   })
 })

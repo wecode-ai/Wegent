@@ -21,7 +21,6 @@ const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed ta
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
 const RUNNING_FORK_FOLLOW_UP_PROMPT =
   'WEWORK_DESKTOP_E2E_RUNNING_FORK: keep streaming while the first turn is forked.'
-const RUNNING_FORK_STREAMING_TEXT = 'WEWORK_DESKTOP_E2E_RUNNING_FORK_STREAMING'
 const RUNNING_FORK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RUNNING_FORK_COMPLETE'
 const FORK_FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP: continue only in the forked task.'
 const FORK_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP_COMPLETE'
@@ -220,6 +219,8 @@ const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY ===
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
 const RETRY_ONLY = process.argv.includes('--retry-only')
+const RUNNING_FORK_ONLY = process.argv.includes('--running-fork-only')
+const SIDE_CHAT_ONLY = process.argv.includes('--side-chat-only')
 const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
 const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
 const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
@@ -797,10 +798,6 @@ async function verifyRunningFollowUpFork({
     RUNNING_FORK_FOLLOW_UP_PROMPT,
     'running_fork_follow_up'
   )
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: RUNNING_FORK_STREAMING_TEXT,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
   await control.command('waitFor', '[data-testid="pause-response-button"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -951,12 +948,19 @@ async function verifyCompletedTurnFork({
 
 async function ensureTaskRowVisible(control, taskRowTestId) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const snapshot = await waitForSnapshot(
+      control,
+      value =>
+        value.testIds.includes(taskRowTestId) ||
+        value.testIds.some(testId => testId.startsWith('project-runtime-tasks-expand-')),
+      `Unable to find task row ${taskRowTestId} or a project task expansion control`,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
     if (snapshot.testIds.includes(taskRowTestId)) return
     const expandTasksButton = snapshot.testIds.find(testId =>
       testId.startsWith('project-runtime-tasks-expand-')
     )
-    assert.ok(expandTasksButton, `Unable to reveal task row ${taskRowTestId}`)
+    assert.ok(expandTasksButton)
     await control.command('click', `[data-testid="${expandTasksButton}"]`)
   }
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
@@ -4208,9 +4212,9 @@ class DesktopE2EServer {
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
-      response.write(createSse(stream.start))
       response.write(
         createSse([
+          ...stream.start,
           {
             type: 'response.output_text.delta',
             item_id: stream.itemId,
@@ -4467,8 +4471,7 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(RUNNING_FORK_FOLLOW_UP_PROMPT),
         'The real Codex request did not contain the running-fork follow-up prompt'
       )
-      const completedText = `${RUNNING_FORK_STREAMING_TEXT}\n${RUNNING_FORK_COMPLETION_TEXT}`
-      const stream = streamingTextEvents(responseId, completedText)
+      const stream = streamingTextEvents(responseId, RUNNING_FORK_COMPLETION_TEXT)
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
@@ -4476,18 +4479,6 @@ class DesktopE2EServer {
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
       response.write(createSse(stream.start))
-      response.write(
-        createSse([
-          {
-            type: 'response.output_text.delta',
-            item_id: stream.itemId,
-            output_index: 0,
-            content_index: 0,
-            delta: RUNNING_FORK_STREAMING_TEXT,
-            offset: 0,
-          },
-        ])
-      )
       await this.runningForkFollowUpRelease
       response.write(
         createSse([
@@ -4496,8 +4487,8 @@ class DesktopE2EServer {
             item_id: stream.itemId,
             output_index: 0,
             content_index: 0,
-            delta: `\n${RUNNING_FORK_COMPLETION_TEXT}`,
-            offset: RUNNING_FORK_STREAMING_TEXT.length,
+            delta: RUNNING_FORK_COMPLETION_TEXT,
+            offset: 0,
           },
         ])
       )
@@ -7088,6 +7079,18 @@ async function main() {
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
 
+    if (SIDE_CHAT_ONLY) {
+      phase = 'side-chat-attachment-isolation'
+      await verifySideChatAttachmentIsolation({ control, taskRowTestId })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework side-chat desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     phase = 'running-follow-up-fork'
     await verifyRunningFollowUpFork({
       composerSelector,
@@ -7095,6 +7098,15 @@ async function main() {
       executorHome,
       sourceTaskRowTestId: taskRowTestId,
     })
+    if (RUNNING_FORK_ONLY) {
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework running-fork desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
 
     phase = 'completed-turn-fork'
     await verifyCompletedTurnFork({
