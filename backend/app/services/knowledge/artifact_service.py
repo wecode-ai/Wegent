@@ -163,7 +163,9 @@ class ArtifactService:
         )
         if artifact is None:
             raise ArtifactNotFoundError("Artifact not found")
-        return await self._reconcile(artifact)
+        reconciled = await self._reconcile(artifact)
+        self._set_delete_capability(reconciled, can_manage=True)
+        return reconciled
 
     async def retry(
         self,
@@ -214,8 +216,15 @@ class ArtifactService:
             raise ArtifactValidationError(
                 "Active artifacts cannot be deleted before generation finishes"
             )
-        if not self.repository.delete(knowledge_base_id, artifact_id):
+        if self.repository.delete(
+            knowledge_base_id,
+            artifact_id,
+            expected_attempt=artifact.attempt,
+        ):
+            return
+        if self.repository.get(knowledge_base_id, artifact_id) is None:
             raise ArtifactNotFoundError("Artifact not found")
+        raise ArtifactValidationError("Artifact execution state has changed")
 
     def resolve_mind_map_node(
         self,

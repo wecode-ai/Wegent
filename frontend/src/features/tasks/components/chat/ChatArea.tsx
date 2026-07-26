@@ -255,6 +255,8 @@ function ChatAreaContent({
   const [pendingFormReplacementMessage, setPendingFormReplacementMessage] = useState<string | null>(
     null
   )
+  const [pendingFormReplacementOptions, setPendingFormReplacementOptions] =
+    useState<SendMessageOptions | null>(null)
   const [isPendingFormReplacementOpen, setIsPendingFormReplacementOpen] = useState(false)
   const [isPendingFormReplacementConfirming, setIsPendingFormReplacementConfirming] =
     useState(false)
@@ -1027,6 +1029,7 @@ function ChatAreaContent({
 
       if (pendingInteractiveForm && !options?.interactiveFormAnswer) {
         setPendingFormReplacementMessage(trimmedMessage)
+        setPendingFormReplacementOptions(options ?? null)
         setIsPendingFormReplacementOpen(true)
         return
       }
@@ -1080,9 +1083,12 @@ function ChatAreaContent({
         pendingInteractiveForm,
         pendingFormReplacementMessage
       )
+      const options = pendingFormReplacementOptions
       setPendingFormReplacementMessage(null)
+      setPendingFormReplacementOptions(null)
       setIsPendingFormReplacementOpen(false)
       await streamHandlers.handleSendMessage(cancellation.message, {
+        ...options,
         interactiveFormAnswer: cancellation.answer,
       })
     } finally {
@@ -1091,6 +1097,7 @@ function ChatAreaContent({
   }, [
     isPendingFormReplacementConfirming,
     pendingFormReplacementMessage,
+    pendingFormReplacementOptions,
     pendingInteractiveForm,
     streamHandlers,
   ])
@@ -1963,6 +1970,7 @@ function ChatAreaContent({
           setIsPendingFormReplacementOpen(open)
           if (!open) {
             setPendingFormReplacementMessage(null)
+            setPendingFormReplacementOptions(null)
           }
         }}
       >

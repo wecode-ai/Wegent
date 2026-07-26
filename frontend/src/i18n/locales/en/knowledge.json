@@ -970,6 +970,9 @@
       "ask": "Ask AI",
       "expand": "Expand node",
       "collapse": "Collapse node",
+      "question": "Based on the current knowledge base, explain “{{title}}” from this mind map in detail.",
+      "path": "Its path in the mind map is: {{path}}.",
+      "instruction": "Explain its core meaning, relationships with parent and child topics, and key facts or conclusions. Cite knowledge base sources.",
       "legacyHint": "This is a legacy mind map. Regenerate it to ask questions from nodes."
     },
     "status": {

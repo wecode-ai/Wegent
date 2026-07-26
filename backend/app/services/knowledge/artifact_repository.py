@@ -215,11 +215,19 @@ class KnowledgeArtifactRepository:
             KnowledgeArtifactStatus.RUNNING.value,
         )
 
-    def delete(self, knowledge_base_id: int, artifact_id: str) -> bool:
+    def delete(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+        *,
+        expected_attempt: int,
+    ) -> bool:
         """Physically delete an Artifact so stale executions cannot recreate it."""
         try:
-            deleted = self._query(knowledge_base_id, artifact_id).delete(
-                synchronize_session=False
+            deleted = (
+                self._query(knowledge_base_id, artifact_id)
+                .filter(KnowledgeArtifactRecord.attempt == expected_attempt)
+                .delete(synchronize_session=False)
             )
             self.db.commit()
             return bool(deleted)

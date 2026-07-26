@@ -45,12 +45,20 @@ describe('mind map content', () => {
 
   it('builds a visible prompt with the full node path', () => {
     const parsed = parseMindMapContent(content)!
+    const t = (key: string, options?: Record<string, string>) =>
+      ({
+        'artifact.mindMap.question': `Explain ${options?.title}`,
+        'artifact.mindMap.path': `Path: ${options?.path}`,
+        'artifact.mindMap.instruction': 'Cite sources',
+      })[key] ?? key
 
     expect(getMindMapNodePath(parsed, 'filter').map(node => node.title)).toEqual([
       'AB 实验',
       '创建流程',
       '过滤条件',
     ])
-    expect(buildMindMapQuestion(parsed, 'filter')).toContain('AB 实验 > 创建流程 > 过滤条件')
+    expect(buildMindMapQuestion(parsed, 'filter', t)).toBe(
+      'Explain 过滤条件\nPath: AB 实验 > 创建流程 > 过滤条件\nCite sources'
+    )
   })
 })

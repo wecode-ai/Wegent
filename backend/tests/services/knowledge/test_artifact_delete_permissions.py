@@ -100,7 +100,11 @@ async def test_delete_allows_owner_after_generation_finishes():
     ):
         await service.delete(12, "artifact-1")
 
-    repository.delete.assert_called_once_with(12, "artifact-1")
+    repository.delete.assert_called_once_with(
+        12,
+        "artifact-1",
+        expected_attempt=artifact.attempt,
+    )
 
 
 @pytest.mark.asyncio
@@ -153,7 +157,46 @@ async def test_delete_allows_manager_to_remove_another_users_artifact():
     ):
         await service.delete(12, "artifact-1")
 
-    repository.delete.assert_called_once_with(12, "artifact-1")
+    repository.delete.assert_called_once_with(
+        12,
+        "artifact-1",
+        expected_attempt=artifact.attempt,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_concurrent_retry():
+    service, repository = _service()
+    artifact = _artifact(KnowledgeArtifactStatus.FAILED)
+    retried = artifact.model_copy(update={"attempt": artifact.attempt + 1})
+    repository.get.side_effect = [artifact, retried]
+    repository.delete.return_value = False
+
+    with (
+        patch.object(service, "_require_read_access"),
+        patch.object(service, "_reconcile", AsyncMock(return_value=artifact)),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=False,
+        ),
+        pytest.raises(ArtifactValidationError, match="state has changed"),
+    ):
+        await service.delete(12, "artifact-1")
+
+
+@pytest.mark.asyncio
+async def test_rename_preserves_delete_capability_for_manager():
+    service, repository = _service()
+    artifact = _artifact(KnowledgeArtifactStatus.SUCCEEDED, user_id=8)
+    repository.rename.return_value = artifact
+
+    with (
+        patch.object(service, "_require_manage_access"),
+        patch.object(service, "_reconcile", AsyncMock(return_value=artifact)),
+    ):
+        renamed = await service.rename(12, "artifact-1", "新标题")
+
+    assert renamed.can_delete is True
 
 
 def test_stalled_artifact_is_deletable():

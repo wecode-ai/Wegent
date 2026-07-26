@@ -68,7 +68,14 @@ def test_repository_round_trip_list_limit_and_delete(db: Session):
         "artifact-1",
     ]
     assert len(repository.list_by_knowledge_base(12, limit=1)) == 1
-    assert repository.delete(12, "artifact-1") is True
+    assert (
+        repository.delete(
+            12,
+            "artifact-1",
+            expected_attempt=older.attempt,
+        )
+        is True
+    )
     assert repository.get(12, "artifact-1") is None
 
 
@@ -92,11 +99,33 @@ def test_deleted_artifact_cannot_be_recreated_by_stale_execution(db: Session):
     repository = KnowledgeArtifactRepository(db)
     stale_execution = repository.create(build_artifact())
 
-    assert repository.delete(12, "artifact-1") is True
+    assert (
+        repository.delete(
+            12,
+            "artifact-1",
+            expected_attempt=stale_execution.attempt,
+        )
+        is True
+    )
 
     stale_execution.status = KnowledgeArtifactStatus.SUCCEEDED
     assert repository.update_execution(stale_execution) is None
     assert repository.get(12, "artifact-1") is None
+
+
+def test_delete_rejects_a_stale_attempt(db: Session):
+    repository = KnowledgeArtifactRepository(db)
+    artifact = repository.create(build_artifact())
+
+    assert (
+        repository.delete(
+            12,
+            "artifact-1",
+            expected_attempt=artifact.attempt + 1,
+        )
+        is False
+    )
+    assert repository.get(12, "artifact-1") is not None
 
 
 def test_terminal_state_cannot_regress_to_running(db: Session):

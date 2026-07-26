@@ -114,21 +114,17 @@ const MindMapNodeCard = memo(function MindMapNodeCard({
             : 'border-border bg-surface hover:border-primary/50'
       }`}
       title={data.node.summary || data.node.title}
-      data-testid={`mind-map-node-${data.node.id}`}
-      role="button"
-      tabIndex={0}
-      aria-label={data.node.title}
-      onClick={() => data.onSelect(data.node.id)}
-      onKeyDown={event => {
-        if (event.key !== 'Enter' && event.key !== ' ') return
-        event.preventDefault()
-        data.onSelect(data.node.id)
-      }}
     >
       <Handle type="target" position={Position.Left} className="!invisible" />
-      <div className="min-w-0 flex-1">
+      <button
+        type="button"
+        className="nodrag min-w-0 flex-1 text-left"
+        aria-label={data.node.title}
+        onClick={() => data.onSelect(data.node.id)}
+        data-testid={`mind-map-node-${data.node.id}`}
+      >
         <p className="line-clamp-2 text-sm font-medium leading-5">{data.node.title}</p>
-      </div>
+      </button>
       {data.hasChildren && (
         <button
           type="button"

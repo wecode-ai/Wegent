@@ -5,6 +5,7 @@
 import type { MindMapContent, MindMapNode } from '@/types/knowledge-artifact'
 
 const MAX_NODES = 200
+type Translate = (key: string, options?: Record<string, string>) => string
 
 function isMindMapNode(value: unknown): value is MindMapNode {
   if (!value || typeof value !== 'object') return false
@@ -78,14 +79,18 @@ export function getMindMapNodePath(content: MindMapContent, nodeId: string): Min
   return path
 }
 
-export function buildMindMapQuestion(content: MindMapContent, nodeId: string): string {
+export function buildMindMapQuestion(
+  content: MindMapContent,
+  nodeId: string,
+  t: Translate
+): string {
   const path = getMindMapNodePath(content, nodeId)
   const node = path[path.length - 1]
   if (!node) return ''
   const pathText = path.map(item => item.title).join(' > ')
   return [
-    `请基于当前知识库详细解释思维导图中的“${node.title}”。`,
-    `它在思维导图中的路径是：${pathText}。`,
-    '请说明这个主题的核心含义、它与上下级主题的关系、关键事实或结论，并引用知识库来源。',
+    t('artifact.mindMap.question', { title: node.title }),
+    t('artifact.mindMap.path', { path: pathText }),
+    t('artifact.mindMap.instruction'),
   ].join('\n')
 }

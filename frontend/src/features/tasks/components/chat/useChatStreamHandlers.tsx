@@ -440,13 +440,15 @@ export function useChatStreamHandlers({
         artifactContext?: ArtifactNodeContext
       }
     ): PreparedChatSend => {
-      const snapshotAttachments = [...attachments]
-      const snapshotContexts = [...selectedContextsRef.current]
-      const snapshotAdditionalSkills = additionalSkills ? [...additionalSkills] : undefined
+      const isArtifactQuestion = Boolean(sendOptions?.artifactContext)
+      const snapshotAttachments = isArtifactQuestion ? [] : [...attachments]
+      const snapshotContexts = isArtifactQuestion ? [] : [...selectedContextsRef.current]
+      const snapshotAdditionalSkills =
+        !isArtifactQuestion && additionalSkills ? [...additionalSkills] : undefined
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
 
       let finalMessage = message
-      if (Object.keys(externalApiParams).length > 0) {
+      if (!isArtifactQuestion && Object.keys(externalApiParams).length > 0) {
         const paramsJson = JSON.stringify(externalApiParams)
         finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
       }
@@ -1056,7 +1058,7 @@ export function useChatStreamHandlers({
       const hasAttachments = attachments.length > 0
       if (!message && !hasAttachments && !shouldHideChatInput) return
 
-      if (!isAttachmentReadyToSend) {
+      if (!sendOptions?.artifactContext && !isAttachmentReadyToSend) {
         toast({
           variant: 'destructive',
           title: '请等待文件上传完成',
@@ -1124,16 +1126,20 @@ export function useChatStreamHandlers({
             snapshot: prepared,
           })
         }
-        setTaskInputMessage('')
-        resetAttachment()
-        resetContexts?.()
+        if (!sendOptions?.artifactContext) {
+          setTaskInputMessage('')
+          resetAttachment()
+          resetContexts?.()
+        }
         setTimeout(() => scrollToBottom(true), 0)
         return
       }
 
-      setTaskInputMessage('')
-      resetAttachment()
-      resetContexts?.()
+      if (!sendOptions?.artifactContext) {
+        setTaskInputMessage('')
+        resetAttachment()
+        resetContexts?.()
+      }
 
       if (!currentTaskId) {
         setPendingTaskId(immediateTaskId)

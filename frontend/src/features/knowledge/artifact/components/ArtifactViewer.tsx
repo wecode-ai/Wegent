@@ -138,7 +138,7 @@ export function ArtifactViewer({
                   key={artifact.artifact_id}
                   content={mindMapContent}
                   onAskNode={nodeId => {
-                    const message = buildMindMapQuestion(mindMapContent, nodeId)
+                    const message = buildMindMapQuestion(mindMapContent, nodeId, t)
                     if (!message || !onAskNode) return
                     onAskNode({
                       requestId: createPromptRequestId(artifact.artifact_id, nodeId),

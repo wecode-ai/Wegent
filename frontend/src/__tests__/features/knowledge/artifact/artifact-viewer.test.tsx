@@ -8,7 +8,10 @@ import { ArtifactViewer } from '@/features/knowledge/artifact/components/Artifac
 import type { KnowledgeArtifact } from '@/types/knowledge-artifact'
 
 jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, string>) =>
+      key === 'artifact.mindMap.path' ? `Path: ${options?.path}` : key,
+  }),
 }))
 
 jest.mock('@/features/theme/ThemeProvider', () => ({

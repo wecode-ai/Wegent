@@ -95,9 +95,15 @@ function renderSendHook(
     taskType?: TaskType
     knowledgeBaseId?: number
     selectedDocumentIds?: number[]
+    attachments?: unknown[]
+    isAttachmentReadyToSend?: boolean
+    externalApiParams?: Record<string, string>
   } = {}
 ) {
-  return renderHook(() =>
+  const setTaskInputMessage = jest.fn()
+  const resetAttachment = jest.fn()
+  const resetContexts = jest.fn()
+  const hook = renderHook(() =>
     useChatStreamHandlers({
       selectedTeam: { id: 5, name: 'Team', agent_type: 'chat' } as never,
       selectedModel: null,
@@ -109,23 +115,24 @@ function renderSendHook(
       showRepositorySelector: false,
       effectiveRequiresWorkspace: false,
       taskInputMessage: 'find the spec',
-      setTaskInputMessage: jest.fn(),
+      setTaskInputMessage,
       enableDeepThinking: false,
       enableClarification: false,
-      externalApiParams: {},
-      attachments: [] as never,
-      resetAttachment: jest.fn(),
-      isAttachmentReadyToSend: true,
+      externalApiParams: options.externalApiParams ?? {},
+      attachments: (options.attachments ?? []) as never,
+      resetAttachment,
+      isAttachmentReadyToSend: options.isAttachmentReadyToSend ?? true,
       taskType: options.taskType ?? 'chat',
       knowledgeBaseId: options.knowledgeBaseId,
       shouldHideChatInput: false,
       scrollToBottom: jest.fn(),
       selectedContexts,
       selectedDocumentIds: options.selectedDocumentIds,
-      resetContexts: jest.fn(),
+      resetContexts,
       additionalSkills: [],
     })
   )
+  return { ...hook, setTaskInputMessage, resetAttachment, resetContexts }
 }
 
 describe('useChatStreamHandlers external knowledge contexts', () => {
@@ -234,11 +241,28 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
   })
 
   it('sends Artifact node identity without trusting the current document selection', async () => {
-    const { result } = renderSendHook([], {
-      taskType: 'knowledge',
-      knowledgeBaseId: 12,
-      selectedDocumentIds: [999],
-    })
+    const currentContext: ContextItem = {
+      type: 'knowledge_base',
+      id: 99,
+      name: 'Unrelated KB',
+      document_count: 1,
+    } as ContextItem
+    const attachment = {
+      id: 88,
+      filename: 'draft.pdf',
+      status: 'uploading',
+    }
+    const { result, setTaskInputMessage, resetAttachment, resetContexts } = renderSendHook(
+      [currentContext],
+      {
+        taskType: 'knowledge',
+        knowledgeBaseId: 12,
+        selectedDocumentIds: [999],
+        attachments: [attachment],
+        isAttachmentReadyToSend: false,
+        externalApiParams: { token: 'draft-value' },
+      }
+    )
 
     await act(async () => {
       await result.current.handleSendMessage('解释这个节点', {
@@ -254,7 +278,12 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
       artifact_id: 'artifact-1',
       node_id: 'node-2',
     })
+    expect(request.message).toBe('解释这个节点')
+    expect(request.attachment_ids).toEqual([])
     expect(request.contexts).toBeUndefined()
+    expect(setTaskInputMessage).not.toHaveBeenCalled()
+    expect(resetAttachment).not.toHaveBeenCalled()
+    expect(resetContexts).not.toHaveBeenCalled()
   })
 
   it('replaces the current-KB context with an explicit whole-KB scope', async () => {
