@@ -205,12 +205,6 @@ export function ArtifactPanel({
                       count: artifact.source_document_ids.length,
                     })}
                   </div>
-                  {(artifact.status === 'queued' || artifact.status === 'running') &&
-                    artifact.execution_health !== 'stalled' && (
-                      <div className="mt-2 h-1 overflow-hidden rounded-full bg-border">
-                        <div className="h-full w-2/3 animate-pulse rounded-full bg-primary" />
-                      </div>
-                    )}
                 </div>
               </div>
             </button>

@@ -899,7 +899,7 @@
     "createTitle": "Generate knowledge artifact",
     "createDescription": "Choose an artifact type. An agent will generate it in the background.",
     "start": "Start generation",
-    "started": "Task started. Track its progress under Recent tasks.",
+    "started": "Task started. Track its status under Recent tasks.",
     "creating": "Creating...",
     "cancel": "Cancel",
     "save": "Save",

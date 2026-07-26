@@ -899,7 +899,7 @@
     "createTitle": "生成知识成果",
     "createDescription": "选择成果类型，智能体将在后台完成生成。",
     "start": "开始生成",
-    "started": "任务已开始，可在最近任务中查看进度",
+    "started": "任务已开始，可在最近任务中查看状态",
     "creating": "正在创建...",
     "cancel": "取消",
     "save": "保存",
