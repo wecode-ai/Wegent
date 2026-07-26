@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_BACKGROUND
 from app.models.user import User
-from app.schemas.kind import Task
+from app.schemas.kind import Task, Team
 from app.schemas.knowledge_artifact import KnowledgeArtifactType
+from app.services.chat.config.model_resolver import get_model_config_for_bot
 from app.services.chat.preprocessing import link_selected_documents_to_subtask
 from app.services.chat.storage.task_manager import TaskCreationParams
 from app.services.chat.trigger.lifecycle import prepare_execution_session
@@ -23,6 +24,7 @@ from app.services.execution import execution_dispatcher
 from app.services.execution.emitters import SSEResultEmitter
 from app.services.readers import KindType, kindReader
 from app.stores.tasks import task_store
+from shared.models.db import Kind
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +64,10 @@ class ArtifactTaskLauncher:
         knowledge_base_id: int,
         document_ids: list[int],
         instruction: str | None,
+        prepared_team: Kind | None = None,
     ) -> ArtifactTaskLaunchResult:
         """Create the agent session, bind sources, and schedule execution."""
-        team = self._resolve_team()
+        team = prepared_team or await self.preflight()
         message = self._build_prompt(artifact_type, instruction)
         params = TaskCreationParams(
             message=message,
@@ -114,7 +117,28 @@ class ArtifactTaskLauncher:
             assistant_subtask_id=session.assistant_subtask.id,
         )
 
-    def _resolve_team(self):
+    async def preflight(self) -> Kind:
+        """Validate the execution configuration without creating records."""
+        team = self._resolve_team()
+        try:
+            team_crd = Team.model_validate(team.json)
+        except ValueError as exc:
+            raise ArtifactTaskConfigurationError(
+                "Artifact agent configuration is invalid"
+            ) from exc
+
+        bot = self._resolve_first_bot(team, team_crd)
+        if bot is None:
+            raise ArtifactTaskConfigurationError(
+                f"Artifact agent '{team.namespace}/{team.name}' has no available bot"
+            )
+        try:
+            get_model_config_for_bot(self.db, bot, self.user.id)
+        except ValueError as exc:
+            raise ArtifactTaskConfigurationError(str(exc)) from exc
+        return team
+
+    def _resolve_team(self) -> Kind:
         config = (settings.DEFAULT_TEAM_KNOWLEDGE or "").strip()
         if not config:
             raise ArtifactTaskConfigurationError(
@@ -138,6 +162,19 @@ class ArtifactTaskLauncher:
                 f"Artifact agent '{namespace or 'default'}/{name}' is unavailable"
             )
         return team
+
+    def _resolve_first_bot(self, team: Kind, team_crd: Team) -> Kind | None:
+        for member in team_crd.spec.members:
+            bot = kindReader.get_by_name_and_namespace(
+                self.db,
+                team.user_id,
+                KindType.BOT,
+                member.botRef.namespace,
+                member.botRef.name,
+            )
+            if bot is not None:
+                return bot
+        return None
 
     def _mark_task_as_background(
         self,

@@ -23,7 +23,10 @@ from app.services.knowledge.artifact_service import (
     ArtifactService,
     ArtifactValidationError,
 )
-from app.services.knowledge.artifact_task_launcher import ArtifactTaskLaunchResult
+from app.services.knowledge.artifact_task_launcher import (
+    ArtifactTaskConfigurationError,
+    ArtifactTaskLaunchResult,
+)
 
 
 def build_service() -> tuple[ArtifactService, MagicMock, AsyncMock]:
@@ -68,6 +71,8 @@ def build_artifact(
 @pytest.mark.asyncio
 async def test_create_persists_before_and_after_launch():
     service, repository, launcher = build_service()
+    prepared_team = MagicMock()
+    launcher.preflight.return_value = prepared_team
     launcher.launch.return_value = ArtifactTaskLaunchResult(
         task_id=31,
         assistant_subtask_id=41,
@@ -90,13 +95,16 @@ async def test_create_persists_before_and_after_launch():
     assert artifact.generation_config == {"instruction": "突出风险"}
     repository.create.assert_called_once()
     repository.update_execution.assert_called_once()
+    launcher.preflight.assert_awaited_once_with()
     launcher.launch.assert_awaited_once()
     assert launcher.launch.await_args.kwargs["attempt"] == 1
+    assert launcher.launch.await_args.kwargs["prepared_team"] is prepared_team
 
 
 @pytest.mark.asyncio
 async def test_create_marks_artifact_failed_when_task_launch_fails():
     service, repository, launcher = build_service()
+    launcher.preflight.return_value = MagicMock()
     launcher.launch.side_effect = RuntimeError("智能体不可用")
     request = KnowledgeArtifactCreate(
         artifact_type=KnowledgeArtifactType.BRIEFING,
@@ -113,6 +121,32 @@ async def test_create_marks_artifact_failed_when_task_launch_fails():
     failed_artifact = repository.update_execution.call_args.args[0]
     assert failed_artifact.status == KnowledgeArtifactStatus.FAILED
     assert failed_artifact.error_message == "智能体不可用"
+
+
+@pytest.mark.asyncio
+async def test_create_does_not_persist_when_preflight_fails():
+    service, repository, launcher = build_service()
+    launcher.preflight.side_effect = ArtifactTaskConfigurationError(
+        "Bot wegent-knowledge-bot has no model configured"
+    )
+    request = KnowledgeArtifactCreate(
+        artifact_type=KnowledgeArtifactType.BRIEFING,
+        document_ids=[101],
+    )
+
+    with (
+        patch.object(service, "_require_manage_access"),
+        patch.object(service, "_resolve_document_ids", return_value=[101]),
+        pytest.raises(
+            ArtifactTaskConfigurationError,
+            match="has no model configured",
+        ),
+    ):
+        await service.create(12, request)
+
+    repository.create.assert_not_called()
+    repository.update_execution.assert_not_called()
+    launcher.launch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -235,6 +269,8 @@ async def test_reconcile_keeps_recent_running_execution_healthy():
 @pytest.mark.asyncio
 async def test_retry_reuses_artifact_identity_and_relaunches():
     service, repository, launcher = build_service()
+    prepared_team = MagicMock()
+    launcher.preflight.return_value = prepared_team
     artifact = build_artifact(status=KnowledgeArtifactStatus.FAILED)
     artifact.error_code = "MODEL_ERROR"
     artifact.error_message = "模型调用失败"
@@ -263,6 +299,7 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
     assert retried.error_message is None
     assert retried.attempt == 2
     assert launcher.launch.await_args.kwargs["attempt"] == 2
+    assert launcher.launch.await_args.kwargs["prepared_team"] is prepared_team
     repository.claim_retry.assert_called_once_with(
         12,
         "artifact-1",
@@ -274,6 +311,7 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
 @pytest.mark.asyncio
 async def test_retry_claims_stalled_active_attempt_and_relaunches():
     service, repository, launcher = build_service()
+    launcher.preflight.return_value = MagicMock()
     artifact = build_artifact()
     stale_at = datetime.now().astimezone() - timedelta(minutes=11)
     artifact.updated_at = stale_at
@@ -310,6 +348,28 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
         expected_attempt=1,
         allow_active=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_retry_does_not_claim_when_preflight_fails():
+    service, repository, launcher = build_service()
+    artifact = build_artifact(status=KnowledgeArtifactStatus.FAILED)
+    repository.get.return_value = artifact
+    launcher.preflight.side_effect = ArtifactTaskConfigurationError(
+        "Bot wegent-knowledge-bot has no model configured"
+    )
+
+    with (
+        patch.object(service, "_require_manage_access"),
+        pytest.raises(
+            ArtifactTaskConfigurationError,
+            match="has no model configured",
+        ),
+    ):
+        await service.retry(12, "artifact-1")
+
+    repository.claim_retry.assert_not_called()
+    launcher.launch.assert_not_awaited()
 
 
 def test_repair_execution_ids_uses_task_store_boundaries():

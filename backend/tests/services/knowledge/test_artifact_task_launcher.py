@@ -11,7 +11,10 @@ import pytest
 
 from app.core.constants import CLIENT_ORIGIN_BACKGROUND
 from app.schemas.knowledge_artifact import KnowledgeArtifactType
-from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
+from app.services.knowledge.artifact_task_launcher import (
+    ArtifactTaskConfigurationError,
+    ArtifactTaskLauncher,
+)
 
 
 @pytest.mark.asyncio
@@ -27,9 +30,9 @@ async def test_launch_schedules_execution():
         assistant_subtask=SimpleNamespace(id=41),
     )
     request = SimpleNamespace(task_id=31, subtask_id=41)
+    prepared_team = MagicMock()
 
     with (
-        patch.object(launcher, "_resolve_team", return_value=MagicMock()),
         patch(
             "app.services.knowledge.artifact_task_launcher.prepare_execution_session",
             return_value=session,
@@ -53,6 +56,7 @@ async def test_launch_schedules_execution():
             knowledge_base_id=12,
             document_ids=[101],
             instruction=None,
+            prepared_team=prepared_team,
         )
 
     assert (
@@ -63,6 +67,63 @@ async def test_launch_schedules_execution():
     schedule_execution.assert_called_once_with(request)
     assert result.task_id == 31
     assert result.assistant_subtask_id == 41
+
+
+@pytest.mark.asyncio
+async def test_preflight_rejects_missing_model_before_session_creation():
+    launcher = ArtifactTaskLauncher(
+        MagicMock(),
+        SimpleNamespace(id=7),
+    )
+    team = SimpleNamespace(
+        name="wegent-notebook",
+        namespace="default",
+        user_id=0,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": "wegent-notebook", "namespace": "default"},
+            "spec": {
+                "members": [
+                    {
+                        "botRef": {
+                            "name": "wegent-knowledge-bot",
+                            "namespace": "default",
+                        }
+                    }
+                ],
+                "collaborationModel": "coordinate",
+            },
+        },
+    )
+    bot = SimpleNamespace(name="wegent-knowledge-bot")
+
+    with (
+        patch.object(launcher, "_resolve_team", return_value=team),
+        patch.object(launcher, "_resolve_first_bot", return_value=bot),
+        patch(
+            "app.services.knowledge.artifact_task_launcher.get_model_config_for_bot",
+            side_effect=ValueError("Bot wegent-knowledge-bot has no model configured"),
+        ),
+        patch(
+            "app.services.knowledge.artifact_task_launcher.prepare_execution_session"
+        ) as prepare_session,
+        pytest.raises(
+            ArtifactTaskConfigurationError,
+            match="has no model configured",
+        ),
+    ):
+        await launcher.launch(
+            artifact_id="artifact-1",
+            attempt=1,
+            artifact_type=KnowledgeArtifactType.BRIEFING,
+            title="项目简报",
+            knowledge_base_id=12,
+            document_ids=[101],
+            instruction=None,
+        )
+
+    prepare_session.assert_not_called()
 
 
 @pytest.mark.asyncio

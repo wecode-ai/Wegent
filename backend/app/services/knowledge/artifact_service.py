@@ -28,6 +28,7 @@ from app.services.knowledge.artifact_repository import KnowledgeArtifactReposito
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.stores.tasks import SubtaskStore, TaskStore, subtask_store, task_store
+from shared.models.db import Kind
 
 _MERMAID_BLOCK = re.compile(r"```mermaid\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _ACTIVE_STATUSES = {
@@ -79,6 +80,7 @@ class ArtifactService:
             knowledge_base_id,
             request.document_ids,
         )
+        prepared_team = await self.launcher.preflight()
         now = datetime.now().astimezone()
         artifact = KnowledgeArtifact(
             artifact_id=str(uuid4()),
@@ -93,7 +95,7 @@ class ArtifactService:
             updated_at=now,
         )
         persisted = self.repository.create(artifact)
-        return await self._launch(persisted)
+        return await self._launch(persisted, prepared_team=prepared_team)
 
     async def list(
         self,
@@ -157,6 +159,7 @@ class ArtifactService:
             raise ArtifactValidationError(
                 "Only failed or stalled artifacts can be retried"
             )
+        prepared_team = await self.launcher.preflight()
         claimed, did_claim = self.repository.claim_retry(
             knowledge_base_id,
             artifact_id,
@@ -171,7 +174,7 @@ class ArtifactService:
             raise ArtifactValidationError(
                 "Only failed or stalled artifacts can be retried"
             )
-        return await self._launch(claimed)
+        return await self._launch(claimed, prepared_team=prepared_team)
 
     async def delete(self, knowledge_base_id: int, artifact_id: str) -> None:
         """Delete the Artifact record without deleting its Task."""
@@ -179,7 +182,12 @@ class ArtifactService:
         if not self.repository.delete(knowledge_base_id, artifact_id):
             raise ArtifactNotFoundError("Artifact not found")
 
-    async def _launch(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
+    async def _launch(
+        self,
+        artifact: KnowledgeArtifact,
+        *,
+        prepared_team: Kind,
+    ) -> KnowledgeArtifact:
         try:
             launch = await self.launcher.launch(
                 artifact_id=artifact.artifact_id,
@@ -189,6 +197,7 @@ class ArtifactService:
                 knowledge_base_id=artifact.knowledge_base_id,
                 document_ids=artifact.source_document_ids,
                 instruction=artifact.generation_config.get("instruction"),
+                prepared_team=prepared_team,
             )
         except Exception as exc:
             artifact.status = KnowledgeArtifactStatus.FAILED
