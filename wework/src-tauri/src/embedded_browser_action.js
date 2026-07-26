@@ -16,6 +16,11 @@
     warnings.push(...preflight.warnings)
     if (!preflight.ok) return failure(action, preflight, startedAt, warnings, target, before)
 
+    const risk = classifyActionRisk(action, target.element, input.text || '', preflight.summary)
+    if (risk.risk === 'high' && !input.options?.riskApproved) {
+      return approvalRequired(action, risk, startedAt, warnings, target, before, preflight)
+    }
+
     const execution = executeAction(action, target.element, input.text || '')
     warnings.push(...execution.warnings)
     if (!execution.ok) return failure(action, execution, startedAt, warnings, target, before)
@@ -260,15 +265,15 @@
     if (states.includes('disabled') || states.includes('aria-disabled')) {
       return errorResult('element_not_actionable', 'Target element is disabled.', 'inspect')
     }
-    if ((actionName === 'type' || actionName === 'fill') && !isEditable(element)) {
-      return errorResult('element_not_editable', 'Target element is not editable.', 'inspect')
-    }
-    if ((actionName === 'type' || actionName === 'fill') && inputType(element) === 'file') {
+    if (['click', 'type', 'fill'].includes(actionName) && inputType(element) === 'file') {
       return errorResult(
         'unsupported_file_input',
-        'File input cannot be filled with text.',
+        'File input requires the user to choose local files.',
         'user_control'
       )
+    }
+    if ((actionName === 'type' || actionName === 'fill') && !isEditable(element)) {
+      return errorResult('element_not_editable', 'Target element is not editable.', 'inspect')
     }
     if (actionName === 'click' && !isClickActionable(element)) {
       preflightWarnings.push(
@@ -723,6 +728,111 @@
     }
   }
 
+  function approvalRequired(actionName, risk, start, actionWarnings, target, before, preflight) {
+    const targetSummary = {
+      ...(target?.summary || {}),
+      ...(preflight?.summary || {}),
+    }
+    const beforeObservation = before || observePage(target?.element || null)
+    return {
+      ok: false,
+      action: actionName,
+      backend: 'wkwebview-js',
+      executionKind: 'synthetic-event',
+      synthetic: true,
+      target: targetSummary,
+      before: beforeObservation,
+      after: observePage(target?.element || null),
+      effect: emptyEffect(),
+      elapsedMs: elapsed(start),
+      warnings: actionWarnings,
+      approval: {
+        risk: risk.risk,
+        actionKind: actionName,
+        reason: risk.reason,
+        target: {
+          role: targetSummary.role,
+          name: targetSummary.name,
+          index: targetSummary.index,
+          ref: targetSummary.ref,
+        },
+      },
+      error: errorObject('approval_required', risk.reason, 'ask_user_to_confirm'),
+    }
+  }
+
+  function classifyActionRisk(actionName, element, text, summary) {
+    if (input.options?.riskApproved) return { risk: 'low' }
+    const role = inferRole(element)
+    const name = accessibleName(element, role)
+    const combined = [
+      actionName,
+      role,
+      name,
+      element.getAttribute?.('type'),
+      element.getAttribute?.('aria-label'),
+      element.getAttribute?.('title'),
+      element.getAttribute?.('href'),
+      element.closest?.('form')?.getAttribute('action'),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    if ((actionName === 'type' || actionName === 'fill') && isSensitiveInput(element, text)) {
+      return {
+        risk: 'high',
+        reason: 'AI is about to enter sensitive credentials or verification text.',
+      }
+    }
+    if (
+      actionName === 'click' &&
+      /(submit|send|post|delete|remove|destroy|confirm|authorize|auth|pay|payment|purchase|checkout|order|transfer|提交|发送|发布|删除|移除|确认|授权|支付|购买|下单|转账)/i.test(
+        combined
+      )
+    ) {
+      return {
+        risk: 'high',
+        reason: `AI wants to click "${trimText(summary?.name || name || role, 80)}".`,
+      }
+    }
+    if (
+      ['fill', 'type', 'select', 'setChecked'].includes(actionName) &&
+      /(password|otp|totp|verification|verify|code|secret|token|密码|验证码|口令|密钥)/i.test(
+        combined
+      )
+    ) {
+      return {
+        risk: 'high',
+        reason: 'AI is about to change a sensitive form field.',
+      }
+    }
+    return { risk: 'low' }
+  }
+
+  function isSensitiveInput(element, text) {
+    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+      return false
+    }
+    const type = inputType(element)
+    const descriptor = [
+      type,
+      element.name,
+      element.id,
+      element.autocomplete,
+      element.placeholder,
+      element.getAttribute('aria-label'),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    if (type === 'password') return true
+    if (/(otp|totp|verification|verify|code|secret|token|验证码|口令|密钥)/i.test(descriptor)) {
+      return true
+    }
+    return /^\d{4,8}$/.test(String(text || '').trim()) && /code|验证码|otp|totp/i.test(descriptor)
+  }
+
   function errorResult(code, message, suggestedNextAction) {
     return {
       ok: false,
@@ -780,6 +890,9 @@
     }
     if (['requires_trusted_input', 'unsupported_browser_capability'].includes(code)) {
       return 'capability'
+    }
+    if (['approval_required', 'approval_rejected', 'approval_expired'].includes(code)) {
+      return 'approval'
     }
     if (['operation_timed_out', 'wait_timeout'].includes(code)) return 'timeout'
     return 'unknown'

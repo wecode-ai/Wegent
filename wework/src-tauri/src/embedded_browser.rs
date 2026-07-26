@@ -35,6 +35,7 @@ const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
 const EMBEDDED_BROWSER_POPUP_EVENT: &str = "wework:embedded-browser-popup";
+const EMBEDDED_BROWSER_AGENT_STATE_EVENT: &str = "wework:embedded-browser-agent-state";
 const EMBEDDED_BROWSER_NOT_READY_ERROR: &str = "Embedded browser is not ready";
 const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
@@ -53,6 +54,8 @@ static EMBEDDED_BROWSER_POPUP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub struct EmbeddedBrowserState {
     webviews: Arc<Mutex<HashMap<String, EmbeddedBrowserEntry>>>,
     downloads: Arc<Mutex<HashMap<String, EmbeddedBrowserDownloadControl>>>,
+    agent_control_paused: Arc<Mutex<HashMap<String, bool>>>,
+    agent_approvals: Arc<Mutex<HashMap<String, EmbeddedBrowserApprovalState>>>,
     lifecycle: Arc<AsyncMutex<()>>,
 }
 
@@ -177,6 +180,38 @@ struct EmbeddedBrowserPopupPayload {
     status: String,
     created_at_unix_ms: u128,
     warning: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddedBrowserAgentStatePayload {
+    label: String,
+    status: String,
+    action: Option<String>,
+    target: Option<String>,
+    message: Option<String>,
+    error_code: Option<String>,
+    approval: Option<EmbeddedBrowserApprovalPayload>,
+    created_at_unix_ms: u128,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddedBrowserApprovalPayload {
+    approval_id: String,
+    risk: String,
+    action_kind: String,
+    reason: String,
+    target: Option<Value>,
+    expires_at_unix_ms: u128,
+}
+
+#[derive(Debug, Clone)]
+struct EmbeddedBrowserApprovalState {
+    label: String,
+    signature: String,
+    payload: EmbeddedBrowserApprovalPayload,
+    approved: bool,
 }
 
 #[derive(Clone)]
@@ -416,6 +451,216 @@ fn emit_popup_observed(
         warning,
     };
     let _ = app.emit(EMBEDDED_BROWSER_POPUP_EVENT, payload);
+}
+
+fn emit_agent_state(
+    app: &tauri::AppHandle,
+    label: &str,
+    status: &str,
+    action: Option<&str>,
+    target: Option<String>,
+    message: Option<String>,
+    error_code: Option<String>,
+    approval: Option<EmbeddedBrowserApprovalPayload>,
+) {
+    let payload = EmbeddedBrowserAgentStatePayload {
+        label: label.to_string(),
+        status: status.to_string(),
+        action: action.map(str::to_string),
+        target,
+        message,
+        error_code,
+        approval,
+        created_at_unix_ms: current_unix_millis(),
+    };
+    let _ = app.emit(EMBEDDED_BROWSER_AGENT_STATE_EVENT, payload);
+}
+
+fn is_agent_observable_bridge_action(action: &str) -> bool {
+    matches!(
+        action,
+        "open"
+            | "navigate"
+            | "inspect"
+            | "resolveRef"
+            | "click"
+            | "typeText"
+            | "fill"
+            | "hover"
+            | "focus"
+            | "select"
+            | "setChecked"
+            | "scroll"
+            | "scrollIntoView"
+            | "press"
+            | "waitFor"
+            | "screenshot"
+    )
+}
+
+fn is_agent_mutating_bridge_action(action: &str) -> bool {
+    matches!(
+        action,
+        "open"
+            | "navigate"
+            | "click"
+            | "typeText"
+            | "fill"
+            | "hover"
+            | "focus"
+            | "select"
+            | "setChecked"
+            | "scroll"
+            | "scrollIntoView"
+            | "press"
+    )
+}
+
+fn agent_action_target(request: &EmbeddedBrowserBridgeRequest) -> Option<String> {
+    if let Some(ref_) = &request.ref_ {
+        return Some(ref_.clone());
+    }
+    if let Some(index) = request.index {
+        return Some(format!("index {index}"));
+    }
+    if let Some(selector) = &request.selector {
+        return Some(selector.clone());
+    }
+    request.url.clone()
+}
+
+fn agent_action_signature(action: &str, request: &EmbeddedBrowserBridgeRequest) -> String {
+    let target = if let Some(ref_) = &request.ref_ {
+        format!("ref:{ref_}")
+    } else if let Some(inspect_id) = &request.inspect_id {
+        format!("inspect:{inspect_id}:{}", request.index.unwrap_or_default())
+    } else if let Some(selector) = &request.selector {
+        format!("selector:{selector}")
+    } else if request.x.is_some() || request.y.is_some() {
+        format!(
+            "coord:{:.1}:{:.1}",
+            request.x.unwrap_or_default(),
+            request.y.unwrap_or_default()
+        )
+    } else {
+        "active".to_string()
+    };
+    format!("{action}:{target}")
+}
+
+fn merge_request_option(request: &mut EmbeddedBrowserBridgeRequest, key: &str, value: Value) {
+    let mut options = request.options.take().unwrap_or_else(|| json!({}));
+    if let Some(object) = options.as_object_mut() {
+        object.insert(key.to_string(), value);
+        request.options = Some(options);
+        return;
+    }
+    request.options = Some(json!({ key: value }));
+}
+
+fn consume_approved_agent_risk(
+    state: &EmbeddedBrowserState,
+    label: &str,
+    signature: &str,
+) -> Result<bool, String> {
+    let now = current_unix_millis();
+    let mut approvals = state
+        .agent_approvals
+        .lock()
+        .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?;
+    approvals.retain(|_, approval| approval.payload.expires_at_unix_ms > now);
+    let approval_id = approvals.iter().find_map(|(id, approval)| {
+        (approval.label == label && approval.signature == signature && approval.approved)
+            .then(|| id.clone())
+    });
+    if let Some(approval_id) = approval_id {
+        approvals.remove(&approval_id);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn register_agent_approval(
+    state: &EmbeddedBrowserState,
+    label: &str,
+    action: &str,
+    signature: &str,
+    result: &mut Value,
+) -> Result<Option<EmbeddedBrowserApprovalPayload>, String> {
+    if result.pointer("/error/code").and_then(Value::as_str) != Some("approval_required") {
+        return Ok(None);
+    }
+    let approval_source = result.get("approval").cloned().unwrap_or_else(|| json!({}));
+    let approval_id = format!(
+        "browser-approval-{}",
+        EMBEDDED_BROWSER_NATIVE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let payload = EmbeddedBrowserApprovalPayload {
+        approval_id: approval_id.clone(),
+        risk: approval_source
+            .get("risk")
+            .and_then(Value::as_str)
+            .unwrap_or("high")
+            .to_string(),
+        action_kind: approval_source
+            .get("actionKind")
+            .and_then(Value::as_str)
+            .unwrap_or(action)
+            .to_string(),
+        reason: approval_source
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("This browser action may change data on the page.")
+            .to_string(),
+        target: approval_source.get("target").cloned(),
+        expires_at_unix_ms: current_unix_millis() + 60_000,
+    };
+    if let Some(object) = result.as_object_mut() {
+        object.insert(
+            "approval".to_string(),
+            serde_json::to_value(&payload).unwrap_or_default(),
+        );
+    }
+    state
+        .agent_approvals
+        .lock()
+        .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?
+        .insert(
+            approval_id,
+            EmbeddedBrowserApprovalState {
+                label: label.to_string(),
+                signature: signature.to_string(),
+                payload: payload.clone(),
+                approved: false,
+            },
+        );
+    Ok(Some(payload))
+}
+
+fn is_agent_control_paused(state: &EmbeddedBrowserState, label: &str) -> Result<bool, String> {
+    let paused = state
+        .agent_control_paused
+        .lock()
+        .map_err(|_| "Embedded browser agent control state lock poisoned".to_string())?
+        .get(label)
+        .copied()
+        .unwrap_or(false);
+    Ok(paused)
+}
+
+fn agent_control_paused_result(action: &str) -> Value {
+    json!({
+        "ok": false,
+        "kind": "browser.action",
+        "action": action,
+        "error": {
+            "code": "user_control",
+            "message": "User is controlling the embedded browser. Ask before continuing.",
+            "recoverable": true,
+            "category": "control",
+            "suggestedNextAction": "ask_user_to_resume_agent_control"
+        }
+    })
 }
 
 fn browser_label(label: Option<String>) -> String {
@@ -1418,13 +1663,50 @@ fn bridge_error(error: String) -> EmbeddedBrowserBridgeResponse {
 fn handle_bridge_request(
     app: &tauri::AppHandle,
     state: &EmbeddedBrowserState,
-    request: EmbeddedBrowserBridgeRequest,
+    mut request: EmbeddedBrowserBridgeRequest,
 ) -> Result<Value, String> {
     let label = browser_label(request.label.clone());
-    match request.action.as_str() {
+    let action = request.action.clone();
+    let observable = is_agent_observable_bridge_action(&action);
+    let mutating = is_agent_mutating_bridge_action(&action);
+    let target = agent_action_target(&request);
+    let action_signature = agent_action_signature(&action, &request);
+
+    if mutating && is_agent_control_paused(state, &label)? {
+        emit_agent_state(
+            app,
+            &label,
+            "paused",
+            Some(&action),
+            target,
+            Some("User is controlling the embedded browser.".to_string()),
+            Some("user_control".to_string()),
+            None,
+        );
+        return Ok(agent_control_paused_result(&action));
+    }
+
+    if mutating && consume_approved_agent_risk(state, &label, &action_signature)? {
+        merge_request_option(&mut request, "riskApproved", Value::Bool(true));
+    }
+
+    if observable {
+        emit_agent_state(
+            app,
+            &label,
+            "running",
+            Some(&action),
+            target.clone(),
+            None,
+            None,
+            None,
+        );
+    }
+
+    let mut result = match action.as_str() {
         "status" => Ok(json!({
             "open": is_browser_open(state, &label)?,
-            "label": label,
+            "label": label.clone(),
         })),
         "pageState" => serde_json::to_value(page_state_for_label(state, &label)?)
             .map_err(|error| format!("Failed to encode embedded browser page state: {error}")),
@@ -1549,9 +1831,56 @@ fn handle_bridge_request(
         "present" => present_probe_result(state, &label),
         _ => Err(format!(
             "Unknown embedded browser bridge action: {}",
-            request.action
+            action
         )),
+    };
+
+    let approval = match &mut result {
+        Ok(value) if mutating => {
+            register_agent_approval(state, &label, &action, &action_signature, value)?
+        }
+        _ => None,
+    };
+
+    if observable {
+        match &result {
+            Ok(value) => {
+                let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(true);
+                let error_code = value
+                    .get("error")
+                    .and_then(|error| error.get("code"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let message = value
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                emit_agent_state(
+                    app,
+                    &label,
+                    if ok { "idle" } else { "needs_user" },
+                    Some(&action),
+                    target,
+                    message,
+                    error_code,
+                    approval,
+                );
+            }
+            Err(error) => emit_agent_state(
+                app,
+                &label,
+                "error",
+                Some(&action),
+                target,
+                Some(error.clone()),
+                Some("operation_failed".to_string()),
+                None,
+            ),
+        }
     }
+
+    result
 }
 
 fn read_http_request(stream: &mut TcpStream) -> Result<(String, String), String> {
@@ -1977,15 +2306,17 @@ mod tests {
     };
 
     use super::{
-        browser_open_action, browser_webview_url, download_event_owner,
-        logical_owner_for_native_label, native_webview_label, ready_logical_entry,
-        relabel_logical_entry, remove_logical_entry_if_native_matches, script_browser_action,
+        browser_open_action, browser_webview_url, consume_approved_agent_risk,
+        download_event_owner, logical_owner_for_native_label, merge_request_option,
+        native_webview_label, ready_logical_entry, register_agent_approval, relabel_logical_entry,
+        remove_logical_entry_if_native_matches, script_browser_action,
         script_resolve_inspect_target, script_semantic_inspect,
         update_logical_entry_if_native_matches, wait_for_browser_ready,
         EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
-        EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EMBEDDED_BROWSER_NOT_READY_ERROR,
+        EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
+        EMBEDDED_BROWSER_NOT_READY_ERROR,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use tauri::WebviewUrl;
 
     #[test]
@@ -2189,6 +2520,92 @@ mod tests {
         assert!(script.contains("\"inspectId\":\"wk-inspect-1\""));
         assert!(script.contains("\"index\":2"));
         assert!(!script.contains("__WEWORK_ACTION_INPUT__"));
+    }
+
+    #[test]
+    fn approval_registration_adds_payload_and_consumes_approved_risk_once() {
+        let state = EmbeddedBrowserState::default();
+        let mut result = json!({
+            "ok": false,
+            "approval": {
+                "risk": "high",
+                "actionKind": "click",
+                "reason": "AI wants to click submit.",
+                "target": {
+                    "role": "button",
+                    "name": "Submit"
+                }
+            },
+            "error": {
+                "code": "approval_required",
+                "message": "AI wants to click submit."
+            }
+        });
+
+        let payload = register_agent_approval(
+            &state,
+            "workspace-browser",
+            "click",
+            "click:ref:wk-mvp:1",
+            &mut result,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(payload.risk, "high");
+        assert_eq!(payload.action_kind, "click");
+        assert_eq!(
+            result
+                .pointer("/approval/approvalId")
+                .and_then(Value::as_str),
+            Some(payload.approval_id.as_str())
+        );
+        assert!(
+            !consume_approved_agent_risk(&state, "workspace-browser", "click:ref:wk-mvp:1")
+                .unwrap()
+        );
+
+        {
+            let mut approvals = state.agent_approvals.lock().unwrap();
+            approvals
+                .get_mut(&payload.approval_id)
+                .expect("approval state")
+                .approved = true;
+        }
+
+        assert!(
+            consume_approved_agent_risk(&state, "workspace-browser", "click:ref:wk-mvp:1").unwrap()
+        );
+        assert!(
+            !consume_approved_agent_risk(&state, "workspace-browser", "click:ref:wk-mvp:1")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn merge_request_option_preserves_existing_object_options() {
+        let mut request = EmbeddedBrowserBridgeRequest {
+            action: "click".to_string(),
+            url: None,
+            expression: None,
+            selector: None,
+            text: None,
+            key: None,
+            x: None,
+            y: None,
+            timeout_ms: None,
+            label: None,
+            options: Some(json!({ "waitAfterMs": 100 })),
+            inspect_id: None,
+            index: None,
+            ref_: Some("wk-mvp:1".to_string()),
+        };
+
+        merge_request_option(&mut request, "riskApproved", Value::Bool(true));
+
+        let options = request.options.expect("options");
+        assert_eq!(options["waitAfterMs"], 100);
+        assert_eq!(options["riskApproved"], true);
     }
 
     #[test]
@@ -2519,6 +2936,93 @@ pub fn embedded_browser_page_state(
 }
 
 #[tauri::command]
+pub fn embedded_browser_set_agent_control_paused(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    label: Option<String>,
+    paused: bool,
+) -> Result<(), String> {
+    let label = browser_label(label);
+    {
+        let mut paused_labels = state
+            .agent_control_paused
+            .lock()
+            .map_err(|_| "Embedded browser agent control state lock poisoned".to_string())?;
+        if paused {
+            paused_labels.insert(label.clone(), true);
+        } else {
+            paused_labels.remove(&label);
+        }
+    }
+    emit_agent_state(
+        &app,
+        &label,
+        if paused { "paused" } else { "idle" },
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub fn embedded_browser_resolve_agent_approval(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    label: Option<String>,
+    approval_id: String,
+    approved: bool,
+) -> Result<(), String> {
+    let label = browser_label(label);
+    let mut approvals = state
+        .agent_approvals
+        .lock()
+        .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?;
+    let approval = approvals
+        .get_mut(&approval_id)
+        .ok_or_else(|| "Browser approval request not found".to_string())?;
+    if approval.label != label {
+        return Err("Browser approval request belongs to a different label".to_string());
+    }
+    if approval.payload.expires_at_unix_ms <= current_unix_millis() {
+        approvals.remove(&approval_id);
+        return Err("Browser approval request expired".to_string());
+    }
+    if approved {
+        approval.approved = true;
+        let payload = approval.payload.clone();
+        drop(approvals);
+        emit_agent_state(
+            &app,
+            &label,
+            "idle",
+            Some(&payload.action_kind),
+            None,
+            Some("Browser action approved. The agent can retry it now.".to_string()),
+            None,
+            None,
+        );
+    } else {
+        let payload = approval.payload.clone();
+        approvals.remove(&approval_id);
+        drop(approvals);
+        emit_agent_state(
+            &app,
+            &label,
+            "error",
+            Some(&payload.action_kind),
+            None,
+            Some("Browser action was rejected by the user.".to_string()),
+            Some("approval_rejected".to_string()),
+            None,
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn embedded_browser_relabel(
     state: tauri::State<'_, EmbeddedBrowserState>,
     from_label: String,
@@ -2562,6 +3066,16 @@ pub async fn embedded_browser_close(
             |current| current.native_label.as_str(),
         );
     }
+    state
+        .agent_control_paused
+        .lock()
+        .map_err(|_| "Embedded browser agent control state lock poisoned".to_string())?
+        .remove(&label);
+    state
+        .agent_approvals
+        .lock()
+        .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?
+        .retain(|_, approval| approval.label != label);
     Ok(())
 }
 

@@ -9,6 +9,10 @@ const ACTIVE_WORKBENCH_SELECTOR =
 const RIGHT_PANEL_TOGGLE_SELECTOR = '[data-testid="toggle-right-workspace-panel-button"]'
 const RIGHT_BROWSER_OPTION_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
 const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
+const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-status"]`
+const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-pause-button"]`
+const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
+const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_PATH = '/embedded-browser-agent-fixture'
 const READY_TEXT = 'Embedded Browser Agent Fixture'
@@ -16,6 +20,7 @@ const FILLED_TEXT = 'filled: Alpha Beta'
 const CLICKED_TEXT = 'clicked: Alpha Beta'
 const DIRECT_FILLED_TEXT = 'filled: Gamma Delta'
 const DIRECT_CLICKED_TEXT = 'clicked: Gamma Delta'
+const DIRECT_DELETED_TEXT = 'deleted: Gamma Delta'
 const HOVER_TEXT = 'hovered'
 const SELECT_TEXT = 'selected: finance'
 const CHECKED_TEXT = 'checked: true'
@@ -41,7 +46,8 @@ function fixtureHtml() {
     <h1>${READY_TEXT}</h1>
     <label for="agent-name">Agent name</label>
     <input id="agent-name" name="agent-name" placeholder="Name" />
-    <button id="agent-submit" type="button">Submit agent form</button>
+    <button id="agent-submit" type="button">Run agent form</button>
+    <button id="agent-delete" type="button">Delete agent record</button>
     <button id="agent-hover" type="button">Hover target</button>
     <label for="agent-kind">Agent kind</label>
     <select id="agent-kind">
@@ -63,6 +69,10 @@ function fixtureHtml() {
       document.getElementById('agent-submit').addEventListener('click', () => {
         result.textContent = 'clicked: ' + input.value;
         document.body.dataset.clicked = 'true';
+      });
+      document.getElementById('agent-delete').addEventListener('click', () => {
+        result.textContent = 'deleted: ' + input.value;
+        document.body.dataset.deleted = 'true';
       });
       document.getElementById('agent-hover').addEventListener('mouseover', () => {
         result.textContent = '${HOVER_TEXT}';
@@ -266,6 +276,30 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       })
       assert.equal(openResult.ok, true, `Bridge open failed: ${JSON.stringify(openResult)}`)
 
+      const pendingAgentWait = callBridge(bridgeUrl, {
+        action: 'waitFor',
+        text: 'WEWORK_AGENT_STATUS_E2E_NEVER_APPEARS',
+        timeoutMs: 4_000,
+      })
+      await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', BROWSER_AGENT_PAUSE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('click', BROWSER_AGENT_PAUSE_SELECTOR)
+      await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const pausedClick = await callBridge(bridgeUrl, {
+        action: 'click',
+        x: 12,
+        y: 12,
+        timeoutMs: 2_000,
+      })
+      assert.equal(
+        pausedClick.ok,
+        false,
+        `Paused click should be blocked: ${JSON.stringify(pausedClick)}`
+      )
+      assert.equal(pausedClick.error?.code, 'user_control')
+      await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
+      await pendingAgentWait
+
       const mcpResult = await withBrowserMcp(bridgeUrl, async callTool => {
         const openText = await callTool('browser_open_and_inspect', {
           url: fixtureUrl,
@@ -285,8 +319,8 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         )
         const mcpButtonNode = findNode(
           openJson.inspect,
-          node => node.role === 'button' && node.name === 'Submit agent form',
-          'MCP submit button'
+          node => node.role === 'button' && node.name === 'Run agent form',
+          'MCP run button'
         )
 
         const fillText = await callTool('browser_fill_and_inspect', {
@@ -395,15 +429,14 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       )
       const buttonNode = findNode(
         initialInspect,
-        node => node.role === 'button' && node.name === 'Submit agent form',
-        'Submit button'
+        node => node.role === 'button' && node.name === 'Run agent form',
+        'Run button'
       )
-      const scrollBoxNode = findNode(
+      const deleteNode = findNode(
         initialInspect,
-        node => node.role === 'region' && node.name === 'Scrollable results',
-        'Scrollable results region'
+        node => node.role === 'button' && node.name === 'Delete agent record',
+        'Delete button'
       )
-
       const fillResult = await callBridge(bridgeUrl, {
         action: 'fill',
         ref: inputNode.ref,
@@ -435,6 +468,44 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       })
       assert.ok(finalInspect.inspectText.includes(DIRECT_CLICKED_TEXT))
 
+      const deleteApproval = await callBridge(bridgeUrl, {
+        action: 'click',
+        ref: deleteNode.ref,
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        deleteApproval.ok,
+        false,
+        `Delete click should require approval: ${JSON.stringify(deleteApproval)}`
+      )
+      assert.equal(deleteApproval.error?.code, 'approval_required')
+      assert.ok(deleteApproval.approval?.approvalId)
+      await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+
+      const approvedDeleteResult = await callBridge(bridgeUrl, {
+        action: 'click',
+        ref: deleteNode.ref,
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        approvedDeleteResult.ok,
+        true,
+        `Approved delete click failed: ${JSON.stringify(approvedDeleteResult)}`
+      )
+
+      const afterDeleteInspect = await callBridge(bridgeUrl, {
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(afterDeleteInspect.inspectText.includes(DIRECT_DELETED_TEXT))
+      const currentScrollBoxNode = findNode(
+        afterDeleteInspect,
+        node => node.role === 'region' && node.name === 'Scrollable results',
+        'Current scrollable results region'
+      )
+
       const waitResult = await callBridge(bridgeUrl, {
         action: 'waitFor',
         options: { condition: { waitUntil: 'pageStable' }, quietMs: 100 },
@@ -445,7 +516,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
 
       const scrollResult = await callBridge(bridgeUrl, {
         action: 'scroll',
-        ref: scrollBoxNode.ref,
+        ref: currentScrollBoxNode.ref,
         options: { direction: 'down', amount: 500 },
         timeoutMs: 5_000,
       })
@@ -481,12 +552,15 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
             initialInspectId: initialInspect.inspectId,
             inputRef: inputNode.ref,
             buttonRef: buttonNode.ref,
+            deleteRef: deleteNode.ref,
             fillEffect: fillResult.effect,
             clickEffect: clickResult.effect,
+            approvalId: deleteApproval.approval.approvalId,
+            deleteEffect: approvedDeleteResult.effect,
             waitReason: waitResult.reason,
             screenshot: screenshotResult,
             capabilities: capabilities.p2,
-            finalText: finalInspect.inspectText,
+            finalText: afterDeleteInspect.inspectText,
           },
           null,
           2

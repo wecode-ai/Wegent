@@ -239,11 +239,24 @@
     const visibility = visibilityFor(element, rect, doc, context)
     const href = hrefFor(element)
     const value = valueFor(element)
+    const inputType =
+      tagName === 'input' ? (element.getAttribute('type') || 'text').toLowerCase() : undefined
+    const upload = uploadInfoFor(element, inputType)
     const actionableRole = isActionableRole(role, element)
     const disabled = states.includes('disabled')
     const readonly = states.includes('readonly')
+    const nodeWarnings = [...visibility.warnings]
+    if (upload) {
+      nodeWarnings.push(
+        warning(
+          'file_upload_requires_user_selection',
+          'File upload controls require the user to choose local files.'
+        )
+      )
+    }
     const actionable =
       actionableRole &&
+      !upload &&
       visibility.visible &&
       visibility.inViewport &&
       visibility.receivesPointerEvents &&
@@ -264,15 +277,15 @@
         trimText(element.getAttribute?.('placeholder') || '', options.maxNameChars) || undefined,
       href,
       tagName,
-      inputType:
-        tagName === 'input' ? (element.getAttribute('type') || 'text').toLowerCase() : undefined,
+      inputType,
+      upload,
       states,
       rect,
       visible: visibility.visible,
       inViewport: visibility.inViewport,
       actionable,
       visibility,
-      warnings: visibility.warnings,
+      warnings: nodeWarnings,
       element,
     }
   }
@@ -328,6 +341,7 @@
       'log',
       'text',
       'iframe',
+      'fileUpload',
     ].includes(node.role)
   }
 
@@ -344,6 +358,7 @@
     if (tag === 'input') {
       if (['button', 'submit', 'reset', 'image'].includes(type)) return 'button'
       if (type === 'checkbox') return 'checkbox'
+      if (type === 'file') return 'fileUpload'
       if (type === 'radio') return 'radio'
       if (['range'].includes(type)) return 'slider'
       if (['email', 'number', 'password', 'search', 'tel', 'text', 'url', ''].includes(type))
@@ -678,10 +693,13 @@
       const label = node.name || node.text || ''
       const stateText = node.states?.length ? ` states=${node.states.join(',')}` : ''
       const valueText = node.value ? ` value="${trimText(node.value, 120)}"` : ''
+      const uploadText = node.upload
+        ? ` upload=${node.upload.multiple ? 'multiple' : 'single'}${node.upload.accept ? ` accept="${trimText(node.upload.accept, 80)}"` : ''}${node.upload.fileCount ? ` files=${node.upload.fileCount}` : ''}`
+        : ''
       const visibleText = node.visible ? '' : ' visible=false'
       const actionText = node.actionable ? '' : ' actionable=false'
       lines.push(
-        `[${node.index}] ${node.role} "${trimText(label, 120)}"${stateText}${valueText}${visibleText}${actionText} rect=(${node.rect.x},${node.rect.y},${node.rect.width},${node.rect.height})`
+        `[${node.index}] ${node.role} "${trimText(label, 120)}"${stateText}${valueText}${uploadText}${visibleText}${actionText} rect=(${node.rect.x},${node.rect.y},${node.rect.width},${node.rect.height})`
       )
     }
     return lines.join('\n')
@@ -732,7 +750,28 @@
     if (!['input', 'textarea', 'select'].includes(tag)) return undefined
     const type = (element.getAttribute('type') || '').toLowerCase()
     if (['password', 'hidden'].includes(type)) return type === 'password' ? '[redacted]' : undefined
+    if (type === 'file') {
+      const files = Array.from(element.files || [])
+        .map(file => file.name)
+        .filter(Boolean)
+      return files.length ? trimText(files.join(', '), options.maxValueChars) : undefined
+    }
     return trimText(redactText(element.value || ''), options.maxValueChars) || undefined
+  }
+
+  function uploadInfoFor(element, inputType) {
+    if (!(element instanceof HTMLInputElement) || inputType !== 'file') return undefined
+    const files = Array.from(element.files || [])
+      .map(file => file.name)
+      .filter(Boolean)
+      .slice(0, 10)
+    return {
+      accept: trimText(element.getAttribute('accept') || '', 120) || undefined,
+      multiple: Boolean(element.multiple),
+      fileCount: element.files?.length || 0,
+      fileNames: files,
+      requiresUserSelection: true,
+    }
   }
 
   function hrefFor(element) {
