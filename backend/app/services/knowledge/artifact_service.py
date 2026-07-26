@@ -164,7 +164,7 @@ class ArtifactService:
         artifact_id: str,
     ) -> KnowledgeArtifact:
         """Retry a failed or stalled Artifact without changing its stable ID."""
-        self._require_manage_access(knowledge_base_id)
+        self._require_read_access(knowledge_base_id)
         artifact = await self._get_artifact(knowledge_base_id, artifact_id)
         artifact = await self._reconcile(artifact)
         if not artifact.can_retry:

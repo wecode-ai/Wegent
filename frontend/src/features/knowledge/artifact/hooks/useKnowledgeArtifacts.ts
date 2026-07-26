@@ -18,24 +18,28 @@ export function useKnowledgeArtifacts(knowledgeBaseId: number) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const mountedRef = useRef(true)
+  const requestVersionRef = useRef(0)
 
   const refresh = useCallback(
     async (showLoading = false) => {
+      const requestVersion = ++requestVersionRef.current
       if (showLoading) setIsLoading(true)
       try {
         const response = await knowledgeArtifactApi.list(knowledgeBaseId)
-        if (!mountedRef.current) return
+        if (!mountedRef.current || requestVersion !== requestVersionRef.current) return
         setItems(response.items)
         setCanManage(response.can_manage)
         setAvailableDocumentCount(response.available_document_count)
         setProcessingDocumentCount(response.processing_document_count)
         setError(null)
       } catch (nextError) {
-        if (mountedRef.current) {
+        if (mountedRef.current && requestVersion === requestVersionRef.current) {
           setError(nextError instanceof Error ? nextError : new Error(String(nextError)))
         }
       } finally {
-        if (mountedRef.current) setIsLoading(false)
+        if (mountedRef.current && requestVersion === requestVersionRef.current) {
+          setIsLoading(false)
+        }
       }
     },
     [knowledgeBaseId]

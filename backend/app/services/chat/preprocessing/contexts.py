@@ -669,10 +669,24 @@ def link_selected_documents_to_subtask(
 def _resolve_usable_selected_document_ids(
     db: Session,
     *,
+    user_id: int,
     knowledge_base_id: int,
     document_ids: List[int],
 ) -> List[int]:
     """Validate selected documents against one usable knowledge-base scope."""
+    from app.services.knowledge import KnowledgeService
+
+    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+        db,
+        knowledge_base_id,
+        user_id,
+    )
+    if knowledge_base is None or not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+
     normalized_ids = _normalize_document_ids(document_ids)
     if len(normalized_ids) != len(document_ids):
         raise HTTPException(
@@ -1064,6 +1078,7 @@ def _prepare_contexts_for_creation(
                         )
                     document_ids = _resolve_usable_selected_document_ids(
                         db,
+                        user_id=user_id,
                         knowledge_base_id=int(knowledge_base_id),
                         document_ids=document_ids,
                     )

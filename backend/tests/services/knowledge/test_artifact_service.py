@@ -337,9 +337,10 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
         assistant_subtask_id=42,
     )
 
-    with patch.object(service, "_require_manage_access"):
+    with patch.object(service, "_require_read_access") as require_read:
         retried = await service.retry(12, "artifact-1")
 
+    require_read.assert_called_once_with(12)
     assert retried.artifact_id == "artifact-1"
     assert retried.status == KnowledgeArtifactStatus.RUNNING
     assert retried.task_id == 32
@@ -386,7 +387,7 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
         assistant_subtask_id=42,
     )
 
-    with patch.object(service, "_require_manage_access"):
+    with patch.object(service, "_require_read_access"):
         retried = await service.retry(12, "artifact-1")
 
     assert retried.status == KnowledgeArtifactStatus.RUNNING
@@ -409,7 +410,7 @@ async def test_retry_does_not_claim_when_preflight_fails():
     )
 
     with (
-        patch.object(service, "_require_manage_access"),
+        patch.object(service, "_require_read_access"),
         pytest.raises(
             ArtifactTaskConfigurationError,
             match="has no model configured",

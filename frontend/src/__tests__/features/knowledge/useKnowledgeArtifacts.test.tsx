@@ -80,6 +80,55 @@ describe('useKnowledgeArtifacts', () => {
     expect(result.current.canManage).toBe(false)
   })
 
+  it('ignores an older response after switching knowledge bases', async () => {
+    let resolveOldRequest:
+      | ((response: {
+          items: KnowledgeArtifact[]
+          can_manage: boolean
+          available_document_count: number
+          processing_document_count: number
+        }) => void)
+      | undefined
+    const oldRequest = new Promise<{
+      items: KnowledgeArtifact[]
+      can_manage: boolean
+      available_document_count: number
+      processing_document_count: number
+    }>(resolve => {
+      resolveOldRequest = resolve
+    })
+    ;(knowledgeArtifactApi.list as jest.Mock)
+      .mockReturnValueOnce(oldRequest)
+      .mockResolvedValueOnce({
+        items: [buildArtifact(13, 'succeeded')],
+        can_manage: false,
+        available_document_count: 2,
+        processing_document_count: 0,
+      })
+
+    const { result, rerender } = renderHook(
+      ({ knowledgeBaseId }) => useKnowledgeArtifacts(knowledgeBaseId),
+      { initialProps: { knowledgeBaseId: 12 } }
+    )
+
+    rerender({ knowledgeBaseId: 13 })
+    await waitFor(() => expect(result.current.items[0]?.knowledge_base_id).toBe(13))
+
+    await act(async () => {
+      resolveOldRequest?.({
+        items: [buildArtifact(12, 'succeeded')],
+        can_manage: true,
+        available_document_count: 9,
+        processing_document_count: 0,
+      })
+      await oldRequest
+    })
+
+    expect(result.current.items[0]?.knowledge_base_id).toBe(13)
+    expect(result.current.availableDocumentCount).toBe(2)
+    expect(result.current.canManage).toBe(false)
+  })
+
   it('polls active artifacts and stops after reaching a terminal status', async () => {
     jest.useFakeTimers()
     ;(knowledgeArtifactApi.list as jest.Mock)

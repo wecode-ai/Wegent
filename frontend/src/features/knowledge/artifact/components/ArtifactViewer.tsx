@@ -146,23 +146,26 @@ export function ArtifactViewer({
             </div>
           )}
         </div>
-        {canManage && (
+        {(canManage || artifact.can_retry) && (
           <DialogFooter className="justify-between sm:justify-between">
             <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                className="text-error"
-                onClick={() => {
-                  if (window.confirm(t('artifact.deleteConfirm'))) void onDelete()
-                }}
-                data-testid="artifact-delete-button"
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                {t('artifact.delete')}
-              </Button>
+              {canManage && (
+                <Button
+                  variant="ghost"
+                  className="text-error"
+                  onClick={() => {
+                    if (window.confirm(t('artifact.deleteConfirm'))) void onDelete()
+                  }}
+                  data-testid="artifact-delete-button"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  {t('artifact.delete')}
+                </Button>
+              )}
             </div>
             <div className="flex items-center gap-2">
-              {artifact.status === 'succeeded' &&
+              {canManage &&
+                artifact.status === 'succeeded' &&
                 artifact.artifact_type === 'briefing' &&
                 artifact.content && (
                   <Button
