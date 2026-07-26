@@ -44,6 +44,31 @@ This document records the state sources for the Wework chat path. The goal is to
 7. `chat:done`, `chat:error`, and cancellation events settle the assistant message through the reducer and refresh the work list.
 8. If runtime work and message state disagree, do not settle it with fallback logic; fix the missing stream event, transcript data, or reducer action.
 
+During send startup, Wework may first receive an empty transcript with
+`source: pending_local_task` and `running: false` before the real runtime task
+appears in the task list. While the turn remains `submitting` or
+`awaiting_assistant` and no assistant has settled, that transcript must not
+settle the executor or turn. The later task-list `running: true` snapshot is
+authoritative once the executor has started. An explicit `running: false`
+received while an assistant is already streaming remains terminal and must
+settle normally; false snapshots must not be ignored indiscriminately.
+
+A Codex provider may send only an `item/completed` snapshot containing the
+complete assistant text, without any `item/agentMessage/delta`. If the current
+final response has not received a delta, the executor must convert that text
+into one `response.output_text.delta`. If deltas were already received, it
+must ignore the completed snapshot to avoid duplicate text. Temporary chats
+use ephemeral threads and cannot depend on `thread/read(includeTurns)` to
+recover live text that was dropped.
+
+When the first message carries a pending Goal seed, both the send entry point
+and pane initialization must write the seed status into
+`RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
+may return no Goal before persistence completes; while the seed still belongs
+to the current task, that empty result must not clear the lifecycle Goal
+status. This lets an active Goal continue to constrain task lifecycle even
+when stream settlement races ahead of Goal persistence.
+
 ## Local Multi-Root Projects and Task Ownership
 
 A local Codex project may contain an ordered list of workspace roots. The first
