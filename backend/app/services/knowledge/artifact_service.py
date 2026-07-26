@@ -336,7 +336,7 @@ class ArtifactService:
             subtask,
             changed=execution_ids_changed,
         )
-        return self._apply_execution_health(reconciled, subtask)
+        return self._apply_execution_health(reconciled)
 
     async def _reconcile_many(
         self,
@@ -383,7 +383,7 @@ class ArtifactService:
                 subtask,
                 changed=artifact.artifact_id in repaired_ids,
             )
-            reconciled.append(self._apply_execution_health(current, subtask))
+            reconciled.append(self._apply_execution_health(current))
         return reconciled
 
     async def _apply_subtask_status(
@@ -453,14 +453,10 @@ class ArtifactService:
     def _apply_execution_health(
         self,
         artifact: KnowledgeArtifact,
-        subtask: Subtask | None = None,
     ) -> KnowledgeArtifact:
         artifact.execution_health = KnowledgeArtifactExecutionHealth.HEALTHY
         artifact.can_retry = artifact.status == KnowledgeArtifactStatus.FAILED
-        if artifact.status in _ACTIVE_STATUSES and self._is_stalled(
-            artifact,
-            subtask,
-        ):
+        if artifact.status in _ACTIVE_STATUSES and self._is_stalled(artifact):
             artifact.execution_health = KnowledgeArtifactExecutionHealth.STALLED
             artifact.can_retry = True
         return artifact
@@ -468,13 +464,8 @@ class ArtifactService:
     def _is_stalled(
         self,
         artifact: KnowledgeArtifact,
-        subtask: Subtask | None,
     ) -> bool:
         activity_at = self._as_utc_naive(artifact.updated_at, timezone.utc)
-        if subtask is not None and (subtask.updated_at or subtask.created_at):
-            activity_at = self._subtask_datetime_as_utc(
-                subtask.updated_at or subtask.created_at
-            )
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         stall_seconds = max(1, settings.KNOWLEDGE_ARTIFACT_STALL_SECONDS)
         return (now - activity_at).total_seconds() >= stall_seconds

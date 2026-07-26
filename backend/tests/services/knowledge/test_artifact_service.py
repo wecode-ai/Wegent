@@ -356,16 +356,18 @@ def test_resolve_mind_map_node_rejects_legacy_mermaid():
 async def test_reconcile_derives_stalled_without_changing_running_execution():
     service, repository, _ = build_service()
     artifact = build_artifact()
-    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    stale_at = mysql_naive_now() - timedelta(minutes=11)
+    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        minutes=11
+    )
+    recent_at = mysql_naive_now() - timedelta(minutes=3)
     subtask = SimpleNamespace(
         id=41,
         status="RUNNING",
         result=None,
         completed_at=None,
         error_message=None,
-        created_at=stale_at,
-        updated_at=stale_at,
+        created_at=recent_at,
+        updated_at=recent_at,
     )
     service.subtask_store.get_by_id_and_role.return_value = subtask
     reconciled = await service._reconcile(artifact)
@@ -380,16 +382,20 @@ async def test_reconcile_derives_stalled_without_changing_running_execution():
 async def test_reconcile_keeps_recent_running_execution_healthy():
     service, repository, _ = build_service()
     artifact = build_artifact()
-    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    recent_at = mysql_naive_now() - timedelta(minutes=3)
+    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        minutes=3
+    )
+    utc_naive_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        minutes=3
+    )
     subtask = SimpleNamespace(
         id=41,
         status="RUNNING",
         result=None,
         completed_at=None,
         error_message=None,
-        created_at=recent_at,
-        updated_at=recent_at,
+        created_at=utc_naive_at,
+        updated_at=utc_naive_at,
     )
     service.subtask_store.get_by_id_and_role.return_value = subtask
     reconciled = await service._reconcile(artifact)
@@ -448,8 +454,10 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
     service, repository, launcher = build_service()
     launcher.preflight.return_value = MagicMock()
     artifact = build_artifact()
-    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    stale_at = mysql_naive_now() - timedelta(minutes=11)
+    artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        minutes=11
+    )
+    recent_at = mysql_naive_now() - timedelta(minutes=3)
     repository.get.return_value = artifact
     subtask = SimpleNamespace(
         id=41,
@@ -457,8 +465,8 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
         result=None,
         completed_at=None,
         error_message=None,
-        created_at=stale_at,
-        updated_at=stale_at,
+        created_at=recent_at,
+        updated_at=recent_at,
     )
     service.subtask_store.get_by_id_and_role.return_value = subtask
     claimed = artifact.model_copy(deep=True)
