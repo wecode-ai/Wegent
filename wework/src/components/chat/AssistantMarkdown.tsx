@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
 import type { Element as HastElement } from 'hast'
-import { FileText, Link2 } from 'lucide-react'
+import { FileText, Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import 'streamdown/styles.css'
 import {
@@ -397,10 +397,11 @@ function formatMarkdownFileTooltip(target: Extract<MarkdownLinkTarget, { kind: '
 function getMarkdownFileOpenOptions(
   target: Extract<MarkdownLinkTarget, { kind: 'file' }>
 ): WorkspaceFileOpenOptions | undefined {
-  if (typeof target.lineStart !== 'number') return undefined
+  if (typeof target.lineStart !== 'number' && !target.isDirectory) return undefined
   return {
     lineStart: target.lineStart,
     lineEnd: target.lineEnd,
+    isDirectory: target.isDirectory,
   }
 }
 
@@ -450,7 +451,15 @@ function AssistantMarkdownLink({
   const target = classifyMarkdownLink(decodeLocalMarkdownHref(href))
   const icon =
     target.kind === 'file' ? (
-      getMarkdownFileIcon(target.path)
+      target.isDirectory ? (
+        <Folder
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0"
+          data-testid="assistant-markdown-link-icon"
+        />
+      ) : (
+        getMarkdownFileIcon(target.path)
+      )
     ) : (
       <Link2
         aria-hidden="true"

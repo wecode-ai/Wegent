@@ -733,6 +733,37 @@
     "custom_input": "自定义输入",
     "custom_placeholder": "请输入您的自定义内容..."
   },
+  "saveToKnowledge": {
+    "action": "保存到知识库",
+    "title": "保存到知识库",
+    "description": "将当前回答保存为知识库文档，并遵循目标知识库的现有访问权限。",
+    "targetLabel": "目标知识库",
+    "targetPlaceholder": "请选择知识库",
+    "loadingTargets": "正在加载知识库...",
+    "noWritableTargets": "暂无可写的知识库",
+    "currentTargetReadOnly": "当前知识库为只读，请选择其他知识库",
+    "permissionHint": "保存后，内容将遵循「{{name}}」现有权限，对该知识库有权成员可见。",
+    "documentTitleLabel": "文档标题",
+    "contentLabel": "Markdown 正文",
+    "contentLength": "{{current}} / {{max}} 字符",
+    "save": "保存",
+    "saving": "保存中...",
+    "fallbackTitle": "对话保存内容",
+    "successTitle": "已保存到知识库",
+    "successDescription": "已保存到「{{name}}」，文档正在处理。",
+    "viewDocument": "查看文档",
+    "scope": {
+      "personal": "个人",
+      "shared": "共享给我"
+    },
+    "errors": {
+      "loadFailed": "知识库加载失败，请稍后重试",
+      "permissionChanged": "目标知识库权限已变化，请重新选择",
+      "targetMissing": "目标知识库不存在，请重新选择",
+      "invalidContent": "标题或正文不符合要求，请检查后重试",
+      "saveFailed": "保存失败，请稍后重试"
+    }
+  },
   "dingtalkDocs": {
     "tabTitle": "钉钉文档",
     "sync": "同步",
