@@ -129,6 +129,8 @@ services:
       # OTEL_SERVICE_NAME: "wegent-backend"
       # OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317"
       # OTEL_TRACES_SAMPLER_ARG: "1.0"
+      GIT_TOKEN_AES_KEY: ${GIT_TOKEN_AES_KEY:?Set GIT_TOKEN_AES_KEY in .env}
+      GIT_TOKEN_AES_IV: ${GIT_TOKEN_AES_IV:?Set GIT_TOKEN_AES_IV in .env}
     depends_on:
       mysql:
         condition: service_healthy
