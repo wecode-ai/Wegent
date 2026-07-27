@@ -121,7 +121,7 @@ API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` be
 
 本地设备代理保存后不会立即中断正在运行的 Codex 任务。界面会提示用户手动重启 Codex；用户确认后，Wework 只重启当前 App 本机 executor 内维护的 persistent Codex app-server，不会终止机器上其他 Codex 进程。新 Codex app-server 启动时会获得代理相关环境变量，后续新对话会使用该代理。
 
-Codex Responses 兼容模型可能通过 executor 内置的 `codex responses proxy` 转发到上游模型服务。该转发器也必须使用同一份本地设备代理；否则模型请求会绕过 Codex app-server 进程环境。日志只记录是否配置代理，不输出代理 URL。
+Codex Responses 兼容模型可能通过 executor 内置的 `codex responses proxy` 转发到上游模型服务。对于用户在 Codex `config.toml` 中配置的自定义模型 provider，该转发器会使用任务携带的同一份本地设备代理访问上游；否则模型请求会绕过 Codex app-server 进程环境。日志只记录是否配置代理，不输出代理 URL。
 
 ## 本机认证状态
 

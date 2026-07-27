@@ -36,6 +36,7 @@ material changed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from copy import deepcopy
@@ -71,6 +72,7 @@ from chat_shell.compression.context_metrics import (
 from chat_shell.compression.summary_compactor import (
     SummaryCompactNotApplicable,
     SummaryCompactor,
+    SummaryCompactResult,
 )
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.tool_output import COMPACTED_FLAG
@@ -79,6 +81,11 @@ from chat_shell.guard.types import GuardSource
 from chat_shell.guard_flags import BYPASS_COMPACTION_FLAG
 
 logger = logging.getLogger(__name__)
+
+# Interval between in-progress heartbeat status emits during summary compaction.
+# The emits keep the SSE stream alive so the backend read-timeout does not fire
+# while a long compaction runs; the model call, not this value, bounds duration.
+COMPACTION_HEARTBEAT_INTERVAL_S = 15.0
 
 
 class ContextGuardFailFastError(RuntimeError):
@@ -719,6 +726,73 @@ class UnifiedContextGuard:
     # Stage 2: request-level compression
     # ------------------------------------------------------------------
 
+    async def _emit_compaction_heartbeats(
+        self,
+        snapshot: ContextMetricsSnapshot,
+        before_tokens: int,
+        created_at: str,
+    ) -> None:
+        """Emit a non-terminal in_progress status every interval to keep SSE alive.
+
+        Runs concurrently with the (potentially slow, non-streaming) compaction so
+        the backend read-timeout is reset by real bytes on the wire. Emit failures
+        are swallowed — telemetry must never break compaction.
+        """
+        if self._tracker is None:
+            return
+        try:
+            while True:
+                await asyncio.sleep(COMPACTION_HEARTBEAT_INTERVAL_S)
+                try:
+                    await self._tracker.emit_status(
+                        phase="summary_compact",
+                        snapshot=snapshot,
+                        context_compaction=ContextCompactionEvent(
+                            type="summary_compact",
+                            status="in_progress",
+                            before_tokens=before_tokens,
+                            trigger_limit=self.trigger_limit,
+                            target_limit=self.target_limit,
+                            used_legacy_fallback=False,
+                            created_at=created_at,
+                        ),
+                    )
+                except Exception:
+                    logger.debug(
+                        "[UnifiedContextGuard] compaction heartbeat emit failed",
+                        exc_info=True,
+                    )
+        except asyncio.CancelledError:
+            # Cleanup is already handled above; re-raise so the cancellation is
+            # observed rather than swallowed (structured-concurrency correctness).
+            raise
+
+    async def _compact_with_heartbeat(
+        self,
+        view: list[dict[str, Any]],
+        *,
+        snapshot: ContextMetricsSnapshot,
+        before_tokens: int,
+        created_at: str,
+    ) -> SummaryCompactResult:
+        """Run compaction while a heartbeat ticker keeps the SSE stream alive.
+
+        The ticker is always cancelled (success, error, or cancellation) via the
+        ``finally`` so no background task is left running past the compaction.
+        """
+        heartbeat = asyncio.create_task(
+            self._emit_compaction_heartbeats(snapshot, before_tokens, created_at)
+        )
+        try:
+            return await self._summary_compactor.compact(
+                [_dict_to_state_message(message_dict) for message_dict in view],
+                preserve_initial_context=True,
+            )
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
+
     async def _apply_summary_compaction_pass(
         self,
         view: list[dict[str, Any]],
@@ -749,9 +823,11 @@ class UnifiedContextGuard:
         )
         compact_started = time.perf_counter()
         try:
-            result = await self._summary_compactor.compact(
-                [_dict_to_state_message(message_dict) for message_dict in view],
-                preserve_initial_context=True,
+            result = await self._compact_with_heartbeat(
+                view,
+                snapshot=before_snapshot,
+                before_tokens=before_tokens,
+                created_at=created_at,
             )
         except asyncio.CancelledError:
             # CancelledError is a BaseException; the ``except Exception`` below

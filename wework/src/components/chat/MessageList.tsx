@@ -21,6 +21,7 @@ import {
   Folder,
   LibraryBig,
   ListTodo,
+  MessageCircle,
   MessageSquare,
   Package,
   PackageOpen,
@@ -1653,7 +1654,7 @@ function MessageHoverActions({
 }
 
 const CODEX_MENTION_LINK_PATTERN =
-  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+))\)/g
+  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1667,12 +1668,15 @@ function displayCodexMentionName(name: string): string {
     .join(' ')
 }
 
-function codexMentionKind(href: string): 'skill' | 'app' | 'plugin' | 'file' | 'folder' | 'cloud' {
+function codexMentionKind(
+  href: string
+): 'skill' | 'app' | 'plugin' | 'file' | 'folder' | 'cloud' | 'conversation' {
   if (href.startsWith('app://')) return 'app'
   if (href.startsWith('plugin://')) return 'plugin'
   if (href.startsWith('file://')) return 'file'
   if (href.startsWith('folder://')) return 'folder'
   if (href.startsWith('cloud://')) return 'cloud'
+  if (href.startsWith('wework-conversation://')) return 'conversation'
   return 'skill'
 }
 
@@ -1745,11 +1749,16 @@ function renderUserContent(
           ) : (
             <LibraryBig data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
           )
+        ) : mentionKind === 'conversation' ? (
+          <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}
         <span className="min-w-0 truncate">
-          {mentionKind === 'file' || mentionKind === 'folder' || mentionKind === 'cloud'
+          {mentionKind === 'file' ||
+          mentionKind === 'folder' ||
+          mentionKind === 'cloud' ||
+          mentionKind === 'conversation'
             ? mentionName
             : displayCodexMentionName(mentionName)}
         </span>

@@ -90,7 +90,6 @@ class ChatAgent:
         workspace_root: str = "/workspace",
         enable_skills: bool = False,
         enable_web_search: bool = False,
-        enable_checkpointing: bool = False,
     ):
         """Initialize Chat Agent.
 
@@ -98,11 +97,9 @@ class ChatAgent:
             workspace_root: Root directory for file operations
             enable_skills: Enable built-in file skills
             enable_web_search: Enable web search tool (global default)
-            enable_checkpointing: Enable state checkpointing
         """
         self.workspace_root = workspace_root
         self.tool_registry = ToolRegistry()
-        self.enable_checkpointing = enable_checkpointing
         self._enable_web_search_default = enable_web_search
 
         # Register built-in skills
@@ -172,7 +169,6 @@ class ChatAgent:
             llm=llm,
             tool_registry=tool_registry,
             max_iterations=config.max_iterations,
-            enable_checkpointing=self.enable_checkpointing,
             pre_model_hook=config.pre_model_hook,
             on_model_usage=config.on_model_usage,
         )
@@ -489,7 +485,6 @@ def create_chat_agent(
     workspace_root: str | None = None,
     enable_skills: bool = True,
     enable_web_search: bool = False,
-    enable_checkpointing: bool = False,
 ) -> ChatAgent:
     """Create a ChatAgent instance with configuration from settings.
 
@@ -500,7 +495,6 @@ def create_chat_agent(
         workspace_root: Override workspace root (defaults to settings)
         enable_skills: Enable built-in file skills
         enable_web_search: Enable web search tool
-        enable_checkpointing: Enable state checkpointing
 
     Returns:
         Configured ChatAgent instance
@@ -512,5 +506,4 @@ def create_chat_agent(
         workspace_root=workspace_root,
         enable_skills=enable_skills,
         enable_web_search=enable_web_search,
-        enable_checkpointing=enable_checkpointing,
     )

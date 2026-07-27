@@ -85,7 +85,7 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
 
 
 @router.get("/startup")
-def startup_check(db: Session = Depends(get_db)):
+def startup_check():
     return {"status": "started"}
 
 
