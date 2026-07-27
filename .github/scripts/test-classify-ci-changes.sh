@@ -54,6 +54,20 @@ all_true="${all_false//false/true}"
 assert_case "workflow changes validate all modules" "$all_true" \
   ".github/workflows/test.yml"
 
+assert_case "ci:all label forces all modules" "$all_true" --all
+
+test_workflow="$script_dir/../workflows/test.yml"
+if ! sed -n '/^  pull_request:/,/^  [a-z_]*:/p' "$test_workflow" |
+  grep -q -- "- labeled"; then
+  printf 'test.yml must run when the ci:all label is applied\n' >&2
+  exit 1
+fi
+
+if ! grep -q "ci:all" "$test_workflow"; then
+  printf 'test.yml must force all module tests for the ci:all label\n' >&2
+  exit 1
+fi
+
 for workflow in e2e-tests.yml wework-e2e.yml; do
   if ! sed -n '/^  pull_request:/,/^  [a-z_]*:/p' \
     "$script_dir/../workflows/$workflow" |

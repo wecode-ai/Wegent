@@ -71,7 +71,9 @@ classify_path() {
   esac
 }
 
-if (($# > 0)); then
+if [[ "${1:-}" == "--all" ]]; then
+  mark_all
+elif (($# > 0)); then
   for path in "$@"; do
     classify_path "$path"
   done

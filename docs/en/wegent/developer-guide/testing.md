@@ -237,6 +237,11 @@ and CLI suites, while a `packages/chat-core/` change runs both Frontend and
 Wework checks. Changes to the test workflows or the classifier itself select
 every module so CI orchestration changes receive full validation.
 
+Apply the `ci:all` label to a PR to bypass path classification and force every
+module test, which is useful when the changed paths might not capture the full
+blast radius of a change. Applying a label re-triggers `test.yml`; without
+`ci:all`, module selection still follows the changed paths.
+
 Feature-branch pushes do not run a duplicate CI suite; the `pull_request` event
 validates the branch after a PR is opened. A newer commit to the same PR or to
 `main` cancels the older in-progress run. `test-summary` and `lint-summary`
