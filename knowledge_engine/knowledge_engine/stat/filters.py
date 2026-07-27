@@ -25,9 +25,7 @@ class MetricFilter:
 
     @property
     def effective_end_date(self) -> date:
-        # Add 1 day so SQL `<= :end_date` includes the entire target_date.
-        # Use this ONLY as the exclusive upper bound for `<=` over DATETIME
-        # columns; for display/persistence prefer period_end_date.
+        """Exclusive upper bound for DATETIME predicates."""
         return (self.end_date or self.target_date) + timedelta(days=1)
 
     @property
@@ -37,9 +35,18 @@ class MetricFilter:
 
     @property
     def effective_period_start(self) -> date:
-        return self.period_start_date or _subtract_days(
-            self.target_date, self.lookback_days
-        )
+        if self.period_start_date is not None:
+            return self.period_start_date
+        # An N-day inclusive window ends on period_end_date and therefore
+        # starts N-1 days earlier.  Deriving both ends from the same anchor
+        # prevents a caller-supplied end_date from drifting away from
+        # target_date.
+        days = max(1, self.lookback_days)
+        return _subtract_days(self.period_end_date, days - 1)
+
+    @property
+    def period_days(self) -> int:
+        return max(0, (self.period_end_date - self.effective_period_start).days + 1)
 
 
 def _subtract_days(d: date, days: int) -> date:

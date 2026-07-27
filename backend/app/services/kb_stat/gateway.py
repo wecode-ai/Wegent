@@ -63,6 +63,9 @@ class RemoteKbStatGateway:
     async def list_collector_runs(self, run_id: int) -> dict[str, Any]:
         return await self._client.get(f"/internal/kb-stat/runs/{run_id}/collectors")
 
+    async def get_run(self, run_id: int) -> dict[str, Any]:
+        return await self._client.get(f"/internal/kb-stat/runs/{run_id}")
+
     async def trigger_run(self, payload: TriggerRunRequest) -> dict[str, Any]:
         return await self._client.post("/internal/kb-stat/runs/trigger", payload)
 

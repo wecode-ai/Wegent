@@ -199,6 +199,7 @@ def seed(
     target_date: Optional[date] = None,
     domain: Optional[str] = None,
     trigger_collect: bool = False,
+    pipeline_mode: str = "legacy",
 ) -> None:
     random.seed(42)
     target = target_date or date.today()
@@ -216,7 +217,8 @@ def seed(
 
     print(
         f"▶ seed start: kbs={kbs} docs={docs} queries={queries} days={days} "
-        f"target={target} domain={domain or 'all'} trigger_collect={trigger_collect}"
+        f"target={target} domain={domain or 'all'} trigger_collect={trigger_collect} "
+        f"pipeline_mode={pipeline_mode}"
     )
     engine, stat_engine = _make_engines()
     src = Session(engine)
@@ -271,7 +273,7 @@ def seed(
 
     if trigger_collect:
         print("▶ triggering collection (--trigger-collect)...")
-        run_id = _trigger_collection(target)
+        run_id = _trigger_collection(target, pipeline_mode=pipeline_mode)
         print(f"✅ triggered collection, run_id={run_id}")
 
 
@@ -698,7 +700,7 @@ def _seed_tasks(
     print(f"  [seed] tasks:        {task_count} rows")
 
 
-def _trigger_collection(target: date) -> int:
+def _trigger_collection(target: date, *, pipeline_mode: str = "legacy") -> int:
     from knowledge_engine.stat import collect_all, mark_kb_stat_stale_runs
     from shared.db.readonly_session import (
         get_readonly_session_factory,
@@ -725,12 +727,16 @@ def _trigger_collection(target: date) -> int:
     print(
         f"  [collect] running collect_all(target={target}, triggered_by={TRIGGERED_BY_SEED})..."
     )
+    from knowledge_engine.stat.registry import all_collectors
+
     print(
-        f"  [collect] NOTE: this runs 80 collectors synchronously and may take 2-5 minutes..."
+        f"  [collect] collectors={len(all_collectors())} "
+        f"pipeline_mode={pipeline_mode}"
     )
     run_id = collect_all(
         target_date=target,
         triggered_by=TRIGGERED_BY_SEED,
+        pipeline_mode=pipeline_mode,
         source_session_factory=get_readonly_session_factory(),
         stat_session_factory=stat_factory,
     )
@@ -788,6 +794,19 @@ def status() -> None:
             print(f"  {span[2]} records, from {span[0]} to {span[1]}")
         else:
             print("  (no test subtask_contexts yet)")
+
+        for table in (
+            "kb_stat_extractor_runs",
+            "kb_stat_stage_query_event",
+            "kb_stat_source_watermarks",
+            "kb_stat_metric_watermarks",
+        ):
+            try:
+                count = stat.execute(text(f"SELECT COUNT(*) FROM `{table}`")).scalar()
+                print(f"  {table:30s} {count}")
+            except Exception:
+                stat.rollback()
+                print(f"  {table:30s} (not installed)")
     finally:
         src.close()
         stat.close()
@@ -818,6 +837,11 @@ def main() -> None:
         default="all",
     )
     p_seed.add_argument("--trigger-collect", action="store_true")
+    p_seed.add_argument(
+        "--pipeline-mode",
+        choices=["legacy", "shadow"],
+        default="legacy",
+    )
 
     sub.add_parser("clean", help="remove all test data")
     sub.add_parser("status", help="show test-data overview")
@@ -832,6 +856,7 @@ def main() -> None:
             target_date=args.target_date,
             domain=args.domain,
             trigger_collect=args.trigger_collect,
+            pipeline_mode=args.pipeline_mode,
         )
     elif args.cmd == "clean":
         clean()

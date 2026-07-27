@@ -47,7 +47,7 @@ def kb_health_score(
     kb_filter_sql = f"AND k.id {kb_clause}" if kb_clause else ""
 
     start = mfilter.effective_period_start
-    end = mfilter.effective_end_date
+    end = mfilter.period_end_date
 
     from datetime import timedelta as _td
 
@@ -163,7 +163,7 @@ def doc_value_ranking(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
         """
         ),
         {
@@ -228,7 +228,7 @@ def doc_value_ranking(
 
     # Build docs with value scores
     scored_docs = []
-    end_dt = mfilter.effective_end_date
+    end_dt = mfilter.period_end_date
     for r in doc_rows:
         rag = rag_counts.get(r.id, 0)
         head = head_counts.get(r.id, 0)
@@ -319,7 +319,7 @@ def orphan_doc_alert(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
         """
         ),
         {
@@ -372,7 +372,7 @@ def orphan_doc_alert(
 
     # Find orphan docs (not in referenced set), limit 500
     kb_meta = fetch_kb_metadata(source_session)
-    end_dt = mfilter.effective_end_date
+    end_dt = mfilter.period_end_date
     orphans = []
     for r in doc_rows:
         if r.id not in referenced_doc_ids:
@@ -615,7 +615,7 @@ def kb_growth_curve(
             FROM knowledge_documents kd
             WHERE kd.is_active = 1
               AND kd.created_at >= :start_date
-              AND kd.created_at <= :end_date
+              AND kd.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(kd.created_at), kd.kind_id
         """
@@ -637,7 +637,7 @@ def kb_growth_curve(
             FROM resource_members rm
             WHERE rm.resource_type = 'KnowledgeBase'
               AND rm.created_at >= :start_date
-              AND rm.created_at <= :end_date
+              AND rm.created_at < :end_date
               {kb_filter_sql2}
             GROUP BY DATE(rm.created_at), rm.resource_id
         """
@@ -787,7 +787,7 @@ def rag_head_verify_rate(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= :start_date
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), JSON_EXTRACT(sc.type_data, '$.knowledge_id')
             ORDER BY d
@@ -897,7 +897,7 @@ def knowledge_coverage(
                 FROM subtask_contexts sc
                 WHERE sc.context_type = 'knowledge_base'
                   AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-                  AND sc.created_at <= :end_date
+                  AND sc.created_at < :end_date
                 ORDER BY sc.created_at DESC
                 LIMIT 500
             """

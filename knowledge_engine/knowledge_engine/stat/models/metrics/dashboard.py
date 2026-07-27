@@ -112,6 +112,7 @@ class KbDailyStats(StatBase):
     target_date = Column(Date, nullable=False)
     stat_date = Column(Date, nullable=False)
     kb_id = Column(BigInteger, nullable=False)
+    total_queries = Column(Integer, nullable=False, default=0)
     rag_queries = Column(Integer, nullable=False, default=0)
     head_queries = Column(Integer, nullable=False, default=0)
     direct_injection = Column(Integer, nullable=False, default=0)

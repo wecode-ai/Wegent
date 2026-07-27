@@ -82,7 +82,7 @@ def thin_doc_alert(
             WHERE kd.is_active = 1
               AND kd.chunks IS NOT NULL
               AND kd.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND kd.created_at <= :end_date
+              AND kd.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(kd.created_at), kd.kind_id
         """
@@ -265,7 +265,7 @@ def content_freshness(
         kb_params,
     ).fetchall()
 
-    ref_date = mfilter.effective_end_date
+    ref_date = mfilter.period_end_date
     bucket_counter: Counter[str] = Counter()
     for r in rows:
         if r.updated_at is None:

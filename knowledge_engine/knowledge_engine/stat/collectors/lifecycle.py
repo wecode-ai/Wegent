@@ -71,7 +71,7 @@ def kb_creation_trend(
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               AND created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND created_at <= :end_date
+              AND created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(created_at), namespace
             ORDER BY d
@@ -365,7 +365,7 @@ def kb_size_distribution(
     kb_filter_sql = f"AND k.id {kb_clause}" if kb_clause else ""
 
     start = mfilter.effective_period_start
-    end = mfilter.effective_end_date
+    end = mfilter.period_end_date
 
     # Generate the list of days we need to compute for.
     from datetime import timedelta as _td
@@ -462,7 +462,7 @@ def kb_abandon_rate(
     kb_filter_sql = f"AND k.id {kb_clause}" if kb_clause else ""
 
     start = mfilter.effective_period_start
-    end = mfilter.effective_end_date
+    end = mfilter.period_end_date
     from datetime import timedelta as _td
 
     written = 0

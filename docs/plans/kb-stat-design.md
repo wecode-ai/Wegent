@@ -213,6 +213,60 @@ title: 知识库统计功能设计文档
 | `kb_retrieval_hit_rate` | subtask_contexts.rag_result.chunks_count | 命中率 |
 | `kb_config_sanity` | kinds.json 检索配置 | 配置异常检测 |
 
+### 3.5 共享抽取与事实管道
+
+统计功能对业务库保持零侵入：只允许只读查询，不修改业务表，不增加字段、
+生成列、索引、触发器或锁表，也不要求业务写入链路维护统计字段。所有
+staging、事实表、watermark 和性能索引仅位于独立统计库。
+
+优化后的采集链路分阶段启用：
+
+```text
+业务库（只读、并发 1～2）
+  -> extractor（keyset 分页，冻结 source cutoff）
+  -> 统计库 staging（JSON 只解析一次）
+  -> collector metric groups（统计库内受控并发）
+  -> validator
+  -> metric watermark 原子发布
+```
+
+`KB_STAT_PIPELINE_MODE` 控制灰度：
+
+| 值 | 行为 |
+| --- | --- |
+| `legacy` | 只运行原 collector，默认值 |
+| `shadow` | 先抽取 staging，再运行原 collector，用于结果和性能对账 |
+| `fact` | 当前版本尚未开放，Runner 会明确拒绝；完成指标对账和切读实现后才可启用 |
+
+第一阶段的 `query_event` extractor 读取
+`subtask_contexts(id, created_at, user_id, type_data)`，在 worker 中解析
+`knowledge_id`、注入模式、分块数、命中、采纳、查询 hash 和耗时，并写入
+`kb_stat_stage_query_event`。它采用 `id > last_id AND id <= cutoff_id`
+keyset 分页，不在业务库创建临时表。
+
+管道控制表：
+
+| 表 | 用途 | 保留 |
+| --- | --- | --- |
+| `kb_stat_extractor_runs` | 抽取状态、cutoff、读取/写入行数、耗时 | 随 run 保留期 |
+| `kb_stat_stage_query_event` | 当前 run 的窄化查询事实 | 重试期后清理 |
+| `kb_stat_source_watermarks` | 为后续增量抽取预留的已发布源游标 | 持久 |
+| `kb_stat_metric_watermarks` | 为后续原子切读预留的指标版本 | 持久 |
+
+当前交付边界是 `legacy` 可信度修复与 `shadow` 查询事件抽取。页面仍按
+“对应 collector 成功的最新适用 run”选择数据，尚不读取上述两个 watermark
+表；在 validator、指标级发布和连续 shadow 对账完成前，不得把配置切到
+`fact`。这样避免用未完成的新链路静默替代生产口径。
+
+同一 run 的 collector 必须使用相同 source cutoff。抽取失败时不进入事实
+指标阶段、不推进 watermark，也不得回退为直接扫描业务库。`partial` run
+只发布成功且通过校验的指标，失败指标继续指向上一个已发布 watermark。
+
+当前仓库使用 `docs/plans/kb-stat-schema.sql` 作为完整新建库快照，
+`docs/plans/sql/kb-stat-019-fact-pipeline-up.sql` 和对应 down SQL 作为
+已有统计库的增量升级/回滚脚本。相关 SQL 只能对
+`KNOWLEDGE_STAT_DATABASE_URL` 执行。
+
 ## 4. 查询服务
 
 ### 4.1 查询路径
@@ -295,7 +349,7 @@ ORDER BY {order_by} LIMIT {limit}
 | `KB_STAT_ENABLED` | `true` | 总开关，false 时 API 返回 503 |
 | `KB_STAT_PRUNE_ENABLED` | `true` | 清理任务开关，false 时永久保留历史数据 |
 | `KB_STAT_WORKER_ENABLED` | `true` | Celery worker 子进程开关 |
-| `KB_STAT_AUTO_MIGRATE` | `false` | 启动时自动执行 alembic upgrade head（生产环境建议手动执行迁移） |
+| `KB_STAT_AUTO_MIGRATE` | `false` | 已废弃；设为 true 时启动失败。统计库必须显式执行 `docs/plans/sql/` 下的版本化 SQL |
 | `KNOWLEDGE_STAT_DATABASE_URL` | （回退到 DATABASE_URL） | 专用统计库连接 |
 | `DATABASE_READONLY_URL` | （回退到 DATABASE_URL） | 业务库只读副本连接 |
 | `KNOWLEDGE_STAT_LOOKBACK_DAYS` | `30` | 手动触发时的回看窗口 |
@@ -485,13 +539,24 @@ set -a && . ../knowledge_runtime/.env && set +a
 
 ### 8.4 数据库迁移
 
+当前仓库以完整建库快照和显式增量 SQL 管理统计库结构：
+
 ```bash
-cd knowledge_runtime
-KNOWLEDGE_STAT_DATABASE_URL=mysql://... \
-  uv run alembic -c alembic.ini upgrade head    # 升级
-  uv run alembic -c alembic.ini current          # 查看当前版本
-  uv run alembic -c alembic.ini downgrade -1     # 回滚一步
+# 全新空统计库
+mysql -u <user> -p <stat_db> < docs/plans/kb-stat-schema.sql
+
+# 已有统计库升级到事实管道 019
+mysql -u <user> -p <stat_db> \
+  < docs/plans/sql/kb-stat-019-fact-pipeline-up.sql
+
+# 回滚 019（先停止 shadow worker）
+mysql -u <user> -p <stat_db> \
+  < docs/plans/sql/kb-stat-019-fact-pipeline-down.sql
 ```
+
+这些命令只能指向独立统计库。`backend/alembic` 属于业务库迁移，禁止放入
+KB-stat staging/fact 表。`KB_STAT_AUTO_MIGRATE` 在独立统计库迁移链路
+正式建立前应保持 `false`。
 
 ### 8.5 日志
 
@@ -509,12 +574,10 @@ KNOWLEDGE_STAT_DATABASE_URL=mysql://... \
 
 ## 9. 数据库设计
 
-- **82 张 ORM 表**（+ 1 张 alembic 版本表 = 84 张物理表）
-- **719 列**
-- **122 个 ORM 声明索引 + 29 个迁移创建的复合/优化索引 = 151 个索引**
+- 表、列和索引数量以 `StatBase.metadata` 与建库 SQL 校验结果为准，文档不
+  再手写易漂移的总数
 - 引擎：MySQL 8.0+ / InnoDB / utf8mb4
-- 版本表独立：`kb_stat_alembic_version`（与业务库的 `alembic_version` 分离）
-- alembic 版本：018
+- 当前显式增量 SQL 版本：019
 
 完整建表语句见同目录 `kb-stat-schema.sql`。
 

@@ -140,6 +140,7 @@ async def admin_trigger_run(
         target_date=payload.target_date,
         kb_ids=payload.kb_ids,
         domains=payload.domains,
+        collector_names=payload.collector_names,
         triggered_by="manual_api",
         triggered_user_id=current_user.id,
     )
@@ -162,14 +163,10 @@ async def admin_retry_run(
             for c in collector_data.get("collectors", [])
             if c.get("status") == "failed"
         ]
-        failed_domains = list({c["domain"] for c in failed_collectors})
-
-        run_info = None
-        runs_data = await gateway.list_runs(limit=200)
-        for r in runs_data.get("runs", []):
-            if r.get("id") == run_id:
-                run_info = r
-                break
+        failed_names = [c["collector_name"] for c in failed_collectors]
+        if not failed_names:
+            raise HTTPException(409, "run has no failed collectors to retry")
+        run_info = await gateway.get_run(run_id)
 
         target_date = None
         kb_ids = None
@@ -182,15 +179,18 @@ async def admin_retry_run(
                 target_date = date_type.fromisoformat(td)
             kf = run_info.get("kb_filter")
             if kf:
-                try:
-                    kb_ids = json.loads(kf)
-                except (json.JSONDecodeError, TypeError):
-                    kb_ids = None
+                if isinstance(kf, list):
+                    kb_ids = kf
+                else:
+                    try:
+                        kb_ids = json.loads(kf)
+                    except (json.JSONDecodeError, TypeError):
+                        raise HTTPException(500, "run has an invalid kb_filter")
 
         runtime_payload = TriggerRunRequest(
             target_date=target_date,
             kb_ids=kb_ids,
-            domains=failed_domains if failed_domains else None,
+            collector_names=failed_names if failed_names else None,
             triggered_by="retry",
             triggered_user_id=current_user.id,
         )

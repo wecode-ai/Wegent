@@ -108,8 +108,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KB_STAT_PRUNE_ENABLED"),
     )
 
-    # Auto-migrate on startup (default false: migrations should be managed
-    # explicitly via `alembic upgrade head` in production deployments).
+    # Retained only to fail fast for deployments still setting the obsolete
+    # flag. Stat schema upgrades use the versioned SQL in docs/plans/sql/.
     kb_stat_auto_migrate: bool = Field(
         default=False,
         validation_alias=AliasChoices("KB_STAT_AUTO_MIGRATE"),
@@ -119,6 +119,16 @@ class Settings(BaseSettings):
     knowledge_stat_lookback_days: int = Field(
         default=30,
         validation_alias=AliasChoices("KNOWLEDGE_STAT_LOOKBACK_DAYS"),
+    )
+
+    # Staged rollout for the statistics-only fact pipeline.
+    # legacy: collectors read the source DB directly
+    # shadow: extract facts, then run legacy collectors for comparison
+    # fact is intentionally rejected until selected collectors have completed
+    # migration; there is no silent direct-source fallback.
+    kb_stat_pipeline_mode: str = Field(
+        default="legacy",
+        validation_alias=AliasChoices("KB_STAT_PIPELINE_MODE"),
     )
 
     # Stat retention (days)

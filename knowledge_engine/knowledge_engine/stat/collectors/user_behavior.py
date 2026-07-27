@@ -167,7 +167,7 @@ def retrieval_active_user(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
             GROUP BY sc.user_id
             ORDER BY total_count DESC
             LIMIT 100
@@ -241,7 +241,7 @@ def user_rag_head_preference(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
             GROUP BY sc.user_id
         """
         ),
@@ -734,7 +734,7 @@ def cross_kb_query_user(
               AND sc.user_id IS NOT NULL
               AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
             GROUP BY sc.user_id
             HAVING kb_count >= 2
             ORDER BY kb_count DESC, query_count DESC

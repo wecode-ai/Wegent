@@ -153,6 +153,14 @@ async def list_collector_runs(run_id: int):
     )
 
 
+@_gated_router.get("/runs/{run_id}", response_model=RunInfo)
+async def get_run(run_id: int):
+    data = _get_query_service().get_run(run_id)
+    if data is None:
+        raise HTTPException(404, f"run {run_id} not found")
+    return RunInfo(**data)
+
+
 @_gated_router.post("/runs/trigger", response_model=TriggerRunResponse)
 async def trigger_run(payload: TriggerRunRequest):
     from fastapi.responses import JSONResponse
@@ -189,6 +197,7 @@ async def trigger_run(payload: TriggerRunRequest):
             target_date_iso=target.isoformat(),
             kb_ids=payload.kb_ids,
             domains=payload.domains,
+            collector_names=payload.collector_names,
             triggered_by=payload.triggered_by,
             triggered_user_id=payload.triggered_user_id,
             lookback_days=get_settings().knowledge_stat_lookback_days,

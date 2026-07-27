@@ -11,6 +11,7 @@ and handles failure isolation.
 
 import json
 import logging
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Optional, Sequence
 
@@ -33,6 +34,7 @@ from knowledge_engine.stat.models.runs import CollectorRun, Run
 from knowledge_engine.stat.registry import (
     all_collectors,
     collectors_by_domains,
+    collectors_by_names,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,9 @@ def collect_all(
     triggered_by: str = "beat",
     triggered_user_id: Optional[int] = None,
     domains: Optional[Sequence[str]] = None,
+    collector_names: Optional[Sequence[str]] = None,
     lookback_days: int = 30,
+    pipeline_mode: str = "legacy",
     source_session_factory: Callable[[], Session],
     stat_session_factory: Callable[[], Session],
 ) -> int:
@@ -54,6 +58,12 @@ def collect_all(
     Each collector executes in its own transaction boundary.
     A single collector failure does not prevent others from running.
     """
+    if pipeline_mode not in {"legacy", "shadow"}:
+        raise ValueError(
+            "pipeline_mode must be 'legacy' or 'shadow'; fact mode is not "
+            "available until all selected collectors have migrated"
+        )
+
     # Trigger collector registration
     import knowledge_engine.stat.collectors  # noqa: F401
 
@@ -76,7 +86,9 @@ def collect_all(
     )
 
     # Select collectors
-    if domains:
+    if collector_names:
+        collectors = collectors_by_names(collector_names)
+    elif domains:
         collectors = collectors_by_domains(domains)
     else:
         collectors = all_collectors()
@@ -85,6 +97,16 @@ def collect_all(
     collector_results: list[str] = []  # track success/failed per collector
 
     try:
+        if pipeline_mode == "shadow":
+            from knowledge_engine.stat.extractors import extract_query_events
+
+            extract_query_events(
+                run_id,
+                mfilter,
+                source_session=source_session,
+                stat_session=stat_session,
+            )
+
         for collector in collectors:
             collector_run_id = _create_collector_run(
                 stat_session,
@@ -92,6 +114,7 @@ def collect_all(
                 domain=collector.domain,
                 name=collector.name,
             )
+            collector_started = time.monotonic()
             try:
                 stat_session.begin()
                 rows = collector.fn(
@@ -106,6 +129,7 @@ def collect_all(
                     collector_run_id,
                     status="success",
                     rows_written=rows or 0,
+                    duration_ms=int((time.monotonic() - collector_started) * 1000),
                 )
                 total_rows += rows or 0
                 collector_results.append("success")
@@ -120,6 +144,7 @@ def collect_all(
                     stat_session,
                     collector_run_id,
                     status="failed",
+                    duration_ms=int((time.monotonic() - collector_started) * 1000),
                     error_message="soft time limit exceeded",
                 )
                 raise
@@ -129,6 +154,7 @@ def collect_all(
                     stat_session,
                     collector_run_id,
                     status="failed",
+                    duration_ms=int((time.monotonic() - collector_started) * 1000),
                     error_message=str(e)[:2000],
                 )
                 logger.warning(f"[kb_stat] collector {collector.name} failed: {e}")
@@ -220,12 +246,15 @@ def prune_old_runs(
     # (it already missed the per-KB detail tables). kb_stat_runs is deleted
     # separately below.
     import knowledge_engine.stat.models.metrics  # noqa: F401
+    import knowledge_engine.stat.models.pipeline  # noqa: F401
     from knowledge_engine.stat.models.base import StatBase
 
     metric_tables = sorted(
         name
-        for name in StatBase.metadata.tables
-        if name.startswith("kb_stat_") and name != "kb_stat_runs"
+        for name, table in StatBase.metadata.tables.items()
+        if name.startswith("kb_stat_")
+        and name != "kb_stat_runs"
+        and "run_id" in table.columns
     )
 
     # Chunk the run_ids to avoid a single massive transaction that holds
@@ -289,6 +318,20 @@ def mark_kb_stat_stale_runs(
     """
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
     with stat_session_factory() as stat_session:
+        stat_session.execute(
+            text(
+                """
+                UPDATE kb_stat_collector_runs c
+                JOIN kb_stat_runs r ON r.id = c.run_id
+                SET c.status = 'failed', c.completed_at = NOW(),
+                    c.error_message = :err
+                WHERE c.status = 'running'
+                  AND r.status = 'running'
+                  AND r.started_at < :cutoff
+                """
+            ),
+            {"err": _STALE_RUN_ERROR_MESSAGE, "cutoff": cutoff},
+        )
         result = stat_session.execute(
             text(
                 """
@@ -365,6 +408,7 @@ def _update_collector_run(
     *,
     status: str,
     rows_written: int = 0,
+    duration_ms: int = 0,
     error_message: Optional[str] = None,
 ) -> None:
     session.execute(
@@ -372,7 +416,8 @@ def _update_collector_run(
             """
             UPDATE kb_stat_collector_runs
             SET status = :status, completed_at = NOW(),
-                rows_written = :rows_written, error_message = :error_message
+                rows_written = :rows_written, duration_ms = :duration_ms,
+                error_message = :error_message
             WHERE id = :id
         """
         ),
@@ -380,6 +425,7 @@ def _update_collector_run(
             "id": collector_run_id,
             "status": status,
             "rows_written": rows_written,
+            "duration_ms": duration_ms,
             "error_message": error_message,
         },
     )

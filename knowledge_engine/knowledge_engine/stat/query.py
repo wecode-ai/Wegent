@@ -1328,16 +1328,58 @@ _DOMAIN_LABELS: dict[str, str] = {
 _METRIC_IMPORTS_DONE = False
 
 
+_METRIC_COLLECTOR_OVERRIDES: dict[str, str] = {
+    "period_totals": "period_and_daily",
+    "daily_dashboard": "period_and_daily",
+    "kb_low_score_rate": "retrieval_score_distribution",
+}
+
+
+def _collector_for_metric(metric_name: Optional[str]) -> Optional[str]:
+    if metric_name is None:
+        return None
+    return _METRIC_COLLECTOR_OVERRIDES.get(metric_name, metric_name)
+
+
+def _successful_run_condition(
+    metric_name: str,
+    filter: MetricFilter,
+    *,
+    run_column: str = "run_id",
+    param_prefix: str = "metric_run",
+) -> tuple[str, dict[str, Any]]:
+    """Build an indicator-specific successful-run and scope predicate."""
+    params: dict[str, Any] = {
+        f"{param_prefix}_collector": _collector_for_metric(metric_name)
+    }
+    scope = "r.kb_filter IS NULL"
+    if filter.kb_ids:
+        scope_parts = ["r.kb_filter IS NULL"]
+        for index, kb_id in enumerate(filter.kb_ids):
+            key = f"{param_prefix}_kb_{index}"
+            scope_parts.append(f"JSON_CONTAINS(r.kb_filter, JSON_ARRAY(:{key}))")
+            params[key] = kb_id
+        scope = f"({' OR '.join(scope_parts)})"
+    condition = (
+        f"{run_column} IN ("
+        "SELECT r.id FROM kb_stat_runs r "
+        "JOIN kb_stat_collector_runs c ON c.run_id = r.id "
+        f"WHERE c.collector_name = :{param_prefix}_collector "
+        "AND c.status = 'success' "
+        "AND r.status IN ('completed', 'partial') "
+        f"AND {scope})"
+    )
+    return condition, params
+
+
 def _ensure_imports() -> None:
     """Lazily import collector modules to ensure registry is populated."""
     global _METRIC_IMPORTS_DONE
     if _METRIC_IMPORTS_DONE:
         return
+    import knowledge_engine.stat.collectors  # noqa: F401
+
     _METRIC_IMPORTS_DONE = True
-    try:
-        import knowledge_engine.stat.collectors  # noqa: F401
-    except ImportError:
-        pass
 
 
 class KbStatQueryService:
@@ -1349,13 +1391,41 @@ class KbStatQueryService:
     def _get_session(self) -> Session:
         return self._stat_session_factory()
 
-    def _latest_run(self, session: Session) -> Optional[dict]:
+    def _latest_run(
+        self,
+        session: Session,
+        *,
+        collector_name: Optional[str] = None,
+        kb_ids: Optional[Sequence[int]] = None,
+    ) -> Optional[dict]:
+        """Return the latest successful run applicable to the requested scope."""
+        conditions = ["r.status IN ('completed', 'partial')"]
+        params: dict[str, Any] = {}
+        join = ""
+        if collector_name:
+            join = (
+                "JOIN kb_stat_collector_runs c ON c.run_id = r.id "
+                "AND c.collector_name = :collector_name AND c.status = 'success' "
+            )
+            params["collector_name"] = collector_name
+        if kb_ids:
+            scope_parts = ["r.kb_filter IS NULL"]
+            for index, kb_id in enumerate(kb_ids):
+                key = f"scope_kb_{index}"
+                scope_parts.append(f"JSON_CONTAINS(r.kb_filter, JSON_ARRAY(:{key}))")
+                params[key] = kb_id
+            conditions.append(f"({' OR '.join(scope_parts)})")
+        else:
+            # Platform-wide queries must never use a single-KB collection.
+            conditions.append("r.kb_filter IS NULL")
+
         row = session.execute(
             text(
-                "SELECT id, completed_at, status FROM kb_stat_runs "
-                "WHERE status IN ('completed', 'partial') "
-                "ORDER BY id DESC LIMIT 1"
-            )
+                "SELECT r.id, r.completed_at, r.status FROM kb_stat_runs r "
+                f"{join}WHERE {' AND '.join(conditions)} "
+                "ORDER BY r.id DESC LIMIT 1"
+            ),
+            params,
         ).fetchone()
         if not row:
             return None
@@ -1369,7 +1439,9 @@ class KbStatQueryService:
 
         session = self._get_session()
         try:
-            run_id, run_completed_at = self._resolve_run(session, filter)
+            run_id, run_completed_at = self._resolve_run(
+                session, filter, metric_name=name
+            )
             return self._fetch_one(
                 session, name, spec, filter, run_id, run_completed_at
             )
@@ -1398,7 +1470,6 @@ class KbStatQueryService:
         results: dict[str, dict] = {}
         session = self._get_session()
         try:
-            run_id, run_completed_at = self._resolve_run(session, filter)
             for name in names:
                 spec = _METRIC_SPECS.get(name)
                 if spec is None:
@@ -1412,6 +1483,9 @@ class KbStatQueryService:
                     }
                     continue
                 try:
+                    run_id, run_completed_at = self._resolve_run(
+                        session, filter, metric_name=name
+                    )
                     results[name] = self._fetch_one(
                         session, name, spec, filter, run_id, run_completed_at
                     )
@@ -1431,16 +1505,24 @@ class KbStatQueryService:
         return {"results": results}
 
     def _resolve_run(
-        self, session: Session, filter: MetricFilter
+        self,
+        session: Session,
+        filter: MetricFilter,
+        *,
+        metric_name: Optional[str] = None,
     ) -> tuple[Optional[int], Optional[datetime]]:
-        """Resolve (run_id, run_completed_at) from the filter or latest run."""
+        """Resolve a run that successfully produced the requested metric."""
         if filter.run_id is not None:
             run_row = session.execute(
                 text("SELECT completed_at FROM kb_stat_runs WHERE id = :id"),
                 {"id": filter.run_id},
             ).fetchone()
             return filter.run_id, (run_row.completed_at if run_row else None)
-        latest = self._latest_run(session)
+        latest = self._latest_run(
+            session,
+            collector_name=_collector_for_metric(metric_name) if metric_name else None,
+            kb_ids=filter.kb_ids,
+        )
         if latest:
             return latest["id"], latest["completed_at"]
         return None, None
@@ -1483,17 +1565,14 @@ class KbStatQueryService:
 
         # --- Path A: target_date metrics — cross-run aggregation ---
         if spec.date_col == "target_date":
-            date_conds = [
-                "run_id IN (SELECT id FROM kb_stat_runs "
-                "WHERE status IN ('completed', 'partial'))"
-            ]
-            params: dict[str, Any] = {}
+            run_condition, params = _successful_run_condition(name, filter)
+            date_conds = [run_condition]
             if filter.effective_period_start:
                 date_conds.append("target_date >= :start_date")
                 params["start_date"] = filter.effective_period_start
-            if filter.effective_end_date:
+            if filter.period_end_date:
                 date_conds.append("target_date <= :end_date")
-                params["end_date"] = filter.effective_end_date
+                params["end_date"] = filter.period_end_date
             if spec.kb_col and filter.kb_ids:
                 placeholders = ", ".join(f":kid_{i}" for i in range(len(filter.kb_ids)))
                 date_conds.append(f"{spec.kb_col} IN ({placeholders})")
@@ -1540,9 +1619,9 @@ class KbStatQueryService:
         if spec.date_col and filter.effective_period_start:
             conditions.append(f"{spec.date_col} >= :start_date")
             params["start_date"] = filter.effective_period_start
-        if spec.date_col and filter.effective_end_date:
+        if spec.date_col and filter.period_end_date:
             conditions.append(f"{spec.date_col} <= :end_date")
-            params["end_date"] = filter.effective_end_date
+            params["end_date"] = filter.period_end_date
 
         if spec.kb_col and filter.kb_ids:
             placeholders = ", ".join(f":kid_{i}" for i in range(len(filter.kb_ids)))
@@ -1600,13 +1679,19 @@ class KbStatQueryService:
         """
         session = self._get_session()
         try:
-            latest = self._latest_run(session)
+            latest = self._latest_run(
+                session,
+                collector_name=(
+                    "kb_daily_stats" if filter.kb_ids else "period_and_daily"
+                ),
+                kb_ids=filter.kb_ids,
+            )
             if not latest:
                 return {
                     "report_period": {
                         "start": _iso(filter.effective_period_start),
                         "end": _iso(filter.period_end_date),
-                        "days": filter.lookback_days,
+                        "days": filter.period_days,
                     },
                     "generated_at": None,
                     "global_totals": None,
@@ -1729,7 +1814,7 @@ class KbStatQueryService:
                 "report_period": {
                     "start": _iso(filter.effective_period_start),
                     "end": _iso(filter.period_end_date),
-                    "days": filter.lookback_days,
+                    "days": filter.period_days,
                 },
                 "generated_at": (
                     _iso(latest["completed_at"]) if latest["completed_at"] else None
@@ -1751,7 +1836,7 @@ class KbStatQueryService:
                 "report_period": {
                     "start": _iso(filter.effective_period_start),
                     "end": _iso(filter.period_end_date),
-                    "days": filter.lookback_days,
+                    "days": filter.period_days,
                 },
                 "generated_at": None,
                 "global_totals": None,
@@ -1760,6 +1845,150 @@ class KbStatQueryService:
             }
         finally:
             session.close()
+
+    def _fetch_aggregated_daily_rows(
+        self, session: Session, filter: MetricFilter
+    ) -> list:
+        """Return the latest successfully collected platform row per date."""
+        return session.execute(
+            text(
+                """
+                SELECT d.*
+                FROM kb_stat_daily_dashboard d
+                JOIN (
+                    SELECT dd.stat_date, MAX(dd.run_id) AS max_run
+                    FROM kb_stat_daily_dashboard dd
+                    JOIN kb_stat_runs r ON r.id = dd.run_id
+                    JOIN kb_stat_collector_runs c
+                      ON c.run_id = r.id
+                     AND c.collector_name = 'period_and_daily'
+                     AND c.status = 'success'
+                    WHERE r.status IN ('completed', 'partial')
+                      AND r.kb_filter IS NULL
+                      AND dd.stat_date >= :start_date
+                      AND dd.stat_date <= :end_date
+                    GROUP BY dd.stat_date
+                ) latest
+                  ON latest.stat_date = d.stat_date
+                 AND latest.max_run = d.run_id
+                ORDER BY d.stat_date
+                """
+            ),
+            {
+                "start_date": filter.effective_period_start,
+                "end_date": filter.period_end_date,
+            },
+        ).fetchall()
+
+    def _fetch_kb_dashboard(
+        self,
+        session: Session,
+        run_id: int,
+        filter: MetricFilter,
+    ) -> dict:
+        """Build the KB overview from per-KB daily and storage snapshots."""
+        kb_id = int(filter.kb_ids[0])
+        daily_rows = session.execute(
+            text(
+                """
+                SELECT d.*
+                FROM kb_stat_kb_daily_stats d
+                JOIN (
+                    SELECT ds.stat_date, ds.kb_id, MAX(ds.run_id) AS max_run
+                    FROM kb_stat_kb_daily_stats ds
+                    JOIN kb_stat_runs r ON r.id = ds.run_id
+                    JOIN kb_stat_collector_runs c
+                      ON c.run_id = r.id
+                     AND c.collector_name = 'kb_daily_stats'
+                     AND c.status = 'success'
+                    WHERE r.status IN ('completed', 'partial')
+                      AND (r.kb_filter IS NULL
+                           OR JSON_CONTAINS(r.kb_filter, JSON_ARRAY(:kb_id)))
+                      AND ds.kb_id = :kb_id
+                      AND ds.stat_date >= :start_date
+                      AND ds.stat_date <= :end_date
+                    GROUP BY ds.stat_date, ds.kb_id
+                ) latest
+                  ON latest.stat_date = d.stat_date
+                 AND latest.kb_id = d.kb_id
+                 AND latest.max_run = d.run_id
+                ORDER BY d.stat_date
+                """
+            ),
+            {
+                "kb_id": kb_id,
+                "start_date": filter.effective_period_start,
+                "end_date": filter.period_end_date,
+            },
+        ).fetchall()
+
+        storage_run, _ = self._resolve_run(session, filter, metric_name="storage_usage")
+        storage = None
+        if storage_run is not None:
+            storage = session.execute(
+                text(
+                    """
+                    SELECT doc_count, total_file_size
+                    FROM kb_stat_storage_usage
+                    WHERE run_id = :run_id AND kb_id = :kb_id
+                    LIMIT 1
+                    """
+                ),
+                {"run_id": storage_run, "kb_id": kb_id},
+            ).fetchone()
+
+        rows = [
+            {
+                "stat_date": _iso(row.stat_date),
+                "total_queries": int(row.total_queries or 0),
+                "rag_queries": int(row.rag_queries or 0),
+                "direct_injection": int(row.direct_injection or 0),
+                "kb_head_rag_queries": 0,
+                "kb_head_queries": int(row.head_queries or 0),
+                "active_kb_count": 1 if int(row.total_queries or 0) > 0 else 0,
+                "active_user_count": int(row.active_user_count or 0),
+                "new_kb_count": 0,
+                "new_doc_count": int(row.new_doc_count or 0),
+                "dingtalk_active_user_count": 0,
+            }
+            for row in daily_rows
+        ]
+        period_totals = {
+            "period_total_queries": sum(row["total_queries"] for row in rows),
+            "period_new_kb": 0,
+            "period_new_docs": sum(row["new_doc_count"] for row in rows),
+            "period_rag_queries": sum(row["rag_queries"] for row in rows),
+            "period_direct_inject": sum(row["direct_injection"] for row in rows),
+            "period_kb_head_queries": sum(row["kb_head_queries"] for row in rows),
+            "active_kb_ratio": 100.0 if rows else 0.0,
+        }
+        latest = self._latest_run(
+            session,
+            collector_name="kb_daily_stats",
+            kb_ids=filter.kb_ids,
+        )
+        return {
+            "report_period": {
+                "start": _iso(filter.effective_period_start),
+                "end": _iso(filter.period_end_date),
+                "days": filter.period_days,
+            },
+            "generated_at": (
+                _iso(latest["completed_at"])
+                if latest and latest["completed_at"]
+                else None
+            ),
+            "global_totals": {
+                "total_kb_count": 1,
+                "total_doc_count": int(storage.doc_count or 0) if storage else 0,
+                "total_storage": (int(storage.total_file_size or 0) if storage else 0),
+                "dingtalk_synced_user_count": 0,
+                "dingtalk_kb_count": 0,
+                "dingtalk_doc_count": 0,
+            },
+            "period_totals": period_totals,
+            "daily_rows": rows,
+        }
 
     def _fetch_platform_health_distribution(
         self, session: Session, filter: MetricFilter
@@ -1776,16 +2005,19 @@ class KbStatQueryService:
         per target_date via an INNER JOIN on MAX(run_id), otherwise SUM
         double-counts KBs and the stacked area shows inflated totals.
         """
-        conditions = [
-            "h.run_id IN (SELECT id FROM kb_stat_runs WHERE status IN ('completed', 'partial'))"
-        ]
-        params: dict[str, Any] = {}
+        run_condition, params = _successful_run_condition(
+            "kb_health_score",
+            filter,
+            run_column="h.run_id",
+            param_prefix="health_run",
+        )
+        conditions = [run_condition]
         if filter.effective_period_start:
             conditions.append("h.target_date >= :start_date")
             params["start_date"] = filter.effective_period_start
-        if filter.effective_end_date:
+        if filter.period_end_date:
             conditions.append("h.target_date <= :end_date")
-            params["end_date"] = filter.effective_end_date
+            params["end_date"] = filter.period_end_date
         where = " AND ".join(conditions)
         try:
             rows = session.execute(
@@ -1808,13 +2040,16 @@ class KbStatQueryService:
                             AS no_data
                     FROM kb_stat_kb_health_score h
                     INNER JOIN (
-                        SELECT target_date, MAX(run_id) AS max_run
-                        FROM kb_stat_kb_health_score
-                        WHERE run_id IN (
-                            SELECT id FROM kb_stat_runs
-                            WHERE status IN ('completed', 'partial')
-                        )
-                        GROUP BY target_date
+                        SELECT hs.target_date, MAX(hs.run_id) AS max_run
+                        FROM kb_stat_kb_health_score hs
+                        JOIN kb_stat_runs sr ON sr.id = hs.run_id
+                        JOIN kb_stat_collector_runs sc
+                          ON sc.run_id = sr.id
+                         AND sc.collector_name = 'kb_health_score'
+                         AND sc.status = 'success'
+                        WHERE sr.status IN ('completed', 'partial')
+                          AND sr.kb_filter IS NULL
+                        GROUP BY hs.target_date
                     ) latest
                         ON h.target_date = latest.target_date
                         AND h.run_id = latest.max_run
@@ -1853,16 +2088,19 @@ class KbStatQueryService:
         **Dedup**: same cross-run dedup as health distribution — pick
         the latest run_id per target_date before aggregating.
         """
-        conditions = [
-            "z.run_id IN (SELECT id FROM kb_stat_runs WHERE status IN ('completed', 'partial'))"
-        ]
-        params: dict[str, Any] = {}
+        run_condition, params = _successful_run_condition(
+            "kb_zero_chunk_rate",
+            filter,
+            run_column="z.run_id",
+            param_prefix="quality_run",
+        )
+        conditions = [run_condition]
         if filter.effective_period_start:
             conditions.append("z.target_date >= :start_date")
             params["start_date"] = filter.effective_period_start
-        if filter.effective_end_date:
+        if filter.period_end_date:
             conditions.append("z.target_date <= :end_date")
-            params["end_date"] = filter.effective_end_date
+            params["end_date"] = filter.period_end_date
         where = " AND ".join(conditions)
         try:
             rows = session.execute(
@@ -1874,13 +2112,16 @@ class KbStatQueryService:
                         SUM(z.total_queries) AS total_events
                     FROM kb_stat_kb_zero_chunk_rate z
                     INNER JOIN (
-                        SELECT target_date, MAX(run_id) AS max_run
-                        FROM kb_stat_kb_zero_chunk_rate
-                        WHERE run_id IN (
-                            SELECT id FROM kb_stat_runs
-                            WHERE status IN ('completed', 'partial')
-                        )
-                        GROUP BY target_date
+                        SELECT zs.target_date, MAX(zs.run_id) AS max_run
+                        FROM kb_stat_kb_zero_chunk_rate zs
+                        JOIN kb_stat_runs sr ON sr.id = zs.run_id
+                        JOIN kb_stat_collector_runs sc
+                          ON sc.run_id = sr.id
+                         AND sc.collector_name = 'kb_zero_chunk_rate'
+                         AND sc.status = 'success'
+                        WHERE sr.status IN ('completed', 'partial')
+                          AND sr.kb_filter IS NULL
+                        GROUP BY zs.target_date
                     ) latest
                         ON z.target_date = latest.target_date
                         AND z.run_id = latest.max_run
@@ -1923,17 +2164,26 @@ class KbStatQueryService:
         ``_fetch_platform_retrieval_quality``. Used for hit / adoption /
         dedup rates so the admin KPI top bar shows true weighted means.
         """
-        conditions = [
-            f"t.run_id IN (SELECT id FROM kb_stat_runs "
-            f"WHERE status IN ('completed', 'partial'))"
-        ]
-        params: dict[str, Any] = {}
+        metric_name_by_table = {
+            "kb_stat_kb_retrieval_hit_rate": "kb_retrieval_hit_rate",
+            "kb_stat_answer_adoption_rate": "answer_adoption_rate",
+            "kb_stat_query_dedup_rate": "query_dedup_rate",
+        }
+        metric_name = metric_name_by_table[table]
+        run_condition, params = _successful_run_condition(
+            metric_name,
+            filter,
+            run_column="t.run_id",
+            param_prefix=f"{metric_name}_run",
+        )
+        params["rate_collector"] = _collector_for_metric(metric_name)
+        conditions = [run_condition]
         if filter.effective_period_start:
             conditions.append("t.target_date >= :start_date")
             params["start_date"] = filter.effective_period_start
-        if filter.effective_end_date:
+        if filter.period_end_date:
             conditions.append("t.target_date <= :end_date")
-            params["end_date"] = filter.effective_end_date
+            params["end_date"] = filter.period_end_date
         where = " AND ".join(conditions)
         try:
             rows = session.execute(
@@ -1945,13 +2195,16 @@ class KbStatQueryService:
                         SUM(t.total_queries) AS total_events
                     FROM {table} t
                     INNER JOIN (
-                        SELECT target_date, MAX(run_id) AS max_run
-                        FROM {table}
-                        WHERE run_id IN (
-                            SELECT id FROM kb_stat_runs
-                            WHERE status IN ('completed', 'partial')
-                        )
-                        GROUP BY target_date
+                        SELECT rs.target_date, MAX(rs.run_id) AS max_run
+                        FROM {table} rs
+                        JOIN kb_stat_runs sr ON sr.id = rs.run_id
+                        JOIN kb_stat_collector_runs sc
+                          ON sc.run_id = sr.id
+                         AND sc.collector_name = :rate_collector
+                         AND sc.status = 'success'
+                        WHERE sr.status IN ('completed', 'partial')
+                          AND sr.kb_filter IS NULL
+                        GROUP BY rs.target_date
                     ) latest
                         ON t.target_date = latest.target_date
                         AND t.run_id = latest.max_run
@@ -2078,7 +2331,7 @@ class KbStatQueryService:
             rows = session.execute(
                 text(
                     "SELECT id, domain, collector_name, status, started_at, "
-                    "completed_at, rows_written, error_message "
+                    "completed_at, rows_written, duration_ms, error_message "
                     "FROM kb_stat_collector_runs WHERE run_id = :run_id "
                     "ORDER BY id"
                 ),
@@ -2093,10 +2346,42 @@ class KbStatQueryService:
                     "started_at": _iso(r.started_at),
                     "completed_at": (_iso(r.completed_at)),
                     "rows_written": r.rows_written,
+                    "duration_ms": r.duration_ms,
                     "error_message": r.error_message,
                 }
                 for r in rows
             ]
+        finally:
+            session.close()
+
+    def get_run(self, run_id: int) -> Optional[dict]:
+        session = self._get_session()
+        try:
+            row = session.execute(
+                text(
+                    "SELECT id, started_at, completed_at, status, target_date, "
+                    "kb_filter, triggered_by, triggered_user_id, metrics_count, "
+                    "error_message, stat_start, stat_end "
+                    "FROM kb_stat_runs WHERE id = :run_id"
+                ),
+                {"run_id": run_id},
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": row.id,
+                "started_at": _iso(row.started_at),
+                "completed_at": _iso(row.completed_at),
+                "status": row.status,
+                "target_date": _iso(row.target_date),
+                "kb_filter": row.kb_filter,
+                "triggered_by": row.triggered_by,
+                "triggered_user_id": row.triggered_user_id,
+                "metrics_count": row.metrics_count,
+                "error_message": row.error_message,
+                "stat_start": _iso(row.stat_start),
+                "stat_end": _iso(row.stat_end),
+            }
         finally:
             session.close()
 

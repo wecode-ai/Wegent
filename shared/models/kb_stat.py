@@ -7,7 +7,7 @@
 from datetime import date, datetime
 from typing import Any, Optional, Sequence
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class KbStatFilter(BaseModel):
@@ -18,6 +18,15 @@ class KbStatFilter(BaseModel):
     namespaces: Optional[Sequence[str]] = None
     kb_ids: Optional[Sequence[int]] = None
     run_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.start_date and self.end_date:
+            if self.start_date > self.end_date:
+                raise ValueError("start_date must be on or before end_date")
+            if (self.end_date - self.start_date).days > 366:
+                raise ValueError("date range cannot exceed 367 days")
+        return self
 
 
 class FieldSchema(BaseModel):
@@ -142,6 +151,7 @@ class TriggerRunRequest(BaseModel):
     target_date: Optional[date] = None
     kb_ids: Optional[Sequence[int]] = None
     domains: Optional[Sequence[str]] = None
+    collector_names: Optional[Sequence[str]] = None
     triggered_by: str = "manual_api"
     triggered_user_id: Optional[int] = None
 
@@ -182,6 +192,7 @@ class CollectorRunInfo(BaseModel):
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     rows_written: int = 0
+    duration_ms: int = 0
     error_message: Optional[str] = None
 
 

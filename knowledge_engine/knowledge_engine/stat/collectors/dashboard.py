@@ -123,7 +123,7 @@ def collect_period_and_daily(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= :start_date
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_join}
         """
         ),
@@ -136,7 +136,7 @@ def collect_period_and_daily(
                 f"""
             SELECT COUNT(*) AS cnt FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
-              AND created_at >= :start_date AND created_at <= :end_date
+              AND created_at >= :start_date AND created_at < :end_date
               {"AND id " + kb_clause if kb_clause else ""}
         """
             ),
@@ -150,7 +150,7 @@ def collect_period_and_daily(
             text(
                 f"""
             SELECT COUNT(*) AS cnt FROM knowledge_documents
-            WHERE created_at >= :start_date AND created_at <= :end_date
+            WHERE created_at >= :start_date AND created_at < :end_date
             {"AND kind_id " + kb_clause if kb_clause else ""}
         """
             ),
@@ -175,7 +175,7 @@ def collect_period_and_daily(
             "run_id": run_id,
             "target_date": mfilter.target_date,
             "start_date": start,
-            "end_date": end,
+            "end_date": mfilter.period_end_date,
             "total_queries": period_row.total_queries if period_row else 0,
             "new_kb": period_new_kb,
             "new_docs": period_new_docs,
@@ -202,7 +202,7 @@ def collect_period_and_daily(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= :start_date
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_join}
             GROUP BY DATE(sc.created_at)
             ORDER BY d
@@ -221,7 +221,7 @@ def collect_period_and_daily(
             SELECT DATE(created_at) AS d, COUNT(*) AS cnt
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
-              AND created_at >= :start_date AND created_at <= :end_date
+              AND created_at >= :start_date AND created_at < :end_date
               {"AND id " + kb_clause if kb_clause else ""}
             GROUP BY DATE(created_at)
         """
@@ -237,7 +237,7 @@ def collect_period_and_daily(
             """
             SELECT DATE(created_at) AS d, COUNT(*) AS cnt
             FROM knowledge_documents
-            WHERE created_at >= :start_date AND created_at <= :end_date
+            WHERE created_at >= :start_date AND created_at < :end_date
             GROUP BY DATE(created_at)
         """
         ),
@@ -253,7 +253,7 @@ def collect_period_and_daily(
             """
             SELECT DATE(updated_at) AS d, COUNT(DISTINCT user_id) AS cnt
             FROM dingtalk_synced_nodes
-            WHERE updated_at >= :start_date AND updated_at <= :end_date
+            WHERE updated_at >= :start_date AND updated_at < :end_date
             GROUP BY DATE(updated_at)
         """
         ),
@@ -359,7 +359,7 @@ def collect_kb_daily_stats(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') IS NOT NULL
               AND sc.created_at >= :start_date
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_join}
             GROUP BY DATE(sc.created_at),
                      CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED)
@@ -379,7 +379,7 @@ def collect_kb_daily_stats(
             SELECT DATE(created_at) AS d, kind_id AS kb_id, COUNT(*) AS cnt
             FROM knowledge_documents
             WHERE is_active = 1
-              AND created_at >= :start_date AND created_at <= :end_date
+              AND created_at >= :start_date AND created_at < :end_date
               {"AND kind_id " + kb_clause if kb_clause else ""}
             GROUP BY DATE(created_at), kind_id
         """
@@ -399,10 +399,10 @@ def collect_kb_daily_stats(
                 """
                 INSERT INTO kb_stat_kb_daily_stats
                     (run_id, target_date, stat_date, kb_id,
-                     rag_queries, head_queries, direct_injection,
+                     total_queries, rag_queries, head_queries, direct_injection,
                      active_user_count, new_doc_count)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id,
-                        :rag_queries, :head_queries, :direct_injection,
+                        :total_queries, :rag_queries, :head_queries, :direct_injection,
                         :active_user_count, :new_doc_count)
             """
             ),
@@ -411,6 +411,7 @@ def collect_kb_daily_stats(
                 "target_date": mfilter.target_date,
                 "stat_date": r.d,
                 "kb_id": kb_id,
+                "total_queries": int(r.total_queries or 0),
                 "rag_queries": int(r.rag_queries or 0),
                 "head_queries": int(r.head_queries or 0),
                 "direct_injection": int(r.direct_inject or 0),

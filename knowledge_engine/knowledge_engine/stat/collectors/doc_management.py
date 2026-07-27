@@ -88,7 +88,7 @@ def doc_upload_trend(
             FROM knowledge_documents
             WHERE is_active = 1
               AND created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND created_at <= :end_date
+              AND created_at < :end_date
               {kb_where}
             GROUP BY DATE(created_at), kind_id, file_extension, source_type, user_id
         """

@@ -148,6 +148,7 @@ export interface CollectorRunInfo {
   started_at: string | null
   completed_at: string | null
   rows_written: number
+  duration_ms: number
   error_message: string | null
 }
 
@@ -160,6 +161,7 @@ export interface TriggerRunRequest {
   target_date?: string
   kb_ids?: number[]
   domains?: string[]
+  collector_names?: string[]
   triggered_by?: string
   triggered_user_id?: number
 }

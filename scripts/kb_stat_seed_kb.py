@@ -266,44 +266,11 @@ def seed_kb(kb_id: int, days: int = 30, queries_per_day: int = 15, target_date=N
     src.commit()
     print(f"share_links: added")
 
-    # 5. 更新文档的 chunks/summary（确保 content_quality 指标有数据）
-    for doc in docs:
-        chunk_count = random.randint(1, 8)
-        splitter = random.choice(["recursive", "semantic", "fixed"])
-        src.execute(
-            text("UPDATE knowledge_documents SET chunks=:c WHERE id=:id"),
-            {
-                "id": doc.id,
-                "c": json.dumps(
-                    {
-                        "splitter_type": splitter,
-                        "total_count": chunk_count,
-                        "items": [
-                            {
-                                "token_count": random.randint(50, 500),
-                                "score": round(random.uniform(0.2, 0.95), 2),
-                            }
-                            for _ in range(min(chunk_count, 5))
-                        ],
-                    }
-                ),
-            },
-        )
-        # 部分 doc 有 summary，部分没有
-        if random.random() < 0.6:
-            src.execute(
-                text("UPDATE knowledge_documents SET summary=:s WHERE id=:id"),
-                {
-                    "id": doc.id,
-                    "s": json.dumps(
-                        {"status": "completed", "short_summary": "test summary"}
-                    ),
-                },
-            )
-    src.commit()
-    print(f"documents: updated chunks/summary for {len(docs)} docs")
+    # Existing KB documents belong to the user. Never mutate chunks/summary
+    # merely to improve statistics fixture coverage.
+    print("documents: existing rows left unchanged")
 
-    # 6. 灌入 tasks（覆盖 user_kb_binding）
+    # 5. 灌入 tasks（覆盖 user_kb_binding）
     for j in range(2):
         name = f"{TEST_PREFIX}task_kb{kb_id}_{j}"
         try:
@@ -362,16 +329,8 @@ def clean_kb(kb_id: int):
         ("share_links", "share_token"),
         ("tasks", "name"),
         ("resource_members", "entity_display_name"),
-        ("users", "user_name"),
     ]:
         try:
-            r = src.execute(
-                text(
-                    f"DELETE FROM {table} WHERE {col} LIKE :p AND ({col} LIKE :kbp OR {col} NOT LIKE :kbp)"
-                ),
-                {"p": f"{TEST_PREFIX}%", "kbp": f"{TEST_PREFIX}%kb{kb_id}%"},
-            )
-            # 更精确：只删该 KB 相关的测试数据
             if table == "subtask_contexts":
                 r = src.execute(
                     text(f"DELETE FROM {table} WHERE {col} LIKE :p"),
@@ -395,12 +354,6 @@ def clean_kb(kb_id: int):
                         f"AND entity_id IN (SELECT id FROM users WHERE user_name LIKE :p)"
                     ),
                     {"kid": kb_id, "p": f"{TEST_PREFIX}%"},
-                )
-            elif table == "users":
-                # 只删测试用户（如果没被其他表引用）
-                r = src.execute(
-                    text(f"DELETE FROM {table} WHERE {col} LIKE :p"),
-                    {"p": f"{TEST_PREFIX}%"},
                 )
             if r.rowcount:
                 print(f"  [clean] src {table}: deleted {r.rowcount}")

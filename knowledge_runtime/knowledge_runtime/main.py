@@ -216,30 +216,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Readonly database initialization skipped: {e}")
 
-    # Auto-migrate stat tables
-    if settings.kb_stat_auto_migrate and stat_url:
-        logger.info("Running stat database auto-migration (KB_STAT_AUTO_MIGRATE=true)")
-        try:
-            import os
-            import subprocess
-
-            env = os.environ.copy()
-            env["KNOWLEDGE_STAT_DATABASE_URL"] = stat_url
-            result = subprocess.run(
-                ["uv", "run", "alembic", "-c", "alembic.ini", "upgrade", "head"],
-                cwd=os.path.dirname(os.path.abspath(__file__)) + "/..",
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode == 0:
-                logger.info("Stat database migration completed successfully")
-            else:
-                logger.warning(f"Stat database migration failed: {result.stderr[:500]}")
-        except Exception as e:
-            logger.warning(f"Stat database migration failed: {e}")
-    elif not settings.kb_stat_auto_migrate:
+    # The stat schema deliberately uses reviewed, versioned SQL migrations.
+    # A previous implementation invoked a non-existent Alembic environment
+    # here and then swallowed the error, allowing the service to start with an
+    # unknown schema. Fail fast when the obsolete switch is enabled.
+    if settings.kb_stat_auto_migrate:
+        raise RuntimeError(
+            "KB_STAT_AUTO_MIGRATE is not supported. Apply "
+            "docs/plans/sql/kb-stat-019-fact-pipeline-up.sql to the statistics "
+            "database before deployment, then keep KB_STAT_AUTO_MIGRATE=false."
+        )
+    else:
         logger.info("Stat database auto-migration skipped (KB_STAT_AUTO_MIGRATE=false)")
 
     # KB stat worker info

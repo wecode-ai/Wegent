@@ -46,11 +46,12 @@ def _ensure_imports() -> None:
     global _IMPORTS_DONE
     if _IMPORTS_DONE:
         return
+    # Collector registration is part of service startup correctness.  Never
+    # swallow an import failure: a partially populated registry makes runs look
+    # successful while silently omitting metrics.
+    import knowledge_engine.stat.collectors  # noqa: F401
+
     _IMPORTS_DONE = True
-    try:
-        import knowledge_engine.stat.collectors  # noqa: F401
-    except ImportError:
-        pass
 
 
 def register_collector(
@@ -85,12 +86,24 @@ def all_collectors() -> list[CollectorMeta]:
 
 
 def collectors_by_domain(domain: str) -> list[CollectorMeta]:
+    _ensure_imports()
     return [c for c in _REGISTRY if c.domain == domain and c.enabled]
 
 
 def collectors_by_domains(domains: Sequence[str]) -> list[CollectorMeta]:
+    _ensure_imports()
     domain_set = set(domains)
     return [c for c in _REGISTRY if c.domain in domain_set and c.enabled]
+
+
+def collectors_by_names(names: Sequence[str]) -> list[CollectorMeta]:
+    _ensure_imports()
+    name_set = set(names)
+    collectors = [c for c in _REGISTRY if c.name in name_set and c.enabled]
+    missing = name_set - {c.name for c in collectors}
+    if missing:
+        raise ValueError(f"Unknown or disabled collectors: {sorted(missing)}")
+    return collectors
 
 
 def metric_list(scope: str = "admin") -> list[dict]:

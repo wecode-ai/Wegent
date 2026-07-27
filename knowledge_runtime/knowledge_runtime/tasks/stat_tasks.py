@@ -65,11 +65,15 @@ class KbStatRunInProgressError(RuntimeError):
         )
 
 
+class KbStatLockUnavailableError(RuntimeError):
+    """Raised when the authoritative Redis collection lock is unavailable."""
+
+
 def _build_lock_redis(settings) -> Optional[redis.Redis]:
     """Build a Redis client for the per-date collection lock.
 
-    Reuses the Celery broker Redis. Returns None when no broker URL is
-    configured so callers degrade to lock-less behaviour (legacy path).
+    Reuses the Celery broker Redis. A missing URL is reported to the caller;
+    collection must never silently degrade to lock-less execution.
     """
     url = settings.celery_broker_url
     if not url:
@@ -116,6 +120,7 @@ def collect_all_metrics_task(
     target_date_iso: Optional[str] = None,
     kb_ids: Optional[Sequence[int]] = None,
     domains: Optional[Sequence[str]] = None,
+    collector_names: Optional[Sequence[str]] = None,
     triggered_by: str = "beat",
     triggered_user_id: Optional[int] = None,
     lookback_days: Optional[int] = None,
@@ -138,12 +143,16 @@ def collect_all_metrics_task(
 
     # Per-target_date distributed lock: prevents concurrent collectors for
     # the same date (beat vs manual_api vs retry vs multi-instance worker).
-    # Different dates may run in parallel. If Redis is unavailable we degrade
-    # to the legacy lock-less behaviour rather than blocking collection.
+    # Different dates may run in parallel. Redis is the authoritative lock;
+    # fail closed when it is unavailable instead of risking duplicate writes.
     lock_token = None
     lock_name = f"kb_stat:lock:{target.isoformat()}"
     lock_redis = _build_lock_redis(settings)
-    if lock_redis is not None:
+    if lock_redis is None:
+        raise KbStatLockUnavailableError(
+            "kb_stat collection lock is unavailable: CELERY_BROKER_URL is not configured"
+        )
+    try:
         from shared.common.distributed_lock import DistributedLock
 
         lock = DistributedLock(redis_client=lock_redis)
@@ -158,6 +167,13 @@ def collect_all_metrics_task(
                 existing,
             )
             raise KbStatRunInProgressError(target, existing_run_id=existing)
+    except KbStatRunInProgressError:
+        raise
+    except Exception as exc:
+        logger.error("[kb_stat] failed to acquire collection lock", exc_info=True)
+        raise KbStatLockUnavailableError(
+            "kb_stat collection lock is unavailable"
+        ) from exc
 
     try:
         try:
@@ -175,6 +191,7 @@ def collect_all_metrics_task(
                 target_date=target,
                 kb_ids=kb_ids,
                 domains=domains,
+                collector_names=collector_names,
                 triggered_by=triggered_by,
                 triggered_user_id=triggered_user_id,
                 lookback_days=(
@@ -182,6 +199,7 @@ def collect_all_metrics_task(
                     if lookback_days is not None
                     else settings.knowledge_stat_lookback_days
                 ),
+                pipeline_mode=settings.kb_stat_pipeline_mode,
                 source_session_factory=get_readonly_session_factory(),
                 stat_session_factory=get_stat_session_factory(),
             )

@@ -1,8 +1,7 @@
 -- =============================================================================
 -- KB-Stat Schema (Full DDL) - Auto-generated from SQLAlchemy ORM metadata
 -- Engine: MySQL 8.0+ / InnoDB / utf8mb4
--- Tables: 83 (82 ORM + alembic_version)
--- Columns: 719 | ORM-declared Indexes: 122
+-- Table/column/index counts are validated from ORM metadata during release.
 -- Source: knowledge_engine/knowledge_engine/stat/models/
 -- Equivalent to: alembic -c alembic.ini upgrade head (001..018)
 -- Generated: 2026-07-23
@@ -47,10 +46,83 @@ CREATE TABLE kb_stat_collector_runs (
 	started_at DATETIME NOT NULL, 
 	completed_at DATETIME, 
 	rows_written INTEGER NOT NULL, 
+	duration_ms BIGINT NOT NULL DEFAULT 0,
 	error_message TEXT, 
 	PRIMARY KEY (id)
 )CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
 CREATE INDEX ix_kb_stat_collector_runs_run_id ON kb_stat_collector_runs (run_id);
+
+-- -----------------------------------------------------------------------------
+-- Pipeline control and statistics-only staging tables
+-- These tables never modify or add indexes to the business database.
+-- -----------------------------------------------------------------------------
+CREATE TABLE kb_stat_extractor_runs (
+	id BIGINT NOT NULL AUTO_INCREMENT,
+	run_id BIGINT NOT NULL,
+	extractor_name VARCHAR(128) NOT NULL,
+	status VARCHAR(20) NOT NULL,
+	source_cutoff VARCHAR(255),
+	started_at DATETIME NOT NULL,
+	completed_at DATETIME,
+	rows_read BIGINT NOT NULL DEFAULT 0,
+	rows_written BIGINT NOT NULL DEFAULT 0,
+	batches INTEGER NOT NULL DEFAULT 0,
+	duration_ms BIGINT NOT NULL DEFAULT 0,
+	error_message TEXT,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_kb_stat_extractor_run UNIQUE (run_id, extractor_name)
+)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
+CREATE INDEX ix_kb_stat_extractor_status
+	ON kb_stat_extractor_runs (status, started_at);
+
+CREATE TABLE kb_stat_stage_query_event (
+	run_id BIGINT NOT NULL,
+	event_id BIGINT NOT NULL,
+	event_time DATETIME NOT NULL,
+	stat_date DATE NOT NULL,
+	kb_id BIGINT,
+	user_id BIGINT,
+	injection_mode VARCHAR(32),
+	is_rag BOOL NOT NULL DEFAULT 0,
+	is_kb_head BOOL NOT NULL DEFAULT 0,
+	chunks_count INTEGER,
+	retrieval_count INTEGER,
+	restricted_mode BOOL,
+	hit BOOL,
+	adopted BOOL,
+	cited_count INTEGER,
+	query_hash VARCHAR(64),
+	duration_ms INTEGER,
+	created_at DATETIME NOT NULL,
+	PRIMARY KEY (run_id, event_id)
+)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
+CREATE INDEX ix_stage_query_kb_date
+	ON kb_stat_stage_query_event (run_id, kb_id, stat_date);
+CREATE INDEX ix_stage_query_date_mode
+	ON kb_stat_stage_query_event (run_id, stat_date, injection_mode);
+CREATE INDEX ix_stage_query_user_date
+	ON kb_stat_stage_query_event (run_id, user_id, stat_date);
+
+CREATE TABLE kb_stat_source_watermarks (
+	source_name VARCHAR(128) NOT NULL,
+	partition_key VARCHAR(255) NOT NULL DEFAULT 'global',
+	last_source_id BIGINT,
+	last_event_time DATETIME,
+	last_successful_run_id BIGINT,
+	updated_at DATETIME NOT NULL,
+	PRIMARY KEY (source_name, partition_key)
+)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE kb_stat_metric_watermarks (
+	metric_name VARCHAR(128) NOT NULL,
+	scope_key VARCHAR(255) NOT NULL DEFAULT 'admin',
+	run_id BIGINT NOT NULL,
+	stat_date DATE NOT NULL,
+	status VARCHAR(20) NOT NULL DEFAULT 'published',
+	published_at DATETIME NOT NULL,
+	PRIMARY KEY (metric_name, scope_key)
+)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
+CREATE INDEX ix_metric_watermark_run ON kb_stat_metric_watermarks (run_id);
 
 -- -----------------------------------------------------------------------------
 -- Table: kb_stat_answer_adoption_rate  (10 cols, 2 idx)
@@ -671,6 +743,7 @@ CREATE TABLE kb_stat_kb_daily_stats (
 	target_date DATE NOT NULL, 
 	stat_date DATE NOT NULL, 
 	kb_id BIGINT NOT NULL, 
+	total_queries INTEGER NOT NULL,
 	rag_queries INTEGER NOT NULL, 
 	head_queries INTEGER NOT NULL, 
 	direct_injection INTEGER NOT NULL, 

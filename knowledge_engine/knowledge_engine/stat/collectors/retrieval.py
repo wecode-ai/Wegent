@@ -91,7 +91,7 @@ def rag_call_frequency(
             WHERE sc.context_type = 'knowledge_base'
               AND {RAG_RETRIEVAL_SQL}
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
             ORDER BY d
@@ -162,7 +162,7 @@ def kb_head_frequency(
             WHERE sc.context_type = 'knowledge_base'
               AND {KB_HEAD_SQL}
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
             ORDER BY d
@@ -231,7 +231,7 @@ def rag_vs_head_ratio(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at)
             ORDER BY d
@@ -297,7 +297,7 @@ def doc_reference_count(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
         """
         ),
@@ -436,7 +436,7 @@ def doc_read_count(
             WHERE sc.context_type = 'knowledge_base'
               AND {KB_HEAD_SQL}
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
         """
         ),
@@ -551,7 +551,7 @@ def retrieval_mode_distribution(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.rag_result') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
             GROUP BY mode
         """
         ),
@@ -612,7 +612,7 @@ def restricted_mode_usage(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.rag_result') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY kb_id
         """
@@ -715,7 +715,7 @@ def rag_call_limit(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.rag_result') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
         """
         ),
@@ -779,7 +779,7 @@ def selected_documents_usage(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'selected_documents'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
         """
         ),
         {
@@ -849,6 +849,84 @@ def selected_documents_usage(
 
 
 # ---------------------------------------------------------------------------
+# Returned chunks-count distribution
+# ---------------------------------------------------------------------------
+
+
+@register_collector(
+    domain="retrieval",
+    name="chunks_count_distribution",
+    description="Distribution of returned chunk counts per RAG retrieval",
+    chart_hint="pie",
+)
+def chunks_count_distribution(
+    run_id: int,
+    mfilter: MetricFilter,
+    *,
+    source_session: Session,
+    stat_session: Session,
+) -> int:
+    """Collect platform-level buckets for chunks returned by each RAG call."""
+    kb_filter_sql, kb_params = _kb_json_filter(mfilter)
+    rows = source_session.execute(
+        text(
+            f"""
+            SELECT
+                CASE
+                    WHEN chunks_count = 0 THEN '0'
+                    WHEN chunks_count BETWEEN 1 AND 3 THEN '1-3'
+                    WHEN chunks_count BETWEEN 4 AND 5 THEN '4-5'
+                    WHEN chunks_count BETWEEN 6 AND 10 THEN '6-10'
+                    ELSE '>10'
+                END AS chunk_bucket,
+                COUNT(*) AS call_count
+            FROM (
+                SELECT
+                    CAST(
+                        JSON_EXTRACT(
+                            sc.type_data, '$.rag_result.chunks_count'
+                        ) AS SIGNED
+                    ) AS chunks_count
+                FROM subtask_contexts sc
+                WHERE sc.context_type = 'knowledge_base'
+                  AND sc.created_at >= :start_date
+                  AND sc.created_at < :end_date
+                  AND JSON_EXTRACT(
+                      sc.type_data, '$.rag_result.chunks_count'
+                  ) IS NOT NULL
+                  {kb_filter_sql}
+            ) events
+            GROUP BY chunk_bucket
+        """
+        ),
+        {
+            "start_date": mfilter.effective_period_start,
+            "end_date": mfilter.effective_end_date,
+            **kb_params,
+        },
+    ).fetchall()
+
+    for row in rows:
+        stat_session.execute(
+            text(
+                """
+                INSERT INTO kb_stat_chunks_count_distribution
+                    (run_id, target_date, chunk_bucket, call_count)
+                VALUES
+                    (:run_id, :target_date, :chunk_bucket, :call_count)
+                """
+            ),
+            {
+                "run_id": run_id,
+                "target_date": mfilter.period_end_date,
+                "chunk_bucket": row.chunk_bucket,
+                "call_count": int(row.call_count or 0),
+            },
+        )
+    return len(rows)
+
+
+# ---------------------------------------------------------------------------
 # Per-KB collectors for KB detail page
 # ---------------------------------------------------------------------------
 
@@ -879,7 +957,7 @@ def kb_active_users(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY kb_id, sc.user_id
         """
@@ -962,7 +1040,7 @@ def kb_rag_head_ratio(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
             ORDER BY d
@@ -1033,7 +1111,7 @@ def kb_zero_chunk_rate(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.rag_result') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
         """
@@ -1103,7 +1181,7 @@ def kb_retrieval_mode_dist(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.rag_result') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY kb_id, mode
         """
@@ -1241,7 +1319,7 @@ def retrieval_score_distribution(
               AND JSON_EXTRACT(sc.type_data, '$.rag_result.injection_mode')
                   = 'rag_retrieval'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
         """
         ),
@@ -1394,7 +1472,7 @@ def answer_adoption_rate(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.adoption_result') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
         """
@@ -1473,7 +1551,7 @@ def kb_retrieval_hit_rate(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.rag_result') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
         """
@@ -1558,7 +1636,7 @@ def query_dedup_rate(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.rag_result.query') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
         """
         ),
@@ -1641,7 +1719,7 @@ def kb_slow_query_rate(
             WHERE sc.context_type = 'knowledge_base'
               AND JSON_EXTRACT(sc.type_data, '$.rag_result.latency_ms') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at <= :end_date
+              AND sc.created_at < :end_date
               {kb_filter_sql}
         """
         ),

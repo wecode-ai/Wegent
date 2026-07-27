@@ -205,7 +205,7 @@ export function KbStatView({ kbId, kbName, headerActions }: KbStatViewProps) {
             colorIndex={6}
           />
           <KbSummaryCard
-            value={dashboard.daily_rows?.length ?? 0}
+            value={dashboard.daily_rows?.filter(row => (row.total_queries ?? 0) > 0).length ?? 0}
             label={t('retrieval_active_days', '检索活跃天数')}
             colorIndex={7}
           />

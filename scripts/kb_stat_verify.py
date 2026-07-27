@@ -333,7 +333,7 @@ def seed_resource_members(
 # ---------------------------------------------------------------------------
 
 
-def trigger_collection() -> int:
+def trigger_collection(pipeline_mode: str = "legacy") -> int:
     """Trigger stat collection via the Celery task and return run_id."""
     from knowledge_engine.stat import collect_all
     from shared.db.readonly_session import get_readonly_session_factory
@@ -342,6 +342,7 @@ def trigger_collection() -> int:
     run_id = collect_all(
         target_date=TARGET_DATE,
         triggered_by=f"{TEST_PREFIX}verify",
+        pipeline_mode=pipeline_mode,
         source_session_factory=get_readonly_session_factory(),
         stat_session_factory=get_stat_session_factory(),
     )
@@ -773,6 +774,12 @@ def main() -> None:
         action="store_true",
         help="Only clean up test data, skip seeding and verification",
     )
+    parser.add_argument(
+        "--pipeline-mode",
+        choices=["legacy", "shadow"],
+        default="legacy",
+        help="Run legacy collectors or also exercise the statistics staging extractor",
+    )
     args = parser.parse_args()
 
     random.seed(42)  # deterministic
@@ -829,7 +836,7 @@ def main() -> None:
     init_stat_db(_STAT_DSN)
     init_readonly_db(_DSN)
 
-    run_id = trigger_collection()
+    run_id = trigger_collection(args.pipeline_mode)
     print(f"   Run ID: {run_id}")
 
     print("5. Verifying stat results...")

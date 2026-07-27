@@ -4,7 +4,7 @@
 
 """Run metadata tables for KB statistics collection."""
 
-from sqlalchemy import Column, Date, DateTime, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Column, Date, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.mysql import JSON
 from sqlalchemy.sql import func
 
@@ -59,6 +59,7 @@ class CollectorRun(StatBase):
     started_at = Column(DateTime, nullable=False, default=func.now())
     completed_at = Column(DateTime, nullable=True)
     rows_written = Column(Integer, nullable=False, default=0)
+    duration_ms = Column(BigInteger, nullable=False, default=0)
     error_message = Column(Text, nullable=True)
 
     __table_args__ = (
