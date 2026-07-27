@@ -154,6 +154,8 @@ class TestBuildExecutionRequestUserSubtaskId:
             request,
             user_subtask_id,
             user_id,
+            *,
+            preload_selected_kb_skill=True,
         ):
             return request
 
@@ -436,6 +438,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                         request_from_builder,
                         123,
                         7,
+                        preload_selected_kb_skill=True,
                     )
 
     async def test_does_not_process_contexts_when_user_subtask_id_is_none(self):
@@ -572,7 +575,12 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder._get_bot_for_subtask.return_value = MagicMock()
 
         async def _process_contexts_with_selected_kb(
-            db, request, user_subtask_id, user_id
+            db,
+            request,
+            user_subtask_id,
+            user_id,
+            *,
+            preload_selected_kb_skill=True,
         ):
             request.knowledge_base_ids = [1408]
             request.is_user_selected_kb = True
@@ -638,7 +646,12 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder.build.return_value = request_from_builder
 
         async def _process_contexts_with_selected_kb(
-            db, request, user_subtask_id, user_id
+            db,
+            request,
+            user_subtask_id,
+            user_id,
+            *,
+            preload_selected_kb_skill=True,
         ):
             request.knowledge_base_ids = [1408]
             request.is_user_selected_kb = True
