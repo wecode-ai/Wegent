@@ -319,6 +319,7 @@ pnpm --filter wework e2e:desktop:memory
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
 普通 Draft PR 不运行浏览器或 Linux 桌面 E2E。macOS 内存门禁默认只在 `main`、
 定时任务和手动任务中运行；需要在 PR 中验证内存边界时，添加 `ci:memory` 标签。
-workflow 每天 UTC 04:00 运行一次完整回归。
+添加该标签只触发内存门禁，不会重复运行浏览器或 Linux 桌面 E2E。workflow 每天
+UTC 04:00 运行一次完整回归。
 
 登录后流程应在测试前通过后端 API 创建测试用户和测试数据，再使用真实登录或真实 token 注入。不要在 Playwright 中 mock 后端 HTTP 响应。

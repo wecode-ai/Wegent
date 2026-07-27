@@ -20,6 +20,7 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+      - labeled
     paths:
       - ".github/workflows/wework-e2e.yml"
       - "package.json"
@@ -33,7 +34,7 @@ on:
     - cron: "0 4 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name || 'code' }}
   cancel-in-progress: true
 
 permissions:
@@ -42,7 +43,7 @@ permissions:
 jobs:
   wework-e2e:
     name: Wework E2E
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -107,7 +108,7 @@ jobs:
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -203,7 +204,7 @@ jobs:
 
   wework-desktop-memory-e2e:
     name: Wework Desktop Memory E2E
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory')
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:memory'))
     runs-on: macos-14
     timeout-minutes: 30
 

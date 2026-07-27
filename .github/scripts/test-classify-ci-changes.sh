@@ -64,4 +64,21 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
   fi
 done
 
+wework_workflow="$script_dir/../workflows/wework-e2e.yml"
+if ! sed -n '/^  pull_request:/,/^  [a-z_]*:/p' "$wework_workflow" |
+  grep -q -- "- labeled"; then
+  printf 'wework-e2e.yml must run when the ci:memory label is applied\n' >&2
+  exit 1
+fi
+
+if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -ne 2 ]]; then
+  printf 'Wework non-memory E2E jobs must skip pull_request label events\n' >&2
+  exit 1
+fi
+
+if ! grep -q "github.event.label.name || 'code'" "$wework_workflow"; then
+  printf 'Wework label events must not cancel code-change E2E runs\n' >&2
+  exit 1
+fi
+
 printf 'CI change classifier tests passed\n'
