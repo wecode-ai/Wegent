@@ -11,7 +11,7 @@ mod claude_options;
 mod codex;
 mod codex_log_db;
 mod dify;
-mod git_auth;
+pub(crate) mod git_auth;
 mod git_workspace;
 mod image_validator;
 pub mod interactive_mcp;
@@ -262,7 +262,8 @@ impl AgentProcessEngine {
 impl AgentEngine for AgentProcessEngine {
     type RunFuture = Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>;
 
-    fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
+    fn run(&self, mut request: ExecutionRequest) -> Self::RunFuture {
+        crate::task_runtime::mcp::ensure_task_mcp_server(&mut request);
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
@@ -346,13 +347,14 @@ impl AgentEngine for AgentProcessEngine {
 
     fn run_with_events<S>(
         &self,
-        request: ExecutionRequest,
+        mut request: ExecutionRequest,
         sink: S,
         builder: ResponsesEventBuilder,
     ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
     where
         S: EventSink,
     {
+        crate::task_runtime::mcp::ensure_task_mcp_server(&mut request);
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();

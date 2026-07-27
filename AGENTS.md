@@ -39,7 +39,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Engineering rules
 
-- Analyze concrete problems using logs and the actual code, and complete tasks based on evidence rather than speculation.
+- Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
@@ -61,6 +61,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 ## Testing and verification
 
 Run focused tests before committing; run broader tests when risk warrants it. E2E tests must use real backend requests, may not silently skip or fail gracefully, and failures must be fixed rather than skipped.
+Every E2E scenario must be invoked by GitHub CI. Focused local E2E commands may exist for debugging, but they must also be included by a CI-covered suite; do not add dead E2E coverage that CI never runs.
 
 ```bash
 cd backend && uv run pytest

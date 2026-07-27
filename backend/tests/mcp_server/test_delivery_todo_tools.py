@@ -328,6 +328,8 @@ def test_create_cloud_project_with_name_only(owner_info: SimpleNamespace) -> Non
 
     assert created["name"] == "Side Project"
     assert created["description"] == ""
+    assert created["projectStore"] == "backend"
+    assert created["taskProvider"] == "local"
     # The key is generated from the name when project_key is omitted.
     assert created["key"].startswith("SIDEPROJ")
 
@@ -375,9 +377,40 @@ def test_resolve_cloud_reference_without_project_id_lists_accessible_projects(
     resolved = delivery_tools.resolve_cloud_reference("cloud://projects", owner_info)
 
     assert "error" not in resolved
-    assert {
-        "id": project.id,
-        "key": project.project_key,
-        "name": project.name,
-        "description": project.description,
-    } in resolved["projects"]
+    matched = next(item for item in resolved["projects"] if item["id"] == project.id)
+    assert matched["key"] == project.project_key
+    assert matched["name"] == project.name
+    assert matched["projectStore"] == "backend"
+    assert matched["taskProvider"] == "local"
+
+
+def test_external_cloud_project_routes_todos_to_local_task_mcp(
+    test_db: Session,
+    project: CloudProject,
+    owner_info: SimpleNamespace,
+) -> None:
+    project.metadata_json = {
+        "project_store": "backend",
+        "task_provider": "gitlab",
+        "provider_config": {"repository": "group/repo"},
+    }
+    test_db.commit()
+
+    listed = delivery_tools.list_cloud_projects(owner_info)
+    matched = next(item for item in listed["projects"] if item["id"] == project.id)
+    assert matched["projectStore"] == "backend"
+    assert matched["taskProvider"] == "gitlab"
+
+    with pytest.raises(HTTPException) as exc_info:
+        delivery_tools.create_cloud_todo(project.id, "Wrong store", owner_info)
+    assert exc_info.value.status_code == 409
+
+    resolved = delivery_tools.resolve_cloud_reference(
+        f"cloud://projects/{project.id}", owner_info
+    )
+    assert resolved["project"]["taskProvider"] == "gitlab"
+    assert resolved["todos"] == {
+        "items": [],
+        "taskProvider": "gitlab",
+        "todoTool": "wegent_tasks.create_todo",
+    }

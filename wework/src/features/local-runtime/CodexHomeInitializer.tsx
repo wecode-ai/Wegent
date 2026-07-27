@@ -120,7 +120,7 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
     localPluginApi
       .initializeCodexHome({
         migrateNativeHome,
-        remoteAppsEnabled: false,
+        remoteAppsEnabled: true,
       })
       .then(() => {
         console.warn('[Wework Codex init] initialization finished')

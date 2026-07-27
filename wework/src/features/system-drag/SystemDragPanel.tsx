@@ -193,7 +193,7 @@ export function SystemDragPanel() {
     : undefined
 
   return (
-    <main data-testid="system-drag-panel" className="mx-auto h-[72px] w-[440px] bg-transparent p-1">
+    <main data-testid="system-drag-panel" className="mx-auto h-[60px] w-[440px] bg-transparent p-1">
       <section className="relative h-full overflow-hidden rounded-xl border border-border bg-background/95 shadow-lg backdrop-blur-md">
         <div className="flex h-full">
           <aside

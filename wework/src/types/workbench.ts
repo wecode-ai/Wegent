@@ -3,8 +3,11 @@ import type {
   CodexMemoryCitation,
   CodexReference,
   DeviceInfo,
+  ModelOptions,
   ProjectWithTasks,
+  RuntimeAdditionalContext,
   RuntimeContextUsage,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
   RuntimeWorkListResponse,
@@ -91,6 +94,17 @@ export interface QueuedWorkbenchMessage {
   createdAt: string
   error?: string
   notice?: string
+}
+
+export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
+  attachments?: Attachment[]
+  displayContent?: string
+  codeComments?: CodeCommentContext[]
+  modelId?: string
+  modelType?: RuntimeSendRequest['modelType']
+  modelOptions?: ModelOptions
+  runtimeGoalRequest?: boolean
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface GuidanceWorkbenchMessage {

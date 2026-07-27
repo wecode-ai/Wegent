@@ -195,6 +195,15 @@ fn append_missing_cached_failed_assistant_messages(
         .iter()
         .filter_map(|message| string_field(message, "id"))
         .collect::<HashSet<_>>();
+    let mut assistant_subtask_ids = messages
+        .iter()
+        .filter(|message| {
+            string_field(message, "role")
+                .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+        })
+        .filter_map(message_subtask_id)
+        .collect::<HashSet<_>>();
+
     for message in cached_messages {
         let is_failed_assistant = string_field(&message, "role")
             .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
@@ -206,10 +215,42 @@ fn append_missing_cached_failed_assistant_messages(
         let Some(message_id) = string_field(&message, "id") else {
             continue;
         };
-        if message_ids.insert(message_id) {
+        let subtask_id = message_subtask_id(&message);
+        if subtask_id
+            .as_ref()
+            .is_some_and(|subtask_id| assistant_subtask_ids.contains(subtask_id))
+        {
+            continue;
+        }
+        if !message_ids.insert(message_id) {
+            continue;
+        }
+        if let Some(subtask_id) = subtask_id {
+            assistant_subtask_ids.insert(subtask_id);
+        }
+        let Some(created_at) = message_created_at_ms(&message) else {
+            messages.push(message);
+            continue;
+        };
+        if let Some(index) = messages.iter().position(|existing| {
+            message_created_at_ms(existing).is_some_and(|existing_at| existing_at > created_at)
+        }) {
+            messages.insert(index, message);
+        } else {
             messages.push(message);
         }
     }
+}
+
+fn message_subtask_id(message: &Value) -> Option<String> {
+    string_field(message, "subtaskId").or_else(|| string_field(message, "subtask_id"))
+}
+
+fn message_created_at_ms(message: &Value) -> Option<i64> {
+    timestamp_ms_field(message, "createdAt")
+        .or_else(|| timestamp_ms_field(message, "created_at"))
+        .or_else(|| timestamp_ms_field(message, "completedAt"))
+        .or_else(|| timestamp_ms_field(message, "completed_at"))
 }
 
 fn cached_user_message_signature(message: &Value) -> Option<String> {

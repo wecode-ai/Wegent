@@ -108,8 +108,12 @@ def _require_poll_token(session_data: dict, poll_token: str | None) -> None:
 
 @router.get("/config", response_model=WeworkWebConfigResponse)
 async def get_wework_web_config() -> WeworkWebConfigResponse:
-    """Return the Wegent Web URL associated with this Backend."""
-    return WeworkWebConfigResponse(web_url=settings.FRONTEND_URL.rstrip("/"))
+    """Return public Web and Socket.IO URLs associated with this Backend."""
+    socket_url = settings.WEGENT_SOCKET_URL.strip().rstrip("/")
+    return WeworkWebConfigResponse(
+        web_url=settings.FRONTEND_URL.rstrip("/"),
+        socket_url=socket_url or None,
+    )
 
 
 @router.post("/sessions", response_model=WeworkAuthSessionCreateResponse)

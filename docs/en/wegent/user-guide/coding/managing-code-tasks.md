@@ -75,6 +75,8 @@ Click the model selector to override the agent's default model:
 - **Select model**: Choose from the dropdown list
 - **Force override**: When enabled, uses your selected model even if the agent has a configured model
 
+When you switch to a different model in an existing Wework conversation, Wework asks for confirmation first. Different models may interpret existing context differently and may vary in tool support, response style, and task continuity. After confirmation, the new model is used for the next message; a response already in progress continues with the previous model. No warning is shown when selecting a model for a new conversation or reselecting the model that is already chosen.
+
 #### Knowledge Base Context
 
 Click the context button to add knowledge bases:
@@ -173,6 +175,8 @@ If a task fails:
 1. **View error message** - Understand the failure reason
 2. **Click retry button** - Re-execute the task
 3. **Or modify and retry** - Adjust task description and resend
+
+After the retry request is accepted, the failed message turn is removed from the conversation. When the retry succeeds, the conversation keeps the original user message and the new successful response without retaining the old failure card or leaving an empty response turn. Wework applies the same rule when the task is reopened.
 
 ## Sending Follow-ups While Running
 

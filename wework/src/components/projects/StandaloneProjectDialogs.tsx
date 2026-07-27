@@ -29,10 +29,6 @@ function isRemoteProjectDevice(device: DeviceInfo): boolean {
   return isCloudDevice(device) || isRemoteDevice(device)
 }
 
-function isExistingFolderDevice(device: DeviceInfo): boolean {
-  return isLocalDevice(device) || isRemoteProjectDevice(device)
-}
-
 function getStandaloneDeviceLabel(device: DeviceInfo): string {
   return device.name || device.device_id
 }
@@ -65,18 +61,13 @@ function getUsableStandaloneDevices(
   devices: DeviceInfo[],
   mode: StandaloneWorkspaceDialogMode
 ): DeviceInfo[] {
-  const isTargetDevice = mode === 'remote' ? isRemoteProjectDevice : isExistingFolderDevice
+  const isTargetDevice = mode === 'remote' ? isRemoteProjectDevice : isLocalDevice
   return devices
     .filter(device => isClaudeCodeDevice(device) && isTargetDevice(device))
     .filter(device =>
       mode === 'remote' ? canUseForRemoteProjectCreation(device) : canUseForProjectCreation(device)
     )
     .sort((left, right) => {
-      if (mode === 'existing') {
-        const leftLocal = isLocalDevice(left)
-        const rightLocal = isLocalDevice(right)
-        if (leftLocal !== rightLocal) return leftLocal ? -1 : 1
-      }
       const leftLabel = isRemoteProjectDevice(left)
         ? getRemoteDeviceLabel(left)
         : getStandaloneDeviceLabel(left)
