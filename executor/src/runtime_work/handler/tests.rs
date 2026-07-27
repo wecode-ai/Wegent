@@ -467,7 +467,11 @@ fn transcript_matches_cached_user_message_to_attachment_wrapped_provider_message
     let mut provider_messages = vec![json!({
         "id": "provider-user",
         "role": "user",
-        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar",
+        "attachments": [{
+            "filename": "image.model-input.png",
+            "local_preview_url": "/tmp/image.model-input.png"
+        }]
     })];
     let cached_messages = vec![json!({
         "id": "cached-user",
@@ -487,6 +491,10 @@ fn transcript_matches_cached_user_message_to_attachment_wrapped_provider_message
     assert_eq!(
         provider_messages[0]["attachments"][0]["filename"],
         "image.png"
+    );
+    assert_eq!(
+        provider_messages[0]["attachments"][0]["local_path"],
+        "/tmp/image.png"
     );
 }
 
