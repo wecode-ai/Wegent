@@ -1072,7 +1072,9 @@
     "connections": "已有 {{count}} 个用户连接",
     "confirm_disable": "确定停用应用“{{name}}”吗？现有连接将被删除，重新启用后用户需要再次授权。",
     "auth": {
-      "none": "无需用户认证"
+      "none": "无需用户认证",
+      "oauth2": "OAuth 2.0 用户授权",
+      "bearer": "用户 Bearer Token"
     },
     "visibility": {
       "all": "所有用户",

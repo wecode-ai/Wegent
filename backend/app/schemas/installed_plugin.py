@@ -39,6 +39,13 @@ class PluginMCPComponent(BaseModel):
     server: Dict[str, Any] = Field(default_factory=dict)
 
 
+class PluginConnectorComponent(BaseModel):
+    """Cloud connector required by a plugin."""
+
+    slug: str
+    authPolicy: Literal["on_install", "optional"] = "optional"
+
+
 class InstalledPluginComponents(BaseModel):
     """Claude Code plugin component inventory."""
 
@@ -47,6 +54,7 @@ class InstalledPluginComponents(BaseModel):
     agents: List[PluginPathComponent] = Field(default_factory=list)
     hooks: List[PluginPathComponent] = Field(default_factory=list)
     mcps: List[PluginMCPComponent] = Field(default_factory=list)
+    connectors: List[PluginConnectorComponent] = Field(default_factory=list)
     lsps: List[PluginPathComponent] = Field(default_factory=list)
     monitors: List[PluginPathComponent] = Field(default_factory=list)
     bins: List[PluginPathComponent] = Field(default_factory=list)

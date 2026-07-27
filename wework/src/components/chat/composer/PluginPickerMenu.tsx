@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { getRuntimeConfig } from '@/config/runtime'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -24,11 +25,18 @@ function pluginId(plugin: InstalledPlugin): string {
 
 export function PluginPickerMenu({ disabled = false, iconOnly = false }: PluginPickerMenuProps) {
   const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
   const rootRef = useRef<HTMLDivElement>(null)
   const api = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
+    const runtime = getRuntimeConfig()
+    return createPluginApi(
+      createHttpClient({
+        baseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
+        getToken: () => cloudConnection.token,
+        redirectOnUnauthorized: false,
+      })
+    )
+  }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([])

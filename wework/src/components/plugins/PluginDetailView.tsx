@@ -29,6 +29,7 @@ interface PluginDetailViewProps {
   secondaryActionLabel?: string
   secondaryActionDisabled?: boolean
   onSecondaryAction?: () => void
+  onManageConnector?: (slug: string) => void
 }
 
 interface DetailComponentItem {
@@ -117,6 +118,14 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
           : typeof item.server.command === 'string'
             ? item.server.command
             : item.name,
+      toggleable: false,
+    })),
+    ...(components.connectors ?? []).map(item => ({
+      key: `connector-${item.slug}`,
+      componentKey: `connector:${item.slug}`,
+      type: 'connector',
+      name: item.slug,
+      description: item.authPolicy === 'on_install' ? '安装和使用此插件需要授权' : '可选应用连接',
       toggleable: false,
     })),
     ...components.lsps.map(item => ({
@@ -234,6 +243,8 @@ function componentTypeLabel(type: string, t: ReturnType<typeof useTranslation>['
       return t('workbench.plugin_component_type_app', '应用')
     case 'mcp':
       return t('workbench.plugin_component_type_mcp', 'MCP')
+    case 'connector':
+      return t('workbench.plugin_component_type_connector', '应用连接')
     case 'hook':
       return t('workbench.plugin_component_type_hook', 'Hook')
     case 'command':
@@ -250,6 +261,7 @@ function componentIcon(type: string) {
     case 'skill':
       return BookOpenText
     case 'mcp':
+    case 'connector':
       return Boxes
     case 'command':
     case 'bin':
@@ -313,6 +325,7 @@ export function PluginDetailView({
   secondaryActionLabel,
   secondaryActionDisabled = false,
   onSecondaryAction,
+  onManageConnector,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
@@ -328,7 +341,14 @@ export function PluginDetailView({
   const logo = installedPluginLogo(plugin)
   const prompts = pluginPromptExamples(plugin)
   const description = pluginDisplayDescription(plugin)
-  const connectorItems = componentItems.filter(item => item.type === 'mcp')
+
+  // 按照 trae 布局分组组件
+  const connectorItems = componentItems.filter(item => item.type === 'connector')
+  const skillItems = componentItems.filter(item => item.type === 'skill')
+  const mcpItems = componentItems.filter(item => item.type === 'mcp')
+  const otherItems = componentItems.filter(
+    item => !['connector', 'skill', 'mcp'].includes(item.type)
+  )
 
   return (
     <main className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
@@ -455,7 +475,13 @@ export function PluginDetailView({
                     type="button"
                     data-testid={`plugin-connection-manage-${item.componentKey}`}
                     className="h-8 rounded-lg bg-surface px-3 text-xs font-medium hover:bg-muted"
-                    onClick={() => navigateTo('/settings/connections')}
+                    onClick={() => {
+                      if (onManageConnector) {
+                        onManageConnector(item.name)
+                        return
+                      }
+                      navigateTo('/settings/connections')
+                    }}
                   >
                     {t('workbench.plugin_manage_connection', '管理连接')}
                   </button>
@@ -465,72 +491,167 @@ export function PluginDetailView({
           </section>
         )}
 
-        <section className="mt-7 space-y-3">
-          <h2 className="text-base font-medium leading-6 text-text-primary">
-            {t('workbench.plugin_detail_capabilities', '包含能力')}{' '}
-            <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
-              {componentItems.length}
-            </span>
-          </h2>
-          <div className="overflow-hidden rounded-xl border border-border">
-            {componentItems.map(item => (
-              <div
-                key={item.key}
-                className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
-              >
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                  {(() => {
-                    const Icon = componentIcon(item.type)
-                    return <Icon className="h-4 w-4" />
-                  })()}
-                </div>
-                <div className="min-w-0">
-                  <h3 className="truncate text-sm font-medium leading-5">
-                    <span className="mr-2 text-xs font-normal text-text-muted">
-                      {componentTypeLabel(item.type, t)}
-                    </span>
-                    {item.name}
-                  </h3>
-                  <p className="truncate text-xs leading-4 text-text-secondary">
-                    {item.description}
-                  </p>
-                </div>
-                {item.toggleable ? (
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={componentStates[item.componentKey] ?? true}
-                    aria-label={item.name}
-                    data-testid={`plugin-component-toggle-${item.componentKey}`}
-                    className={[
-                      'relative h-[22px] w-[38px] rounded-full transition-colors',
-                      (componentStates[item.componentKey] ?? true) ? 'bg-emerald-600' : 'bg-border',
-                    ].join(' ')}
-                    onClick={() =>
-                      onComponentToggle(
-                        item.componentKey,
-                        !(componentStates[item.componentKey] ?? true)
-                      )
-                    }
-                  >
-                    <span
+        {/* 技能部分 */}
+        {skillItems.length > 0 && (
+          <section className="mt-7 space-y-3">
+            <h2 className="text-base font-medium leading-6 text-text-primary">
+              {t('workbench.plugin_detail_skills', '技能')}{' '}
+              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                {skillItems.length}
+              </span>
+            </h2>
+            <div className="overflow-hidden rounded-xl border border-border">
+              {skillItems.map(item => (
+                <div
+                  key={item.key}
+                  className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
+                >
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                    <BookOpenText className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
+                    <p className="line-clamp-2 text-xs leading-4 text-text-secondary">
+                      {item.description}
+                    </p>
+                  </div>
+                  {item.toggleable && (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={componentStates[item.componentKey] ?? true}
+                      aria-label={item.name}
+                      data-testid={`plugin-component-toggle-${item.componentKey}`}
                       className={[
-                        'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                        'relative h-[22px] w-[38px] rounded-full transition-colors',
                         (componentStates[item.componentKey] ?? true)
-                          ? 'translate-x-4'
-                          : 'translate-x-0',
+                          ? 'bg-emerald-600'
+                          : 'bg-border',
                       ].join(' ')}
-                    />
-                  </button>
-                ) : (
-                  <span className="text-sm leading-5 text-text-muted">
-                    {t('workbench.plugins_component_included', '已包含')}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
+                      onClick={() =>
+                        onComponentToggle(
+                          item.componentKey,
+                          !(componentStates[item.componentKey] ?? true)
+                        )
+                      }
+                    >
+                      <span
+                        className={[
+                          'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                          (componentStates[item.componentKey] ?? true)
+                            ? 'translate-x-4'
+                            : 'translate-x-0',
+                        ].join(' ')}
+                      />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* MCP 服务器部分 */}
+        {mcpItems.length > 0 && (
+          <section className="mt-7 space-y-3">
+            <h2 className="text-base font-medium leading-6 text-text-primary">
+              {t('workbench.plugin_detail_mcp_servers', 'MCP 服务器')}{' '}
+              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                {mcpItems.length}
+              </span>
+            </h2>
+            <div className="overflow-hidden rounded-xl border border-border">
+              {mcpItems.map(item => (
+                <div
+                  key={item.key}
+                  className="grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 px-4 py-3 border-b border-border last:border-b-0"
+                >
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                    <Boxes className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
+                    <p className="truncate text-xs leading-4 text-text-secondary">
+                      {item.description}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* 其他组件（如果有的话，保留向后兼容） */}
+        {otherItems.length > 0 && (
+          <section className="mt-7 space-y-3">
+            <h2 className="text-base font-medium leading-6 text-text-primary">
+              {t('workbench.plugin_detail_other_components', '其他组件')}{' '}
+              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                {otherItems.length}
+              </span>
+            </h2>
+            <div className="overflow-hidden rounded-xl border border-border">
+              {otherItems.map(item => (
+                <div
+                  key={item.key}
+                  className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
+                >
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                    {(() => {
+                      const Icon = componentIcon(item.type)
+                      return <Icon className="h-4 w-4" />
+                    })()}
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="truncate text-sm font-medium leading-5">
+                      <span className="mr-2 text-xs font-normal text-text-muted">
+                        {componentTypeLabel(item.type, t)}
+                      </span>
+                      {item.name}
+                    </h3>
+                    <p className="truncate text-xs leading-4 text-text-secondary">
+                      {item.description}
+                    </p>
+                  </div>
+                  {item.toggleable ? (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={componentStates[item.componentKey] ?? true}
+                      aria-label={item.name}
+                      data-testid={`plugin-component-toggle-${item.componentKey}`}
+                      className={[
+                        'relative h-[22px] w-[38px] rounded-full transition-colors',
+                        (componentStates[item.componentKey] ?? true)
+                          ? 'bg-emerald-600'
+                          : 'bg-border',
+                      ].join(' ')}
+                      onClick={() =>
+                        onComponentToggle(
+                          item.componentKey,
+                          !(componentStates[item.componentKey] ?? true)
+                        )
+                      }
+                    >
+                      <span
+                        className={[
+                          'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                          (componentStates[item.componentKey] ?? true)
+                            ? 'translate-x-4'
+                            : 'translate-x-0',
+                        ].join(' ')}
+                      />
+                    </button>
+                  ) : (
+                    <span className="text-sm leading-5 text-text-muted">
+                      {t('workbench.plugins_component_included', '已包含')}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {prompts.length > 0 && (
           <section className="mt-7 space-y-3">

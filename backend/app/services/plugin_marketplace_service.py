@@ -143,7 +143,7 @@ class PluginMarketplaceService:
         self,
         db: Session,
         *,
-        user_id: int,
+        user_id: int | None,
         query: str | None = None,
         source: str | None = None,
         listing_type: str | None = None,
@@ -322,13 +322,20 @@ class PluginMarketplaceService:
         featured_rank: int | None = None,
         created_by_user_id: int | None = None,
         provenance: dict[str, Any] | None = None,
+        source_type: str = "native",
+        source_provider: str = "wework",
     ) -> PublishedRelease:
-        """Publish a scanned Wegent-owned release through the shared state machine."""
+        """Publish a controlled native or curated release."""
         self._validate_slug(slug)
         if listing_type not in {"plugin", "skill"}:
             raise HTTPException(status_code=422, detail="Invalid plugin listing type")
         if visibility not in {"workspace", "public"}:
             raise HTTPException(status_code=422, detail="Invalid plugin visibility")
+        if (source_type, source_provider) not in {
+            ("native", "wework"),
+            ("mirror", "codex"),
+        }:
+            raise HTTPException(status_code=422, detail="Invalid controlled source")
         parsed, security_report = self._analyze_package(package)
         if parsed.name != slug:
             raise HTTPException(
@@ -337,13 +344,13 @@ class PluginMarketplaceService:
             )
         plugin = db.query(Plugin).filter(Plugin.slug == slug).with_for_update().first()
         if plugin and (
-            plugin.source_type != "native"
-            or plugin.source_provider != "wegent"
+            plugin.source_type != source_type
+            or plugin.source_provider != source_provider
             or plugin.owner_user_id is not None
         ):
             raise HTTPException(
                 status_code=409,
-                detail="Plugin slug is not owned by the Wegent official publisher",
+                detail="Plugin slug is owned by a different publisher",
             )
         if plugin and plugin.listing_type != listing_type:
             raise HTTPException(
@@ -355,8 +362,8 @@ class PluginMarketplaceService:
                 name=parsed.name,
                 display_name=parsed.displayName,
                 listing_type=listing_type,
-                source_type="native",
-                source_provider="wegent",
+                source_type=source_type,
+                source_provider=source_provider,
                 owner_user_id=None,
                 keywords_json=[],
                 interface_json={},
@@ -387,7 +394,10 @@ class PluginMarketplaceService:
                 parsed=parsed,
                 security_report=security_report,
                 created_by_user_id=created_by_user_id,
-                provenance={"kind": "official", **(provenance or {})},
+                provenance={
+                    "kind": "curated" if source_type == "mirror" else "official",
+                    **(provenance or {}),
+                },
             )
         except Exception:
             db.rollback()
@@ -1142,9 +1152,34 @@ class PluginMarketplaceService:
             raise HTTPException(status_code=404, detail="Marketplace plugin not found")
         return plugin
 
-    def _can_access_plugin(self, db: Session, *, plugin: Plugin, user_id: int) -> bool:
-        """Apply optional direct-user or department grants to workspace plugins."""
-        if plugin.visibility == "public" or plugin.owner_user_id == user_id:
+    def _can_access_plugin(
+        self, db: Session, *, plugin: Plugin, user_id: int | None
+    ) -> bool:
+        """Apply optional direct-user or department grants to workspace plugins.
+
+        Args:
+            db: Database session
+            plugin: Plugin to check access for
+            user_id: User ID, or None for unauthenticated access
+
+        Returns:
+            True if user can access plugin, False otherwise
+
+        Notes:
+            - Public plugins are accessible to everyone (including unauthenticated users)
+            - Owner can always access their own plugins
+            - Workspace plugins with no user_id return False (require authentication)
+        """
+        # Public plugins are accessible to everyone
+        if plugin.visibility == "public":
+            return True
+
+        # Unauthenticated users can only access public plugins
+        if user_id is None:
+            return False
+
+        # Owner can always access their own plugins
+        if plugin.owner_user_id == user_id:
             return True
         plugin_type_values = (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
         approved_values = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)

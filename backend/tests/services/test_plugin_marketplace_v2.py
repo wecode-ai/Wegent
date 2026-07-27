@@ -357,7 +357,7 @@ def test_user_submission_cannot_claim_an_official_plugin_slug(test_db, test_user
             name="official-plugin",
             display_name="Official Plugin",
             source_type="native",
-            source_provider="wegent",
+            source_provider="wework",
             owner_user_id=None,
             keywords_json=[],
             interface_json={},
@@ -418,7 +418,7 @@ def test_official_package_build_is_deterministic_and_publish_is_idempotent(
     assert test_db.query(PluginRelease).count() == 1
     plugin = test_db.get(Plugin, first.release.plugin_id)
     assert plugin.source_type == "native"
-    assert plugin.source_provider == "wegent"
+    assert plugin.source_provider == "wework"
     assert plugin.owner_user_id is None
     assert plugin.latest_release_id == first.release.id
     assert first.release.scan_report_json["provenance"] == {
@@ -427,6 +427,29 @@ def test_official_package_build_is_deterministic_and_publish_is_idempotent(
         "buildUrl": "https://ci.example/build/1",
         "publisher": "release-bot",
     }
+
+
+def test_curated_publish_preserves_mirror_source_identity(
+    test_db, monkeypatch, tmp_path
+):
+    source = _write_official_source(tmp_path / "official-review")
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages)
+
+    OfficialPluginPublisher().publish_directory(
+        test_db,
+        source_directory=source,
+        source_type="mirror",
+        source_provider="codex",
+        provenance={"upstreamCommit": "abc123"},
+    )
+
+    plugin = test_db.query(Plugin).filter(Plugin.slug == "official-review").one()
+    assert plugin.source_type == "mirror"
+    assert plugin.source_provider == "codex"
+    release = test_db.query(PluginRelease).filter_by(plugin_id=plugin.id).one()
+    assert release.scan_report_json["provenance"]["kind"] == "curated"
+    assert release.scan_report_json["provenance"]["upstreamCommit"] == "abc123"
 
 
 def test_official_publish_rejects_same_version_with_different_package(

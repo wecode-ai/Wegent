@@ -38,7 +38,7 @@ class Plugin(Base):
     description_md = Column(Text, nullable=False, default="")
     listing_type = Column(String(20), nullable=False, default="plugin")
     source_type = Column(String(20), nullable=False, default="native")
-    source_provider = Column(String(50), nullable=False, default="wegent")
+    source_provider = Column(String(50), nullable=False, default="wework")
     owner_user_id = Column(big_integer_id_type(), nullable=True)
     category = Column(String(50), nullable=False, default="", server_default="")
     keywords_json = Column(JSON, nullable=False, default=list)

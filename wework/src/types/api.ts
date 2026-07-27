@@ -1776,6 +1776,10 @@ export interface InstalledPluginComponents {
   agents: PluginPathComponent[]
   hooks: PluginPathComponent[]
   mcps: PluginMCPComponent[]
+  connectors?: Array<{
+    slug: string
+    authPolicy: 'on_install' | 'optional'
+  }>
   lsps: PluginPathComponent[]
   monitors: PluginPathComponent[]
   bins: PluginPathComponent[]

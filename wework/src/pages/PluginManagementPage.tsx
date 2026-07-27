@@ -9,6 +9,7 @@ import { PluginManagementWorkspace } from '@/components/plugins/PluginManagement
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { useAuth } from '@/features/auth/useAuth'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -19,6 +20,7 @@ import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 export function PluginManagementPage() {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
+  const cloudConnection = useOptionalCloudConnection()
   const isMobile = useIsMobile()
   const {
     state,
@@ -182,6 +184,8 @@ export function PluginManagementPage() {
         </>
       )}
       <PluginManagementWorkspace
+        cloudApiBaseUrl={cloudConnection.apiBaseUrl}
+        cloudToken={cloudConnection.token}
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         topBarLeftActions={
           !isMobile && sidebarCollapsed && !isTauri ? (

@@ -785,7 +785,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugins-marketplace-selector')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-refresh-button')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
-      'Wegent 云端市场'
+      'Wework 云端市场'
     )
     expect(screen.queryByTestId('plugins-marketplace-source-openai')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-add-marketplace-button')).not.toBeInTheDocument()
@@ -1060,7 +1060,7 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
-      'Wegent 云端市场'
+      'Wework 云端市场'
     )
     expect(
       screen.queryByTestId('plugins-marketplace-tab-openai-curated-remote')

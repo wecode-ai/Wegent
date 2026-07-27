@@ -148,6 +148,7 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
       commands: components.commands.length,
       agents: components.agents.length,
       mcp: components.mcps.length,
+      connectors: components.connectors?.length ?? 0,
       hooks: components.hooks.length,
       lsp: components.lsps.length,
       monitors: components.monitors.length,
@@ -210,11 +211,15 @@ function serverConfigFromCustomForm(form: CustomMcpFormState): InstalledMCPServe
 interface PluginManagementWorkspaceProps {
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
+  cloudApiBaseUrl?: string
+  cloudToken?: string | null
 }
 
 export function PluginManagementWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
+  cloudApiBaseUrl,
+  cloudToken,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<ManagementTab>('plugins')
@@ -222,9 +227,19 @@ export function PluginManagementWorkspace({
   const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
+    const runtime = getRuntimeConfig()
+    return createPluginApi(
+      createHttpClient({
+        baseUrl: cloudApiBaseUrl || runtime.apiBaseUrl,
+        ...(cloudToken === undefined
+          ? {}
+          : {
+              getToken: () => cloudToken,
+              redirectOnUnauthorized: false,
+            }),
+      })
+    )
+  }, [cloudApiBaseUrl, cloudToken])
   const mcpApi = useMemo(() => {
     const { apiBaseUrl } = getRuntimeConfig()
     return createMcpApi(createHttpClient({ baseUrl: apiBaseUrl }))
@@ -702,14 +717,6 @@ export function PluginManagementWorkspace({
               isOpen={isCreateMenuOpen}
               buttonTestId="plugin-management-create-button"
               onToggle={() => setIsCreateMenuOpen(previous => !previous)}
-              onCreateSkill={() => {
-                setIsCreateMenuOpen(false)
-                navigateTo('/plugins/create?type=skill')
-              }}
-              onCreateMcp={() => {
-                setIsCreateMenuOpen(false)
-                setShowCustomMcpDialog(true)
-              }}
               onCreatePlugin={() => {
                 setIsCreateMenuOpen(false)
                 navigateTo('/plugins/create')

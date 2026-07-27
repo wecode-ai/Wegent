@@ -112,12 +112,17 @@ def list_marketplace_plugins(
     listing_type: str | None = None,
     device_id: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User | None = Depends(security.get_current_user_optional),
 ) -> PluginMarketplaceListResponse:
-    """List Codex-compatible plugins published to the Wegent marketplace."""
+    """List Codex-compatible plugins published to the Wegent marketplace.
+
+    This endpoint supports both authenticated and unauthenticated access:
+    - Authenticated users see installation status and device-specific info
+    - Unauthenticated users see all available plugins without installation status
+    """
     return plugin_marketplace_service.list_plugins(
         db,
-        user_id=current_user.id,
+        user_id=current_user.id if current_user else None,
         query=q,
         source=source,
         listing_type=listing_type,

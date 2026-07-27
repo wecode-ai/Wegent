@@ -92,7 +92,7 @@ class PluginMarketplaceMigrationService:
                 description_md=str(spec.get("description") or parsed.description),
                 listing_type="plugin",
                 source_type="native",
-                source_provider="wegent",
+                source_provider="wework",
                 owner_user_id=spec.get("ownerUserId") or row.user_id or None,
                 category=(parsed.interface.category if parsed.interface else "") or "",
                 keywords_json=parsed.manifest.get("keywords") or [],
@@ -175,10 +175,10 @@ class PluginMarketplaceMigrationService:
             source.update(
                 {
                     "type": "marketplace",
-                    "providerKey": "wegent-market",
+                    "providerKey": "wework-market",
                     "pluginKey": plugin.name,
                     "catalogItemId": str(plugin.id),
-                    "marketplace": "wegent",
+                    "marketplace": "wework",
                 }
             )
             spec.update(

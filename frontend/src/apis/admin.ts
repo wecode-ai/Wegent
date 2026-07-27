@@ -115,7 +115,7 @@ export interface SystemStats {
 }
 
 // Connector App Types
-export type ConnectorAuthType = 'none'
+export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
 export type ConnectorVisibility = 'all' | 'roles'
 export type ConnectorTransport = 'streamable-http' | 'sse' | 'http'
 
@@ -165,6 +165,7 @@ export interface AdminConnectorApp {
   mcp_url: string
   provider_header_names: string[]
   provider_headers_configured: boolean
+  forward_user_context_headers: boolean
   tool_allowlist: string[]
   http_tools: ConnectorHttpToolDefinition[]
   connection_count: number
@@ -184,6 +185,7 @@ export interface AdminConnectorAppCreate {
   transport: ConnectorTransport
   mcp_url: string
   provider_headers: Record<string, string>
+  forward_user_context_headers?: boolean
   tool_allowlist: string[]
   http_tools: ConnectorHttpToolDefinition[]
 }

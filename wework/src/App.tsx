@@ -5,6 +5,7 @@ import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginCreatePage } from '@/pages/PluginCreatePage'
@@ -153,6 +154,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
   if (path === '/login/oidc') {
     return <OidcCallbackPage />
+  }
+
+  if (path === '/auth/wework/authorize') {
+    return <WeworkAuthorizePage />
   }
 
   if (isLoading || !user) {

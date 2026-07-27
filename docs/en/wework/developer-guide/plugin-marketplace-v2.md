@@ -4,6 +4,8 @@ sidebar_position: 20
 
 # Wework Plugin Marketplace V2
 
+For plugin development, open-source migration, and local integration, start with the [Plugin Marketplace Developer Guide](./wework-plugin-marketplace-dev.md). This document focuses on the control-plane architecture, data model, and operational constraints.
+
 ## Architecture
 
 Marketplace V2 uses a Wework cloud control plane with a local Codex runtime. MySQL stores catalog metadata, immutable releases, selected upstreams, submissions, account install intent, and per-device materialization. Private S3-compatible storage holds packages. Codex App Server remains the source of truth for the current device.

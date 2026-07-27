@@ -222,6 +222,15 @@ class Settings(BaseSettings):
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
+    # GitHub OAuth App used by Wework connector authorization.
+    GITHUB_OAUTH_CLIENT_ID: str = ""
+    GITHUB_OAUTH_CLIENT_SECRET: str = ""
+    GITHUB_OAUTH_REDIRECT_URI: str = (
+        "http://localhost:8000/api/connector-apps/oauth/callback"
+    )
+    GITHUB_OAUTH_SCOPES: str = "repo read:org workflow"
+    CONNECTOR_OAUTH_STATE_SECRET: str = ""
+    CONNECTOR_OAUTH_SESSION_TTL_SECONDS: int = 600
     # Upstream Sites Platform base URL. Wework accesses it through Backend.
     SITES_API_BASE_URL: str = ""
     # Optional bearer token for the upstream Sites Platform project API.

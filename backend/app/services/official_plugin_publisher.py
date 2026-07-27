@@ -100,6 +100,8 @@ class OfficialPluginPublisher:
         featured_rank: int | None = None,
         created_by_user_id: int | None = None,
         provenance: dict[str, Any] | None = None,
+        source_type: str = "native",
+        source_provider: str = "wework",
     ) -> tuple[OfficialPluginPackage, PublishedRelease]:
         built = self.build_package(source_directory)
         result = self.publish_package(
@@ -111,6 +113,8 @@ class OfficialPluginPublisher:
             featured_rank=featured_rank,
             created_by_user_id=created_by_user_id,
             provenance=provenance,
+            source_type=source_type,
+            source_provider=source_provider,
         )
         return built, result
 
@@ -125,6 +129,8 @@ class OfficialPluginPublisher:
         featured_rank: int | None = None,
         created_by_user_id: int | None = None,
         provenance: dict[str, Any] | None = None,
+        source_type: str = "native",
+        source_provider: str = "wework",
     ) -> PublishedRelease:
         """Publish an already-built package without rebuilding CI input."""
         result = self.marketplace_service.publish_official_release(
@@ -136,6 +142,8 @@ class OfficialPluginPublisher:
             featured_rank=featured_rank,
             created_by_user_id=created_by_user_id,
             provenance=provenance,
+            source_type=source_type,
+            source_provider=source_provider,
         )
         return result
 

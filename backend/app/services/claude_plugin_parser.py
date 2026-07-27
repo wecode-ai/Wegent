@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import re
 import zipfile
 from pathlib import PurePosixPath
 from typing import Any, Dict, Iterable
@@ -11,6 +12,7 @@ from fastapi import HTTPException
 
 from app.schemas.installed_plugin import (
     InstalledPluginComponents,
+    PluginConnectorComponent,
     PluginInterface,
     PluginMCPComponent,
     PluginPathComponent,
@@ -133,6 +135,7 @@ class ClaudePluginParser:
             agents=self._parse_markdown_files(root, names, "agents"),
             hooks=self._parse_json_file_components(root, names, "hooks"),
             mcps=self._parse_mcps(archive, root, manifest),
+            connectors=self._parse_connectors(manifest),
             lsps=self._parse_json_file_components(root, names, ".lsp.json"),
             monitors=self._parse_json_file_components(root, names, "monitors"),
             bins=self._parse_bin_files(root, names),
@@ -304,6 +307,29 @@ class ClaudePluginParser:
             )
             for name, server in sorted(servers.items())
         ]
+
+    def _parse_connectors(
+        self, manifest: Dict[str, Any]
+    ) -> list[PluginConnectorComponent]:
+        raw_connectors = manifest.get("connectors")
+        if not isinstance(raw_connectors, list):
+            return []
+        connectors: list[PluginConnectorComponent] = []
+        seen: set[str] = set()
+        for item in raw_connectors:
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("slug") or "").strip()
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,99}", slug) or slug in seen:
+                continue
+            auth_policy = str(item.get("authPolicy") or "optional")
+            if auth_policy not in {"on_install", "optional"}:
+                continue
+            seen.add(slug)
+            connectors.append(
+                PluginConnectorComponent(slug=slug, authPolicy=auth_policy)
+            )
+        return connectors
 
     def _join_root_path(self, root: str, path: str) -> str:
         normalized = path[2:] if path.startswith("./") else path

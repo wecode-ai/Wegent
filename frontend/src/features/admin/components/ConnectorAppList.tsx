@@ -515,6 +515,8 @@ function ConnectorAppDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">{t('connector_apps.auth.none')}</SelectItem>
+                <SelectItem value="oauth2">{t('connector_apps.auth.oauth2')}</SelectItem>
+                <SelectItem value="bearer">{t('connector_apps.auth.bearer')}</SelectItem>
               </SelectContent>
             </Select>
           </FormField>

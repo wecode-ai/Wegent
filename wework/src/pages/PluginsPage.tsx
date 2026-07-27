@@ -15,6 +15,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getRuntimeConfig } from '@/config/runtime'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 const PluginsWorkspace = lazy(() =>
@@ -267,7 +268,9 @@ export function PluginsPage() {
         }
       >
         <PluginsWorkspace
-          cloudMarketplaceAvailable={cloudConnection.isConnected}
+          cloudMarketplaceAvailable={true}
+          cloudApiBaseUrl={cloudConnection.apiBaseUrl || getRuntimeConfig().apiBaseUrl}
+          cloudToken={cloudConnection.token}
           sidebarCollapsed={sidebarCollapsed && !isMobile}
           topBarLeftActions={
             !isMobile && sidebarCollapsed && !isTauri ? (

@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/openai/plugins",
+  "commit": "11c74d6ba24d3a6d48f54a194cd00ef3beea18f9",
+  "subdirectory": "plugins/github",
+  "upstreamVersion": "0.1.6",
+  "adapterVersion": "1"
+}

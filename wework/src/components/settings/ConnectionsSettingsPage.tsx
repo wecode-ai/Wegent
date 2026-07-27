@@ -21,6 +21,7 @@ import {
   Plus,
   RotateCcw,
   Server,
+  ShieldCheck,
   ScanLine,
   SlidersHorizontal,
   Terminal,
@@ -35,9 +36,17 @@ import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import {
+  authorizeWegentConnector,
+  disconnectWegentConnector,
+  listWegentConnectorApps,
+  notifyConnectorAuthorizationChanged,
+  type WegentConnectorApp,
+} from '@/api/cloud/connectorApps'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
+import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -1060,6 +1069,115 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
   )
 }
 
+function ConnectorApplicationsSection() {
+  const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
+  const [apps, setApps] = useState<WegentConnectorApp[]>([])
+  const [pendingSlug, setPendingSlug] = useState('')
+  const [error, setError] = useState('')
+
+  const refresh = useCallback(async () => {
+    if (!cloudConnection.apiBaseUrl || !cloudConnection.token) {
+      setApps([])
+      return
+    }
+    try {
+      setApps(await listWegentConnectorApps(cloudConnection.apiBaseUrl, cloudConnection.token))
+      setError('')
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Failed to load connections')
+    }
+  }, [cloudConnection.apiBaseUrl, cloudConnection.token])
+
+  useEffect(() => {
+    void Promise.resolve().then(refresh)
+  }, [refresh])
+
+  if (apps.length === 0 && !error) return null
+
+  return (
+    <section
+      data-testid="connector-applications-settings"
+      className="rounded-lg border border-border bg-background p-5"
+    >
+      <div className="mb-4">
+        <h2 className="text-sm font-semibold text-text-primary">
+          {t('workbench.connector_apps_title', '第三方应用')}
+        </h2>
+        <p className="mt-1 text-sm text-text-secondary">
+          {t('workbench.connector_apps_description', '管理插件使用的 OAuth 应用连接。')}
+        </p>
+      </div>
+      {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+      <div className="divide-y divide-border">
+        {apps.map(app => {
+          const connected = app.connection.status === 'connected'
+          const pending = pendingSlug === app.slug
+          return (
+            <div
+              key={app.slug}
+              data-testid={`connector-application-${app.slug}`}
+              className="flex items-center gap-3 py-3"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface">
+                <ShieldCheck className="h-4 w-4 text-text-secondary" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <strong className="block text-sm font-medium text-text-primary">{app.name}</strong>
+                <small className="block truncate text-xs text-text-muted">
+                  {connected
+                    ? app.connection.external_account_name ||
+                      t('workbench.connector_connected', '已连接')
+                    : t('workbench.connector_disconnected', '未连接')}
+                </small>
+              </span>
+              <button
+                type="button"
+                disabled={pending}
+                data-testid={`connector-application-action-${app.slug}`}
+                className="h-8 rounded-lg border border-border px-3 text-sm font-medium hover:bg-surface disabled:opacity-50"
+                onClick={() => {
+                  if (!cloudConnection.apiBaseUrl || !cloudConnection.token) return
+                  setPendingSlug(app.slug)
+                  setError('')
+                  const request = connected
+                    ? disconnectWegentConnector(
+                        cloudConnection.apiBaseUrl,
+                        cloudConnection.token,
+                        app.slug
+                      ).then(() => notifyConnectorAuthorizationChanged())
+                    : authorizeWegentConnector(
+                        cloudConnection.apiBaseUrl,
+                        cloudConnection.token,
+                        app.slug,
+                        openCloudAuthorizationWindow
+                      ).then(() => undefined)
+                  void request
+                    .then(refresh)
+                    .catch(nextError =>
+                      setError(
+                        nextError instanceof Error
+                          ? nextError.message
+                          : 'Connector operation failed'
+                      )
+                    )
+                    .finally(() => setPendingSlug(''))
+                }}
+              >
+                {pending
+                  ? t('common.loading', '处理中...')
+                  : connected
+                    ? t('workbench.connector_disconnect', '断开')
+                    : t('workbench.connector_connect', '连接')}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
   onCloudDesktopOpened,
@@ -1218,6 +1336,7 @@ function ConnectionsDeviceSettingsPage({
         </section>
 
         <section className="mt-6 space-y-5">
+          <ConnectorApplicationsSection />
           <CloudModelsSection cloudConnection={cloudConnection} />
 
           <div className="rounded-lg border border-border bg-background p-5">

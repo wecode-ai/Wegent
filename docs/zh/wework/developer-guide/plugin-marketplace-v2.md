@@ -4,6 +4,8 @@ sidebar_position: 20
 
 # Wework 插件市场 V2 技术设计
 
+面向插件开发、开源迁移和本地联调，请先阅读 [插件市场开发指南](./wework-plugin-marketplace-dev.md)。本文侧重控制面架构、数据模型和运维约束。
+
 ## 1. 决策与边界
 
 插件市场采用“Wework 云端控制面 + 本地 Codex 运行面”。云端决定可见插件、可安装 Release、账号期望版本和审核状态；Codex App Server 决定当前设备是否真正安装成功。市场包统一进入私有对象存储，数据库只保存元数据和不可变 Release 引用。

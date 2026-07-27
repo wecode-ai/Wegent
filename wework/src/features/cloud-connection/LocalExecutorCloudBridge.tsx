@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   issueWegentConnectorToken,
   listWegentInstalledConnectorApps,
 } from '@/api/cloud/connectorApps'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
+
+const CONNECTOR_AUTHORIZATION_CHANGED_EVENT = 'wegent:connector-authorization-changed'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
 import {
   applyLocalExecutorCloudConnection,
@@ -32,6 +34,13 @@ export function LocalExecutorCloudBridge({
   token,
 }: LocalExecutorCloudBridgeProps) {
   const lastTargetRef = useRef<string | null>(null)
+  const [connectorRefreshRevision, setConnectorRefreshRevision] = useState(0)
+
+  useEffect(() => {
+    const refresh = () => setConnectorRefreshRevision(revision => revision + 1)
+    window.addEventListener(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, refresh)
+  }, [])
 
   useEffect(() => {
     const backendUrl = isConnected ? configuredBackendUrl : null
@@ -126,7 +135,7 @@ export function LocalExecutorCloudBridge({
       cancelled = true
       if (refreshTimer) clearTimeout(refreshTimer)
     }
-  }, [apiBaseUrl, isConnected, token])
+  }, [apiBaseUrl, connectorRefreshRevision, isConnected, token])
 
   return null
 }
