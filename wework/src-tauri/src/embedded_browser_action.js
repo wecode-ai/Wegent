@@ -112,7 +112,10 @@
   }
 
   function resolveTarget(request) {
-    if (request.ref || (request.inspectId && Number.isFinite(Number(request.index)))) {
+    const index = Number(request.index)
+    const hasIndex =
+      request.index !== null && request.index !== undefined && Number.isInteger(index) && index >= 0
+    if (request.ref || hasIndex) {
       const resolver = window.__WEWORK_BROWSER_AGENT__?.resolveInspectElement
       if (typeof resolver !== 'function') {
         return errorResult(
@@ -124,7 +127,7 @@
       const resolved = resolver({
         ref: request.ref || undefined,
         inspectId: request.inspectId || undefined,
-        index: request.index,
+        index: hasIndex ? index : undefined,
       })
       if (!resolved.ok) {
         return errorResult(
@@ -588,7 +591,6 @@
           data: String(text),
         })
       )
-      element.dispatchEvent(new Event('change', { bubbles: true }))
       const actualValue = String(element.value || '')
       if (actualValue === oldValue && nextValue !== oldValue) {
         return {
@@ -787,9 +789,19 @@
     }
     if (
       actionName === 'click' &&
-      /(submit|send|post|delete|remove|destroy|confirm|authorize|auth|pay|payment|purchase|checkout|order|transfer|提交|发送|发布|删除|移除|确认|授权|支付|购买|下单|转账)/i.test(
+      /(delete|remove|destroy|authorize|auth|pay|payment|purchase|checkout|order|transfer|删除|移除|授权|支付|购买|下单|转账)/i.test(
         combined
       )
+    ) {
+      return {
+        risk: 'high',
+        reason: `AI wants to click "${trimText(summary?.name || name || role, 80)}".`,
+      }
+    }
+    if (
+      actionName === 'click' &&
+      /(submit|send|post|confirm|提交|发送|发布|确认)/i.test(combined) &&
+      !isSearchLikeSubmission(element, combined)
     ) {
       return {
         risk: 'high',
@@ -808,6 +820,30 @@
       }
     }
     return { risk: 'low' }
+  }
+
+  function isSearchLikeSubmission(element, combined) {
+    const form = element.closest?.('form')
+    const formText = [
+      form?.getAttribute('role'),
+      form?.getAttribute('aria-label'),
+      form?.getAttribute('action'),
+      form?.getAttribute('name'),
+      form?.id,
+      form?.className,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    const hasSearchField = Boolean(
+      form?.querySelector?.(
+        'input[type="search"], input[name="q"], input[name="wd"], input[name="query"], input[name="keyword"], input[id="kw"], textarea[name="q"]'
+      )
+    )
+    const labelLooksLikeSearch = /(search|query|百度一下|搜索|搜一下|检索)/i.test(
+      `${combined} ${formText}`
+    )
+    return hasSearchField || labelLooksLikeSearch
   }
 
   function isSensitiveInput(element, text) {

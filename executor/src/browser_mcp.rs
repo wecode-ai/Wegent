@@ -183,10 +183,21 @@ async fn execute_tool(
             "action": "evaluate",
             "expression": "({ title: document.title, url: location.href, text: document.body?.innerText?.slice(0, 12000) || '' })"
         }),
-        "browser_evaluate" => json!({
-            "action": "evaluate",
-            "expression": evaluate_expression(arguments)
-        }),
+        "browser_evaluate" => {
+            let expression = evaluate_expression(arguments);
+            if let Some(reason) = evaluate_action_violation(&expression) {
+                return text_result(
+                    format!(
+                        "browser_evaluate only supports read-only diagnostics during normal browser tasks ({reason}). Use browser_fill/browser_click/browser_press_key/browser_open for page actions."
+                    ),
+                    true,
+                );
+            }
+            json!({
+                "action": "evaluate",
+                "expression": expression
+            })
+        }
         "browser_take_screenshot" => json!({ "action": "screenshot" }),
         "browser_capabilities" => json!({ "action": "capabilities" }),
         "browser_native_input_probe" => json!({
@@ -283,7 +294,14 @@ async fn execute_tool(
         None,
     );
     let result = match call_bridge(client, bridge_payload, sequence, name, started).await {
-        Ok(value) => text_result(value, false),
+        Ok(value) => {
+            let is_error = bridge_value_is_error(name, &value);
+            text_result_with_options(
+                value,
+                is_error,
+                optional_bool_arg(arguments, "includeJson").unwrap_or(false),
+            )
+        }
         Err(error) => {
             log_request(
                 sequence,
@@ -331,6 +349,14 @@ async fn execute_combined_tool(
                 action = Some(value);
             }
             Err(message) => {
+                log_request(
+                    sequence,
+                    "bridge_action_error",
+                    "tools/call",
+                    Some(name),
+                    started,
+                    Some(&message),
+                );
                 error = Some(json!({ "code": "bridge_action_failed", "message": message }));
             }
         }
@@ -420,7 +446,11 @@ async fn execute_combined_tool(
     if let Some(error) = error {
         result.insert("error".to_owned(), error);
     }
-    text_result(Value::Object(result), false)
+    text_result_with_options(
+        Value::Object(result),
+        !ok,
+        optional_bool_arg(arguments, "includeJson").unwrap_or(false),
+    )
 }
 
 async fn call_bridge(
@@ -584,12 +614,12 @@ fn tools() -> Vec<Value> {
     vec![
         tool(
             "browser_open",
-            "Open or navigate the built-in browser in Wegent's Wework desktop app to a URL.",
+            "Open or navigate the Wework built-in browser to a URL.",
             &["url"],
         ),
         tool(
             "browser_inspect",
-            "Inspect the current page and return a structured, indexable page tree.",
+            "Return a compact structured page tree with numbered elements. Reuse known targets and inspect again only after page changes, unknown/stale targets, or for a final-page summary.",
             &[],
         ),
         tool(
@@ -604,55 +634,34 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "browser_click",
-            "Click an element by inspect index/ref or CSS selector.",
+            "Click an element by inspect index/ref or a specific CSS selector. A requested click is complete only when this action succeeds.",
             &[],
         ),
         tool(
             "browser_click_coordinates",
-            "Click viewport coordinates.",
+            "Click viewport coordinates. Prefer an inspected index/ref when available.",
             &["x", "y"],
         ),
         tool(
             "browser_type",
-            "Append text into an editable element by inspect index/ref, CSS selector, or the focused element.",
+            "Append text to an editable element by inspect index/ref or CSS selector.",
             &["text"],
         ),
         tool(
             "browser_fill",
-            "Fill a single editable element by inspect index/ref or CSS selector.",
+            "Replace an editable element's value by inspect index/ref or CSS selector. Continue any separately requested click or submit action after filling.",
             &["text"],
-        ),
-        tool(
-            "browser_open_and_inspect",
-            "Open a URL, wait briefly for the page, then return a structured page inspection.",
-            &["url"],
-        ),
-        tool(
-            "browser_click_and_inspect",
-            "Click an element by inspect index/ref or CSS selector, then return a fresh structured page inspection.",
-            &[],
-        ),
-        tool(
-            "browser_fill_and_inspect",
-            "Fill a single editable element, then return a fresh structured page inspection.",
-            &["text"],
-        ),
-        tool(
-            "browser_type_and_inspect",
-            "Append text into an editable element, then return a fresh structured page inspection.",
-            &["text"],
-        ),
-        tool(
-            "browser_wait_and_inspect",
-            "Wait for page state, then return a fresh structured page inspection.",
-            &[],
         ),
         tool(
             "browser_fill_form",
             "Fill multiple form fields.",
             &["fields"],
         ),
-        tool("browser_press_key", "Press a keyboard key.", &["key"]),
+        tool(
+            "browser_press_key",
+            "Press a keyboard key on the target or focused element.",
+            &["key"],
+        ),
         tool("browser_hover", "Hover an element.", &[]),
         tool("browser_focus", "Focus an element.", &[]),
         tool("browser_scroll", "Scroll the current page.", &[]),
@@ -670,7 +679,11 @@ fn tools() -> Vec<Value> {
             "Resize the embedded browser viewport.",
             &[],
         ),
-        tool("browser_take_screenshot", "Capture a page screenshot.", &[]),
+        tool(
+            "browser_take_screenshot",
+            "Capture a screenshot only when the user explicitly requests one.",
+            &[],
+        ),
         tool(
             "browser_capabilities",
             "Report current embedded WKWebView browser capabilities and limits.",
@@ -691,7 +704,11 @@ fn tools() -> Vec<Value> {
             "Report panel/popout WebView presentation and reparent capability.",
             &[],
         ),
-        tool("browser_evaluate", "Evaluate JavaScript in the page.", &[]),
+        tool(
+            "browser_evaluate",
+            "Evaluate read-only JavaScript for diagnostics. Use dedicated tools for page actions.",
+            &[],
+        ),
         tool(
             "browser_tab_list",
             "List browser tabs in Wegent's Wework desktop app.",
@@ -735,6 +752,34 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
     ] {
         properties.insert(key.to_owned(), json!({ "type": "string" }));
     }
+    properties.insert(
+        "ref".to_owned(),
+        json!({
+            "type": "string",
+            "description": "Opaque element ref from browser_inspect, preferred for action targets."
+        }),
+    );
+    properties.insert(
+        "selector".to_owned(),
+        json!({
+            "type": "string",
+            "description": "CSS selector target. Prefer inspect ref or index; use a specific selector with the same action tool when a fresh ref/index is unavailable or resolves the wrong element."
+        }),
+    );
+    properties.insert(
+        "text".to_owned(),
+        json!({
+            "type": "string",
+            "description": "Text to type or fill into the target element."
+        }),
+    );
+    properties.insert(
+        "value".to_owned(),
+        json!({
+            "type": "string",
+            "description": "Alternative text/value argument for fill/select tools."
+        }),
+    );
     for key in [
         "x",
         "y",
@@ -744,10 +789,17 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
         "timeoutMs",
         "width",
         "height",
-        "index",
     ] {
         properties.insert(key.to_owned(), json!({ "type": "number" }));
     }
+    properties.insert(
+        "index".to_owned(),
+        json!({
+            "type": "integer",
+            "minimum": 0,
+            "description": "Element index from the latest browser_inspect result, for example 0 for [0] textbox."
+        }),
+    );
     properties.insert("fields".to_owned(), json!({ "type": "array" }));
     properties.insert("condition".to_owned(), json!({ "type": "object" }));
     properties.insert("inspectOptions".to_owned(), json!({ "type": "object" }));
@@ -784,9 +836,14 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 }
 
 fn text_result(data: impl Into<Value>, is_error: bool) -> Value {
+    text_result_with_options(data, is_error, false)
+}
+
+fn text_result_with_options(data: impl Into<Value>, is_error: bool, include_json: bool) -> Value {
     let data = data.into();
-    let text = combined_text_result(&data)
-        .or_else(|| inspect_text_result(&data))
+    let text = combined_text_result_with_options(&data, include_json)
+        .or_else(|| inspect_text_result_with_options(&data, include_json))
+        .or_else(|| action_text_result_with_options(&data, include_json))
         .unwrap_or_else(|| {
             data.as_str()
                 .map(str::to_owned)
@@ -795,7 +852,12 @@ fn text_result(data: impl Into<Value>, is_error: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
 }
 
+#[cfg(test)]
 fn combined_text_result(data: &Value) -> Option<String> {
+    combined_text_result_with_options(data, false)
+}
+
+fn combined_text_result_with_options(data: &Value, include_json: bool) -> Option<String> {
     if data.get("kind").and_then(Value::as_str) != Some("browser.combined") {
         return None;
     }
@@ -838,32 +900,134 @@ fn combined_text_result(data: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|text| !text.trim().is_empty())
     {
-        sections.push(format!("Inspect:\n{inspect_text}"));
+        sections.push(format!(
+            "Inspect:\n{inspect_text}\n\n{}",
+            action_guidance_text()
+        ));
     }
-    let mut compact = data.clone();
-    if let Some(object) = compact.as_object_mut() {
-        if let Some(inspect) = object.get_mut("inspect").and_then(Value::as_object_mut) {
-            inspect.remove("textPreview");
-            inspect.remove("inspectText");
-        }
+    if include_json {
+        sections.push(format!(
+            "JSON:\n{}",
+            serde_json::to_string_pretty(data).unwrap_or_default()
+        ));
+    } else {
+        sections.push(format!(
+            "Metadata: {}",
+            serde_json::to_string(&json!({
+                "kind": "browser.combined",
+                "ok": ok,
+                "tool": tool,
+                "elapsedMs": data.get("elapsedMs"),
+                "warningCount": data
+                    .get("warnings")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0),
+            }))
+            .unwrap_or_default()
+        ));
     }
-    let json_text = serde_json::to_string_pretty(&compact).unwrap_or_default();
-    sections.push(format!("JSON:\n{json_text}"));
     Some(sections.join("\n\n"))
 }
 
+#[cfg(test)]
 fn inspect_text_result(data: &Value) -> Option<String> {
+    inspect_text_result_with_options(data, false)
+}
+
+fn inspect_text_result_with_options(data: &Value, include_json: bool) -> Option<String> {
     if data.get("kind").and_then(Value::as_str) != Some("browser.inspect") {
         return None;
     }
     let inspect_text = data.get("inspectText").and_then(Value::as_str)?;
-    let mut compact = data.clone();
-    if let Some(object) = compact.as_object_mut() {
-        object.remove("textPreview");
-        object.remove("inspectText");
+    let suffix = if include_json {
+        format!(
+            "JSON:\n{}",
+            serde_json::to_string_pretty(data).unwrap_or_default()
+        )
+    } else {
+        format!(
+            "Metadata: {}",
+            serde_json::to_string(&json!({
+                "kind": "browser.inspect",
+                "inspectId": data.get("inspectId"),
+                "partial": data.get("partial"),
+                "truncated": data.get("truncated"),
+                "stats": data.get("stats"),
+            }))
+            .unwrap_or_default()
+        )
+    };
+    Some(format!(
+        "{inspect_text}\n\n{}\n\n{suffix}",
+        action_guidance_text()
+    ))
+}
+
+#[cfg(test)]
+fn action_text_result(data: &Value) -> Option<String> {
+    action_text_result_with_options(data, false)
+}
+
+fn action_text_result_with_options(data: &Value, include_json: bool) -> Option<String> {
+    let action = data.get("action").and_then(Value::as_str)?;
+    let ok = data.get("ok").and_then(Value::as_bool)?;
+    let mut sections = vec![serde_json::to_string(&json!({
+        "success": ok,
+        "action": action,
+    }))
+    .unwrap_or_default()];
+    if let Some(error) = data.get("error") {
+        sections.push(format!(
+            "Error: {}",
+            serde_json::to_string(error).unwrap_or_default()
+        ));
     }
-    let json_text = serde_json::to_string_pretty(&compact).unwrap_or_default();
-    Some(format!("{inspect_text}\n\nJSON:\n{json_text}"))
+    let next = if ok && matches!(action, "fill" | "type" | "typeText") {
+        "Next: Continue any remaining requested action and reuse known targets without another inspect."
+    } else if ok && action == "click" {
+        "Next: The click succeeded. Continue any remaining user-requested actions. If none remain and the task needs final-page understanding, call browser_inspect once, summarize that page, and stop."
+    } else if !ok {
+        "Recovery: Call browser_inspect and retry this same direct action once with a fresh index/ref/selector. Do not reopen an already available page."
+    } else {
+        "Next action: Continue any remaining requested browser actions."
+    };
+    sections.push(next.to_owned());
+    if include_json {
+        sections.push(format!(
+            "JSON:\n{}",
+            serde_json::to_string_pretty(data).unwrap_or_default()
+        ));
+    }
+    Some(sections.join("\n\n"))
+}
+
+fn action_guidance_text() -> &'static str {
+    "Action guidance: Continue the user's requested actions, reuse known targets, and avoid redundant inspections. Inspect again only after a page change, an unknown/stale target, or when a final-page summary is needed."
+}
+
+fn bridge_value_is_error(tool: &str, value: &Value) -> bool {
+    value.get("ok").and_then(Value::as_bool) == Some(false)
+        && matches!(
+            tool,
+            "browser_open"
+                | "browser_navigate"
+                | "browser_tab_new"
+                | "browser_click"
+                | "browser_click_coordinates"
+                | "browser_type"
+                | "browser_fill"
+                | "browser_press_key"
+                | "browser_wait_for"
+                | "browser_hover"
+                | "browser_focus"
+                | "browser_scroll_into_view"
+                | "browser_scroll"
+                | "browser_select_option"
+                | "browser_set_checked"
+                | "browser_fill_form"
+                | "browser_drag"
+        )
 }
 
 fn string_arg(value: &Value, key: &str) -> String {
@@ -904,6 +1068,39 @@ fn evaluate_expression(value: &Value) -> String {
         .unwrap_or_default()
 }
 
+fn evaluate_action_violation(expression: &str) -> Option<&'static str> {
+    let compact = expression
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .collect::<String>();
+    const DISALLOWED: &[(&str, &str)] = &[
+        (".click(", "click invocation"),
+        (".submit(", "form submission"),
+        (".requestsubmit(", "form submission"),
+        (".dispatchevent(", "synthetic event dispatch"),
+        (".setattribute(", "DOM mutation"),
+        (".removeattribute(", "DOM mutation"),
+        (".appendchild(", "DOM mutation"),
+        (".removechild(", "DOM mutation"),
+        (".insertadjacent", "DOM mutation"),
+        (".value=", "input value assignment"),
+        (".checked=", "control state assignment"),
+        (".innerhtml=", "DOM mutation"),
+        (".outerhtml=", "DOM mutation"),
+        (".textcontent=", "DOM mutation"),
+        ("location.href=", "navigation"),
+        ("location.assign(", "navigation"),
+        ("location.replace(", "navigation"),
+        ("window.open(", "navigation"),
+        ("history.pushstate(", "navigation"),
+        ("history.replacestate(", "navigation"),
+    ];
+    DISALLOWED
+        .iter()
+        .find_map(|(pattern, reason)| compact.contains(pattern).then_some(*reason))
+}
+
 fn inspect_payload(value: &Value) -> Value {
     json!({
         "action": "inspect",
@@ -940,7 +1137,7 @@ fn action_target_payload(action: &str, value: &Value) -> Value {
     if let Some(inspect_id) = optional_string_arg(value, "inspectId") {
         payload.insert("inspectId".to_owned(), Value::String(inspect_id));
     }
-    if let Some(index) = optional_number_arg(value, "index") {
+    if let Some(index) = optional_u64_arg(value, "index") {
         payload.insert("index".to_owned(), json!(index));
     }
     if let Some(selector) =
@@ -1304,11 +1501,11 @@ mod tests {
         assert!(names.contains(&"browser_open"));
         assert!(names.contains(&"browser_inspect"));
         assert!(names.contains(&"browser_fill"));
-        assert!(names.contains(&"browser_open_and_inspect"));
-        assert!(names.contains(&"browser_click_and_inspect"));
-        assert!(names.contains(&"browser_fill_and_inspect"));
-        assert!(names.contains(&"browser_type_and_inspect"));
-        assert!(names.contains(&"browser_wait_and_inspect"));
+        assert!(!names.contains(&"browser_open_and_inspect"));
+        assert!(!names.contains(&"browser_click_and_inspect"));
+        assert!(!names.contains(&"browser_fill_and_inspect"));
+        assert!(!names.contains(&"browser_type_and_inspect"));
+        assert!(!names.contains(&"browser_wait_and_inspect"));
         assert!(names.contains(&"browser_navigate"));
         assert!(names.contains(&"browser_evaluate"));
         assert!(names.contains(&"browser_take_screenshot"));
@@ -1323,7 +1520,72 @@ mod tests {
         assert!(names.contains(&"browser_scroll_into_view"));
         assert!(names.contains(&"browser_select_option"));
         assert!(names.contains(&"browser_set_checked"));
-        assert_eq!(names.len(), 34);
+        assert_eq!(names.len(), 29);
+    }
+
+    #[tokio::test]
+    async fn action_tool_schema_guides_index_ref_followup_actions() {
+        let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+        let response = handle_request(&reqwest::Client::new(), &request, 1, Instant::now())
+            .await
+            .unwrap();
+        let tools = response["result"]["tools"].as_array().unwrap();
+        let fill = tools
+            .iter()
+            .find(|tool| tool["name"] == "browser_fill")
+            .expect("browser_fill tool");
+        let click = tools
+            .iter()
+            .find(|tool| tool["name"] == "browser_click")
+            .expect("browser_click tool");
+        let inspect = tools
+            .iter()
+            .find(|tool| tool["name"] == "browser_inspect")
+            .expect("browser_inspect tool");
+        let evaluate = tools
+            .iter()
+            .find(|tool| tool["name"] == "browser_evaluate")
+            .expect("browser_evaluate tool");
+
+        assert!(click["description"]
+            .as_str()
+            .unwrap()
+            .contains("requested click is complete only"));
+        assert!(fill["description"]
+            .as_str()
+            .unwrap()
+            .contains("separately requested click"));
+        assert!(inspect["description"]
+            .as_str()
+            .unwrap()
+            .contains("Reuse known targets"));
+        assert!(evaluate["description"]
+            .as_str()
+            .unwrap()
+            .contains("read-only JavaScript"));
+        assert!(evaluate["description"]
+            .as_str()
+            .unwrap()
+            .contains("dedicated tools"));
+        assert!(fill
+            .pointer("/inputSchema/properties/selector/description")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("same action tool"));
+        assert!(fill
+            .pointer("/inputSchema/properties/index/description")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("latest browser_inspect"));
+        assert_eq!(
+            fill.pointer("/inputSchema/properties/index/type"),
+            Some(&json!("integer"))
+        );
+        assert!(fill
+            .pointer("/inputSchema/properties/ref/description")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("browser_inspect"));
     }
 
     #[test]
@@ -1354,9 +1616,75 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(text.starts_with("[0] button \"登录\"\n\nJSON:"));
-        assert!(text.contains("\"role\": \"button\""));
+        assert!(text.starts_with("[0] button \"登录\"\n\nAction guidance:"));
+        assert!(text.contains("Action guidance:"));
+        assert!(text.contains("Continue the user's requested actions"));
+        assert!(text.contains("reuse known targets"));
+        assert!(text.contains("avoid redundant inspections"));
+        assert!(text.contains("Metadata:"));
+        assert!(text.contains("\"kind\":\"browser.inspect\""));
         assert!(!text.contains("large body text"));
+        assert!(!text.contains("\"nodes\""));
+    }
+
+    #[test]
+    fn combined_text_result_repeats_action_guidance_after_inspect() {
+        let text = combined_text_result(&json!({
+            "kind": "browser.combined",
+            "ok": true,
+            "tool": "open_and_inspect",
+            "wait": { "ok": true, "reason": "load_finished" },
+            "inspect": {
+                "kind": "browser.inspect",
+                "inspectText": "[0] textbox \"百度一下\"",
+                "textPreview": "large body text",
+                "nodes": [{ "index": 0, "role": "textbox", "name": "百度一下" }]
+            }
+        }))
+        .unwrap();
+
+        assert!(text.contains("Inspect:\n[0] textbox \"百度一下\""));
+        assert!(text.contains("Action guidance:"));
+        assert!(text.contains("reuse known targets"));
+        assert!(text.contains("Metadata:"));
+        assert!(!text.contains("large body text"));
+        assert!(!text.contains("\"nodes\""));
+    }
+
+    #[test]
+    fn action_text_result_is_concise_and_drives_the_next_requested_action() {
+        let text = action_text_result(&json!({
+            "ok": true,
+            "action": "fill",
+            "target": { "index": 20, "role": "textbox", "name": "百度搜索" },
+            "before": { "bodyTextHash": "large-before" },
+            "after": { "bodyTextHash": "large-after" },
+            "effect": { "valueChanged": true }
+        }))
+        .unwrap();
+
+        assert!(text.contains("{\"action\":\"fill\",\"success\":true}"));
+        assert!(text.contains("Continue any remaining requested action"));
+        assert!(text.contains("without another inspect"));
+        assert!(!text.contains("large-before"));
+        assert!(!text.contains("large-after"));
+    }
+
+    #[test]
+    fn full_json_output_remains_available_for_e2e_diagnostics() {
+        let data = json!({
+            "kind": "browser.inspect",
+            "inspectId": "wk-inspect-1",
+            "inspectText": "[20] textbox \"百度搜索\"",
+            "nodes": [{ "index": 20, "ref": "wk-ref-20", "role": "textbox" }]
+        });
+
+        let compact = inspect_text_result_with_options(&data, false).unwrap();
+        let full = inspect_text_result_with_options(&data, true).unwrap();
+
+        assert!(!compact.contains("wk-ref-20"));
+        assert!(full.contains("JSON:"));
+        assert!(full.contains("wk-ref-20"));
     }
 
     #[test]
@@ -1374,7 +1702,7 @@ mod tests {
 
         assert_eq!(payload["action"], "click");
         assert_eq!(payload["inspectId"], "wk-inspect-1");
-        assert_eq!(payload["index"], 3.0);
+        assert_eq!(payload["index"], 3);
         assert_eq!(payload["ref"], "wk-mvp:wk-inspect-1:main:3:abcd1234");
         assert_eq!(payload["selector"], "#fallback");
         assert_eq!(payload["timeoutMs"], 5000);
@@ -1393,6 +1721,68 @@ mod tests {
         assert_eq!(payload["action"], "fill");
         assert_eq!(payload["selector"], "#email");
         assert_eq!(payload["text"], "user@example.com");
+    }
+
+    #[test]
+    fn evaluate_rejects_page_action_expressions_but_allows_diagnostics() {
+        assert_eq!(
+            evaluate_action_violation("document.querySelector('#kw').value = '微博'"),
+            Some("input value assignment")
+        );
+        assert_eq!(
+            evaluate_action_violation("document.querySelector('#su').click()"),
+            Some("click invocation")
+        );
+        assert_eq!(
+            evaluate_action_violation("document.querySelector('form').requestSubmit()"),
+            Some("form submission")
+        );
+        assert_eq!(
+            evaluate_action_violation("({ title: document.title, url: location.href })"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_tool_rejects_click_without_calling_bridge() {
+        let result = execute_tool(
+            &reqwest::Client::new(),
+            "browser_evaluate",
+            &json!({ "expression": "document.querySelector('#su').click()" }),
+            1,
+            Instant::now(),
+        )
+        .await;
+
+        assert_eq!(result["isError"], true);
+        assert!(result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("Use browser_fill/browser_click"));
+    }
+
+    #[test]
+    fn failed_bridge_action_is_marked_as_tool_error() {
+        assert!(bridge_value_is_error(
+            "browser_fill",
+            &json!({
+                "ok": false,
+                "error": { "code": "stale_ref" }
+            })
+        ));
+        assert!(!bridge_value_is_error(
+            "browser_fill",
+            &json!({ "ok": true })
+        ));
+        assert!(!bridge_value_is_error(
+            "browser_inspect",
+            &json!({ "kind": "browser.inspect" })
+        ));
+        assert!(!bridge_value_is_error(
+            "browser_native_input_probe",
+            &json!({ "ok": false, "error": { "category": "capability" } })
+        ));
     }
 
     #[test]

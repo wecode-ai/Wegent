@@ -193,7 +193,10 @@ async function withBrowserMcp(bridgeUrl, callback) {
     return withTimeout(response, 30_000, `Timed out waiting for MCP ${method}`)
   }
   const callTool = async (name, args = {}) => {
-    const result = await request('tools/call', { name, arguments: args })
+    const result = await request('tools/call', {
+      name,
+      arguments: { ...args, includeJson: true },
+    })
     assert.equal(result.isError, false, `${name} returned error: ${JSON.stringify(result)}`)
     const text = result.content?.[0]?.text ?? ''
     assert.ok(text.trim(), `${name} returned empty text: ${JSON.stringify(result)}`)
@@ -323,24 +326,19 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
           'MCP run button'
         )
 
-        const fillText = await callTool('browser_fill_and_inspect', {
+        const fillText = await callTool('browser_fill', {
           ref: mcpInputNode.ref,
           text: 'Alpha Beta',
-          condition: { textVisible: FILLED_TEXT },
-          inspectOptions: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
           timeoutMs: 8_000,
         })
-        assert.ok(fillText.includes('Combined: fill_and_inspect ok=true'))
-        assert.ok(fillText.includes(FILLED_TEXT))
+        assert.ok(fillText.includes('{"action":"fill","success":true}'))
+        assert.ok(fillText.includes('"valueChanged": true'))
 
-        const clickText = await callTool('browser_click_and_inspect', {
+        const clickText = await callTool('browser_click', {
           ref: mcpButtonNode.ref,
-          condition: { textVisible: CLICKED_TEXT },
-          inspectOptions: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
           timeoutMs: 8_000,
         })
-        assert.ok(clickText.includes('Combined: click_and_inspect ok=true'))
-        assert.ok(clickText.includes(CLICKED_TEXT))
+        assert.ok(clickText.includes('{"action":"click","success":true}'))
 
         const waitText = await callTool('browser_wait_and_inspect', {
           condition: { textVisible: CLICKED_TEXT },

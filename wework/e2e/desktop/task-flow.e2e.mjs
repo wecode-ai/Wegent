@@ -6428,6 +6428,18 @@ async function main() {
     )
     await control.command('focusMainWindow', 'body')
 
+    if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
+      phase = 'desktop-extension-scenario'
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (CLOUD_ONLY) {
       phase = 'local-connected-model-protocol-matrix'
       await verifyConnectedModelsOnLocalExecution({
@@ -6617,15 +6629,6 @@ async function main() {
     if (desktopScenario) {
       phase = 'desktop-extension-scenario'
       await desktopScenario.verify(control)
-      if (DESKTOP_SCENARIO_ONLY) {
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
-        console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
-        return
-      }
     }
 
     phase = 'remote-project-dialog'

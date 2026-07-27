@@ -251,9 +251,23 @@ fn prepare_wework_codex_home_migrates_base_instruction_override() {
         .any(|line| line.starts_with("instructions =")));
     assert!(config.contains("developer_instructions"));
     assert!(config.contains("用中文回复"));
-    assert!(config.contains("browser_navigate"));
+    assert!(config.contains("Build the workflow from the user's requested outcome"));
+    assert!(config.contains("reuse all known targets across adjacent actions"));
+    assert!(config.contains("An explicit click request requires `browser_click`"));
+    assert!(config.contains("Use `browser_take_screenshot` only when"));
+    assert!(config.contains("Do not narrate plans or progress"));
     assert!(config.contains("personality = \"pragmatic\""));
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn strip_wework_browser_instructions_removes_unknown_generated_version() {
+    let instructions = "用中文回复\n\nWework 内置浏览器 routing:\n- prior generated version";
+
+    assert_eq!(
+        strip_wework_browser_instructions(instructions),
+        "用中文回复"
+    );
 }
 
 #[test]

@@ -75,10 +75,15 @@ Sub-agents are off-limits in this side conversation. Do not interact with any ex
 pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
 - "Wework" refers to Wegent's desktop workbench. Describe its browser as the Wework built-in browser.
 - For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
-- Use `browser_open` to open pages in the Wework 内置浏览器, `browser_inspect` for structured page inspection, `browser_take_screenshot` for screenshots, and `browser_evaluate` only when direct JavaScript evaluation is needed.
-- `browser_navigate` is a compatibility alias for opening pages. Do not use `browser_snapshot` for structured inspection; snapshot wording is reserved for screenshots.
+- Build the workflow from the user's requested outcome. Run browser tools sequentially, complete every requested action, and never claim an action succeeded unless its matching tool succeeded.
+- Use `browser_open` for navigation and `browser_inspect` for structured page state. Inspect when targets or page understanding are needed, prefer numbered `index` targets, and reuse all known targets across adjacent actions. Inspect again only after an intentional page change, an unknown/stale target, or when the task needs a final-page summary.
+- An explicit click request requires `browser_click` or `browser_click_coordinates`; filling, pressing Enter, page auto-update, JavaScript submission, or a screenshot does not count as a click.
+- Use `browser_take_screenshot` only when the user explicitly requests a screenshot. Use `browser_evaluate` only for read-only diagnostics, never as a substitute for open/fill/click/press actions.
+- On a transient action error, inspect the existing page and retry that action once with a fresh target. Do not reopen a page that is still available.
+- Do not narrate plans or progress between browser tools. After the requested actions and any needed final inspect, give one concise result based on the final page.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
+const WEWORK_BROWSER_INSTRUCTIONS_SEPARATOR: &str = "\n\nWework 内置浏览器 routing:";
 
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
@@ -1743,8 +1748,13 @@ pub(crate) fn combined_codex_developer_instructions(user_instructions: &str) -> 
 }
 
 pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
+    let instructions = instructions.trim();
+    if instructions.starts_with("Wework 内置浏览器 routing:") {
+        return "";
+    }
     instructions
-        .strip_suffix(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
+        .rsplit_once(WEWORK_BROWSER_INSTRUCTIONS_SEPARATOR)
+        .map(|(user_instructions, _)| user_instructions)
         .unwrap_or(instructions)
         .trim()
 }

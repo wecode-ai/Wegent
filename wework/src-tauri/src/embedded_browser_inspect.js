@@ -600,7 +600,9 @@
     }
     const registry = input.ref
       ? current.inspectRegistries.find(item => item.refs?.[input.ref])
-      : current.inspectRegistries.find(item => item.inspectId === input.inspectId)
+      : input.inspectId
+        ? current.inspectRegistries.find(item => item.inspectId === input.inspectId)
+        : current.inspectRegistries[0]
     if (!registry) {
       return {
         ok: false,
