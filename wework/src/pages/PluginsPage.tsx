@@ -16,6 +16,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
+import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
@@ -161,93 +162,130 @@ export function PluginsPage() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden bg-background text-text-primary">
-      {!isMobile && (
-        <DesktopSidebar
-          user={state.user}
-          projects={state.projects}
-          devices={state.devices}
-          runtimeWork={state.runtimeWork}
-          currentRuntimeTask={state.currentRuntimeTask}
-          cloudWorkStatus={cloudWorkStatus}
-          standaloneDeviceId={state.standaloneDeviceId}
-          standaloneWorkspacePath={state.standaloneWorkspacePath}
-          preferredDeviceId={
-            state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-          }
-          activeItem="plugins"
-          collapsed={sidebarCollapsed}
-          onNewChat={handleNewChat}
-          onStartStandaloneChat={handleStartStandaloneChat}
-          onOpenSearch={() => setSearchOpen(true)}
-          onSelectProject={handleSelectProject}
-          onStartNewProjectChat={handleStartNewProjectChat}
-          onOpenRuntimeTask={handleOpenRuntimeTask}
-          onRenameRuntimeTask={renameRuntimeTask}
-          onArchiveRuntimeTask={archiveRuntimeTask}
-          onArchiveProjectConversations={archiveProjectConversations}
-          onArchiveProjectsConversations={archiveProjectsConversations}
-          onArchiveChatConversations={archiveChatConversations}
-          onOpenStandaloneWorkspace={openStandaloneWorkspace}
-          onSelectStandaloneDevice={selectStandaloneDevice}
-          onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
-          onOpenPlugins={handleOpenPlugins}
-          onRefreshDevices={refreshDevices}
-          onUpdateProjectName={updateProjectName}
-          onRemoveProject={removeProject}
-          onGetDeviceHomeDirectory={getDeviceHomeDirectory}
-          onListDeviceDirectories={listDeviceDirectories}
-          onCreateDeviceDirectory={createDeviceDirectory}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onLogout={logout}
-        />
-      )}
-      {isMobile && (
-        <>
-          <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
-            <button
-              type="button"
-              data-testid="open-mobile-drawer-button"
-              onClick={() => setDrawerOpen(true)}
-              className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-lg bg-surface text-text-primary transition-colors hover:bg-muted"
-              aria-label={t('workbench.open_menu', '打开菜单')}
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-          </header>
-          <MobileDrawer
-            open={drawerOpen}
+    <div className="flex h-full flex-col overflow-hidden bg-background text-text-primary">
+      <DesktopWindowsTitlebar
+        sidebarCollapsed={sidebarCollapsed && !isMobile}
+        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+        activeApp="wework"
+        onNavigate={app =>
+          navigateTo(
+            app === 'wework'
+              ? '/'
+              : app === 'todo'
+                ? '/todo'
+                : app === 'wegent'
+                  ? '/app/wegent'
+                  : '/apps'
+          )
+        }
+      />
+      <div className="flex flex-1 overflow-hidden">
+        {!isMobile && (
+          <DesktopSidebar
             user={state.user}
-            devices={state.devices}
             projects={state.projects}
+            devices={state.devices}
             runtimeWork={state.runtimeWork}
-            currentProjectId={state.currentProject?.id}
             currentRuntimeTask={state.currentRuntimeTask}
+            cloudWorkStatus={cloudWorkStatus}
+            standaloneDeviceId={state.standaloneDeviceId}
+            standaloneWorkspacePath={state.standaloneWorkspacePath}
+            preferredDeviceId={
+              state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+            }
             activeItem="plugins"
-            onClose={() => setDrawerOpen(false)}
+            collapsed={sidebarCollapsed}
             onNewChat={handleNewChat}
             onStartStandaloneChat={handleStartStandaloneChat}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSearch={() => setSearchOpen(true)}
             onSelectProject={handleSelectProject}
+            onStartNewProjectChat={handleStartNewProjectChat}
             onOpenRuntimeTask={handleOpenRuntimeTask}
-            onCreateProject={createProject}
-            onCreateGitWorkspaceProject={createGitWorkspaceProject}
-            onPrepareDeviceWorkspace={prepareDeviceWorkspace}
-            onDeleteDeviceWorkspace={deleteDeviceWorkspace}
-            onListGitRepositories={listGitRepositories}
-            onListGitBranches={listGitBranches}
+            onRenameRuntimeTask={renameRuntimeTask}
+            onArchiveRuntimeTask={archiveRuntimeTask}
+            onArchiveProjectConversations={archiveProjectConversations}
+            onArchiveProjectsConversations={archiveProjectsConversations}
+            onArchiveChatConversations={archiveChatConversations}
+            onOpenStandaloneWorkspace={openStandaloneWorkspace}
+            onSelectStandaloneDevice={selectStandaloneDevice}
+            onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
+            onOpenPlugins={handleOpenPlugins}
+            onRefreshDevices={refreshDevices}
             onUpdateProjectName={updateProjectName}
             onRemoveProject={removeProject}
             onGetDeviceHomeDirectory={getDeviceHomeDirectory}
-            onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
             onListDeviceDirectories={listDeviceDirectories}
             onCreateDeviceDirectory={createDeviceDirectory}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onLogout={logout}
           />
-        </>
-      )}
-      <Suspense
-        fallback={
-          <PluginsWorkspaceRouteFallback
+        )}
+        {isMobile && (
+          <>
+            <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
+              <button
+                type="button"
+                data-testid="open-mobile-drawer-button"
+                onClick={() => setDrawerOpen(true)}
+                className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-lg bg-surface text-text-primary transition-colors hover:bg-muted"
+                aria-label={t('workbench.open_menu', '打开菜单')}
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+            </header>
+            <MobileDrawer
+              open={drawerOpen}
+              user={state.user}
+              devices={state.devices}
+              projects={state.projects}
+              runtimeWork={state.runtimeWork}
+              currentProjectId={state.currentProject?.id}
+              currentRuntimeTask={state.currentRuntimeTask}
+              activeItem="plugins"
+              onClose={() => setDrawerOpen(false)}
+              onNewChat={handleNewChat}
+              onStartStandaloneChat={handleStartStandaloneChat}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onSelectProject={handleSelectProject}
+              onOpenRuntimeTask={handleOpenRuntimeTask}
+              onCreateProject={createProject}
+              onCreateGitWorkspaceProject={createGitWorkspaceProject}
+              onPrepareDeviceWorkspace={prepareDeviceWorkspace}
+              onDeleteDeviceWorkspace={deleteDeviceWorkspace}
+              onListGitRepositories={listGitRepositories}
+              onListGitBranches={listGitBranches}
+              onUpdateProjectName={updateProjectName}
+              onRemoveProject={removeProject}
+              onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+              onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
+              onListDeviceDirectories={listDeviceDirectories}
+              onCreateDeviceDirectory={createDeviceDirectory}
+            />
+          </>
+        )}
+        <Suspense
+          fallback={
+            <PluginsWorkspaceRouteFallback
+              sidebarCollapsed={sidebarCollapsed && !isMobile}
+              topBarLeftActions={
+                !isMobile && sidebarCollapsed && !isTauri ? (
+                  <DesktopWindowControls
+                    sidebarCollapsed
+                    onToggleSidebar={() => setSidebarCollapsed(false)}
+                    onNewChat={handleNewChat}
+                  />
+                ) : !isMobile && !isTauri ? (
+                  <DesktopWindowControls
+                    sidebarCollapsed={false}
+                    onToggleSidebar={() => setSidebarCollapsed(true)}
+                  />
+                ) : undefined
+              }
+            />
+          }
+        >
+          <PluginsWorkspace
+            cloudMarketplaceAvailable={cloudConnection.isConnected}
             sidebarCollapsed={sidebarCollapsed && !isMobile}
             topBarLeftActions={
               !isMobile && sidebarCollapsed && !isTauri ? (
@@ -264,33 +302,14 @@ export function PluginsPage() {
               ) : undefined
             }
           />
-        }
-      >
-        <PluginsWorkspace
-          cloudMarketplaceAvailable={cloudConnection.isConnected}
-          sidebarCollapsed={sidebarCollapsed && !isMobile}
-          topBarLeftActions={
-            !isMobile && sidebarCollapsed && !isTauri ? (
-              <DesktopWindowControls
-                sidebarCollapsed
-                onToggleSidebar={() => setSidebarCollapsed(false)}
-                onNewChat={handleNewChat}
-              />
-            ) : !isMobile && !isTauri ? (
-              <DesktopWindowControls
-                sidebarCollapsed={false}
-                onToggleSidebar={() => setSidebarCollapsed(true)}
-              />
-            ) : undefined
-          }
+        </Suspense>
+        <WorkbenchSearchDialog
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          onSearchRuntimeWork={searchRuntimeWork}
+          onOpenRuntimeTask={handleOpenRuntimeTask}
         />
-      </Suspense>
-      <WorkbenchSearchDialog
-        open={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        onSearchRuntimeWork={searchRuntimeWork}
-        onOpenRuntimeTask={handleOpenRuntimeTask}
-      />
+      </div>
     </div>
   )
 }
