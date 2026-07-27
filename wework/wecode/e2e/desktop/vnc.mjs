@@ -272,6 +272,28 @@ class VncDesktopScenario {
     throw new Error('The system browser did not connect to the cloud desktop viewer')
   }
 
+  async waitForEmbeddedBrowserDesktopConnection(control) {
+    await control.command('waitFor', '[data-testid="right-workspace-browser-tab"]', {
+      timeoutMs: this.uiTimeoutMs,
+    })
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < this.uiTimeoutMs) {
+      if (this.vncProtocolError) throw new Error(this.vncProtocolError)
+      if (this.vncRfbConnections >= 2) {
+        const pageState = JSON.parse(
+          await control.command('evalEmbeddedBrowserJson', 'workspace-browser', {
+            timeoutMs: this.uiTimeoutMs,
+            value:
+              '({ connected: document.documentElement.dataset.vncConnected === "true", hasTauriInternals: Boolean(window.__TAURI_INTERNALS__), url: window.location.href })',
+          })
+        )
+        if (pageState.connected) return pageState
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
+    throw new Error('The embedded browser did not connect to the cloud desktop viewer')
+  }
+
   async verify(control) {
     await control.command('click', '[data-testid="settings-button"]')
     await control.command('click', '[data-testid="settings-menu-button"]')
@@ -287,9 +309,14 @@ class VncDesktopScenario {
     await this.waitForSystemBrowserDesktopConnection()
     const browserSnapshot = await waitForSnapshot(
       control,
-      snapshot => !snapshot.testIds.includes('wework-settings-page'),
-      'Opening the cloud desktop in the system browser did not leave settings',
+      snapshot => snapshot.testIds.includes('wework-settings-page'),
+      'Opening the cloud desktop in the system browser unexpectedly left settings',
       this.uiTimeoutMs
+    )
+    assert.equal(
+      browserSnapshot.testIds.includes('wework-settings-page'),
+      true,
+      'Opening the cloud desktop in the system browser should keep settings open'
     )
     assert.equal(
       browserSnapshot.testIds.includes('right-workspace-browser-tab'),
@@ -312,6 +339,46 @@ class VncDesktopScenario {
       1,
       'The system browser did not complete the noVNC RFB handshake'
     )
+
+    await control.command('click', '[data-testid="settings-back-button"]')
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('wework-settings-page'),
+      'The explicit settings back action did not return to the workspace',
+      this.uiTimeoutMs
+    )
+
+    await control.command('openEmbeddedCloudDesktop', '', {
+      value: JSON.stringify({
+        apiBaseUrl: `${control.url}/api`,
+        deviceId: this.deviceId,
+        socketBaseUrl: control.url,
+        token: CLOUD_DEVICE_TOKEN,
+      }),
+    })
+    const embeddedPageState = await this.waitForEmbeddedBrowserDesktopConnection(control)
+    assert.match(
+      embeddedPageState.url,
+      /^http:\/\/127\.0\.0\.1:\d+\/vnc\.html\?/,
+      'The embedded browser did not host the loopback VNC viewer'
+    )
+    assert.equal(
+      embeddedPageState.hasTauriInternals,
+      true,
+      'The VNC regression requires a Tauri-created remote child WebView'
+    )
+    assert.equal(
+      this.vncConfigRequests,
+      2,
+      'The two desktop targets did not each request one VNC configuration'
+    )
+    assert.equal(this.vncProtocolError, null, 'The embedded noVNC RFB handshake failed')
+    assert.equal(
+      this.vncRfbConnections,
+      2,
+      'The embedded browser did not complete the noVNC RFB handshake'
+    )
+    await control.command('closeEmbeddedBrowser', 'workspace-browser')
   }
 }
 

@@ -176,11 +176,6 @@
         }
 
         async function getSessionConfig() {
-          const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
-          if (typeof invoke === 'function') {
-            return invoke('get_vnc_session_config', { sessionId: sessionId })
-          }
-
           const response = await fetch('/session/' + encodeURIComponent(sessionId), {
             cache: 'no-store',
             credentials: 'omit',

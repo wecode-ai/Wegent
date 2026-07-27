@@ -1,6 +1,6 @@
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { getVncConfig } from './api'
-import { buildExternalVncPageUrl, buildVncPageUrl, prepareVncSession } from './session'
+import { buildVncPageUrl, prepareVncSession } from './session'
 import type { OpenCloudDesktopOptions } from './types'
 import { openSystemBrowserIfCurrent } from './systemBrowser'
 
@@ -27,19 +27,19 @@ export async function openCloudDesktop({
   })
   if (!isCurrent()) return false
 
+  const pageUrl = await buildVncPageUrl({
+    sandboxId: config.sandbox_id,
+    sessionId,
+  })
+  if (!isCurrent()) return false
+
   if (target === 'system') {
-    const pageUrl = await buildExternalVncPageUrl({
-      sandboxId: config.sandbox_id,
-      sessionId,
-    })
-    if (!isCurrent()) return false
     const opened = await openSystemBrowserIfCurrent(pageUrl, isCurrent)
     if (!isCurrent()) return false
     if (!opened) throw new Error('VNC external bridge URL is invalid')
     return true
   }
 
-  const pageUrl = buildVncPageUrl({ sandboxId: config.sandbox_id, sessionId })
   if (!requestEmbeddedBrowserOpen(pageUrl)) {
     throw new Error('Built-in browser is unavailable')
   }

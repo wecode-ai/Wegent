@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core'
-import { getRuntimeConfig, joinAppPath } from '@/config/runtime'
 
 interface PrepareVncSessionOptions {
   deviceId: string
@@ -48,16 +47,7 @@ export async function prepareVncSession({
   return sessionId
 }
 
-export function buildVncPageUrl({ sandboxId, sessionId }: BuildVncPageUrlOptions): string {
-  const { appBasePath } = getRuntimeConfig()
-  const pageUrl = new URL(joinAppPath(appBasePath, '/vnc.html'), window.location.href)
-
-  pageUrl.searchParams.set('sessionId', sessionId)
-  pageUrl.searchParams.set('sandboxId', sandboxId)
-  return pageUrl.toString()
-}
-
-export async function buildExternalVncPageUrl({
+export async function buildVncPageUrl({
   sandboxId,
   sessionId,
 }: BuildVncPageUrlOptions): Promise<string> {
@@ -80,13 +70,17 @@ export async function buildExternalVncPageUrl({
 
 export function isInternalVncPageUrl(value: string): boolean {
   try {
-    const { appBasePath } = getRuntimeConfig()
-    const expectedUrl = new URL(joinAppPath(appBasePath, '/vnc.html'), window.location.href)
     const url = new URL(value)
     return (
-      url.protocol === expectedUrl.protocol &&
-      url.host === expectedUrl.host &&
-      url.pathname === expectedUrl.pathname
+      url.protocol === 'http:' &&
+      url.hostname === '127.0.0.1' &&
+      Boolean(url.port) &&
+      !url.username &&
+      !url.password &&
+      url.pathname === '/vnc.html' &&
+      Boolean(url.searchParams.get('sessionId')) &&
+      Boolean(url.searchParams.get('sandboxId')) &&
+      !url.hash
     )
   } catch {
     return false

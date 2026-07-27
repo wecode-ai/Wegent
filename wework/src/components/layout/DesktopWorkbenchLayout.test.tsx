@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode, useMemo } from 'react'
+import { StrictMode, useEffect, useMemo } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
@@ -58,9 +58,13 @@ const cloudDesktopExtensionMock = vi.hoisted(() => {
         action: ((options?: { notifyOpened?: boolean }) => Promise<void>) | null
       ) => void
     }) => {
-      onLaunchActionChange?.(async options => {
-        await launch(options)
-      })
+      useEffect(() => {
+        const launchAction = async (options?: { notifyOpened?: boolean }) => {
+          await launch(options)
+        }
+        onLaunchActionChange?.(launchAction)
+        return () => onLaunchActionChange?.(null)
+      }, [onLaunchActionChange])
       return null
     },
     isInternalPageUrl: vi.fn(() => false),

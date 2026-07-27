@@ -2,12 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import {
-  buildExternalVncPageUrl,
-  buildVncPageUrl,
-  isInternalVncPageUrl,
-  prepareVncSession,
-} from './session'
+import { buildVncPageUrl, isInternalVncPageUrl, prepareVncSession } from './session'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 const vncHtml = readFileSync(resolve(process.cwd(), 'wecode/features/vnc/assets/vnc.html'), 'utf8')
@@ -64,12 +59,31 @@ function runVncPage(invoke?: ReturnType<typeof vi.fn>) {
   window.eval(vncInlineScript!)
 }
 
+function stubSessionFetch(
+  config = {
+    wsUrl: 'wss://cloud.example.com/vnc-proxy/device-1',
+    token: 'cloud-token',
+  }
+) {
+  const fetchMock = vi.fn().mockResolvedValue({
+    json: () => Promise.resolve(config),
+    ok: true,
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 
 describe('buildVncPageUrl', () => {
   beforeEach(() => {
     invokeMock.mockReset()
-    invokeMock.mockResolvedValue(undefined)
+    invokeMock.mockImplementation(command => {
+      if (command === 'get_vnc_external_bridge_url') {
+        return Promise.resolve('http://127.0.0.1:43123')
+      }
+      return Promise.resolve(undefined)
+    })
   })
 
   afterEach(() => {
@@ -86,17 +100,12 @@ describe('buildVncPageUrl', () => {
   })
 
   test('keeps the VNC page local without putting credentials in its URL', async () => {
-    window.__WEWORK_RUNTIME_CONFIG__ = {
-      ...window.__WEWORK_RUNTIME_CONFIG__,
-      appBasePath: '/wework',
-    }
-
     const sessionId = await prepareVncSession({
       deviceId: 'device/1',
       socketBaseUrl: 'https://cloud.example.com/wework/',
       token: 'cloud token',
     })
-    const url = buildVncPageUrl({
+    const url = await buildVncPageUrl({
       sandboxId: 'sandbox-1',
       sessionId,
     })
@@ -107,8 +116,8 @@ describe('buildVncPageUrl', () => {
       token: 'cloud token',
       wsUrl: 'wss://cloud.example.com/wework/vnc-proxy/device%2F1',
     })
-    expect(parsedUrl.origin).toBe(window.location.origin)
-    expect(parsedUrl.pathname).toBe('/wework/vnc.html')
+    expect(parsedUrl.origin).toBe('http://127.0.0.1:43123')
+    expect(parsedUrl.pathname).toBe('/vnc.html')
     expect(parsedUrl.searchParams.get('sandboxId')).toBe('sandbox-1')
     expect(parsedUrl.searchParams.get('sessionId')).toBe(sessionId)
     expect(parsedUrl.toString()).not.toContain('cloud%20token')
@@ -117,15 +126,8 @@ describe('buildVncPageUrl', () => {
     expect(isInternalVncPageUrl('https://cloud.example.com/wework/vnc.html')).toBe(false)
   })
 
-  test('builds a credential-free loopback URL for the system browser', async () => {
-    invokeMock.mockImplementation(command => {
-      if (command === 'get_vnc_external_bridge_url') {
-        return Promise.resolve('http://127.0.0.1:43123')
-      }
-      return Promise.resolve(undefined)
-    })
-
-    const url = await buildExternalVncPageUrl({
+  test('builds one credential-free loopback URL for either browser target', async () => {
+    const url = await buildVncPageUrl({
       sandboxId: 'sandbox/1',
       sessionId: '123e4567-e89b-42d3-a456-426614174000',
     })
@@ -138,6 +140,17 @@ describe('buildVncPageUrl', () => {
     expect(parsedUrl.searchParams.get('sandboxId')).toBe('sandbox/1')
     expect(parsedUrl.searchParams.has('token')).toBe(false)
     expect(parsedUrl.searchParams.has('wsUrl')).toBe(false)
+  })
+
+  test.each([
+    'http://localhost:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1',
+    'http://127.0.0.1/vnc.html?sessionId=session-1&sandboxId=sandbox-1',
+    'http://127.0.0.1:43123/other.html?sessionId=session-1&sandboxId=sandbox-1',
+    'http://127.0.0.1:43123/vnc.html?sandboxId=sandbox-1',
+    'http://127.0.0.1:43123/vnc.html?sessionId=session-1',
+    'http://127.0.0.1:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1#fragment',
+  ])('does not classify a non-viewer loopback page as the internal desktop: %s', value => {
+    expect(isInternalVncPageUrl(value)).toBe(false)
   })
 
   test.each([
@@ -173,7 +186,8 @@ describe('buildVncPageUrl', () => {
   test('loads noVNC relative to the VNC page base path', () => {
     expect(vncHtml).toContain('<script src="./novnc/rfb.min.js"></script>')
     expect(vncHtml).not.toContain('<script src="/novnc/rfb.min.js"></script>')
-    expect(vncHtml).toContain("invoke('get_vnc_session_config'")
+    expect(vncHtml).toContain("fetch('/session/' + encodeURIComponent(sessionId)")
+    expect(vncHtml).not.toContain('get_vnc_session_config')
     expect(vncHtml).not.toContain("params.get('wsUrl')")
     expect(vncHtml).toContain("retryButton.addEventListener('click', connect)")
     expect(vncHtml).toContain('scheduleReconnect()')
@@ -182,12 +196,9 @@ describe('buildVncPageUrl', () => {
     expect(vncHtml).not.toContain('window.location.reload()')
   })
 
-  test('reconnects with the in-memory WebSocket URL without rereading the IPC handoff', async () => {
-    const pageInvoke = vi.fn().mockResolvedValue({
-      wsUrl: 'wss://cloud.example.com/vnc-proxy/device-1',
-      token: 'cloud-token',
-    })
-    runVncPage(pageInvoke)
+  test('reconnects with the in-memory WebSocket URL without rereading the HTTP handoff', async () => {
+    const fetchMock = stubSessionFetch()
+    runVncPage()
 
     await vi.waitFor(() => expect(RfbMock.instances).toHaveLength(1))
     const firstRfb = RfbMock.instances[0]
@@ -205,18 +216,15 @@ describe('buildVncPageUrl', () => {
     await vi.waitFor(() => expect(RfbMock.instances).toHaveLength(2))
     expect(firstRfb.disconnect).toHaveBeenCalledTimes(1)
     expect(RfbMock.instances[1].url).toBe(firstRfb.url)
-    expect(pageInvoke).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   test('automatically reconnects after a transient upstream disconnect', async () => {
     vi.useFakeTimers()
-    const pageInvoke = vi.fn().mockResolvedValue({
-      wsUrl: 'wss://cloud.example.com/vnc-proxy/device-1',
-      token: 'cloud-token',
-    })
+    const fetchMock = stubSessionFetch()
 
     try {
-      runVncPage(pageInvoke)
+      runVncPage()
       await vi.waitFor(() => expect(RfbMock.instances).toHaveLength(1))
 
       RfbMock.instances[0].emit('disconnect', { clean: false })
@@ -225,26 +233,20 @@ describe('buildVncPageUrl', () => {
       await vi.advanceTimersByTimeAsync(1000)
       expect(RfbMock.instances).toHaveLength(2)
       expect(RfbMock.instances[1].url).toBe(RfbMock.instances[0].url)
-      expect(pageInvoke).toHaveBeenCalledTimes(1)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  test('loads the session from the loopback bridge outside Tauri', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      json: () =>
-        Promise.resolve({
-          wsUrl: 'wss://cloud.example.com/vnc-proxy/device-1',
-          token: 'cloud-token',
-        }),
-      ok: true,
-    })
-    vi.stubGlobal('fetch', fetchMock)
+  test('loads the session from the loopback bridge when Tauri internals are present', async () => {
+    const fetchMock = stubSessionFetch()
+    const pageInvoke = vi.fn().mockRejectedValue('Remote IPC is not allowed')
 
-    runVncPage()
+    runVncPage(pageInvoke)
 
     await vi.waitFor(() => expect(RfbMock.instances).toHaveLength(1))
+    expect(pageInvoke).not.toHaveBeenCalled()
     expect(fetchMock).toHaveBeenCalledWith('/session/123e4567-e89b-42d3-a456-426614174000', {
       cache: 'no-store',
       credentials: 'omit',
@@ -255,8 +257,12 @@ describe('buildVncPageUrl', () => {
   })
 
   test('explains that an expired reload must be reopened without offering a broken retry', async () => {
-    const pageInvoke = vi.fn().mockRejectedValue('VNC session is missing or expired')
-    runVncPage(pageInvoke)
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve({ error: 'VNC session is missing or expired' }),
+      ok: false,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    runVncPage()
 
     await vi.waitFor(() => {
       expect(document.querySelector('.status-text')).toHaveTextContent(
