@@ -75,6 +75,8 @@ Click the model selector to override the agent's default model:
 - **Select model**: Choose from the dropdown list
 - **Force override**: When enabled, uses your selected model even if the agent has a configured model
 
+When you switch to a different model in an existing Wework conversation, Wework asks for confirmation first. Different models may interpret existing context differently and may vary in tool support, response style, and task continuity. After confirmation, the new model is used for the next message; a response already in progress continues with the previous model. No warning is shown when selecting a model for a new conversation or reselecting the model that is already chosen.
+
 #### Knowledge Base Context
 
 Click the context button to add knowledge bases:

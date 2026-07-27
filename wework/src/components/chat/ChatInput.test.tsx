@@ -482,6 +482,136 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-button')).not.toHaveTextContent('Next')
   })
 
+  test('warns before switching away from the model that owns the conversation context', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const targetModel: UnifiedModel = {
+      name: 'local-model:second',
+      type: 'runtime',
+      displayName: 'Second Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const setSelectedModel = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [activeModel, targetModel],
+          activeModel,
+          selectedModel: activeModel,
+          setSelectedModel,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-local-model:second'))
+
+    expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+      'Switching to Second Model may change how the existing context is understood.'
+    )
+    expect(setSelectedModel).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
+
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+    expect(setSelectedModel).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-local-model:second'))
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+  })
+
+  test('does not warn when selecting a model before a conversation has an active model', async () => {
+    const targetModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const setSelectedModel = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [targetModel],
+          selectedModel: null,
+          setSelectedModel,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-local-model:first'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+  })
+
+  test('does not warn when reselecting the model already chosen for the next turn', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'local-model:second',
+      type: 'runtime',
+      displayName: 'Second Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const setSelectedModel = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [activeModel, selectedModel],
+          activeModel,
+          selectedModel,
+          setSelectedModel,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-local-model:second'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(selectedModel)
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {
