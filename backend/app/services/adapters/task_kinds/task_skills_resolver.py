@@ -422,6 +422,9 @@ def _build_skill_binding_context(
         mode=_derive_task_mode(task_crd),
         agent_id=team.id if team else None,
         project_id=getattr(task, "project_id", None),
+        group_namespace=(
+            team.namespace if team and team.namespace != "default" else None
+        ),
     )
 
 

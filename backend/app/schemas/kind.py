@@ -469,6 +469,10 @@ class TeamSpec(QuickPhraseMixin):
         "If not set (None), it will be inferred from the underlying shell types. "
         "Set to True to always require workspace, False to never require workspace.",
     )
+    capability: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Capability Center publication metadata.",
+    )
 
 
 class TeamStatus(Status):
@@ -839,6 +843,10 @@ class SkillSpec(BaseModel):
         description="Source information for the skill. "
         "Tracks where the skill was imported from (upload or git repository). "
         "Used to enable updating skills from their original Git source.",
+    )
+    capability: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Capability Center publication metadata.",
     )
 
     @field_validator("version", mode="before")

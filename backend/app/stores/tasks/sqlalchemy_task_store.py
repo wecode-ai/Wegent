@@ -15,6 +15,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.stores.tasks.interfaces import WorkspaceRefLookup
 
@@ -753,6 +754,31 @@ class SqlAlchemyTaskStore:
             query = query.limit(limit)
         return query.all()
 
+    def list_active_tasks_referencing_team(
+        self,
+        db: Session,
+        *,
+        team_name: str,
+        team_namespace: str,
+    ) -> list[TaskResource]:
+        team_name_value = func.json_extract(TaskResource.json, "$.spec.teamRef.name")
+        team_namespace_value = func.json_extract(
+            TaskResource.json, "$.spec.teamRef.namespace"
+        )
+        if db.get_bind().dialect.name == "mysql":
+            team_name_value = func.json_unquote(team_name_value)
+            team_namespace_value = func.json_unquote(team_namespace_value)
+        return (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                team_name_value == team_name,
+                team_namespace_value == team_namespace,
+            )
+            .all()
+        )
+
     def list_recent_owner_only_tasks(
         self,
         db: Session,
@@ -780,6 +806,54 @@ class SqlAlchemyTaskStore:
             .limit(limit)
             .all()
         )
+
+    def list_recent_owner_only_used_tasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+    ) -> list[TaskResource]:
+        """Return owner-only Tasks ordered by their latest submitted user message."""
+        approved_member_exists = exists().where(
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == TaskResource.id,
+            ResourceMember.status == MemberStatus.APPROVED,
+        )
+        activity_rows = (
+            db.query(
+                Subtask.task_id, func.max(Subtask.created_at).label("last_used_at")
+            )
+            .join(TaskResource, TaskResource.id == Subtask.task_id)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.user_id == user_id,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                TaskResource.is_group_chat.is_(False),
+                ~approved_member_exists,
+                Subtask.user_id == user_id,
+                Subtask.role == SubtaskRole.USER,
+                Subtask.status != SubtaskStatus.DELETE,
+            )
+            .group_by(Subtask.task_id)
+            .order_by(func.max(Subtask.created_at).desc(), Subtask.task_id.desc())
+            .limit(limit)
+            .all()
+        )
+        task_ids = [int(row.task_id) for row in activity_rows]
+        if not task_ids:
+            return []
+        tasks_by_id = {
+            int(task.id): task
+            for task in db.query(TaskResource)
+            .filter(TaskResource.id.in_(task_ids))
+            .all()
+        }
+        return [
+            tasks_by_id[int(row.task_id)]
+            for row in activity_rows
+            if int(row.task_id) in tasks_by_id
+        ]
 
     def list_owned_tasks_by_states(
         self,

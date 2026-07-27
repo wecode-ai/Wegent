@@ -5,15 +5,23 @@
 'use client'
 import '@/features/common/scrollbar.css'
 
-import React, { useEffect, useState, useCallback, type ReactNode } from 'react'
+import React, { useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
+import {
+  ResourceCardIcon,
+  getResourceCardActionsClassName,
+  getResourceCardBodyClassName,
+  getResourceCardClassName,
+  getResourceGridClassName,
+} from '@/components/common/resourceCardLayout'
 import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import ShellEditDialog from './ShellEditDialog'
 import {
   AlertDialog,
@@ -31,6 +39,7 @@ import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 import {
   buildGroupDisplayNameMap,
+  filterResourceLibraryItemsByGroups,
   sortResourceLibraryItems,
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
@@ -39,6 +48,7 @@ import {
   hasResourceCreateTargets,
   ResourceCreateButton,
   type ResourceCreateTarget,
+  type ResourceCreateRequest,
 } from '@/features/resource-library/components/ResourceCreateButton'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
 
@@ -51,7 +61,13 @@ interface ShellListProps {
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  groupFilter?: string[]
   sortMode?: ResourceLibrarySortMode
+  createRequest?: ResourceCreateRequest
+  onCreateRequestClose?: () => void
+  creationOnly?: boolean
+  hideCreateActions?: boolean
+  compact?: boolean
 }
 
 /**
@@ -71,7 +87,13 @@ const ShellList: React.FC<ShellListProps> = ({
   sortControls,
   sourceFilter = 'all',
   groups = [],
+  groupFilter,
   sortMode = 'default',
+  createRequest,
+  onCreateRequestClose,
+  creationOnly = false,
+  hideCreateActions = false,
+  compact = false,
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -82,6 +104,8 @@ const ShellList: React.FC<ShellListProps> = ({
   const [deleteConfirmShell, setDeleteConfirmShell] = useState<UnifiedShell | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
+  const handledCreateRequestId = useRef<number | null>(null)
+  const externalCreateRequestActiveRef = useRef(false)
 
   const fetchShells = useCallback(async () => {
     setLoading(true)
@@ -105,17 +129,17 @@ const ShellList: React.FC<ShellListProps> = ({
 
   // Categorize shells by type
   const sourceFilteredShells = React.useMemo(() => {
+    let filteredShells = shells
     if (sourceFilter === 'personal') {
-      return shells.filter(shell => shell.type === 'user')
+      filteredShells = shells.filter(shell => shell.type === 'user')
+    } else if (sourceFilter === 'group') {
+      filteredShells = shells.filter(shell => shell.type === 'group')
+    } else if (sourceFilter === 'system') {
+      filteredShells = shells.filter(shell => shell.type === 'public')
     }
-    if (sourceFilter === 'group') {
-      return shells.filter(shell => shell.type === 'group')
-    }
-    if (sourceFilter === 'system') {
-      return shells.filter(shell => shell.type === 'public')
-    }
-    return shells
-  }, [shells, sourceFilter])
+
+    return filterResourceLibraryItemsByGroups(filteredShells, groupFilter, shell => shell.namespace)
+  }, [shells, sourceFilter, groupFilter])
 
   const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
@@ -184,10 +208,13 @@ const ShellList: React.FC<ShellListProps> = ({
   }
 
   const handleEditClose = () => {
+    const shouldNotifyCreateRequestClose = externalCreateRequestActiveRef.current
+    externalCreateRequestActiveRef.current = false
     setEditingShell(null)
     setDialogOpen(false)
     setCreateTarget({ scope: 'personal' })
     fetchShells()
+    if (shouldNotifyCreateRequestClose) onCreateRequestClose?.()
   }
 
   const handleCreate = (target: ResourceCreateTarget) => {
@@ -195,6 +222,13 @@ const ShellList: React.FC<ShellListProps> = ({
     setEditingShell(null)
     setDialogOpen(true)
   }
+
+  useEffect(() => {
+    if (!createRequest || handledCreateRequestId.current === createRequest.id) return
+    handledCreateRequestId.current = createRequest.id
+    externalCreateRequestActiveRef.current = true
+    handleCreate(createRequest.target)
+  }, [createRequest])
 
   const getExecutionTypeLabel = (executionType?: string | null) => {
     if (executionType === 'local_engine') return 'Local Engine'
@@ -214,23 +248,29 @@ const ShellList: React.FC<ShellListProps> = ({
     return true
   }
 
+  const shouldShowShellType = (shell: UnifiedShell) =>
+    shell.shellType.toLocaleLowerCase() !== (shell.displayName || shell.name).toLocaleLowerCase()
+
   const canDeleteShell = (shell: UnifiedShell) => {
     if (shell.type === 'public') return false
     if (shell.type === 'group') return canDeleteGroupResource(shell.namespace || 'default')
     return true
   }
 
-  const createAction = hasResourceCreateTargets({ scope, groupName, sourceFilter, groups }) ? (
-    <ResourceCreateButton
-      label={t('common:shells.create')}
-      scope={scope}
-      groupName={groupName}
-      sourceFilter={sourceFilter}
-      groups={groups}
-      onCreate={handleCreate}
-      data-testid="create-shell-button"
-    />
-  ) : null
+  const hasShellActions = (shell: UnifiedShell) => canEditShell(shell) || canDeleteShell(shell)
+
+  const createAction =
+    !hideCreateActions && hasResourceCreateTargets({ scope, groupName, sourceFilter, groups }) ? (
+      <ResourceCreateButton
+        label={t('common:shells.create')}
+        scope={scope}
+        groupName={groupName}
+        sourceFilter={sourceFilter}
+        groups={groups}
+        onCreate={handleCreate}
+        data-testid="create-shell-button"
+      />
+    ) : null
 
   const filters =
     sourceControls || sortControls ? (
@@ -242,121 +282,149 @@ const ShellList: React.FC<ShellListProps> = ({
 
   return (
     <>
-      <ResourceManagementLayout
-        title={t('common:shells.title')}
-        description={t('common:shells.description')}
-        actions={createAction}
-        filters={filters}
-      >
-        {loading && (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
-          </div>
-        )}
+      {!creationOnly && (
+        <ResourceManagementLayout
+          title={t('common:shells.title')}
+          description={t('common:shells.description')}
+          actions={createAction}
+          filters={filters}
+          hideHeader={compact}
+        >
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
+            </div>
+          )}
 
-        {!loading && totalShells === 0 && (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <CommandLineIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('common:shells.no_shells')}</p>
-            <p className="text-sm text-text-muted mt-1">{t('common:shells.no_shells_hint')}</p>
-          </div>
-        )}
+          {!loading && totalShells === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <CommandLineIcon className="w-12 h-12 text-text-muted mb-4" />
+              <p className="text-text-muted">{t('common:shells.no_shells')}</p>
+              <p className="text-sm text-text-muted mt-1">
+                {t(
+                  hideCreateActions
+                    ? 'resource-library:empty.create_shell'
+                    : 'common:shells.no_shells_hint'
+                )}
+              </p>
+            </div>
+          )}
 
-        {!loading && totalShells > 0 && (
-          <div className="space-y-3" data-testid="shell-list-items">
-            {sortedShells.map(shell => (
-              <Card
-                key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
-                className="overflow-hidden bg-base p-3 transition-colors hover:bg-hover sm:p-4"
-              >
-                <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <ResourceListItem
-                    name={shell.name}
-                    displayName={shell.displayName || undefined}
-                    showId={true}
-                    isPublic={shell.type === 'public'}
-                    publicLabel={t('common:shells.public')}
-                    icon={
-                      shell.type === 'public' ? (
-                        <GlobeAltIcon className="w-5 h-5 text-primary" />
-                      ) : (
-                        <CommandLineIcon className="w-5 h-5 text-primary" />
-                      )
-                    }
-                    tags={[
-                      {
-                        key: 'source',
-                        label: getSourceLabel(shell),
-                        variant:
-                          shell.type === 'public'
-                            ? 'info'
-                            : shell.type === 'group'
-                              ? 'success'
-                              : 'default',
-                      },
-                      ...(shell.type === 'group' && shell.namespace
-                        ? [
-                            {
-                              key: 'namespace',
-                              label: shell.namespace,
-                              variant: 'info' as const,
-                            },
-                          ]
-                        : []),
-                      {
-                        key: 'shell-type',
-                        label: shell.shellType,
-                        variant: 'default',
-                        className: 'capitalize',
-                      },
-                      {
-                        key: 'execution-type',
-                        label: getExecutionTypeLabel(shell.executionType),
-                        variant: 'info',
-                        className: 'hidden sm:inline-flex text-xs',
-                      },
-                      ...(shell.baseImage
-                        ? [
-                            {
-                              key: 'base-image',
-                              label: shell.baseImage,
-                              variant: 'default' as const,
-                              className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
-                            },
-                          ]
-                        : []),
-                    ]}
-                  />
-                  <div className="flex flex-shrink-0 items-center gap-1 self-end sm:ml-3 sm:self-auto">
-                    {canEditShell(shell) && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleEdit(shell)}
-                        title={t('common:shells.edit')}
+          {!loading && totalShells > 0 && (
+            <div className={getResourceGridClassName(compact)} data-testid="shell-list-items">
+              {sortedShells.map(shell => (
+                <Card
+                  key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
+                  className={getResourceCardClassName(compact)}
+                  data-testid={`shell-card-${shell.type}-${shell.name}`}
+                >
+                  <div className={getResourceCardBodyClassName(compact)}>
+                    <ResourceListItem
+                      cardLayout={compact}
+                      name={shell.name}
+                      displayName={shell.displayName || undefined}
+                      showId={true}
+                      isPublic={shell.type === 'public'}
+                      publicLabel={t('common:shells.public')}
+                      icon={
+                        <ResourceCardIcon compact={compact}>
+                          {shell.type === 'public' ? (
+                            <GlobeAltIcon className="w-5 h-5 text-primary" />
+                          ) : (
+                            <CommandLineIcon className="w-5 h-5 text-primary" />
+                          )}
+                        </ResourceCardIcon>
+                      }
+                      tags={[
+                        ...(shell.type !== 'public'
+                          ? [
+                              {
+                                key: 'source',
+                                label: getSourceLabel(shell),
+                                variant:
+                                  shell.type === 'group'
+                                    ? ('success' as const)
+                                    : ('default' as const),
+                              },
+                            ]
+                          : []),
+                        ...(shell.type === 'group' && shell.namespace
+                          ? [
+                              {
+                                key: 'namespace',
+                                label: shell.namespace,
+                                variant: 'info' as const,
+                              },
+                            ]
+                          : []),
+                        ...(shouldShowShellType(shell)
+                          ? [
+                              {
+                                key: 'shell-type',
+                                label: shell.shellType,
+                                variant: 'default' as const,
+                                className: 'capitalize',
+                              },
+                            ]
+                          : []),
+                        {
+                          key: 'execution-type',
+                          label: getExecutionTypeLabel(shell.executionType),
+                          variant: 'info',
+                          className: 'hidden sm:inline-flex text-xs',
+                        },
+                        ...(shell.baseImage
+                          ? [
+                              {
+                                key: 'base-image',
+                                label: shell.baseImage,
+                                variant: 'default' as const,
+                                className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
+                    {hasShellActions(shell) && (
+                      <div
+                        className={cn(
+                          'flex flex-shrink-0 items-center gap-1',
+                          getResourceCardActionsClassName(compact),
+                          compact && 'justify-end'
+                        )}
+                        data-testid={`shell-card-actions-${shell.type}-${shell.name}`}
                       >
-                        <PencilIcon className="w-4 h-4" />
-                      </Button>
-                    )}
-                    {canDeleteShell(shell) && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 hover:text-error"
-                        onClick={() => setDeleteConfirmShell(shell)}
-                        title={t('common:shells.delete')}
-                      >
-                        <TrashIcon className="w-4 h-4" />
-                      </Button>
+                        {canEditShell(shell) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleEdit(shell)}
+                            title={t('common:shells.edit')}
+                          >
+                            <PencilIcon className="w-4 h-4" />
+                          </Button>
+                        )}
+                        {canDeleteShell(shell) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 hover:text-error"
+                            onClick={() => setDeleteConfirmShell(shell)}
+                            title={t('common:shells.delete')}
+                          >
+                            <TrashIcon className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
-      </ResourceManagementLayout>
+                </Card>
+              ))}
+            </div>
+          )}
+        </ResourceManagementLayout>
+      )}
 
       {/* Shell Edit/Create Dialog */}
       <ShellEditDialog

@@ -8,11 +8,13 @@ import type { ReactNode } from 'react'
 
 import { botApis } from '@/apis/bots'
 import { modelApis } from '@/apis/models'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { shellApis } from '@/apis/shells'
 import { fetchUnifiedSkillsList } from '@/apis/skills'
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 import { createTeam, updateTeam } from '@/features/settings/services/teams'
 import type { Bot, Team } from '@/types/api'
+import type { Group } from '@/types/group'
 
 const mockRefreshTeams = jest.fn()
 
@@ -117,6 +119,17 @@ jest.mock('@/apis/bots', () => {
 jest.mock('@/apis/models', () => ({
   modelApis: {
     getUnifiedModels: jest.fn(),
+  },
+}))
+
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    archiveListing: jest.fn(),
+    bindAgent: jest.fn(),
+    createListing: jest.fn(),
+    getAgentBindings: jest.fn(),
+    syncAgentBindings: jest.fn(),
+    updatePublication: jest.fn(),
   },
 }))
 
@@ -250,6 +263,11 @@ const mockedUpdateTeam = updateTeam as jest.Mock
 const mockedGetUnifiedShells = shellApis.getUnifiedShells as jest.Mock
 const mockedGetUnifiedModels = modelApis.getUnifiedModels as jest.Mock
 const mockedFetchUnifiedSkillsList = fetchUnifiedSkillsList as jest.Mock
+const mockedArchiveListing = resourceLibraryApi.archiveListing as jest.Mock
+const mockedBindAgent = resourceLibraryApi.bindAgent as jest.Mock
+const mockedCreateListing = resourceLibraryApi.createListing as jest.Mock
+const mockedGetAgentBindings = resourceLibraryApi.getAgentBindings as jest.Mock
+const mockedSyncAgentBindings = resourceLibraryApi.syncAgentBindings as jest.Mock
 
 function makeBot(overrides: Partial<Bot> = {}): Bot {
   return {
@@ -319,6 +337,19 @@ describe('Simple TeamEditDialog', () => {
     mockedCreateTeam.mockResolvedValue(makeTeam({ id: 99, name: 'new-agent' }))
     mockedUpdateBot.mockResolvedValue(makeBot())
     mockedUpdateTeam.mockResolvedValue(makeTeam())
+    mockedBindAgent.mockResolvedValue({ id: 2 })
+    mockedGetAgentBindings.mockResolvedValue({
+      agent_id: 1,
+      personal: true,
+      group_names: [],
+    })
+    mockedSyncAgentBindings.mockResolvedValue({
+      agent_id: 1,
+      personal: true,
+      group_names: [],
+    })
+    mockedArchiveListing.mockResolvedValue({ id: 1 })
+    mockedCreateListing.mockResolvedValue({ id: 1 })
   })
 
   it('defaults new agents to simple mode with chat bind mode selected', async () => {
@@ -339,6 +370,62 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.getByRole('checkbox', { name: /code/i })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: /device/i })).not.toBeChecked()
     expect(screen.getByRole('radio', { name: /simple/i })).toBeChecked()
+    const scrollContent = screen.getByTestId('team-edit-scroll-content')
+    expect(scrollContent).toContainElement(screen.getByTestId('team-publish-scope-section'))
+    expect(scrollContent).not.toContainElement(screen.getByRole('button', { name: /save/i }))
+    expect(screen.getByTestId('capability-scope-personal')).toBeInTheDocument()
+    expect(screen.getByTestId('capability-scope-team')).toBeInTheDocument()
+    expect(screen.getByTestId('capability-scope-marketplace')).toBeInTheDocument()
+  })
+
+  it('loads personal and target-team skills when creating a team agent', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        scope="group"
+        groupName="engineering"
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({ scope: 'personal' })
+      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
+        scope: 'group',
+        groupName: 'engineering',
+      })
+    })
+  })
+
+  it('does not load team-only skills for a personal agent', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({ scope: 'personal' })
+    })
+    expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'all' })
+    )
+    expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'group' })
+    )
   })
 
   it('uses settings-scoped text for the simple requires repository hint', async () => {
@@ -434,6 +521,7 @@ describe('Simple TeamEditDialog', () => {
               is_public: false,
             },
           },
+          target_group_names: [],
           default_knowledge_base_refs: [{ id: 10, name: 'Product Docs' }],
         })
       )
@@ -446,6 +534,336 @@ describe('Simple TeamEditDialog', () => {
         })
       )
       expect(onSaved).toHaveBeenCalled()
+    })
+  })
+
+  it('lets an existing personal agent be distributed to a team', async () => {
+    const team = makeTeam()
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Developer',
+      } as Group,
+    ]
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-team'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({
+          target_group_names: ['engineering'],
+        })
+      )
+      expect(mockedUpdateTeam).toHaveBeenCalled()
+      expect(mockedSyncAgentBindings).toHaveBeenCalledWith(1, {
+        group_names: ['engineering'],
+      })
+    })
+  })
+
+  it('distributes an existing personal agent to multiple teams', async () => {
+    const team = makeTeam()
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Developer',
+      } as Group,
+      {
+        id: 8,
+        name: 'research',
+        display_name: 'Research',
+        my_role: 'Developer',
+      } as Group,
+    ]
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-team'))
+    fireEvent.click(screen.getByTestId('capability-scope-group-research'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({
+          target_group_names: ['engineering', 'research'],
+        })
+      )
+      expect(mockedSyncAgentBindings).toHaveBeenCalledWith(1, {
+        group_names: ['engineering', 'research'],
+      })
+    })
+  })
+
+  it('loads all existing team bindings when editing an agent', async () => {
+    const team = makeTeam({ namespace: 'default' })
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Maintainer',
+      } as Group,
+      {
+        id: 8,
+        name: 'research',
+        display_name: 'Research',
+        my_role: 'Developer',
+      } as Group,
+    ]
+    mockedGetAgentBindings.mockResolvedValueOnce({
+      agent_id: team.id,
+      personal: false,
+      group_names: ['engineering', 'research'],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot({ namespace: 'default' })]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('capability-scope-team')).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByTestId('capability-scope-group-engineering')).toBeChecked()
+      expect(screen.getByTestId('capability-scope-group-research')).toBeChecked()
+    })
+  })
+
+  it('preserves an existing personal skill when reopening a team-distributed agent', async () => {
+    const team = makeTeam({ namespace: 'default' })
+    const personalSkillRef = {
+      skill_id: 92,
+      namespace: 'default',
+      is_public: false,
+      content_hash: 'sha256:personal-skill',
+    }
+    mockedGetAgentBindings.mockResolvedValueOnce({
+      agent_id: team.id,
+      personal: false,
+      group_names: ['engineering'],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[
+          makeBot({
+            skills: ['h52wbox-cloud'],
+            skill_refs: {
+              'h52wbox-cloud': personalSkillRef,
+            },
+          }),
+        ]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={[
+          {
+            id: 7,
+            name: 'engineering',
+            display_name: 'Engineering',
+            my_role: 'Developer',
+          } as Group,
+        ]}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
+        scope: 'group',
+        groupName: 'engineering',
+      })
+      expect(screen.getByText('h52wbox-cloud')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({
+          skills: ['h52wbox-cloud'],
+          skill_refs: {
+            'h52wbox-cloud': personalSkillRef,
+          },
+          target_group_names: ['engineering'],
+        })
+      )
+    })
+  })
+
+  it('lets an existing personal agent be published to the marketplace', async () => {
+    const team = makeTeam()
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-marketplace'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateListing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource_type: 'agent',
+          source_id: 1,
+          name: 'agent',
+        })
+      )
+    })
+  })
+
+  it('closes after the agent is saved when marketplace publication fails', async () => {
+    const team = makeTeam()
+    const onClose = jest.fn()
+    const toast = jest.fn()
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockedCreateListing.mockRejectedValueOnce(new Error('Publication unavailable'))
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={onClose}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={toast}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-marketplace'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateTeam).toHaveBeenCalled()
+      expect(mockedCreateListing).toHaveBeenCalled()
+      expect(onClose).toHaveBeenCalled()
+    })
+    expect(toast).toHaveBeenCalledWith({
+      variant: 'destructive',
+      title: 'resource-library:messages.agent_saved_publication_failed',
+    })
+    consoleError.mockRestore()
+  })
+
+  it('lets a published team agent be distributed to personal scope', async () => {
+    const team = makeTeam({ namespace: 'engineering', publication_status: 'published' })
+    mockedUpdateTeam.mockResolvedValueOnce({ ...team, namespace: 'default' })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot({ namespace: 'engineering' })]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-personal'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          namespace: 'default',
+        })
+      )
+      expect(mockedSyncAgentBindings).toHaveBeenCalledWith(1, {
+        group_names: [],
+      })
+      expect(mockedBindAgent).not.toHaveBeenCalled()
+      expect(mockedArchiveListing).toHaveBeenCalledWith(1)
+    })
+  })
+
+  it('lets a team agent be published to the marketplace', async () => {
+    const team = makeTeam({ namespace: 'engineering' })
+    mockedUpdateTeam.mockResolvedValueOnce(team)
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot({ namespace: 'engineering' })]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-marketplace'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateListing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource_type: 'agent',
+          source_id: 1,
+          name: 'agent',
+        })
+      )
     })
   })
 

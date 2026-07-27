@@ -4,6 +4,7 @@
 
 import React from 'react'
 import { Tag } from '@/components/ui/tag'
+import { cn } from '@/lib/utils'
 
 /**
  * Tag configuration for ResourceListItem
@@ -26,6 +27,8 @@ export interface ResourceListItemProps {
   displayName?: string
   /** Description text to show below the name */
   description?: string
+  /** Secondary identity text shown below the name */
+  identity?: React.ReactNode
   /** Whether this is a public resource */
   isPublic?: boolean
   /** Whether to show ID line when displayName differs from name */
@@ -38,6 +41,8 @@ export interface ResourceListItemProps {
   children?: React.ReactNode
   /** Public resource label translation */
   publicLabel?: string
+  /** Use the resource-library card hierarchy */
+  cardLayout?: boolean
 }
 
 /**
@@ -49,30 +54,40 @@ export function ResourceListItem({
   name,
   displayName,
   description,
+  identity,
   isPublic = false,
   showId = false,
   tags = [],
   icon,
   children,
   publicLabel = 'Public',
+  cardLayout = false,
 }: ResourceListItemProps) {
   const finalDisplayName = displayName || name
   const shouldShowId = showId && displayName && displayName !== name
 
   return (
-    <div className="flex items-center space-x-3 min-w-0 flex-1">
+    <div
+      className={cn('flex min-w-0 flex-1 space-x-3', cardLayout ? 'items-start' : 'items-center')}
+    >
       {/* Icon */}
       {icon && <div className="flex-shrink-0">{icon}</div>}
 
       {/* Content column */}
-      <div className="flex flex-col justify-center min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col justify-center">
         {/* Name row */}
-        <div className="flex items-center space-x-2 min-w-0">
-          <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+        <div className="flex min-w-0 items-center space-x-2">
+          <h3
+            className={cn(
+              'mb-0 truncate text-base text-text-primary',
+              cardLayout ? 'font-semibold' : 'font-medium'
+            )}
+            title={finalDisplayName}
+          >
             {finalDisplayName}
           </h3>
           {isPublic && (
-            <Tag variant="info" className="text-xs">
+            <Tag variant="info" className="shrink-0 whitespace-nowrap text-xs">
               {publicLabel}
             </Tag>
           )}
@@ -83,12 +98,24 @@ export function ResourceListItem({
         {/* ID row (optional) */}
         {shouldShowId && <p className="text-xs text-text-muted truncate">ID: {name}</p>}
 
+        {/* Secondary identity row (optional) */}
+        {identity && <div className="mt-1 truncate text-xs text-text-muted">{identity}</div>}
+
         {/* Description row (optional) */}
-        {description && <p className="text-sm text-text-muted mt-1 truncate">{description}</p>}
+        {description && (
+          <p
+            className={cn(
+              'mt-2 text-sm leading-5 text-text-secondary',
+              cardLayout ? 'line-clamp-2 min-h-10' : 'truncate'
+            )}
+          >
+            {description}
+          </p>
+        )}
 
         {/* Tags row */}
         {tags.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1.5">
             {tags.map(tag => (
               <Tag key={tag.key} variant={tag.variant || 'default'} className={tag.className}>
                 {tag.label}

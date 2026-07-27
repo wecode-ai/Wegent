@@ -35,6 +35,7 @@ from app.schemas.quick_launch import (
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.subtask_context import AttachmentDetailResponse
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.services.adapters.team_kinds import team_kinds_service
 from app.services.admin_password_bootstrap import (
     get_cached_admin_password_setup_required,
     raise_admin_password_setup_required,
@@ -665,6 +666,17 @@ def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
     )
 
 
+def _quick_access_team_from_data(team: dict) -> QuickAccessTeam:
+    return QuickAccessTeam(
+        id=int(team["id"]),
+        name=str(team.get("name") or f"Team {team['id']}"),
+        display_name=team.get("displayName") or team.get("display_name"),
+        is_system=int(team.get("user_id") or 0) == 0,
+        recommended_mode=team.get("recommended_mode") or "both",
+        agent_type=team.get("agent_type"),
+    )
+
+
 def _build_system_function(
     config: QuickLaunchFunctionConfig,
 ) -> Optional[QuickLaunchFunctionResponse]:
@@ -756,7 +768,6 @@ async def get_user_quick_access(
     quick_access_config = _get_user_quick_access_config(current_user)
     user_version = quick_access_config.get("version")
     user_team_ids = quick_access_config.get("teams", [])
-
     # Keep version comparison for clients that need migration state.
     show_system_recommended = user_version is None or user_version < system_version
 
@@ -809,6 +820,19 @@ async def get_user_quick_access(
         show_system_recommended=show_system_recommended,
         teams=result_teams,
     )
+
+
+@router.get("/recent-teams", response_model=list[QuickAccessTeam])
+async def get_user_recent_teams(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get five recently used teams, filled by recently updated teams."""
+    teams = team_kinds_service.get_recent_accessible_teams(
+        db,
+        user_id=current_user.id,
+    )
+    return [_quick_access_team_from_data(team) for team in teams]
 
 
 @router.get("/quick-launch", response_model=QuickLaunchResponse)

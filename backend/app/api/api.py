@@ -30,6 +30,7 @@ from app.api.endpoints import (
     quota,
     remote_devices,
     repository,
+    resource_library,
     runtime_work,
     share,
     skill_identity,
@@ -108,6 +109,11 @@ api_router.include_router(
     wework_auth.router, prefix="/auth/wework", tags=["auth", "wework"]
 )
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(
+    resource_library.router,
+    prefix="/resource-library",
+    tags=["resource-library"],
+)
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])

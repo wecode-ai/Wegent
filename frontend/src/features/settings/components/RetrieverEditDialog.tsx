@@ -61,6 +61,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -471,6 +472,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditing ? t('retrievers.edit') : t('retrievers.create')}</DialogTitle>
+          <DialogDescription>{t('retrievers.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">

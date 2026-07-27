@@ -19,5 +19,16 @@ describe('resource library i18n namespace', () => {
 
     expect(i18n.hasResourceBundle('zh-CN', 'resource-library')).toBe(true)
     expect(i18n.hasResourceBundle('en', 'resource-library')).toBe(true)
+    expect(i18n.getResource('zh-CN', 'resource-library', 'tabs.team')).toBe('团队')
+    expect(i18n.getResource('zh-CN', 'resource-library', 'actions.use')).toBe('去使用')
+  })
+
+  it('refreshes an initialized resource bundle', async () => {
+    const i18n = await initI18n()
+    i18n.addResourceBundle('zh-CN', 'resource-library', { actions: { use: 'stale' } }, true, true)
+
+    await initI18n()
+
+    expect(i18n.getResource('zh-CN', 'resource-library', 'actions.use')).toBe('去使用')
   })
 })

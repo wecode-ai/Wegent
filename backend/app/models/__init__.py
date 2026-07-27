@@ -19,6 +19,7 @@ from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.project import Project
+from app.models.resource_library_publication import ResourceLibraryPublication
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.skill_binary import SkillBinary
@@ -64,6 +65,7 @@ __all__ = [
     "APIKey",
     "KnowledgeDocument",
     "Project",
+    "ResourceLibraryPublication",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",
     "BackgroundExecution",

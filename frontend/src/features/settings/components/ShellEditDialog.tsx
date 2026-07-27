@@ -19,6 +19,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -479,6 +480,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           <DialogTitle>
             {isEditing ? t('common:shells.edit_title') : t('common:shells.create_title')}
           </DialogTitle>
+          <DialogDescription>{t('common:shells.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
