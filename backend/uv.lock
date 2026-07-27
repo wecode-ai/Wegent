@@ -6454,7 +6454,7 @@ requires-dist = [
     { name = "docx2txt", specifier = ">=0.8" },
     { name = "email-validator", specifier = ">=2.0.0" },
     { name = "emoji", specifier = ">=2.9.0" },
-    { name = "fastapi", specifier = ">=0.109.1" },
+    { name = "fastapi", specifier = "<0.137.0" },
     { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "flower", specifier = ">=2.0.0" },
     { name = "html2text", specifier = ">=2024.2.26" },
