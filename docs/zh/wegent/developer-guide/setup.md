@@ -169,6 +169,8 @@ cp .env.example .env
 
 `CHECK_SYSTEM_INITIALIZATION_STATUS` 默认开启。开启时,后端启动会把首次管理员密码初始化状态加载到内存,登录页通过 `/users/me` 握手获取 `ADMIN_PASSWORD_SETUP_REQUIRED` 错误码。特殊部署需要跳过该检查时可设置为 `False`。
 
+`SITES_API_BASE_URL` 和 `SITES_API_TOKEN` 用于启用 Sites 页面。配置后,Wegent Backend 会代理 `/api/sites` 请求,把当前登录用户名注入到上游 Sites 平台请求中,并使用 `SITES_API_TOKEN` 作为平台访问令牌。未配置 `SITES_API_BASE_URL` 时,前端会显示 Sites 不可用状态。不要把真实令牌提交到仓库,本地和部署环境应通过 `.env` 或密钥管理系统提供。
+
 #### 运行开发服务器
 
 ```bash
