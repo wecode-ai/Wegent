@@ -128,13 +128,45 @@ function externalProjectDescriptor(project: CloudProject, token?: string) {
 export function createExternalIssueApi(request: LocalRequest) {
   return {
     async configureProject(project: CloudProject, token?: string) {
-      await request('external_projects.configure', {
-        project: externalProjectDescriptor(project, token),
-      })
+      const context = {
+        projectId: project.id,
+        projectStore: project.project_store,
+        taskProvider: project.task_provider,
+        credentialProvided: Boolean(token?.trim()),
+      }
+      console.warn('[Wework external issues] executor configuration requested', context)
+      try {
+        await request('external_projects.configure', {
+          project: externalProjectDescriptor(project, token),
+        })
+      } catch (error) {
+        console.error('[Wework external issues] executor configuration failed', {
+          ...context,
+          error,
+        })
+        throw error
+      }
+      console.warn('[Wework external issues] executor configuration completed', context)
     },
     async listLoopItems(project: CloudProject) {
-      const records = await request<LocalLoopItemRecord[]>('external_todos.list', {
-        project: externalProjectDescriptor(project),
+      const context = {
+        projectId: project.id,
+        projectStore: project.project_store,
+        taskProvider: project.task_provider,
+      }
+      console.warn('[Wework external issues] issue list requested', context)
+      let records
+      try {
+        records = await request<LocalLoopItemRecord[]>('external_todos.list', {
+          project: externalProjectDescriptor(project),
+        })
+      } catch (error) {
+        console.error('[Wework external issues] issue list failed', { ...context, error })
+        throw error
+      }
+      console.warn('[Wework external issues] issue list received', {
+        ...context,
+        issueCount: records.length,
       })
       return { items: records.map(localTask) }
     },
