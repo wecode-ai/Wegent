@@ -4906,6 +4906,24 @@ class DesktopE2EServer {
         excludes: [followUpPrompt],
       })
       this.assertLocalApplyPatchTool(model, body)
+      this.assertLocalNamespaceTools(model, body)
+      if (model.protocol !== 'responses') {
+        state.stage = 'awaiting_namespace_tool_output'
+        this.writeLocalNamespaceToolCall(response, model)
+        return
+      }
+      state.stage = 'awaiting_tool_output'
+      this.writeLocalToolCall(response, model, localProtocolPatch(model))
+      return
+    }
+    if (state.stage === 'awaiting_namespace_tool_output') {
+      this.assertLocalConversation(model, body, {
+        includes: [],
+        excludes: [followUpPrompt],
+      })
+      this.assertLocalApplyPatchTool(model, body)
+      this.assertLocalNamespaceTools(model, body)
+      this.assertLocalNamespaceToolOutput(model, body)
       state.stage = 'awaiting_tool_output'
       this.writeLocalToolCall(response, model, localProtocolPatch(model))
       return
@@ -5104,6 +5122,57 @@ class DesktopE2EServer {
     )
   }
 
+  assertLocalNamespaceTools(model, body) {
+    if (model.protocol === 'responses') return
+    const tools = Array.isArray(body.tools) ? body.tools : []
+    const names = tools
+      .map(candidate => candidate?.name ?? candidate?.function?.name)
+      .filter(Boolean)
+
+    assert.ok(
+      names.includes('browser_snapshot'),
+      `${model.protocol} did not flatten the wework_browser namespace: ${names.join(', ')}`
+    )
+    assert.equal(
+      names.includes('wework_browser'),
+      false,
+      `${model.protocol} exposed the namespace container as a callable function`
+    )
+  }
+
+  assertLocalNamespaceToolOutput(model, body) {
+    const serialized = JSON.stringify(body)
+    assert.equal(
+      serialized.includes('unsupported function call: browser_snapshot'),
+      false,
+      `${model.protocol} did not restore the wework_browser namespace on the tool call`
+    )
+
+    if (model.protocol === 'chat') {
+      const call = body.messages
+        ?.flatMap(message => message?.tool_calls ?? [])
+        .find(candidate => candidate?.function?.name === 'browser_snapshot')
+      assert.ok(call, 'Chat lost the flattened browser_snapshot call history')
+      assert.ok(
+        body.messages?.some(
+          message => message?.role === 'tool' && message?.tool_call_id === call?.id
+        ),
+        'Chat lost the namespaced browser_snapshot result'
+      )
+      return
+    }
+
+    const blocks = body.messages?.flatMap(message => message?.content ?? []) ?? []
+    const call = blocks.find(
+      block => block?.type === 'tool_use' && block?.name === 'browser_snapshot'
+    )
+    assert.ok(call, 'Anthropic lost the flattened browser_snapshot call history')
+    assert.ok(
+      blocks.some(block => block?.type === 'tool_result' && block?.tool_use_id === call?.id),
+      'Anthropic lost the namespaced browser_snapshot result'
+    )
+  }
+
   assertApplyPatchOutputContract(model, description) {
     for (const instruction of [
       'Critical apply_patch input contract:',
@@ -5294,6 +5363,15 @@ class DesktopE2EServer {
       return
     }
     this.writeAnthropicToolCall(response, patch)
+  }
+
+  writeLocalNamespaceToolCall(response, model) {
+    const callId = `${model.protocol}-local-browser-snapshot`
+    if (model.protocol === 'chat') {
+      this.writeChatToolCall(response, {}, callId, 'browser_snapshot')
+      return
+    }
+    this.writeAnthropicToolCall(response, {}, callId, 'browser_snapshot')
   }
 
   writeLocalAssistantMessage(response, model, text) {
