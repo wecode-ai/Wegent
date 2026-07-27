@@ -58,7 +58,7 @@ def _artifact(
 
 
 @pytest.mark.asyncio
-async def test_list_exposes_delete_capability_by_owner_and_execution_state():
+async def test_list_exposes_delete_capability_by_manage_permission_and_execution_state():
     service, repository = _service()
     completed = _artifact(KnowledgeArtifactStatus.SUCCEEDED)
     active = _artifact(KnowledgeArtifactStatus.RUNNING)
@@ -74,7 +74,7 @@ async def test_list_exposes_delete_capability_by_owner_and_execution_state():
         patch.object(service, "_document_source_counts", return_value=(4, 0)),
         patch(
             "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
-            return_value=False,
+            return_value=True,
         ),
     ):
         response = await service.list(12)
@@ -84,7 +84,7 @@ async def test_list_exposes_delete_capability_by_owner_and_execution_state():
 
 
 @pytest.mark.asyncio
-async def test_delete_allows_owner_after_generation_finishes():
+async def test_delete_allows_manager_after_generation_finishes():
     service, repository = _service()
     artifact = _artifact(KnowledgeArtifactStatus.SUCCEEDED)
     repository.get.return_value = artifact
@@ -95,7 +95,7 @@ async def test_delete_allows_owner_after_generation_finishes():
         patch.object(service, "_reconcile", AsyncMock(return_value=artifact)),
         patch(
             "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
-            return_value=False,
+            return_value=True,
         ),
     ):
         await service.delete(12, "artifact-1")
@@ -108,7 +108,7 @@ async def test_delete_allows_owner_after_generation_finishes():
 
 
 @pytest.mark.asyncio
-async def test_delete_rejects_active_artifact_and_other_readers():
+async def test_delete_rejects_active_artifact_and_read_only_user():
     service, repository = _service()
     active = _artifact(KnowledgeArtifactStatus.RUNNING)
     repository.get.return_value = active
@@ -118,25 +118,24 @@ async def test_delete_rejects_active_artifact_and_other_readers():
         patch.object(service, "_reconcile", AsyncMock(return_value=active)),
         patch(
             "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
-            return_value=False,
+            return_value=True,
         ),
         pytest.raises(ArtifactValidationError, match="cannot be deleted"),
     ):
         await service.delete(12, "artifact-1")
 
-    other_user = _artifact(KnowledgeArtifactStatus.SUCCEEDED, user_id=8)
-    repository.get.return_value = other_user
+    repository.reset_mock()
     with (
         patch.object(service, "_require_read_access"),
-        patch.object(service, "_reconcile", AsyncMock(return_value=other_user)),
         patch(
             "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
             return_value=False,
         ),
-        pytest.raises(ArtifactPermissionError, match="deletion is not allowed"),
+        pytest.raises(ArtifactPermissionError, match="management is not allowed"),
     ):
         await service.delete(12, "artifact-1")
 
+    repository.get.assert_not_called()
     repository.delete.assert_not_called()
 
 
@@ -177,7 +176,7 @@ async def test_delete_rejects_concurrent_retry():
         patch.object(service, "_reconcile", AsyncMock(return_value=artifact)),
         patch(
             "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
-            return_value=False,
+            return_value=True,
         ),
         pytest.raises(ArtifactValidationError, match="state has changed"),
     ):
@@ -204,6 +203,6 @@ def test_stalled_artifact_is_deletable():
     artifact = _artifact(KnowledgeArtifactStatus.RUNNING)
     artifact.execution_health = KnowledgeArtifactExecutionHealth.STALLED
 
-    service._set_delete_capability(artifact, can_manage=False)
+    service._set_user_capabilities(artifact, can_manage=True)
 
     assert artifact.can_delete is True
