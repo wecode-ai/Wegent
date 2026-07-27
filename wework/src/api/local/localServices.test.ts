@@ -1360,6 +1360,7 @@ describe('createLocalAppServices', () => {
           'X-Wegent-Model-Type': 'user',
           'X-Wegent-Model-Namespace': 'default',
           'X-Wegent-Model-User-Id': '42',
+          'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
         },
         runtime_config: {
           codex: {
