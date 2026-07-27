@@ -304,6 +304,13 @@ xvfb-run -a pnpm --filter wework e2e:desktop
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
 
+GitHub Actions runs the plugins, core, and cloud Linux desktop scenarios as a
+parallel matrix. Each scenario receives an isolated runner, HOME, Executor
+Home, ports, and diagnostic artifact. This preserves the existing real Tauri,
+Executor, and Codex verification semantics while removing the serial wait
+between the three scenarios. Matrix fail-fast is disabled so the remaining
+scenarios can finish and upload diagnostics when one scenario fails.
+
 The memory gate depends on macOS WebKit process association and physical-footprint sampling, so run it separately on a macOS runner:
 
 ```bash
@@ -312,5 +319,10 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
+Regular draft PRs do not run browser or Linux desktop E2E. The macOS memory gate
+runs by default only on `main`, scheduled runs, and manual runs. Add the
+`ci:memory` label when a PR must validate the memory boundary. Applying that
+label starts only the memory gate and does not repeat browser or Linux desktop
+E2E. The workflow also runs a complete regression every day at 04:00 UTC.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.
