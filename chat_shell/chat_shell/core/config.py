@@ -112,7 +112,6 @@ class Settings(BaseSettings):
     # Workspace configuration
     WORKSPACE_ROOT: str = "/workspace"
     ENABLE_SKILLS: bool = True
-    ENABLE_CHECKPOINTING: bool = False
 
     # Attachment/Context configuration
     MAX_EXTRACTED_TEXT_LENGTH: int = 100000

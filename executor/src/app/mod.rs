@@ -9,7 +9,10 @@ use crate::local::{
     app_ipc::normalize_device_id,
     backend::{serve_local_app_sidecar, serve_remote_local_backend},
 };
-use crate::logging::{init_executor_logging, reserve_executor_stdout_for_protocol};
+use crate::logging::{
+    init_executor_logging, log_executor_event, reserve_executor_stdout_for_protocol,
+};
+use crate::process_environment::ShellEnvironmentLoad;
 use crate::server::{self, ServerConfig};
 use crate::services::updater::UpdaterService;
 use crate::version::get_version;
@@ -113,6 +116,13 @@ pub async fn run_from_env() -> Result<(), AppError> {
 }
 
 pub async fn run(args: CliArgs) -> Result<(), AppError> {
+    run_with_shell_environment(args, None).await
+}
+
+pub async fn run_with_shell_environment(
+    args: CliArgs,
+    shell_environment: Option<Result<Option<ShellEnvironmentLoad>, String>>,
+) -> Result<(), AppError> {
     if args.help {
         println!("{}", CliArgs::usage());
         return Ok(());
@@ -132,6 +142,7 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
         reserve_executor_stdout_for_protocol();
     }
     init_executor_logging(&DeviceConfig::default());
+    log_shell_environment_load(shell_environment);
     let config = load_device_config(args.config_path.as_deref())?;
     init_executor_logging(&config);
     let plan = startup_plan_for_config(&config)?;
@@ -161,6 +172,27 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
         (None, None) => Err(AppError::Server(
             "startup plan has no runtime target".to_owned(),
         )),
+    }
+}
+
+fn log_shell_environment_load(result: Option<Result<Option<ShellEnvironmentLoad>, String>>) {
+    match result {
+        Some(Ok(Some(loaded))) => {
+            log_executor_event(
+                "user login shell environment loaded",
+                &[
+                    ("shell", loaded.shell),
+                    ("path_entries", loaded.path_entry_count.to_string()),
+                ],
+            );
+        }
+        Some(Ok(None)) | None => {}
+        Some(Err(error)) => {
+            log_executor_event(
+                "user login shell environment load failed",
+                &[("error", error), ("fallback", "process_path".to_string())],
+            );
+        }
     }
 }
 

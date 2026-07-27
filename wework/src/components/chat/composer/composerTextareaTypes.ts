@@ -2,7 +2,10 @@ import type { RefObject } from 'react'
 import type { CloudProject } from '@/api/deliveries'
 import type { LocalDeviceApp, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
 
 export interface ComposerSubmitOptions {
   guideWhenBusy?: boolean
@@ -26,6 +29,7 @@ export interface ComposerTextareaProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void

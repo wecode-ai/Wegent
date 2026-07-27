@@ -49,6 +49,11 @@ sidebar_position: 31
 
 这比把长度控制分散在 `build_messages`、tool event、history serialization 等多处更稳。治理逻辑最终收敛到 `UnifiedContextGuard`，避免不同路径口径漂移。
 
+**覆盖边界（重要，别被“非流式”误导）。** `UnifiedContextGuard` 只在 **chat 执行引擎**构建 agent 时通过 `pre_model_hook` 挂载，所以要区分两种“非流式”：
+
+- **传输层非流式**（HTTP `stream=false` 追问）：只是把 SSE 事件缓冲后一次性返回，**底层执行引擎仍是 `stream_tokens`**，照常挂 guard、走压缩恢复与落库。它**受**治理。
+- **引擎级非流式**（`agent.execute` → `_collect_final_state_from_events`）：是否挂 guard 取决于调用方是否传入 `pre_model_hook`。当前唯一使用者是答案质检 `correction_service`，它**不传** `pre_model_hook`——这是一条 **guard 未覆盖的短路路径**：不做压缩治理、把待评估历史内嵌进 prompt、结果只写 `subtask.result.correction`（**不落 `messages_chain`**）、并自带 try/except 兜底。它是一次性质检器，不是对话/追问路径，与本上下文治理解耦。
+
 ### 区分“用户可见原始数据”和“模型可见紧凑数据”
 
 这是整个设计里最重要的边界之一。
@@ -87,8 +92,12 @@ sidebar_position: 31
 
 同时明确保留了 Wegent 自己的取舍：
 
-- **不做 Codex 式持久 `replacement_history`**
-  当前压缩只改本轮 live state，不把摘要后的历史永久写回为新的规范历史。
+- **检查点持久化进 `messages_chain`，而不是单独的 blob**（Phase 1）
+  压缩那一轮成为自包含检查点（保留的近期 user 消息 + summary）落进它自己的
+  `messages_chain`，reload 从最新检查点开始。功能上接近 Codex 的
+  `replacement_history`，但复用现有持久化而非新增字段。Phase 2a 进一步通过
+  request-local checkpointer 读取权威 LangGraph state，让这份持久化不再依赖该轮
+  以何种方式结束。详见 Phase 1 与 Phase 2a 两节。
 - **不把 summary compact 变成长期记忆层**
   它是 request-time 治理手段，不是新的会话存储模型。
 - **不让单个 fallback 路径承载全部功能**
@@ -138,6 +147,95 @@ Stage 3 解决的是另一个长期问题：附件提取文本会作为 `<attach
 
 这一步的实质是把附件从“隐式历史负担”改成“显式可控上下文源”。
 
+## Phase 1：检查点 reload 与卡死加固
+
+Phase 1 补齐了 Stage 2 遗留的两个缺口。
+
+### 检查点 reload（不再全量复原膨胀）
+
+此前每个新 subtask 都会 reload 完整原始转录并重跑一次全量压缩——跨多天的长会话意味着每一新轮都要压缩约 1.7M tokens。Phase 1 把压缩那一轮做成**自包含检查点**：
+
+- `_select_recent_user_messages` 把保留的近期 user 消息克隆成新 id 并打上 `checkpoint_retained` 标记，让本轮序列化器把它们保留进 `messages_chain`（和带 `summary_compacted` 的 summary、以及其后同轮生成的 suffix 一起）。
+- backend 历史接口新增 `from_latest_compaction=true`：用 chain 内 `summary_compacted` 标记定位最新检查点，返回 `[检查点 chain] + [其后完整 turns]`；`limit` 绝不截断检查点 chain 本身。
+- HTTP 端点与 package 模式共用同一条 `resolve_history_subtasks` 管线，保证 fork、`before_message_id`、`limit`、检查点切片语义一致。
+- 由于 HTTP 传输会丢弃 `additional_kwargs`，reload 回来的 summary 通过内容标记重新识别，避免被再次当作 user 消息保留。
+
+### 卡死加固
+
+针对一次生产卡死（O(n²) 裁剪把 CPU 打满数分钟、随后 backend 读超时取消该轮）对 summary 压缩路径做了加固：
+
+- 裁剪改为对 sanitized prompt 的单趟 O(n) 预算裁剪（不再每删一条重算、不再每条消息叠加一次 reply-priming）
+- 压缩期间心跳 ticker 持续发 `summary_compact` in_progress 状态，保持 SSE 不断连，不再与 backend 读超时赛跑
+- summary LLM 调用带 provider 超时 + `asyncio.wait_for` 兜底
+- 超长判定识别 HTTP 413 与非英文 marker；裸 400 不再直接当超长（避免重试风暴）
+
+## Phase 2a：终止路径无关的权威状态持久化
+
+Phase 1 让压缩那一轮成为自包含检查点，但持久化仍依赖 happy path：该轮的
+`messages_chain` 由 `_collected_state_messages` 序列化而来，而后者是在顶层
+`on_chain_end` 事件里、用“保留最长快照”门槛捕获的。两个后果：
+
+- 触发 `GraphRecursionError`（工具调用上限）时顶层 end 可能根本不触发，recovery
+  又用请求前的 `lc_messages` 重建 chain —— 于是一轮“既压缩又撞工具上限”只持久化了
+  recovery 回复，静默丢掉检查点，下次续聊回退到更早的检查点。
+- 压缩会让 state **变短**，“最长快照”门槛可能拒绝真正的压缩后权威状态。
+
+Phase 2a 让**最后的权威 LangGraph state** 成为唯一收口的唯一来源，覆盖所有终止路径。
+
+### request-local checkpointer + `aget_state`
+
+- 每次构建 agent 都挂一个 **request-local `InMemorySaver`**，每轮（以及每层截断重试）
+  用唯一 `thread_id` 且 **`durability="exit"`**。exit 只在图退出时（含异常退出）提交
+  一份 checkpoint，因此 `aget_state(config)` 能取到压缩后的权威状态（summary + 压缩后
+  已完成的 tool pair），内存约 ~1×，而不是每个 super-step 一份。已删除失效的
+  `ENABLE_CHECKPOINTING` 开关，checkpointer 不再可选。
+- `_finalize_turn_history` 是唯一的原子收口：sanitize tool pair → 用 turn 不变的
+  `original_input_ids`（见 `TurnExecutionContext`）过滤本轮新消息 → 序列化校验 →
+  同时设置 `_last_messages_chain`、`_last_live_state_messages`、
+  `_last_termination_reason`，三者不会漂移。
+- 所有**流式**终止路径都经它：正常结束、`completed_with_unexecuted_tool_calls`、
+  工具上限 recovery、截断重试与重试耗尽、silent/deferred。旧的
+  `_collected_state_messages` / 长度门槛权威判定已移除。
+- **finalizer 执行 ≠ 落库**：finalizer 只在 builder 上设置内存里的
+  `_last_messages_chain`；它是否 durable 落进 `subtask.result.messages_chain` 取决于
+  终止状态。受支持的（COMPLETED 类）终止会落库；`FAILED` / `CANCELLED` 的携带与落库
+  推迟到 Phase 2b（见下文“不在 Phase 2a 范围”）。因此 finalizer 可能在一条最终并不
+  落库的路径上运行。
+- **引擎级非流式**路径（`agent.execute` → `_collect_final_state_from_events`）**不**
+  构建 `messages_chain`：它返回 LangGraph 最终 state（调用方只消费 content/tool-results，
+  `messages_chain` 仅在流式路径落库）。它仍复用 request-local checkpointer、exit
+  durability、recovery-from-current-state 与每轮 thread 释放，只是不产出持久化历史，
+  故没有 finalizer。**注意**：HTTP `stream=false` 的追问**不属于**此类——它底层仍是
+  `stream_tokens`，照常走 finalizer 与落库（见“统一入口”一节的覆盖边界）。
+
+### recovery 与 retry 用当前状态，不用 `lc_messages`
+
+- **工具上限 recovery** 把当前权威状态（sanitize 后）喂给 recovery LLM，使其能看到本轮
+  已产生的工具结果；final state = `safe_state + [recovery 回复]`，内部指令不入库。
+- **截断重试** 用当前权威状态（sanitize 后）**新开一个 thread** 重建（向同一 thread 重交
+  并不会删掉被截断的 tool call —— `add_messages` 按 id 合并），并**继承根轮的
+  `original_input_ids`**。截断指令走独立的 **attempt 控制平面**：它只放在
+  `_attempt_guidance` 里，由 builder 自己的 `_attempt_guidance_hook`（挂在 pre-model
+  链的最后一环）在**压缩之后**通过 `llm_input_messages` 注入模型输入，从不写入
+  `messages` channel。因此它既不进 summary source、不进 checkpoint、不进
+  `messages_chain`，也不与真实用户消息争抢 recent-user 预算；因为在压缩之后才追加，重试
+  thread 自身压缩也不会把它裁掉，重试 attempt 结束即自然销毁。`chain_pre_model_hooks`
+  会把 `llm_input_messages` 逐环向后滚动，让用户 guidance 与 attempt guidance 叠加而非互相
+  覆盖。
+
+### 生命周期与可观测
+
+- 每层 `stream_tokens` 在自己的 `finally` 里删**自己那个** thread（`adelete_thread`），
+  失败会记日志而非静默吞掉，且在删除前测量 `checkpoints_in_saver`。每轮输出一条持久化
+  日志：`path`、`chain_msgs`、`has_summary_marker`、`post_compaction_tool_pairs`、
+  `checkpoints_in_saver`、`adelete_thread_ok`。
+- checkpointer 只是请求内读取权威状态的临时暂存，持久真源仍是
+  `subtask.result.messages_chain`；不引入独立 checkpoint blob，重建逻辑不变 —— finalizer
+  复用同一序列化器，recovery 路径的检查点与正常结束的检查点重建结果一致。
+
+不在 Phase 2a 范围（推迟）：让非 `COMPLETED` 终止（FAILED / CANCELLED）携带并持久化
+`messages_chain`，以及放宽检查点定位以识别它们。
+
 ## 实现落点
 
 下列模块是后续维护最值得先看的入口：
@@ -146,7 +244,13 @@ Stage 3 解决的是另一个长期问题：附件提取文本会作为 `<attach
 |---|---|
 | `chat_shell/guard/context_guard.py` | 统一治理主入口，串 source pass、summary compact、emergency pass |
 | `chat_shell/guard/tool_output.py` | tool output 的 compact 表示和紧急重截断 |
-| `chat_shell/compression/summary_compactor.py` | summary compact 主逻辑 |
+| `chat_shell/compression/summary_compactor.py` | summary compact 主逻辑、O(n) 裁剪、检查点保留 |
+| `chat_shell/compression/tool_sanitizer.py` | 共享 `sanitize_tool_pairs`，压缩 / recovery / finalizer 共用（Phase 2a） |
+| `chat_shell/guard/composition.py` | `chain_pre_model_hooks`：组合多个 pre-model hook，`llm_input_messages` 逐环滚动叠加 |
+| `chat_shell/agents/graph_builder.py` | request-local exit-durability checkpointer、`_finalize_turn_history`、attempt 控制平面（`_attempt_guidance_hook`）、各终止路径处理（Phase 2a） |
+| `chat_shell/agents/turn_context.py` | `TurnExecutionContext`：turn 不变的 `original_input_ids` + 每层 thread 所有权（Phase 2a） |
+| `chat_shell/history/loader.py` | 历史 reload；透传 `from_latest_compaction` |
+| `backend/app/services/chat/compaction_checkpoint.py` | 定位最新检查点 + 共享 resolve→scope→limit 管线（Phase 1） |
 | `chat_shell/compression/config.py` | 上下文窗口、reserved output、trigger/target limit 计算 |
 | `chat_shell/compression/context_metrics.py` | 上下文指标快照 |
 | `chat_shell/messages/attachment_preview.py` | 附件 preview 预算分配与截断 |
@@ -182,9 +286,9 @@ Stage 3 解决的是另一个长期问题：附件提取文本会作为 `<attach
 
 ## 注意事项
 
-### summary compact 只治理 live state
+### reload 从最新压缩检查点开始（Phase 1）
 
-当前实现不会把 compact 后的 replacement history 永久写回成新的会话标准历史。下一轮仍会从重建后的完整历史重新评估，必要时再压一次。这是有意接受的简化。
+早期实现每一轮都从完整存储历史重建并重新评估压缩，长会话会因此“复原膨胀”。Phase 1 把自包含检查点持久化进压缩那一轮的 `messages_chain`（保留的近期 user 消息带 `checkpoint_retained`，summary 带 `summary_compacted`），并通过 backend 的 `from_latest_compaction` 路径从最新检查点 reload。详见上面的 Phase 1 一节。
 
 ### `max_output_tokens` 主要是预算输入，不是历史改写结果
 

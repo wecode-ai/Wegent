@@ -4596,7 +4596,7 @@ describe('MessageList', () => {
     await user.click(screen.getByTestId('assistant-error-retry'))
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
-    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
   test('classifies hidden raw failed content before generic task status errors', () => {
@@ -4681,7 +4681,7 @@ describe('MessageList', () => {
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
-    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
   test('uses backend error type before raw error text when rendering failed messages', () => {
@@ -4867,6 +4867,31 @@ describe('MessageList', () => {
       'WEG0001-1 结合代码分析，这个问题可能是因为什么'
     )
     expect(screen.queryByText(/cloud:\/\/projects\/3\/todos/)).not.toBeInTheDocument()
+  })
+
+  test('renders conversation references in user messages without exposing the internal URI', () => {
+    const href =
+      'wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22runtime-42%22%7D'
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: `[$修复登录流程](${href}) 继续分析`,
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const conversationLink = screen.getByTestId(/^sent-conversation-token-/)
+
+    expect(conversationLink).toHaveAttribute('href', href)
+    expect(screen.getByTestId(/^sent-conversation-icon-/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent('修复登录流程 继续分析')
+    expect(screen.queryByText(/wework-conversation:\/\//)).not.toBeInTheDocument()
   })
 })
 
