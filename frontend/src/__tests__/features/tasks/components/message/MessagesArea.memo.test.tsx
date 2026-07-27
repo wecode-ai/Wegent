@@ -36,6 +36,10 @@ let mockMessages: DisplayMessage[] = [
 ]
 let mockStreamingSubtaskIds: number[] = []
 let mockPresentedIsStreaming = false
+let mockUser: { id: number; user_name: string } | null = {
+  id: 1,
+  user_name: 'tester',
+}
 let mockTaskSession = {
   selectedTaskDetail: null as { id: number; title: string; status: string } | null,
   refreshSelectedTaskDetail: jest.fn(),
@@ -129,9 +133,7 @@ jest.mock('@/features/theme/ThemeProvider', () => ({
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
-  useUser: () => ({
-    user: { id: 1, user_name: 'tester' },
-  }),
+  useUser: () => ({ user: mockUser }),
 }))
 
 jest.mock('@/hooks/useTraceAction', () => ({
@@ -238,6 +240,7 @@ describe('MessagesArea memoization', () => {
     ]
     mockStreamingSubtaskIds = []
     mockPresentedIsStreaming = false
+    mockUser = { id: 1, user_name: 'tester' }
     mockTaskSession = {
       selectedTaskDetail: null,
       refreshSelectedTaskDetail: jest.fn(),
@@ -262,6 +265,49 @@ describe('MessagesArea memoization', () => {
     rerender(<MessagesArea {...props} />)
 
     expect(messageBubbleRenderSpy).toHaveBeenCalledTimes(firstRenderCount)
+  })
+
+  it('only supplies save-to-knowledge actions to authenticated users', () => {
+    const props = {
+      selectedTeam: null,
+      selectedRepo: null,
+      isGroupChat: false,
+    }
+    const { rerender } = render(
+      <MessagesArea
+        {...props}
+        selectedBranch={{ name: 'authenticated', protected: false, default: false }}
+      />
+    )
+    const getLatestAiBubbleProps = () =>
+      [...messageBubbleRenderSpy.mock.calls]
+        .reverse()
+        .map(call => call[0])
+        .find(messageProps => messageProps.msg.type === 'ai') as {
+        onSaveToKnowledge?: (content: string) => void
+      }
+
+    expect(getLatestAiBubbleProps().onSaveToKnowledge).toEqual(expect.any(Function))
+
+    mockUser = null
+    rerender(
+      <MessagesArea
+        {...props}
+        selectedBranch={{ name: 'anonymous', protected: false, default: false }}
+      />
+    )
+
+    expect(getLatestAiBubbleProps().onSaveToKnowledge).toBeUndefined()
+
+    mockUser = { id: 1, user_name: 'tester' }
+    rerender(
+      <MessagesArea
+        {...props}
+        selectedBranch={{ name: 'authenticated-again', protected: false, default: false }}
+      />
+    )
+
+    expect(getLatestAiBubbleProps().onSaveToKnowledge).toEqual(expect.any(Function))
   })
 
   it('binds each success toast to the document created by that save', () => {

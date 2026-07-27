@@ -113,4 +113,5 @@ executor/dist/
 executor/target/
 wework/src-tauri/binaries/
 docs/superpowers/
+docs/discussions/
 .worktrees/

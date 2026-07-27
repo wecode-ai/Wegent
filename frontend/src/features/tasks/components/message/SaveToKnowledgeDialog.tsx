@@ -288,7 +288,7 @@ export function SaveToKnowledgeDialog({
             <Label>{t('saveToKnowledge.contentLabel')}</Label>
             <div data-testid="save-to-knowledge-content-editor">
               <WysiwygEditor
-                initialContent={initialContent}
+                initialContent={content}
                 onChange={setContent}
                 className="min-h-[320px]"
                 language="markdown"

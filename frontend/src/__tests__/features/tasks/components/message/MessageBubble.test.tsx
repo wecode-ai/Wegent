@@ -197,6 +197,42 @@ describe('MessageBubble', () => {
     )
   })
 
+  it('re-renders when save action presence changes but ignores callback identity changes', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$# Final answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+    }
+    const team = makeTeam()
+    const props = {
+      msg,
+      index: 0,
+      selectedTaskDetail: null,
+      selectedTeam: team,
+      theme: 'light' as const,
+      t,
+    }
+    const { rerender } = render(<MessageBubble {...props} />)
+
+    expect(mockBubbleTools).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showSaveToKnowledge: false })
+    )
+
+    mockBubbleTools.mockClear()
+    rerender(<MessageBubble {...props} onSaveToKnowledge={jest.fn()} />)
+
+    expect(mockBubbleTools).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showSaveToKnowledge: true })
+    )
+
+    mockBubbleTools.mockClear()
+    rerender(<MessageBubble {...props} onSaveToKnowledge={jest.fn()} />)
+
+    expect(mockBubbleTools).not.toHaveBeenCalled()
+  })
+
   it('preserves Deep Research citation links in regular messages', () => {
     const msg: Message = {
       type: 'ai',

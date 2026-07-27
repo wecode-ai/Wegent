@@ -1766,6 +1766,7 @@ const MessageBubble = memo(
       prevProps.onUseAsReference === nextProps.onUseAsReference &&
       prevProps.onRetryWithModel === nextProps.onRetryWithModel &&
       prevProps.onReEdit === nextProps.onReEdit &&
+      Boolean(prevProps.onSaveToKnowledge) === Boolean(nextProps.onSaveToKnowledge) &&
       prevProps.taskType === nextProps.taskType &&
       prevProps.selectedTeam?.name === nextProps.selectedTeam?.name &&
       prevProps.selectedTeam?.displayName === nextProps.selectedTeam?.displayName &&
