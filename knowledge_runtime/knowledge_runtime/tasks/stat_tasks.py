@@ -149,8 +149,13 @@ def collect_all_metrics_task(
     lock_name = f"kb_stat:lock:{target.isoformat()}"
     lock_redis = _build_lock_redis(settings)
     if lock_redis is None:
-        raise KbStatLockUnavailableError(
+        error = KbStatLockUnavailableError(
             "kb_stat collection lock is unavailable: CELERY_BROKER_URL is not configured"
+        )
+        raise self.retry(
+            exc=error,
+            countdown=min(60, 5 * (2**self.request.retries)),
+            max_retries=3,
         )
     try:
         from shared.common.distributed_lock import DistributedLock
@@ -171,8 +176,11 @@ def collect_all_metrics_task(
         raise
     except Exception as exc:
         logger.error("[kb_stat] failed to acquire collection lock", exc_info=True)
-        raise KbStatLockUnavailableError(
-            "kb_stat collection lock is unavailable"
+        error = KbStatLockUnavailableError("kb_stat collection lock is unavailable")
+        raise self.retry(
+            exc=error,
+            countdown=min(60, 5 * (2**self.request.retries)),
+            max_retries=3,
         ) from exc
 
     try:

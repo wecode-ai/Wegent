@@ -37,6 +37,24 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
     const backend = metricList?.domains?.map(d => d.domain).filter(d => d && d !== 'dashboard')
     return backend && backend.length > 0 ? backend : DOMAIN_LIST
   }, [metricList])
+  const yesterday = useMemo(() => {
+    const value = new Date()
+    value.setDate(value.getDate() - 1)
+    return value.toISOString().split('T')[0]
+  }, [])
+  const validationError = useMemo(() => {
+    if (!startDate) return null
+    const effectiveEnd = endDate || startDate
+    if (effectiveEnd < startDate) return t('runs.trigger.invalid_range')
+    if (startDate > yesterday || effectiveEnd > yesterday) {
+      return t('runs.trigger.future_date')
+    }
+    const startMs = Date.parse(`${startDate}T00:00:00Z`)
+    const endMs = Date.parse(`${effectiveEnd}T00:00:00Z`)
+    const days = Math.floor((endMs - startMs) / 86_400_000) + 1
+    if (days > 31) return t('runs.trigger.range_too_large')
+    return null
+  }, [startDate, endDate, yesterday, t])
 
   const toggleDomain = useCallback((domain: string) => {
     setSelectedDomains(prev => {
@@ -51,7 +69,7 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
   }, [])
 
   const handleSubmit = useCallback(async () => {
-    if (!startDate) return
+    if (!startDate || validationError) return
 
     const dates: string[] = []
     const start = new Date(startDate)
@@ -101,7 +119,7 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
     onTriggered?.()
 
     setTimeout(() => setResult(null), 5000)
-  }, [startDate, endDate, selectedDomains, t, onTriggered])
+  }, [startDate, endDate, selectedDomains, t, onTriggered, validationError])
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
@@ -117,6 +135,7 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
             type="date"
             value={startDate}
             onChange={e => setStartDate(e.target.value)}
+            max={endDate || yesterday}
             className="rounded-md border border-border bg-base px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
             data-testid="trigger-start-date"
           />
@@ -128,11 +147,14 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
             type="date"
             value={endDate}
             onChange={e => setEndDate(e.target.value)}
+            min={startDate || undefined}
+            max={yesterday}
             className="rounded-md border border-border bg-base px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
             data-testid="trigger-end-date"
           />
         </div>
         <span className="text-xs text-text-muted">{t('runs.trigger.single_day_hint')}</span>
+        {validationError && <span className="text-xs text-red-500">{validationError}</span>}
       </div>
 
       <div className="space-y-1.5">
@@ -162,7 +184,7 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
           variant="primary"
           size="sm"
           onClick={handleSubmit}
-          disabled={!startDate || submitting}
+          disabled={!startDate || submitting || !!validationError}
           data-testid="trigger-submit"
         >
           {submitting ? (

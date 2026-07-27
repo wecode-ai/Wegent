@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,6 +27,7 @@ from shared.models.kb_stat import (
     MetricBatchResponse,
     MetricListResponse,
     MetricResponse,
+    QualityAlertMetricsResponse,
     RunListResponse,
     TriggerRunRequest,
     TriggerRunResponse,
@@ -82,6 +84,21 @@ async def admin_metric(
         _handle_remote_error(e)
 
 
+@router.post(
+    "/knowledge-stats/quality-alert-metrics",
+    response_model=QualityAlertMetricsResponse,
+)
+async def admin_quality_alert_metrics(
+    payload: KbStatFilter,
+    current_user: User = Depends(get_admin_user),
+):
+    gateway = get_kb_stat_gateway()
+    try:
+        return await gateway.quality_alert_metrics(payload)
+    except RemoteRuntimeError as e:
+        _handle_remote_error(e)
+
+
 @router.get("/knowledge-stats/metrics/list", response_model=MetricListResponse)
 async def admin_list_metrics(
     current_user: User = Depends(get_admin_user),
@@ -135,6 +152,11 @@ async def admin_trigger_run(
     payload: TriggerRunRequest,
     current_user: User = Depends(get_admin_user),
 ):
+    if payload.target_date and payload.target_date >= date.today():
+        raise HTTPException(
+            422,
+            "manual statistics runs must target a date before today",
+        )
     gateway = get_kb_stat_gateway()
     runtime_payload = TriggerRunRequest(
         target_date=payload.target_date,

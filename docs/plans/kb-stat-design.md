@@ -368,6 +368,7 @@ ORDER BY {order_by} LIMIT {limit}
 | GET | `/health` | 统计库连通性 + 开关状态 |
 | POST | `/dashboard` | Dashboard 聚合数据 |
 | POST | `/metrics/{name}` | 单指标查询 |
+| POST | `/quality-alert-metrics` | 管理页质量告警专用的无图表截断数据 |
 | POST | `/metrics/batch` | 批量指标查询（一次 HTTP 取 N 个指标） |
 | GET | `/metrics/list` | 指标元数据列表（含 date_col/chart_hint/description） |
 | GET | `/runs` | 采集运行历史（分页+状态过滤） |

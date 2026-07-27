@@ -94,6 +94,62 @@ def test_latest_metric_run_accepts_full_or_matching_kb_run() -> None:
     assert params["scope_kb_0"] == 7
 
 
+def test_latest_metric_run_requires_a_multi_kb_run_to_cover_every_requested_kb() -> (
+    None
+):
+    session = MagicMock()
+    session.execute.return_value.fetchone.return_value = None
+    service = KbStatQueryService(stat_session_factory=MagicMock())
+
+    service._latest_run(
+        session,
+        collector_name="kb_health_score",
+        kb_ids=[7, 8],
+    )
+
+    sql = str(session.execute.call_args.args[0])
+    assert "JSON_CONTAINS(r.kb_filter, " "JSON_ARRAY(:scope_kb_0, :scope_kb_1))" in sql
+
+
+def test_explicit_run_requires_successful_collector_and_matching_scope() -> None:
+    session = MagicMock()
+    session.execute.return_value.fetchone.return_value = None
+    service = KbStatQueryService(stat_session_factory=MagicMock())
+    metric_filter = MetricFilter(
+        target_date=date(2026, 7, 20),
+        kb_ids=[7],
+        run_id=123,
+    )
+
+    run_id, completed_at = service._resolve_run(
+        session,
+        metric_filter,
+        metric_name="kb_health_score",
+    )
+
+    assert run_id is None
+    assert completed_at is None
+    sql = str(session.execute.call_args.args[0])
+    assert "c.collector_name = :collector_name" in sql
+    assert "c.status = 'success'" in sql
+    assert "r.status IN ('completed', 'partial')" in sql
+
+
+def test_quality_alert_rows_keep_only_latest_value_per_kb() -> None:
+    rows = [
+        {"kb_id": 7, "stat_date": "2026-07-19", "health_score": 90},
+        {"kb_id": 7, "stat_date": "2026-07-20", "health_score": 40},
+        {"kb_id": 8, "stat_date": "2026-07-20", "health_score": 80},
+    ]
+
+    latest = KbStatQueryService._latest_alert_rows(rows)
+
+    assert {(row["kb_id"], row["health_score"]) for row in latest} == {
+        (7, 40),
+        (8, 80),
+    }
+
+
 def test_query_event_is_parsed_once_for_fact_reuse() -> None:
     row = SimpleNamespace(
         id=99,

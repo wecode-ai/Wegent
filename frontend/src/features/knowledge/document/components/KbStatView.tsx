@@ -111,17 +111,15 @@ export function KbStatView({ kbId, kbName, headerActions }: KbStatViewProps) {
   // The latest health row is used for the radar + pillars display.
   const latestHealthRow = useMemo(() => {
     if (!health?.rows || health.rows.length === 0) return null
-    // Filter to rows with a numeric health_score, then take the latest
-    // by target_date. Empty KBs return null health_score; including them
-    // would show a broken radar/pillars panel.
-    const valid = health.rows.filter(r => typeof r.health_score === 'number')
-    if (valid.length === 0) return null
-    const sorted = [...valid].sort((a, b) => {
-      const va = String(a.target_date ?? '')
-      const vb = String(b.target_date ?? '')
+    // The card represents the report cutoff, not the most recent historical
+    // non-null score. Falling back across missing days makes stale health look
+    // current after a KB has been emptied.
+    const sorted = [...health.rows].sort((a, b) => {
+      const va = String(a.stat_date ?? a.target_date ?? '')
+      const vb = String(b.stat_date ?? b.target_date ?? '')
       return va < vb ? 1 : va > vb ? -1 : 0
     })
-    return sorted[0]
+    return typeof sorted[0]?.health_score === 'number' ? sorted[0] : null
   }, [health?.rows])
 
   return (
@@ -138,6 +136,7 @@ export function KbStatView({ kbId, kbName, headerActions }: KbStatViewProps) {
             type="date"
             value={filter.startDate}
             onChange={e => setStartDate(e.target.value)}
+            max={filter.endDate}
             className="border-0 bg-transparent text-sm tabular-nums focus:outline-none"
             data-testid="stats-filter-date-from"
           />
@@ -146,6 +145,8 @@ export function KbStatView({ kbId, kbName, headerActions }: KbStatViewProps) {
             type="date"
             value={filter.endDate}
             onChange={e => setEndDate(e.target.value)}
+            min={filter.startDate}
+            max={new Date(Date.now() - 86_400_000).toISOString().split('T')[0]}
             className="border-0 bg-transparent text-sm tabular-nums focus:outline-none"
             data-testid="stats-filter-date-to"
           />
@@ -239,6 +240,11 @@ export function KbStatView({ kbId, kbName, headerActions }: KbStatViewProps) {
               </p>
             </div>
           )}
+        </div>
+      )}
+      {!latestHealthRow && health && !loading && (
+        <div className="rounded-lg border border-border bg-surface p-4 text-sm text-text-muted">
+          {t('health_score_no_cutoff_data', '报表截止日无可用健康分')}
         </div>
       )}
 

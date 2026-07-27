@@ -9,7 +9,7 @@ import { AlertTriangle, Info, ShieldAlert } from 'lucide-react'
 
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { type MetricFilter, type MetricResponse, fetchMetricsBatch } from '../../api'
+import { type MetricFilter, type MetricResponse, fetchQualityAlertMetrics } from '../../api'
 import { getThreshold, isWarn, isCritical } from '../../thresholds'
 
 interface QualityAlertPanelProps {
@@ -43,6 +43,7 @@ export function QualityAlertPanel({ filter }: QualityAlertPanelProps) {
   const [results, setResults] = useState<Record<string, MetricResponse>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
+  const [coverageComplete, setCoverageComplete] = useState(true)
 
   // Stable string key so array/object identity churn does not refetch.
   const filterKey = JSON.stringify(filter)
@@ -51,8 +52,13 @@ export function QualityAlertPanel({ filter }: QualityAlertPanelProps) {
     let cancelled = false
     setLoading(true)
     setError(false)
-    fetchMetricsBatch('admin', ALERT_METRICS, filter)
-      .then(d => !cancelled && setResults(d.results ?? {}))
+    fetchQualityAlertMetrics(filter)
+      .then(d => {
+        if (!cancelled) {
+          setResults(d.results ?? {})
+          setCoverageComplete(d.coverage?.complete ?? false)
+        }
+      })
       .catch(() => {
         if (!cancelled) {
           setResults({})
@@ -98,7 +104,7 @@ export function QualityAlertPanel({ filter }: QualityAlertPanelProps) {
     )
   }
 
-  if (alerts.length === 0) {
+  if (alerts.length === 0 && coverageComplete) {
     return (
       <div
         className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700"
@@ -142,6 +148,14 @@ export function QualityAlertPanel({ filter }: QualityAlertPanelProps) {
           )}
         </span>
       </div>
+      {!coverageComplete && (
+        <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-700">
+          {t(
+            'quality_alert_partial_coverage',
+            '孤儿文档明细采用采集上限，本面板可能未覆盖全部孤儿文档；其他质量指标已完整检查。'
+          )}
+        </div>
+      )}
       <div className="space-y-2">
         {visibleAlerts.map((a, i) => (
           <div
@@ -212,8 +226,11 @@ function computeAlerts(
       continue
     }
 
-    // Rate/score-based metrics.
-    for (const row of data.rows) {
+    // Rate/score-based metrics. Time-series collectors may return many days
+    // per KB; alerts represent current state, so retain only the latest row
+    // for each KB/dimension instead of emitting one alert per historical day.
+    const latestRows = latestRowsByEntity(data.rows)
+    for (const row of latestRows) {
       const value = row[tDef.fields[0]]
       if (typeof value !== 'number' || !Number.isFinite(value)) continue
       if (isWarn(value, tDef)) {
@@ -238,4 +255,20 @@ function computeAlerts(
     if (a.severity !== b.severity) return a.severity === 'high' ? -1 : 1
     return b.sortValue - a.sortValue
   })
+}
+
+function latestRowsByEntity(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const latest = new Map<string, Record<string, unknown>>()
+  for (const row of rows) {
+    const key = [
+      String(row.kb_id ?? 'platform'),
+      String(row.file_extension ?? ''),
+      String(row.mode ?? ''),
+    ].join(':')
+    const rowDate = String(row.stat_date ?? row.target_date ?? '')
+    const previous = latest.get(key)
+    const previousDate = String(previous?.stat_date ?? previous?.target_date ?? '')
+    if (!previous || rowDate >= previousDate) latest.set(key, row)
+  }
+  return [...latest.values()]
 }

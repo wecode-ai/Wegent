@@ -31,6 +31,7 @@
   "quality_alert_title": "Quality Alerts",
   "quality_alert_none": "No quality anomalies detected",
   "quality_alert_items": "items",
+  "quality_alert_partial_coverage": "Orphan-document details are capped and may not cover every orphan; all other quality metrics were evaluated completely.",
   "quality_alert_high": "high",
   "quality_alert_medium": "medium",
   "alert_index_failure": "High index failure rate",
@@ -171,7 +172,8 @@
   "period_kb_head": "KB Head",
   "total_queries": "Total Queries",
   "active_user_count": "Active Users",
-  "retrieval_active_days": "Retrieval Active Days",
+  "retrieval_active_days": "Days with Queries",
+  "health_score_no_cutoff_data": "No health score is available for the report cutoff date",
   "health_score": "Health Score",
   "orphan_doc_count": "Orphan Docs",
   "domains_kb_lifecycle": "KB Lifecycle",
@@ -195,7 +197,10 @@
       "partial_success": "Some tasks failed to trigger",
       "failed": "Failed to trigger tasks",
       "skipped": "already running, skipped",
-      "single_day_hint": "Leave end date empty to run a single day"
+      "single_day_hint": "Leave end date empty for one day; maximum 31 days per request",
+      "invalid_range": "End date cannot be before start date",
+      "future_date": "Statistics runs cannot target today or a future date",
+      "range_too_large": "A single request is limited to 31 days; split the range"
     },
     "list": {
       "title": "Run History",

@@ -140,6 +140,14 @@ export function MetricCard({
             </TooltipContent>
           </Tooltip>
         )}
+        {dataResolved?.run_id != null && (
+          <span
+            className="ml-auto text-[10px] text-text-muted tabular-nums"
+            title={dataResolved.run_completed_at ?? undefined}
+          >
+            run #{dataResolved.run_id}
+          </span>
+        )}
       </div>
       {hint && (
         <div

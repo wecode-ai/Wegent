@@ -23,6 +23,7 @@ from shared.models.kb_stat import (
     MetricBatchResponse,
     MetricListResponse,
     MetricResponse,
+    QualityAlertMetricsResponse,
     RunInfo,
     RunListResponse,
     TriggerRunRequest,
@@ -115,6 +116,18 @@ async def metric(name: str, payload: KbStatFilter):
     except KeyError:
         raise HTTPException(404, f"unknown metric: {name}")
     return MetricResponse(**result)
+
+
+@_gated_router.post(
+    "/quality-alert-metrics",
+    response_model=QualityAlertMetricsResponse,
+)
+async def quality_alert_metrics(payload: KbStatFilter):
+    """Return untruncated rows for platform alert evaluation."""
+    mfilter = _to_metric_filter(payload)
+    return QualityAlertMetricsResponse(
+        **_get_query_service().fetch_quality_alert_metrics(mfilter)
+    )
 
 
 @_gated_router.get("/metrics/list", response_model=MetricListResponse)

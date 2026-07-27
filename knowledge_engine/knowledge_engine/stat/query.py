@@ -907,7 +907,7 @@ _METRIC_QUERY_OPTIONS: dict[str, dict[str, Any]] = {
     "chunks_count_distribution": {"order_by": "call_count DESC", "limit": 20},
     "kb_active_users": {"order_by": "total_count DESC", "limit": 20},
     "kb_rag_head_ratio": {"order_by": "stat_date", "limit": 20},
-    "kb_zero_chunk_rate": {"order_by": "target_date", "limit": 60},
+    "kb_zero_chunk_rate": {"order_by": "stat_date", "limit": 60},
     "kb_retrieval_mode_dist": {"order_by": "call_count DESC", "limit": 20},
     # user_behavior
     "kb_creator_ranking": {"order_by": "kb_count DESC", "limit": 20},
@@ -949,17 +949,17 @@ _METRIC_QUERY_OPTIONS: dict[str, dict[str, Any]] = {
     "prom_active_conversions": {"limit": 20},
     "prom_callback_success_rate": {"order_by": "success_rate ASC", "limit": 20},
     # quality metrics
-    "retrieval_score_distribution": {"order_by": "target_date", "limit": 60},
-    "kb_low_score_rate": {"order_by": "target_date", "limit": 60},
+    "retrieval_score_distribution": {"order_by": "stat_date", "limit": 60},
+    "kb_low_score_rate": {"order_by": "stat_date", "limit": 60},
     "thin_doc_alert": {"order_by": "stat_date", "limit": 60},
     "doc_chunk_quality": {"order_by": "doc_count DESC", "limit": 20},
     "content_freshness": {"order_by": "doc_count DESC", "limit": 20},
     "kb_content_freshness": {"order_by": "fresh_rate ASC", "limit": 20},
     "duplicate_doc_suspect": {"order_by": "duplicate_rate DESC", "limit": 20},
     "kb_config_sanity": {"order_by": "kb_id", "limit": 20},
-    "answer_adoption_rate": {"order_by": "target_date", "limit": 60},
-    "kb_retrieval_hit_rate": {"order_by": "target_date", "limit": 60},
-    "query_dedup_rate": {"order_by": "target_date", "limit": 60},
+    "answer_adoption_rate": {"order_by": "stat_date", "limit": 60},
+    "kb_retrieval_hit_rate": {"order_by": "stat_date", "limit": 60},
+    "query_dedup_rate": {"order_by": "stat_date", "limit": 60},
     "kb_slow_query_rate": {"order_by": "slow_rate DESC", "limit": 20},
     "kb_avg_doc_length": {"order_by": "avg_doc_length ASC", "limit": 20},
     "cross_kb_query_user": {"order_by": "kb_count DESC", "limit": 20},
@@ -1354,12 +1354,16 @@ def _successful_run_condition(
     }
     scope = "r.kb_filter IS NULL"
     if filter.kb_ids:
-        scope_parts = ["r.kb_filter IS NULL"]
+        placeholders = []
         for index, kb_id in enumerate(filter.kb_ids):
             key = f"{param_prefix}_kb_{index}"
-            scope_parts.append(f"JSON_CONTAINS(r.kb_filter, JSON_ARRAY(:{key}))")
+            placeholders.append(f":{key}")
             params[key] = kb_id
-        scope = f"({' OR '.join(scope_parts)})"
+        requested_scope = ", ".join(placeholders)
+        scope = (
+            "(r.kb_filter IS NULL OR "
+            f"JSON_CONTAINS(r.kb_filter, JSON_ARRAY({requested_scope})))"
+        )
     condition = (
         f"{run_column} IN ("
         "SELECT r.id FROM kb_stat_runs r "
@@ -1409,12 +1413,16 @@ class KbStatQueryService:
             )
             params["collector_name"] = collector_name
         if kb_ids:
-            scope_parts = ["r.kb_filter IS NULL"]
+            placeholders = []
             for index, kb_id in enumerate(kb_ids):
                 key = f"scope_kb_{index}"
-                scope_parts.append(f"JSON_CONTAINS(r.kb_filter, JSON_ARRAY(:{key}))")
+                placeholders.append(f":{key}")
                 params[key] = kb_id
-            conditions.append(f"({' OR '.join(scope_parts)})")
+            requested_scope = ", ".join(placeholders)
+            conditions.append(
+                "(r.kb_filter IS NULL OR "
+                f"JSON_CONTAINS(r.kb_filter, JSON_ARRAY({requested_scope})))"
+            )
         else:
             # Platform-wide queries must never use a single-KB collection.
             conditions.append("r.kb_filter IS NULL")
@@ -1470,6 +1478,10 @@ class KbStatQueryService:
         results: dict[str, dict] = {}
         session = self._get_session()
         try:
+            run_cache: dict[
+                tuple[Optional[str], tuple[int, ...]],
+                tuple[Optional[int], Optional[datetime]],
+            ] = {}
             for name in names:
                 spec = _METRIC_SPECS.get(name)
                 if spec is None:
@@ -1483,9 +1495,15 @@ class KbStatQueryService:
                     }
                     continue
                 try:
-                    run_id, run_completed_at = self._resolve_run(
-                        session, filter, metric_name=name
+                    cache_key = (
+                        _collector_for_metric(name),
+                        tuple(sorted(filter.kb_ids or [])),
                     )
+                    if cache_key not in run_cache:
+                        run_cache[cache_key] = self._resolve_run(
+                            session, filter, metric_name=name
+                        )
+                    run_id, run_completed_at = run_cache[cache_key]
                     results[name] = self._fetch_one(
                         session, name, spec, filter, run_id, run_completed_at
                     )
@@ -1504,6 +1522,84 @@ class KbStatQueryService:
             session.close()
         return {"results": results}
 
+    def fetch_quality_alert_metrics(self, filter: MetricFilter) -> dict:
+        """Return complete, untruncated rows used by the admin alert panel.
+
+        Chart endpoints intentionally cap rows. Reusing those responses for
+        platform-wide alerting caused false "no anomalies" results, so alerts
+        use this dedicated path and explicitly report collector-side coverage.
+        """
+        names = (
+            "doc_index_failure_rate",
+            "kb_zero_chunk_rate",
+            "kb_health_score",
+            "thin_doc_alert",
+            "orphan_doc_alert",
+        )
+        results: dict[str, dict] = {}
+        session = self._get_session()
+        try:
+            run_cache: dict[
+                tuple[Optional[str], tuple[int, ...]],
+                tuple[Optional[int], Optional[datetime]],
+            ] = {}
+            for name in names:
+                spec = _METRIC_SPECS[name]
+                cache_key = (
+                    _collector_for_metric(name),
+                    tuple(sorted(filter.kb_ids or [])),
+                )
+                if cache_key not in run_cache:
+                    run_cache[cache_key] = self._resolve_run(
+                        session, filter, metric_name=name
+                    )
+                run_id, completed_at = run_cache[cache_key]
+                result = self._fetch_one(
+                    session,
+                    name,
+                    spec,
+                    filter,
+                    run_id,
+                    completed_at,
+                    ignore_limit=True,
+                )
+                if name != "orphan_doc_alert":
+                    result["rows"] = self._latest_alert_rows(result["rows"])
+                results[name] = result
+        finally:
+            session.close()
+        return {
+            "results": results,
+            # orphan_doc_alert intentionally stores only the oldest 500 rows.
+            # Never claim complete platform coverage until a per-KB summary
+            # collector replaces that capped detail table.
+            "coverage": {
+                "complete": False,
+                "incomplete_metrics": ["orphan_doc_alert"],
+            },
+        }
+
+    @staticmethod
+    def _latest_alert_rows(rows: list[dict]) -> list[dict]:
+        """Collapse time series to the latest row per alert dimension."""
+        latest: dict[tuple[Any, ...], dict] = {}
+        for row in rows:
+            key = (
+                row.get("kb_id", "platform"),
+                row.get("file_extension"),
+                row.get("mode"),
+            )
+            row_date = str(row.get("stat_date") or row.get("target_date") or "")
+            previous = latest.get(key)
+            previous_date = (
+                str(previous.get("stat_date") or previous.get("target_date") or "")
+                if previous
+                else ""
+            )
+            if previous is None or row_date >= previous_date:
+                latest[key] = row
+        return list(latest.values())
+
     def _resolve_run(
         self,
         session: Session,
@@ -1513,11 +1609,40 @@ class KbStatQueryService:
     ) -> tuple[Optional[int], Optional[datetime]]:
         """Resolve a run that successfully produced the requested metric."""
         if filter.run_id is not None:
+            collector_name = _collector_for_metric(metric_name)
+            params: dict[str, Any] = {"id": filter.run_id}
+            scope_condition = "r.kb_filter IS NULL"
+            if filter.kb_ids:
+                placeholders = []
+                for index, kb_id in enumerate(filter.kb_ids):
+                    key = f"explicit_kb_{index}"
+                    placeholders.append(f":{key}")
+                    params[key] = kb_id
+                scope_condition = (
+                    "(r.kb_filter IS NULL OR JSON_CONTAINS("
+                    f"r.kb_filter, JSON_ARRAY({', '.join(placeholders)})))"
+                )
+            collector_join = ""
+            if collector_name:
+                collector_join = (
+                    "JOIN kb_stat_collector_runs c ON c.run_id = r.id "
+                    "AND c.collector_name = :collector_name "
+                    "AND c.status = 'success' "
+                )
+                params["collector_name"] = collector_name
             run_row = session.execute(
-                text("SELECT completed_at FROM kb_stat_runs WHERE id = :id"),
-                {"id": filter.run_id},
+                text(
+                    "SELECT r.completed_at FROM kb_stat_runs r "
+                    f"{collector_join}"
+                    "WHERE r.id = :id "
+                    "AND r.status IN ('completed', 'partial') "
+                    f"AND {scope_condition}"
+                ),
+                params,
             ).fetchone()
-            return filter.run_id, (run_row.completed_at if run_row else None)
+            if run_row is None:
+                return None, None
+            return filter.run_id, run_row.completed_at
         latest = self._latest_run(
             session,
             collector_name=_collector_for_metric(metric_name) if metric_name else None,
@@ -1535,6 +1660,8 @@ class KbStatQueryService:
         filter: MetricFilter,
         run_id: Optional[int],
         run_completed_at: Optional[datetime],
+        *,
+        ignore_limit: bool = False,
     ) -> dict:
         """Query one metric using an already-open session and resolved run.
 
@@ -1593,7 +1720,9 @@ class KbStatQueryService:
                 dedup_cols = f"target_date, {spec.kb_col}"
 
             order_by = qopts.order_by if qopts and qopts.order_by else "target_date"
-            limit = qopts.limit if qopts and qopts.limit else 60
+            limit = (
+                None if ignore_limit else (qopts.limit if qopts and qopts.limit else 60)
+            )
             sql = (
                 f"SELECT t.* FROM {table} t "
                 f"INNER JOIN ("
@@ -1605,7 +1734,9 @@ class KbStatQueryService:
             )
             if spec.kb_col:
                 sql += f" AND t.{spec.kb_col} = latest.{spec.kb_col}"
-            sql += f" ORDER BY t.{order_by} LIMIT {int(limit)}"
+            sql += f" ORDER BY t.{order_by}"
+            if limit is not None:
+                sql += f" LIMIT {int(limit)}"
 
             rows = session.execute(text(sql), params).fetchall()
             return self._rows_to_metric_dict(
@@ -1635,7 +1766,7 @@ class KbStatQueryService:
         if qopts:
             if qopts.order_by:
                 sql += f" ORDER BY {qopts.order_by}"
-            if qopts.limit:
+            if qopts.limit and not ignore_limit:
                 sql += f" LIMIT {int(qopts.limit)}"
 
         rows = session.execute(text(sql), params).fetchall()
@@ -1707,24 +1838,42 @@ class KbStatQueryService:
             if filter.kb_ids:
                 return self._fetch_kb_dashboard(session, latest["id"], filter)
 
-            # Global totals (always from latest run — point-in-time snapshot)
-            gt_row = session.execute(
-                text(
-                    "SELECT * FROM kb_stat_global_totals WHERE run_id = :run_id LIMIT 1"
-                ),
-                {"run_id": latest["id"]},
-            ).fetchone()
+            # Snapshot sections resolve their own successful collector runs.
+            # A precise retry of period_and_daily must not make global totals
+            # or storage disappear merely because the retry run did not
+            # execute those collectors.
+            global_run_id, _ = self._resolve_run(
+                session, filter, metric_name="global_totals"
+            )
+            gt_row = (
+                session.execute(
+                    text(
+                        "SELECT * FROM kb_stat_global_totals WHERE run_id = :run_id LIMIT 1"
+                    ),
+                    {"run_id": global_run_id},
+                ).fetchone()
+                if global_run_id is not None
+                else None
+            )
 
             global_totals = None
             if gt_row:
+                storage_run_id, _ = self._resolve_run(
+                    session, filter, metric_name="storage_usage"
+                )
                 try:
-                    storage_row = session.execute(
-                        text(
-                            "SELECT COALESCE(SUM(total_file_size), 0) AS total_storage "
-                            "FROM kb_stat_storage_usage WHERE run_id = :run_id"
-                        ),
-                        {"run_id": latest["id"]},
-                    ).fetchone()
+                    storage_row = (
+                        session.execute(
+                            text(
+                                "SELECT COALESCE(SUM(total_file_size), 0) "
+                                "AS total_storage "
+                                "FROM kb_stat_storage_usage WHERE run_id = :run_id"
+                            ),
+                            {"run_id": storage_run_id},
+                        ).fetchone()
+                        if storage_run_id is not None
+                        else None
+                    )
                     total_storage = int(storage_row.total_storage) if storage_row else 0
                 except (ProgrammingError, OperationalError):
                     total_storage = 0

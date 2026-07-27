@@ -60,7 +60,7 @@ export function domainToType(domain: string): MetricType {
   return DOMAIN_TO_TYPE[domain] ?? 'ops'
 }
 
-// The 30 core metrics (v4 §2.2 / appendix A). Everything returned by the
+// Core metrics shown by default. Everything returned by the
 // metrics/list endpoint that is NOT in this set is demoted to the
 // collapsed "advanced view" (v4 §2.4) — the backend tables and collectors
 // keep running, only the UI folds them away.

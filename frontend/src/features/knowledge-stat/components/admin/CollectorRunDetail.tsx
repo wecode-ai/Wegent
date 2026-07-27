@@ -35,6 +35,15 @@ function formatDuration(start: string | null, end: string | null): string {
   return `${(ms / 60_000).toFixed(1)}m`
 }
 
+function formatDurationMs(durationMs: number, start: string | null, end: string | null): string {
+  if (durationMs > 0) {
+    if (durationMs < 1000) return `${durationMs}ms`
+    if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(1)}s`
+    return `${(durationMs / 60_000).toFixed(1)}m`
+  }
+  return formatDuration(start, end)
+}
+
 export function CollectorRunDetail({ collectors, loading, error }: CollectorRunDetailProps) {
   const { t } = useTranslation('knowledge-stat')
 
@@ -69,31 +78,33 @@ export function CollectorRunDetail({ collectors, loading, error }: CollectorRunD
           </tr>
         </thead>
         <tbody>
-          {collectors.map(c => (
-            <tr key={c.id} className="border-b border-border/50 last:border-0">
-              <td className="py-1.5 pr-3">
-                <CollectorStatusDot status={c.status} />
-              </td>
-              <td className="py-1.5 pr-3 text-text-primary font-mono text-xs">
-                {c.collector_name}
-              </td>
-              <td className="py-1.5 pr-3 text-text-secondary text-xs">
-                {t(`domains.${c.domain}`, c.domain)}
-              </td>
-              <td className="py-1.5 pr-3 text-right text-text-secondary tabular-nums">
-                {c.rows_written}
-              </td>
-              <td className="py-1.5 pr-3 text-right text-text-secondary tabular-nums">
-                {formatDuration(c.started_at, c.completed_at)}
-              </td>
-              <td
-                className="py-1.5 text-xs text-red-500 max-w-[300px] truncate"
-                title={c.error_message ?? ''}
-              >
-                {c.error_message ?? '-'}
-              </td>
-            </tr>
-          ))}
+          {[...collectors]
+            .sort((a, b) => (b.duration_ms ?? 0) - (a.duration_ms ?? 0))
+            .map(c => (
+              <tr key={c.id} className="border-b border-border/50 last:border-0">
+                <td className="py-1.5 pr-3">
+                  <CollectorStatusDot status={c.status} />
+                </td>
+                <td className="py-1.5 pr-3 text-text-primary font-mono text-xs">
+                  {c.collector_name}
+                </td>
+                <td className="py-1.5 pr-3 text-text-secondary text-xs">
+                  {t(`domains.${c.domain}`, c.domain)}
+                </td>
+                <td className="py-1.5 pr-3 text-right text-text-secondary tabular-nums">
+                  {c.rows_written}
+                </td>
+                <td className="py-1.5 pr-3 text-right text-text-secondary tabular-nums">
+                  {formatDurationMs(c.duration_ms, c.started_at, c.completed_at)}
+                </td>
+                <td
+                  className="py-1.5 text-xs text-red-500 max-w-[300px] truncate"
+                  title={c.error_message ?? ''}
+                >
+                  {c.error_message ?? '-'}
+                </td>
+              </tr>
+            ))}
         </tbody>
       </table>
     </div>

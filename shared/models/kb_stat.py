@@ -61,6 +61,17 @@ class MetricBatchResponse(BaseModel):
     results: dict[str, MetricResponse] = {}
 
 
+class MetricCoverage(BaseModel):
+    complete: bool = True
+    incomplete_metrics: list[str] = Field(default_factory=list)
+
+
+class QualityAlertMetricsResponse(MetricBatchResponse):
+    """Untruncated metric rows used by the platform quality-alert panel."""
+
+    coverage: MetricCoverage = Field(default_factory=MetricCoverage)
+
+
 class PeriodInfo(BaseModel):
     start: str
     end: str

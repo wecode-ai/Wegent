@@ -31,6 +31,7 @@
   "quality_alert_title": "质量告警",
   "quality_alert_none": "未检测到质量异常",
   "quality_alert_items": "项",
+  "quality_alert_partial_coverage": "孤儿文档明细采用采集上限，本面板可能未覆盖全部孤儿文档；其他质量指标已完整检查。",
   "quality_alert_high": "高危",
   "quality_alert_medium": "中危",
   "alert_index_failure": "索引失败率高",
@@ -171,7 +172,8 @@
   "period_kb_head": "指定文档",
   "total_queries": "总查询量",
   "active_user_count": "活跃用户",
-  "retrieval_active_days": "检索活跃天数",
+  "retrieval_active_days": "有查询天数",
+  "health_score_no_cutoff_data": "报表截止日无可用健康分",
   "health_score": "健康评分",
   "orphan_doc_count": "孤儿文档",
   "domains_kb_lifecycle": "知识库生命周期",
@@ -195,7 +197,10 @@
       "partial_success": "部分任务触发失败",
       "failed": "任务触发失败",
       "skipped": "个正在运行，已跳过",
-      "single_day_hint": "仅填写开始日期则只执行当天"
+      "single_day_hint": "仅填写开始日期则只执行当天，单次最多 31 天",
+      "invalid_range": "结束日期不能早于开始日期",
+      "future_date": "统计任务不能选择今天或未来日期",
+      "range_too_large": "单次任务最多允许 31 天，请拆分后执行"
     },
     "list": {
       "title": "运行历史",

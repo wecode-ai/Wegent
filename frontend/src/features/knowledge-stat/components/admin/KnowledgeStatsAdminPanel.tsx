@@ -72,6 +72,7 @@ export function KnowledgeStatsAdminPanel() {
                 type="date"
                 value={filter.startDate}
                 onChange={e => setStartDate(e.target.value)}
+                max={filter.endDate}
                 className="rounded-md border border-border bg-base px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
                 data-testid="stats-filter-date-from"
               />
@@ -83,6 +84,8 @@ export function KnowledgeStatsAdminPanel() {
                 type="date"
                 value={filter.endDate}
                 onChange={e => setEndDate(e.target.value)}
+                min={filter.startDate}
+                max={new Date(Date.now() - 86_400_000).toISOString().split('T')[0]}
                 className="rounded-md border border-border bg-base px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
                 data-testid="stats-filter-date-to"
               />

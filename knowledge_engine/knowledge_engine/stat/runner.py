@@ -72,7 +72,6 @@ def collect_all(
     )
 
     stat_session = stat_session_factory()
-    source_session = source_session_factory()
 
     # Create run record
     run_id = _create_run(
@@ -100,12 +99,16 @@ def collect_all(
         if pipeline_mode == "shadow":
             from knowledge_engine.stat.extractors import extract_query_events
 
-            extract_query_events(
-                run_id,
-                mfilter,
-                source_session=source_session,
-                stat_session=stat_session,
-            )
+            extractor_source_session = source_session_factory()
+            try:
+                extract_query_events(
+                    run_id,
+                    mfilter,
+                    source_session=extractor_source_session,
+                    stat_session=stat_session,
+                )
+            finally:
+                extractor_source_session.close()
 
         for collector in collectors:
             collector_run_id = _create_collector_run(
@@ -115,7 +118,12 @@ def collect_all(
                 name=collector.name,
             )
             collector_started = time.monotonic()
+            source_session: Optional[Session] = None
             try:
+                # Keep source-side read transactions short. Reusing one
+                # session for all collectors can retain a MySQL MVCC snapshot
+                # for the entire 20-30 minute run.
+                source_session = source_session_factory()
                 stat_session.begin()
                 rows = collector.fn(
                     run_id,
@@ -159,6 +167,9 @@ def collect_all(
                 )
                 logger.warning(f"[kb_stat] collector {collector.name} failed: {e}")
                 collector_results.append("failed")
+            finally:
+                if source_session is not None:
+                    source_session.close()
 
         # Determine overall run status
         if all(r == "success" for r in collector_results):
@@ -185,7 +196,6 @@ def collect_all(
         error_message=error_msg,
     )
 
-    source_session.close()
     stat_session.close()
 
     logger.info(
