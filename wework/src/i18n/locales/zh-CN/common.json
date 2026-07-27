@@ -1468,6 +1468,8 @@
     "mention_loading": "正在搜索...",
     "mention_search_error": "搜索失败",
     "mention_no_results": "没有匹配结果",
+    "mention_conversation": "会话",
+    "mention_conversation_load_failed": "无法加载引用的会话",
     "mention_files_and_folders": "文件和文件夹",
     "mention_path_picker_add": "添加",
     "mention_path_picker_back": "返回",

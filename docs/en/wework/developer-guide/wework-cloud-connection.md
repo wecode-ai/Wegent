@@ -121,7 +121,7 @@ The Proxy page manages local device proxy and cloud device proxy separately. The
 
 Saving a local device proxy does not immediately interrupt running Codex tasks. The UI asks the user to restart Codex manually. After confirmation, Wework restarts only the persistent Codex app-server maintained by the current App's local executor; it does not terminate other Codex processes on the machine. The new Codex app-server receives proxy-related environment variables, and later new chats use that proxy.
 
-Codex Responses-compatible models may be routed through the executor's built-in `codex responses proxy` before reaching the upstream model service. That proxy must also use the same local device proxy; otherwise model requests would bypass the Codex app-server process environment. Logs record only whether a proxy is configured and do not print the proxy URL.
+Codex Responses-compatible models may be routed through the executor's built-in `codex responses proxy` before reaching the upstream model service. For custom model providers configured by the user in Codex `config.toml`, that proxy uses the same local device proxy carried by the task when connecting to the upstream service; otherwise model requests would bypass the Codex app-server process environment. Logs record only whether a proxy is configured and do not print the proxy URL.
 
 ## Local Auth Status
 

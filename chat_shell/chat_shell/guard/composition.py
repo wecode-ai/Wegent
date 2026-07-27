@@ -14,11 +14,15 @@ The chained hook:
   prior hooks' state mutations;
 * tolerates a mix of sync and async hooks transparently;
 * concatenates ``messages`` updates from every hook (in order);
-* keeps the LAST hook's ``llm_input_messages`` if any hook supplied one.
+* rolls each hook's ``llm_input_messages`` forward into the state passed to the
+  next hook, so multiple model-input producers compose instead of clobbering
+  one another. The merged result carries the LAST such value.
 
 Order matters. Place hooks that mutate state (e.g., the budget guard) BEFORE
 hooks that only override the LLM's input list (e.g., guidance injection) so the
-latter sees post-mutation state.
+latter sees post-mutation state. A later model-input producer should base its
+output on ``state.get("llm_input_messages") or state["messages"]`` to build on
+the earlier producer's list.
 """
 
 from __future__ import annotations
@@ -47,8 +51,8 @@ def chain_pre_model_hooks(
 
     Hooks fire in the order given. Each hook sees a state where prior hooks'
     ``messages`` updates have already been applied via the ``add_messages``
-    reducer. ``llm_input_messages`` is forwarded from the last hook that
-    produced one (so place the guidance-style hook last).
+    reducer, and where any prior ``llm_input_messages`` has been rolled forward
+    so guidance-style hooks stack (place the guidance-style hooks last).
     """
     if not hooks:
         raise ValueError("chain_pre_model_hooks requires at least one hook")
@@ -77,6 +81,12 @@ def chain_pre_model_hooks(
 
             if "llm_input_messages" in update:
                 last_llm_input = update["llm_input_messages"]
+                # Roll forward so a later model-input producer builds on this
+                # list instead of overwriting it.
+                current_state = {
+                    **current_state,
+                    "llm_input_messages": last_llm_input,
+                }
 
         merged: dict[str, Any] = {}
         if accumulated_messages:
