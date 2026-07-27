@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
@@ -14,6 +14,7 @@ import type {
   RuntimeContextUsage,
   RuntimeGoal,
   RuntimePlanEventPayload,
+  RuntimeTaskAddress,
   RuntimeWorkListResponse,
   SkillRef,
   UnifiedModel,
@@ -23,6 +24,10 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
+import {
+  buildConversationMentionCandidates,
+  type ConversationMentionCandidate,
+} from '@/lib/conversation-mentions'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
@@ -69,6 +74,7 @@ export interface ProjectWorkControls {
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
   currentRuntimeDeviceId?: string | null
+  currentRuntimeTask?: RuntimeTaskAddress | null
   selectedDeviceWorkspaceId?: number | null
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
@@ -283,6 +289,14 @@ export function ChatInput({
     listLocalSkills: async () => [],
     listLocalApps: async () => [],
   }
+  const conversationMentionCandidates = useMemo(
+    () =>
+      buildConversationMentionCandidates(
+        projectWork?.runtimeWork,
+        projectWork?.currentRuntimeTask
+      ).map(candidate => conversationMentionCandidate(candidate, t)),
+    [projectWork?.currentRuntimeTask, projectWork?.runtimeWork, t]
+  )
 
   const planModeActive = controls.selectedModelOptions.collaborationMode === 'plan'
   const handleSetPlanMode = () => {
@@ -344,6 +358,7 @@ export function ChatInput({
     workspaceTarget,
     workspaceFileApi,
     cloudMentionCandidates,
+    conversationMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
     onSelectCloudProject,
@@ -511,6 +526,30 @@ export function ChatInput({
       {queueResumeDialog}
     </div>
   )
+}
+
+function conversationMentionCandidate(
+  candidate: ConversationMentionCandidate,
+  t: ReturnType<typeof useTranslation>['t']
+) {
+  const workspaceLabel =
+    candidate.projectName || candidate.address.workspacePath || candidate.address.deviceId
+  return {
+    kind: 'conversation' as const,
+    key: candidate.key,
+    title: candidate.title,
+    description: workspaceLabel,
+    metaLabel: t('workbench.mention_conversation', 'Conversation'),
+    testId: candidate.testId,
+    enabled: true,
+    reference: candidate.reference,
+    searchAliases: [
+      candidate.title,
+      candidate.projectName ?? '',
+      candidate.address.workspacePath ?? '',
+    ],
+    conversation: candidate,
+  }
 }
 
 function QueueResumeDialog({

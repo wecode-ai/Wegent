@@ -5,6 +5,7 @@ import {
   Cloud,
   File,
   Folder,
+  MessageCircle,
   Package,
   Paperclip,
   Target,
@@ -119,9 +120,11 @@ export function ComposerMentionMenu({
                       row.kind === 'cloud-projects-action' ||
                       candidate?.kind === 'cloud'
                     ? Cloud
-                    : row.kind === 'cloud-back-action'
-                      ? ArrowLeft
-                      : Package
+                    : candidate?.kind === 'conversation'
+                      ? MessageCircle
+                      : row.kind === 'cloud-back-action'
+                        ? ArrowLeft
+                        : Package
           const title = candidate
             ? candidate.title
             : pathItem
@@ -158,7 +161,15 @@ export function ComposerMentionMenu({
               type="button"
               data-testid={
                 candidate
-                  ? `${candidate.kind === 'app' ? 'local-app' : candidate.kind === 'cloud' ? 'cloud-reference' : 'local-skill'}-option-${candidate.testId}`
+                  ? `${
+                      candidate.kind === 'app'
+                        ? 'local-app'
+                        : candidate.kind === 'cloud'
+                          ? 'cloud-reference'
+                          : candidate.kind === 'conversation'
+                            ? 'conversation-reference'
+                            : 'local-skill'
+                    }-option-${candidate.testId}`
                   : pathItem
                     ? `workspace-mention-option-${index}`
                     : `mention-${row.kind}`
@@ -196,7 +207,11 @@ export function ComposerMentionMenu({
               </span>
               {candidate && !(projectSpaceScope && candidate.kind === 'cloud') && (
                 <span
-                  data-testid={`local-skill-source-${candidate.testId}`}
+                  data-testid={
+                    candidate.kind === 'conversation'
+                      ? `conversation-reference-source-${candidate.testId}`
+                      : `local-skill-source-${candidate.testId}`
+                  }
                   className="shrink-0 text-xs leading-5 text-text-muted"
                 >
                   {candidate.metaLabel}

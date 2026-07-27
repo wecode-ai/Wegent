@@ -95,6 +95,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
         is_group_chat: bool = False,
         supports_image: bool = False,
         supports_video: bool = False,
+        from_latest_compaction: bool = False,
     ) -> list[Message]:
         """Get chat history for a session.
 
@@ -107,6 +108,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
             supports_video: Whether the model supports video input.
                 If True, video attachments will include canonical video blocks.
                 If False (default), video attachments cannot be resolved as model input.
+            from_latest_compaction: Whether to start at the latest compaction checkpoint.
         """
         total_start = time.perf_counter()
         wall_start = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -124,6 +126,8 @@ class RemoteHistoryStore(HistoryStoreInterface):
         # Pass attachment capabilities to API for attachment history handling
         params["supports_image"] = str(supports_image).lower()
         params["supports_video"] = str(supports_video).lower()
+        if from_latest_compaction:
+            params["from_latest_compaction"] = "true"
 
         url = f"/chat/history/{session_id}"
         full_url = f"{self.base_url}{url}"

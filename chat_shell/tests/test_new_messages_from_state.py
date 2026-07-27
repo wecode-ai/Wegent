@@ -16,11 +16,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph.message import add_messages
 
-from chat_shell.agents.graph_builder import (
-    TOOL_LIMIT_REACHED_MESSAGE,
-    _build_limit_recovery_messages_chain,
-    _new_messages_from_state,
-)
+from chat_shell.agents.graph_builder import _new_messages_from_state
 
 
 def _assign_ids(*msgs):
@@ -236,45 +232,26 @@ class TestNewMessagesFromStateContextGuard:
         assert ai_no_id in result
 
 
-class TestLimitRecoveryMessagesChain:
-    """Tests for tool-limit recovery message-chain persistence."""
+def test_cloned_retained_user_survives_new_messages_and_serialize():
+    from langchain_core.messages import HumanMessage
 
-    def test_falls_back_to_limit_notice_when_collected_state_missing(self):
-        user = HumanMessage(content="please continue")
-        ids = _input_ids(user)
-        limit_notice = HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
-        _assign_ids(limit_notice)
+    from chat_shell.agents.graph_builder import (
+        _new_messages_from_state,
+        _serialize_messages_chain,
+    )
 
-        result = _build_limit_recovery_messages_chain(
-            collected_state_messages=[],
-            limit_messages=[user, limit_notice],
-            input_ids=ids,
-            final_response_text="",
-        )
+    input_user = HumanMessage(content="orig", id="in-1")
+    input_ids = frozenset({"in-1"})
+    cloned = HumanMessage(
+        content="orig", id="clone-1", additional_kwargs={"checkpoint_retained": True}
+    )
+    state = [input_user, cloned]
 
-        assert result == [limit_notice]
-
-    def test_appends_limit_notice_and_final_response_to_existing_chain(self):
-        user = HumanMessage(content="search")
-        ids = _input_ids(user)
-
-        ai_tool = _make_ai_with_tool("call_limit")
-        tool_result = _make_tool_result("call_limit")
-        _assign_ids(ai_tool, tool_result)
-
-        limit_notice = HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
-        _assign_ids(limit_notice)
-
-        result = _build_limit_recovery_messages_chain(
-            collected_state_messages=[user, ai_tool, tool_result],
-            limit_messages=[user, limit_notice],
-            input_ids=ids,
-            final_response_text="Final summary after limit.",
-        )
-
-        assert result == [
-            ai_tool,
-            tool_result,
-            limit_notice,
-            AIMessage(content="Final summary after limit."),
-        ]
+    new_msgs = _new_messages_from_state(state, input_ids)
+    assert cloned in new_msgs and input_user not in new_msgs
+    chain = _serialize_messages_chain(new_msgs)
+    assert any(
+        m["role"] == "user"
+        and m.get("additional_kwargs", {}).get("checkpoint_retained") is True
+        for m in chain
+    )

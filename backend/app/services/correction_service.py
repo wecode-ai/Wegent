@@ -150,7 +150,6 @@ class CorrectionService:
                 tool_registry=tool_registry,
                 # Increase iterations to allow: Search -> Read -> Search -> Evaluate
                 max_iterations=12,
-                enable_checkpointing=False,
             )
 
             # 4. Construct Payload (Structured Input)
@@ -241,7 +240,6 @@ class CorrectionService:
                 llm=llm,
                 tool_registry=tool_registry,
                 max_iterations=12,
-                enable_checkpointing=False,
             )
 
             # 4. Construct Payload

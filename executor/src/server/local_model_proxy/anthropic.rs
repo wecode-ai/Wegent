@@ -430,6 +430,34 @@ mod tests {
     }
 
     #[test]
+    fn flattens_namespace_tools_for_anthropic_messages() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [{"role": "user", "content": "Inspect the page"}],
+            "tools": [{
+                "type": "namespace",
+                "name": "wework_browser",
+                "tools": [{
+                    "type": "function",
+                    "name": "browser_snapshot",
+                    "description": "Capture the page",
+                    "parameters": {"type": "object", "properties": {}}
+                }]
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+
+        assert_eq!(converted["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(converted["tools"][0]["name"], "browser_snapshot");
+        assert_eq!(converted["tools"][0]["description"], "Capture the page");
+        assert_eq!(
+            converted["tools"][0]["input_schema"],
+            json!({"type": "object", "properties": {}})
+        );
+    }
+
+    #[test]
     fn preserves_friendly_apply_patch_failure_guidance() {
         let input = json!({
             "model": "kimi-for-coding",
@@ -481,6 +509,45 @@ mod tests {
         assert!(output.contains("response.output_text.delta"));
         assert!(output.contains("response.custom_tool_call_input.done"));
         assert!(output.contains("\"input_tokens\":10"));
+    }
+
+    #[tokio::test]
+    async fn restores_namespace_on_anthropic_tool_calls() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{"input_tokens":1}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"browser_snapshot","input":{}}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}),
+        ];
+        let source = futures_util::stream::iter(
+            events
+                .into_iter()
+                .map(|event| Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))),
+        );
+        let input = json!({
+            "tools": [{
+                "type": "namespace",
+                "name": "wework_browser",
+                "tools": [{
+                    "type": "function",
+                    "name": "browser_snapshot",
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+        let context = chat::responses_to_chat(&input)
+            .expect("context should build")
+            .1;
+        let output = anthropic_sse_to_responses(source, context)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect::<String>();
+
+        assert!(output.contains("\"name\":\"browser_snapshot\""));
+        assert!(output.contains("\"namespace\":\"wework_browser\""));
     }
 
     #[tokio::test]
