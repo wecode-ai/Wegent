@@ -8,6 +8,8 @@ import { ArtifactSourceSelector } from '@/features/knowledge/artifact/components
 import { useDocuments } from '@/features/knowledge/document/hooks/useDocuments'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
+const refreshMock = jest.fn()
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string, params?: { count?: number }) =>
@@ -41,6 +43,7 @@ const document = (id: number, overrides: Partial<KnowledgeDocument> = {}): Knowl
 
 describe('ArtifactSourceSelector', () => {
   beforeEach(() => {
+    jest.clearAllMocks()
     ;(useDocuments as jest.Mock).mockReturnValue({
       documents: [document(11), document(12, { index_status: 'indexing' })],
       loading: false,
@@ -51,6 +54,7 @@ describe('ArtifactSourceSelector', () => {
       totalPages: 1,
       goToPage: jest.fn(),
       changePageSize: jest.fn(),
+      refresh: refreshMock,
     })
   })
 
@@ -73,6 +77,9 @@ describe('ArtifactSourceSelector', () => {
     )
 
     expect(screen.getByText('artifact.sourceBrowser.documents')).toBeInTheDocument()
+    expect(screen.queryByTestId('artifact-source-open-document-11')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('artifact-source-selected'))
     fireEvent.click(screen.getByTestId('artifact-source-open-document-11'))
     expect(onOpenDocument).toHaveBeenCalledWith(expect.objectContaining({ id: 11 }))
 
@@ -80,5 +87,46 @@ describe('ArtifactSourceSelector', () => {
     expect(onModeChange).toHaveBeenCalledWith('selected')
     expect(onSelectedDocumentIdsChange).toHaveBeenCalledWith(new Set([11]))
     expect(screen.getByTestId('artifact-source-document-12')).toBeDisabled()
+  })
+
+  it('refreshes document status when the available source count changes', () => {
+    const props = {
+      knowledgeBaseId: 12,
+      mode: 'all' as const,
+      selectedDocumentIds: new Set<number>(),
+      availableDocumentCount: 1,
+      compact: true,
+      onModeChange: jest.fn(),
+      onSelectedDocumentIdsChange: jest.fn(),
+    }
+    const { rerender } = render(<ArtifactSourceSelector {...props} />)
+
+    expect(refreshMock).not.toHaveBeenCalled()
+    rerender(<ArtifactSourceSelector {...props} availableDocumentCount={2} />)
+
+    expect(refreshMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('resets the compact browser when the knowledge base changes', () => {
+    const props = {
+      knowledgeBaseId: 12,
+      mode: 'all' as const,
+      selectedDocumentIds: new Set<number>(),
+      availableDocumentCount: 1,
+      compact: true,
+      onModeChange: jest.fn(),
+      onSelectedDocumentIdsChange: jest.fn(),
+    }
+    const { rerender } = render(<ArtifactSourceSelector {...props} />)
+
+    fireEvent.click(screen.getByTestId('artifact-source-selected'))
+    fireEvent.change(screen.getByTestId('artifact-source-search'), {
+      target: { value: 'report' },
+    })
+    rerender(<ArtifactSourceSelector {...props} knowledgeBaseId={13} />)
+
+    expect(screen.queryByTestId('artifact-source-search')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('artifact-source-selected'))
+    expect(screen.getByTestId('artifact-source-search')).toHaveValue('')
   })
 })

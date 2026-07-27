@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useState } from 'react'
-import { Check, Database, FileText, Search } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Check, ChevronDown, Database, FileText, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -52,6 +52,9 @@ export function ArtifactSourceSelector({
 }: ArtifactSourceSelectorProps) {
   const { t } = useTranslation('knowledge')
   const [searchQuery, setSearchQuery] = useState('')
+  const [documentsExpanded, setDocumentsExpanded] = useState(false)
+  const previousKnowledgeBaseIdRef = useRef(knowledgeBaseId)
+  const previousAvailableDocumentCountRef = useRef(availableDocumentCount)
   const {
     documents,
     loading,
@@ -62,6 +65,7 @@ export function ArtifactSourceSelector({
     totalPages,
     goToPage,
     changePageSize,
+    refresh,
   } = useDocuments({
     knowledgeBaseId,
     autoLoad: active,
@@ -71,6 +75,29 @@ export function ArtifactSourceSelector({
     sortBy: 'name',
     sortOrder: 'asc',
   })
+
+  useEffect(() => {
+    setSearchQuery('')
+    setDocumentsExpanded(false)
+  }, [knowledgeBaseId])
+
+  useEffect(() => {
+    if (!active) {
+      previousKnowledgeBaseIdRef.current = knowledgeBaseId
+      previousAvailableDocumentCountRef.current = availableDocumentCount
+      return
+    }
+    if (previousKnowledgeBaseIdRef.current !== knowledgeBaseId) {
+      previousKnowledgeBaseIdRef.current = knowledgeBaseId
+      previousAvailableDocumentCountRef.current = availableDocumentCount
+      return
+    }
+    const previousCount = previousAvailableDocumentCountRef.current
+    previousAvailableDocumentCountRef.current = availableDocumentCount
+    if (previousCount !== null && previousCount !== availableDocumentCount) {
+      void refresh()
+    }
+  }, [active, availableDocumentCount, knowledgeBaseId, refresh])
 
   const toggleDocument = (documentId: number, checked: boolean) => {
     const next = new Set(selectedDocumentIds)
@@ -114,8 +141,11 @@ export function ArtifactSourceSelector({
         <button
           type="button"
           className={`flex min-h-11 items-center gap-3 text-left ${compact ? 'px-3 py-2' : 'p-4'}`}
-          onClick={() => onModeChange('selected')}
+          onClick={() =>
+            compact ? setDocumentsExpanded(current => !current) : onModeChange('selected')
+          }
           data-testid="artifact-source-selected"
+          aria-expanded={compact ? documentsExpanded : mode === 'selected'}
         >
           <div className="rounded-lg bg-primary/10 p-2 text-primary">
             <FileText className={compact ? 'h-4 w-4' : 'h-5 w-5'} />
@@ -125,7 +155,15 @@ export function ArtifactSourceSelector({
               <span className="text-sm font-medium">
                 {t(compact ? 'artifact.sourceBrowser.documents' : 'artifact.sourceDialog.selected')}
               </span>
-              {mode === 'selected' && <Check className="h-4 w-4 shrink-0 text-primary" />}
+              {compact ? (
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
+                    documentsExpanded ? 'rotate-180' : ''
+                  }`}
+                />
+              ) : (
+                mode === 'selected' && <Check className="h-4 w-4 shrink-0 text-primary" />
+              )}
             </div>
             <p className="truncate text-xs text-text-secondary">
               {mode === 'all' && compact
@@ -137,7 +175,7 @@ export function ArtifactSourceSelector({
           </div>
         </button>
 
-        {(mode === 'selected' || compact) && (
+        {((compact && documentsExpanded) || (!compact && mode === 'selected')) && (
           <div className="flex min-h-0 flex-col border-t border-border p-2">
             {selectedDocumentIds.size > 0 && (
               <div className="mb-1 flex items-center justify-between gap-2 text-xs text-text-secondary">

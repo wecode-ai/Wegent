@@ -929,7 +929,6 @@
     "wholeKnowledgeBase": "Entire knowledge base · {{count}} documents",
     "wholeKnowledgeBaseShort": "Entire knowledge base",
     "source": "Current sources",
-    "sourceUsageHint": "Used for chat and AI Workshop",
     "sourceCount": "{{count}} sources",
     "adjustSources": "Adjust",
     "sourceBrowser": {

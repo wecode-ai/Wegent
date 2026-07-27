@@ -281,11 +281,13 @@ export function KnowledgeDetailPanel({
 
         {/* Right panel - Document context selection */}
         <DocumentPanel
+          key={selectedKb.id}
           knowledgeBase={selectedKb}
           onDocumentSelectionChange={setSelectedDocumentIds}
           selectedDocumentIds={selectedDocumentIds}
           onCollapsedChange={setIsDocumentPanelCollapsed}
           mobileVisible={mobileWorkspaceTab === 'workshop'}
+          isOrganization={groupInfo?.groupType === 'organization'}
           onAskArtifactNode={request => {
             setArtifactPromptRequest(request)
             setMobileWorkspaceTab('chat')

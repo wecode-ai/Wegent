@@ -68,6 +68,8 @@ interface DocumentPanelProps {
   onCollapsedChange?: (collapsed: boolean) => void
   /** Whether the AI Workshop is the active workspace surface on small screens. */
   mobileVisible?: boolean
+  /** Whether the knowledge base uses organization-level public routes. */
+  isOrganization?: boolean
   onAskArtifactNode?: (request: ArtifactPromptRequest) => void
 }
 
@@ -93,6 +95,7 @@ export function DocumentPanel({
   onNewChat,
   onCollapsedChange,
   mobileVisible = false,
+  isOrganization = false,
   onAskArtifactNode,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
@@ -372,6 +375,7 @@ export function DocumentPanel({
         canEdit={false}
         knowledgeBaseName={knowledgeBase.name}
         knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
+        isOrganization={isOrganization}
       />
 
       {/* Overlay while resizing */}

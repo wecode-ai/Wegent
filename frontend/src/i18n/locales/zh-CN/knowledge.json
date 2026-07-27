@@ -929,7 +929,6 @@
     "wholeKnowledgeBase": "整个知识库 · {{count}} 篇文档",
     "wholeKnowledgeBaseShort": "整个知识库",
     "source": "当前来源",
-    "sourceUsageHint": "用于对话与 AI 工坊",
     "sourceCount": "{{count}} 篇来源",
     "adjustSources": "调整",
     "sourceBrowser": {
