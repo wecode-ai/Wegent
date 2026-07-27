@@ -1352,7 +1352,9 @@ function MessagesArea({
                     onReEdit={onReEdit}
                     waitingMessage={waitingMessage}
                     taskType={selectedTaskDetail?.task_type}
-                    onSaveToKnowledge={content => handleSaveToKnowledge(index, content)}
+                    onSaveToKnowledge={
+                      user ? content => handleSaveToKnowledge(index, content) : undefined
+                    }
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -1428,7 +1430,9 @@ function MessagesArea({
                   waitingMessage={waitingMessage}
                   taskType={selectedTaskDetail?.task_type}
                   onForwardClick={handleForwardClick}
-                  onSaveToKnowledge={content => handleSaveToKnowledge(index, content)}
+                  onSaveToKnowledge={
+                    user ? content => handleSaveToKnowledge(index, content) : undefined
+                  }
                 />
               </div>
             )

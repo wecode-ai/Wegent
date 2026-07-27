@@ -9,7 +9,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from sqlalchemy.orm import Session
 
+from app.models.user import User
 from app.schemas.knowledge import (
     DocumentSourceType,
     KnowledgeDocumentCreate,
@@ -1067,8 +1069,11 @@ class TestKnowledgeOrchestrator:
         mock_schedule.assert_not_called()
 
     def test_create_document_from_attachment_requires_manage_permission(
-        self, orchestrator, mock_db, mock_user
-    ):
+        self,
+        orchestrator: KnowledgeOrchestrator,
+        mock_db: Session,
+        mock_user: User,
+    ) -> None:
         """Test attachment document creation requires document manage permission."""
         mock_kb = MagicMock()
         data = KnowledgeDocumentCreate(
