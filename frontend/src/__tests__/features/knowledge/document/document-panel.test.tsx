@@ -9,6 +9,7 @@ import type { KnowledgeBase } from '@/types/knowledge'
 
 const mockDocumentDetailDialog = jest.fn((_props: unknown) => null)
 const mockArtifactSourceSelector = jest.fn((_props: unknown) => null)
+const mockSourceContinuation = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -17,16 +18,40 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/features/knowledge/artifact/components/ArtifactPanel', () => ({
-  ArtifactPanel: ({ onCanManageChange }: { onCanManageChange?: (canManage: boolean) => void }) => (
+  ArtifactPanel: ({
+    onCanManageChange,
+    onAdjustSources,
+  }: {
+    onCanManageChange?: (canManage: boolean) => void
+    onAdjustSources: (continuation: () => void) => void
+  }) => (
     <>
       <button data-testid="mock-read-only-permission" onClick={() => onCanManageChange?.(false)} />
       <button data-testid="mock-editor-permission" onClick={() => onCanManageChange?.(true)} />
+      <button
+        data-testid="mock-adjust-sources"
+        onClick={() => onAdjustSources(mockSourceContinuation)}
+      />
     </>
   ),
 }))
 
 jest.mock('@/features/knowledge/artifact/components/ArtifactSourceDialog', () => ({
-  ArtifactSourceDialog: () => null,
+  ArtifactSourceDialog: ({
+    open,
+    onOpenChange,
+    onApply,
+  }: {
+    open: boolean
+    onOpenChange: (open: boolean) => void
+    onApply: (documentIds: number[]) => void
+  }) =>
+    open ? (
+      <>
+        <button data-testid="mock-source-cancel" onClick={() => onOpenChange(false)} />
+        <button data-testid="mock-source-apply" onClick={() => onApply([11])} />
+      </>
+    ) : null,
 }))
 
 jest.mock('@/features/knowledge/artifact/components/ArtifactSourceSelector', () => ({
@@ -95,5 +120,17 @@ describe('DocumentPanel', () => {
       })
     )
     expect(screen.getByText('artifact.source')).toBeInTheDocument()
+  })
+
+  it('resumes creation only after applying source changes', () => {
+    render(<DocumentPanel knowledgeBase={knowledgeBase} />)
+
+    fireEvent.click(screen.getByTestId('mock-adjust-sources'))
+    fireEvent.click(screen.getByTestId('mock-source-cancel'))
+    expect(mockSourceContinuation).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('mock-adjust-sources'))
+    fireEvent.click(screen.getByTestId('mock-source-apply'))
+    expect(mockSourceContinuation).toHaveBeenCalledTimes(1)
   })
 })

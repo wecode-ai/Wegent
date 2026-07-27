@@ -197,6 +197,31 @@ describe('MessageBubble', () => {
     )
   })
 
+  it('keeps complete cancelled AI output saveable', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$Partial but complete answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'CANCELLED',
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({ showSaveToKnowledge: true })
+    )
+  })
+
   it('re-renders when save action presence changes but ignores callback identity changes', () => {
     const msg: Message = {
       type: 'ai',

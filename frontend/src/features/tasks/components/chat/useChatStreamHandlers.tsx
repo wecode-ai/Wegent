@@ -44,6 +44,11 @@ import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
 import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 
+export interface SendMessageOptions {
+  interactiveFormAnswer?: InteractiveFormAnswerPayload
+  artifactContext?: ArtifactNodeContext
+}
+
 function isVirtualKnowledgeBasePath(path: string): boolean {
   return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
 }
@@ -150,13 +155,7 @@ export interface ChatStreamHandlers {
   sendExpiredGuidanceAsMessage: (id: string) => Promise<void>
 
   // Actions
-  handleSendMessage: (
-    overrideMessage?: string,
-    options?: {
-      interactiveFormAnswer?: InteractiveFormAnswerPayload
-      artifactContext?: ArtifactNodeContext
-    }
-  ) => Promise<void>
+  handleSendMessage: (overrideMessage?: string, options?: SendMessageOptions) => Promise<void>
   /**
    * Send a message with a temporary model override (used for regeneration).
    * @param overrideMessage - The message content to send
@@ -435,10 +434,7 @@ export function useChatStreamHandlers({
         GitRepoInfo,
         'git_url' | 'git_repo' | 'git_repo_id' | 'git_domain'
       > | null,
-      sendOptions?: {
-        interactiveFormAnswer?: InteractiveFormAnswerPayload
-        artifactContext?: ArtifactNodeContext
-      }
+      sendOptions?: SendMessageOptions
     ): PreparedChatSend => {
       const isArtifactQuestion = Boolean(sendOptions?.artifactContext)
       const snapshotAttachments = isArtifactQuestion ? [] : [...attachments]
@@ -1046,13 +1042,7 @@ export function useChatStreamHandlers({
 
   // Core message sending logic
   const handleSendMessage = useCallback(
-    async (
-      overrideMessage?: string,
-      sendOptions?: {
-        interactiveFormAnswer?: InteractiveFormAnswerPayload
-        artifactContext?: ArtifactNodeContext
-      }
-    ) => {
+    async (overrideMessage?: string, sendOptions?: SendMessageOptions) => {
       const message =
         overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
       const hasAttachments = attachments.length > 0

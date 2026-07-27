@@ -4,6 +4,7 @@
 
 """Knowledge Artifact REST endpoints."""
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -35,6 +36,7 @@ from app.services.knowledge.artifact_task_launcher import (
 from shared.telemetry.decorators import trace_async
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
@@ -54,6 +56,7 @@ async def _execute(operation: Callable[[], Awaitable[T]]) -> T:
     except (ArtifactStorageError, ArtifactTaskConfigurationError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RuntimeError as exc:
+        logger.exception("Unexpected runtime failure while handling knowledge Artifact")
         raise HTTPException(
             status_code=503,
             detail="Artifact generation is unavailable",

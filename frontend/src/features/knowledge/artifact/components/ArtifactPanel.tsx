@@ -106,12 +106,6 @@ export function ArtifactPanel({
     }
   }
 
-  const handleDelete = async () => {
-    if (selectedArtifact) {
-      await deleteArtifact(selectedArtifact.artifact_id)
-    }
-  }
-
   const openCreate = (artifactType: KnowledgeArtifactType) => {
     setCreateType(artifactType)
     setCreateSessionKey(current => current + 1)
@@ -294,7 +288,11 @@ export function ArtifactPanel({
             showError(nextError)
           }
         }}
-        onDelete={handleDelete}
+        onDelete={async () => {
+          if (selectedArtifact) {
+            setPendingDeleteArtifactId(selectedArtifact.artifact_id)
+          }
+        }}
         onAskNode={request => {
           setSelectedArtifactId(null)
           onAskNode?.(request)

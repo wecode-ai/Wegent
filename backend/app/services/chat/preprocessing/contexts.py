@@ -25,7 +25,6 @@ from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.api.ws.events import ContextItem
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
 from app.services.knowledge.folder_service import KnowledgeFolderService
@@ -677,45 +676,27 @@ def _resolve_usable_selected_document_ids(
     document_ids: List[int],
 ) -> List[int]:
     """Validate selected documents against one usable knowledge-base scope."""
-    from app.services.knowledge import KnowledgeService
-
-    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
-        db,
-        knowledge_base_id,
-        user_id,
+    from app.services.knowledge.knowledge_service import (
+        KnowledgeDocumentScopeValidationError,
+        KnowledgeService,
     )
-    if knowledge_base is None or not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found",
-        )
 
-    normalized_ids = _normalize_document_ids(document_ids)
-    if len(normalized_ids) != len(document_ids):
+    try:
+        return KnowledgeService.resolve_usable_document_ids(
+            db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+            document_ids=document_ids,
+        )
+    except KnowledgeDocumentScopeValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Selected document IDs must be unique positive integers",
-        )
-
-    found_ids = {
-        row[0]
-        for row in (
-            db.query(KnowledgeDocument.id)
-            .filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-                KnowledgeDocument.id.in_(normalized_ids),
-                KnowledgeDocument.is_active.is_(True),
-                KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
-            )
-            .all()
-        )
-    }
-    if found_ids != set(normalized_ids):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Selected documents must belong to the knowledge base and be indexed",
-        )
-    return normalized_ids
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+                if exc.knowledge_base_not_found
+                else status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(exc),
+        ) from exc
 
 
 def _sync_kb_contexts_to_task(
@@ -1413,6 +1394,32 @@ async def prepare_contexts_for_chat(
         f"selected_docs_contexts_count={len(selected_docs_contexts)}, "
         f"contexts_data={[c.type_data for c in selected_docs_contexts]}"
     )
+    selected_document_ids_by_kb: dict[int, list[int]] = {}
+    for context in selected_docs_contexts:
+        type_data = context.type_data if isinstance(context.type_data, dict) else {}
+        try:
+            knowledge_base_id = int(type_data.get("knowledge_base_id"))
+        except (TypeError, ValueError):
+            continue
+        document_ids = selected_document_ids_by_kb.setdefault(knowledge_base_id, [])
+        for document_id in _normalize_document_ids(type_data.get("document_ids", [])):
+            if document_id not in document_ids:
+                document_ids.append(document_id)
+
+    selected_scopes = [
+        KnowledgeBaseScope(
+            knowledge_base_id=knowledge_base_id,
+            scope_restricted=True,
+            document_ids=document_ids,
+        )
+        for knowledge_base_id, document_ids in selected_document_ids_by_kb.items()
+        if document_ids
+    ]
+    if selected_docs_contexts and not selected_scopes:
+        raise ExternalRefValidationError(
+            "Selected documents context has no valid documents"
+        )
+
     if selected_docs_contexts:
         from .selected_documents import process_selected_documents_contexts
 
@@ -1442,31 +1449,27 @@ async def prepare_contexts_for_chat(
     # with the returned table payload — if parsing fails, the flag stays False.
     has_table_context = len(parsed_tables) > 0
 
-    selected_document_ids_by_kb: dict[int, list[int]] = {}
-    for context in selected_docs_contexts:
-        type_data = context.type_data if isinstance(context.type_data, dict) else {}
-        try:
-            knowledge_base_id = int(type_data.get("knowledge_base_id"))
-        except (TypeError, ValueError):
-            continue
-        document_ids = selected_document_ids_by_kb.setdefault(knowledge_base_id, [])
-        for document_id in _normalize_document_ids(type_data.get("document_ids", [])):
-            if document_id not in document_ids:
-                document_ids.append(document_id)
-
-    selected_scopes = [
-        KnowledgeBaseScope(
-            knowledge_base_id=knowledge_base_id,
+    merged_scopes_by_kb = {
+        scope.knowledge_base_id: scope for scope in kb_result.knowledge_base_scopes
+    }
+    for selected_scope in selected_scopes:
+        existing_scope = merged_scopes_by_kb.get(selected_scope.knowledge_base_id)
+        existing_document_ids = (
+            existing_scope.document_ids if existing_scope is not None else []
+        )
+        merged_scopes_by_kb[selected_scope.knowledge_base_id] = KnowledgeBaseScope(
+            knowledge_base_id=selected_scope.knowledge_base_id,
             scope_restricted=True,
-            document_ids=document_ids,
+            document_ids=list(
+                dict.fromkeys(existing_document_ids + selected_scope.document_ids)
+            ),
         )
-        for knowledge_base_id, document_ids in selected_document_ids_by_kb.items()
-        if document_ids
-    ]
-    if selected_docs_contexts and not selected_scopes:
-        raise ExternalRefValidationError(
-            "Selected documents context has no valid documents"
+    merged_knowledge_base_ids = list(
+        dict.fromkeys(
+            kb_result.knowledge_base_ids
+            + [scope.knowledge_base_id for scope in selected_scopes]
         )
+    )
 
     # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
     # and extra_tools (table prompt and selected_documents processing may have modified
@@ -1475,16 +1478,12 @@ async def prepare_contexts_for_chat(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt=kb_meta_prompt,
-        knowledge_base_ids=(
-            [scope.knowledge_base_id for scope in selected_scopes]
-            if selected_scopes
-            else kb_result.knowledge_base_ids
-        ),
+        knowledge_base_ids=merged_knowledge_base_ids,
         is_user_selected_kb=(
             True if selected_scopes else kb_result.is_user_selected_kb
         ),
-        document_ids=[] if selected_scopes else kb_result.document_ids,
-        knowledge_base_scopes=selected_scopes or kb_result.knowledge_base_scopes,
+        document_ids=kb_result.document_ids,
+        knowledge_base_scopes=list(merged_scopes_by_kb.values()),
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(

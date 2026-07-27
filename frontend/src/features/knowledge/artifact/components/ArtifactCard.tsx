@@ -24,6 +24,9 @@ interface ArtifactCardProps {
 export function ArtifactCard({ artifact, onOpen, onDelete }: ArtifactCardProps) {
   const { t, i18n } = useTranslation('knowledge')
   const createdAt = parseUTCDate(artifact.created_at)
+  const displayTitle =
+    artifact.title ||
+    t(`artifact.type.${artifact.artifact_type === 'mind_map' ? 'mindMap' : 'briefing'}`)
 
   return (
     <div className="relative rounded-lg border border-border transition-colors hover:bg-hover">
@@ -43,7 +46,7 @@ export function ArtifactCard({ artifact, onOpen, onDelete }: ArtifactCardProps) 
           </div>
           <div className="min-w-0 flex-1">
             <div className={`truncate text-sm font-medium ${artifact.can_delete ? 'pr-8' : ''}`}>
-              {artifact.title}
+              {displayTitle}
             </div>
             <div className="mt-1 flex items-center justify-between gap-2 text-xs text-text-secondary">
               <span>

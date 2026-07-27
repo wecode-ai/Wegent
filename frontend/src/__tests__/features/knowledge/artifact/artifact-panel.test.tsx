@@ -13,6 +13,7 @@ import type {
 } from '@/types/knowledge-artifact'
 
 const createMock = jest.fn()
+const removeMock = jest.fn()
 const toastMock = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -62,24 +63,29 @@ jest.mock('@/features/knowledge/artifact/components/ArtifactViewer', () => ({
   ArtifactViewer: ({
     artifact,
     onAskNode,
+    onDelete,
   }: {
     artifact: KnowledgeArtifact | null
     onAskNode?: (request: ArtifactPromptRequest) => void
+    onDelete: () => Promise<void>
   }) =>
     artifact ? (
-      <button
-        data-testid="mock-artifact-viewer"
-        onClick={() =>
-          onAskNode?.({
-            requestId: 'request-1',
-            message: '解释节点',
-            artifactContext: {
-              artifact_id: artifact.artifact_id,
-              node_id: 'node-1',
-            },
-          })
-        }
-      />
+      <>
+        <button
+          data-testid="mock-artifact-viewer"
+          onClick={() =>
+            onAskNode?.({
+              requestId: 'request-1',
+              message: '解释节点',
+              artifactContext: {
+                artifact_id: artifact.artifact_id,
+                node_id: 'node-1',
+              },
+            })
+          }
+        />
+        <button data-testid="mock-viewer-delete" onClick={() => void onDelete()} />
+      </>
     ) : null,
 }))
 
@@ -96,10 +102,11 @@ describe('ArtifactPanel AI Workshop', () => {
       create: createMock,
       rename: jest.fn(),
       retry: jest.fn(),
-      remove: jest.fn(),
+      remove: removeMock,
       refresh: jest.fn(),
     })
     createMock.mockResolvedValue({ artifact_id: 'artifact-1' })
+    removeMock.mockResolvedValue(undefined)
   })
 
   it('shows compact capability cards and creates from the whole knowledge base by default', async () => {
@@ -257,5 +264,42 @@ describe('ArtifactPanel AI Workshop', () => {
 
     expect(screen.getByText('artifact.documentsProcessingHint')).toBeInTheDocument()
     expect(screen.getByTestId('artifact-type-briefing')).toBeDisabled()
+  })
+
+  it('routes viewer deletion through the shared alert dialog', async () => {
+    ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
+      items: [
+        {
+          artifact_id: 'artifact-1',
+          artifact_type: 'briefing',
+          title: 'Briefing',
+          status: 'succeeded',
+          source_document_ids: [101],
+          created_at: '2026-07-26T12:00:00+08:00',
+          can_delete: true,
+        },
+      ],
+      canManage: true,
+      availableDocumentCount: 1,
+      processingDocumentCount: 0,
+      isLoading: false,
+      error: null,
+      create: createMock,
+      rename: jest.fn(),
+      retry: jest.fn(),
+      remove: removeMock,
+      refresh: jest.fn(),
+    })
+
+    render(
+      <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
+    )
+
+    fireEvent.click(screen.getByTestId('artifact-card-artifact-1'))
+    fireEvent.click(screen.getByTestId('mock-viewer-delete'))
+    expect(removeMock).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('artifact-delete-confirm'))
+    await waitFor(() => expect(removeMock).toHaveBeenCalledWith('artifact-1'))
   })
 })

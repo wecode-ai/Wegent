@@ -906,6 +906,12 @@
     "saveToKnowledge": "Save to knowledge base",
     "saveToKnowledgeHint": "Edit the title and content before saving it as a searchable Markdown document.",
     "savedToKnowledge": "Saved as a knowledge document",
+    "saveErrors": {
+      "permissionChanged": "You no longer have permission to save to this knowledge base.",
+      "targetMissing": "This knowledge base is no longer available.",
+      "invalidContent": "The document title or content is invalid.",
+      "saveFailed": "Failed to save the knowledge document."
+    },
     "moreActions": "More actions",
     "delete": "Delete",
     "deleteConfirm": "Delete this generation record? Its result will be permanently deleted. Source documents will not be affected.",

@@ -134,7 +134,7 @@ def test_selected_document_context_requires_database_session():
 
 
 @pytest.mark.asyncio
-async def test_selected_documents_replace_whole_kb_scope_in_runtime_request():
+async def test_selected_documents_augment_existing_kb_scopes_in_runtime_request():
     selected_context = SimpleNamespace(
         context_type="selected_documents",
         status="ready",
@@ -144,8 +144,16 @@ async def test_selected_documents_replace_whole_kb_scope_in_runtime_request():
         extra_tools=[],
         enhanced_system_prompt="system",
         kb_meta_prompt="",
-        knowledge_base_ids=[12],
-        knowledge_base_scopes=[KnowledgeBaseScope(knowledge_base_id=12)],
+        knowledge_base_ids=[12, 13],
+        document_ids=[88],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=12,
+                scope_restricted=True,
+                document_ids=[100],
+            ),
+            KnowledgeBaseScope(knowledge_base_id=13),
+        ],
     )
 
     with (
@@ -175,14 +183,15 @@ async def test_selected_documents_replace_whole_kb_scope_in_runtime_request():
             task_id=31,
         )
 
-    assert result.kb.knowledge_base_ids == [12]
-    assert result.kb.document_ids == []
+    assert result.kb.knowledge_base_ids == [12, 13]
+    assert result.kb.document_ids == [88]
     assert result.kb.knowledge_base_scopes == [
         KnowledgeBaseScope(
             knowledge_base_id=12,
             scope_restricted=True,
-            document_ids=[101],
-        )
+            document_ids=[100, 101],
+        ),
+        KnowledgeBaseScope(knowledge_base_id=13),
     ]
 
 
@@ -194,6 +203,7 @@ async def test_selected_documents_without_valid_scopes_raise_domain_error():
         type_data={"knowledge_base_id": "invalid", "document_ids": [101]},
     )
 
+    process_selected_documents = MagicMock(return_value=("prompt", "system", []))
     with (
         patch(
             "app.services.chat.preprocessing.contexts.context_service.get_by_subtask",
@@ -213,7 +223,7 @@ async def test_selected_documents_without_valid_scopes_raise_domain_error():
         ),
         patch(
             "app.services.chat.preprocessing.selected_documents.process_selected_documents_contexts",
-            return_value=("prompt", "system", []),
+            new=process_selected_documents,
         ),
         pytest.raises(
             ExternalRefValidationError,
@@ -228,3 +238,5 @@ async def test_selected_documents_without_valid_scopes_raise_domain_error():
             base_system_prompt="system",
             task_id=31,
         )
+
+    process_selected_documents.assert_not_called()

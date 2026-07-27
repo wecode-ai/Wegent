@@ -8,6 +8,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createTextKnowledgeDocument } from '@/apis/knowledge'
 import { ArtifactSaveDialog } from '@/features/knowledge/artifact/components/ArtifactSaveDialog'
 
+const mockToast = jest.fn()
+
 jest.mock('@/apis/knowledge', () => ({
   createTextKnowledgeDocument: jest.fn(),
 }))
@@ -17,7 +19,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/hooks/use-toast', () => ({
-  useToast: () => ({ toast: jest.fn() }),
+  useToast: () => ({ toast: mockToast }),
 }))
 
 jest.mock('@/components/common/WysiwygEditor', () => ({
@@ -88,5 +90,33 @@ describe('ArtifactSaveDialog', () => {
     expect(screen.getByTestId('artifact-save-submit')).toHaveClass('bg-primary')
     expect(onSaved).toHaveBeenCalled()
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('shows an error and keeps the dialog open when saving fails', async () => {
+    ;(createTextKnowledgeDocument as jest.Mock).mockRejectedValue(new Error('boom'))
+    const onOpenChange = jest.fn()
+
+    render(
+      <ArtifactSaveDialog
+        open
+        onOpenChange={onOpenChange}
+        knowledgeBaseId={12}
+        initialTitle="Initial"
+        initialContent="Initial content"
+        onSaved={jest.fn()}
+      />
+    )
+
+    expect(screen.getByLabelText('artifact.titleLabel')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('artifact-save-submit'))
+
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        description: 'artifact.saveErrors.saveFailed',
+        variant: 'destructive',
+      })
+    )
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(screen.getByTestId('artifact-save-dialog')).toBeInTheDocument()
   })
 })

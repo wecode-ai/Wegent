@@ -6,6 +6,7 @@
 
 import logging
 from datetime import datetime, timezone
+from typing import NoReturn
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Query, Session
@@ -167,7 +168,7 @@ class KnowledgeArtifactRepository:
     ) -> KnowledgeArtifact | None:
         """Update execution fields for a current attempt and legal transition."""
         try:
-            (
+            updated_count = (
                 self._query(artifact.knowledge_base_id, artifact.artifact_id)
                 .filter(
                     KnowledgeArtifactRecord.attempt == artifact.attempt,
@@ -194,6 +195,8 @@ class KnowledgeArtifactRepository:
                     synchronize_session=False,
                 )
             )
+            if updated_count == 0:
+                return None
             self.db.commit()
             return self.get(artifact.knowledge_base_id, artifact.artifact_id)
         except SQLAlchemyError as exc:
@@ -286,7 +289,7 @@ class KnowledgeArtifactRepository:
         operation: str,
         target: str,
         exc: SQLAlchemyError,
-    ) -> None:
+    ) -> NoReturn:
         self.db.rollback()
         logger.exception(
             "Failed to %s knowledge Artifact %s",

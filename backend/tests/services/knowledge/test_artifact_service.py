@@ -334,15 +334,33 @@ def test_parse_mind_map_accepts_explanatory_text_around_json():
 
 def test_resolve_document_ids_deduplicates_in_request_order():
     service, _, _ = build_service()
-    query = service.db.query.return_value.filter.return_value
-    query.filter.return_value.all.return_value = [
-        SimpleNamespace(id=101),
-        SimpleNamespace(id=102),
-    ]
-
-    result = service._resolve_document_ids(12, [102, 101, 102])
+    with patch(
+        "app.services.knowledge.artifact_service.KnowledgeService.resolve_usable_document_ids",
+        return_value=[102, 101],
+    ) as resolve_document_ids:
+        result = service._resolve_document_ids(12, [102, 101, 102])
 
     assert result == [102, 101]
+    assert resolve_document_ids.call_args.kwargs["document_ids"] == [102, 101]
+
+
+def test_resolve_document_ids_uses_all_indexed_documents_for_empty_scope():
+    service, _, _ = build_service()
+    query = service.db.query.return_value.filter.return_value
+    query.order_by.return_value.with_entities.return_value = [
+        (document_id,) for document_id in range(1, 52)
+    ]
+
+    assert service._resolve_document_ids(12, []) == list(range(1, 52))
+
+
+def test_default_title_is_locale_neutral_when_omitted():
+    request = KnowledgeArtifactCreate(
+        artifact_type=KnowledgeArtifactType.MIND_MAP,
+        document_ids=[101],
+    )
+
+    assert ArtifactService._default_title(request) == ""
 
 
 @pytest.mark.parametrize(
@@ -469,7 +487,12 @@ async def test_reconcile_uses_recent_subtask_activity_for_running_execution():
     assert reconciled.status == KnowledgeArtifactStatus.RUNNING
     assert reconciled.execution_health == KnowledgeArtifactExecutionHealth.HEALTHY
     assert reconciled.can_retry is False
-    assert reconciled.updated_at == service._subtask_datetime_as_utc(recent_at)
+    expected_recent_at = (
+        recent_at.replace(tzinfo=timezone(timedelta(hours=8)))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    assert reconciled.updated_at == expected_recent_at
     repository.update_execution.assert_called_once()
 
 

@@ -44,14 +44,22 @@ interface InteractiveMindMapProps {
 function getDepths(content: MindMapContent): Map<string, number> {
   const nodesById = new Map(content.nodes.map(node => [node.id, node]))
   const depths = new Map<string, number>()
-  const resolveDepth = (node: MindMapNode): number => {
-    const cached = depths.get(node.id)
-    if (cached !== undefined) return cached
-    const depth = node.parent_id ? resolveDepth(nodesById.get(node.parent_id)!) + 1 : 0
-    depths.set(node.id, depth)
-    return depth
+  for (const node of content.nodes) {
+    if (depths.has(node.id)) continue
+    const path: MindMapNode[] = []
+    const visited = new Set<string>()
+    let current: MindMapNode | undefined = node
+    while (current && !depths.has(current.id) && !visited.has(current.id)) {
+      visited.add(current.id)
+      path.push(current)
+      current = current.parent_id ? nodesById.get(current.parent_id) : undefined
+    }
+    let depth = current ? (depths.get(current.id) ?? -1) : -1
+    for (let index = path.length - 1; index >= 0; index -= 1) {
+      depth += 1
+      depths.set(path[index].id, depth)
+    }
   }
-  content.nodes.forEach(resolveDepth)
   return depths
 }
 
@@ -66,6 +74,7 @@ function getVisibleNodeIds(content: MindMapContent, collapsed: Set<string>): Set
 
   const visible = new Set<string>()
   const visit = (nodeId: string) => {
+    if (visible.has(nodeId)) return
     visible.add(nodeId)
     if (collapsed.has(nodeId)) return
     childrenByParent.get(nodeId)?.forEach(visit)
@@ -128,7 +137,7 @@ const MindMapNodeCard = memo(function MindMapNodeCard({
       {data.hasChildren && (
         <button
           type="button"
-          className="nodrag ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-hover hover:text-text-primary sm:h-9 sm:w-9"
+          className="nodrag ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-hover hover:text-text-primary md:h-9 md:w-9"
           onClick={event => {
             event.stopPropagation()
             data.onToggle(data.node.id)
@@ -147,7 +156,7 @@ const MindMapNodeCard = memo(function MindMapNodeCard({
       )}
       <button
         type="button"
-        className="nodrag ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-white sm:h-9 sm:w-9"
+        className="nodrag ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary hover:bg-primary hover:text-white md:h-9 md:w-9"
         onClick={event => {
           event.stopPropagation()
           data.onAsk(data.node.id)

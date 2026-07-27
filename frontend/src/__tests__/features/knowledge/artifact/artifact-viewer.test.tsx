@@ -149,3 +149,35 @@ it('rejects mind maps outside the structured data contract', () => {
   expect(screen.getByTestId('invalid-mind-map-state')).toBeInTheDocument()
   expect(screen.queryByTestId('mock-mind-map-ask')).not.toBeInTheDocument()
 })
+
+it('preserves an in-progress rename when the same artifact is refetched', () => {
+  const artifact = {
+    ...failedArtifact,
+    can_delete: true,
+  }
+  const props = {
+    canManage: true,
+    onClose: jest.fn(),
+    onRename: jest.fn(),
+    onRetry: jest.fn(),
+    onDelete: jest.fn(),
+  }
+  const { rerender } = render(<ArtifactViewer {...props} artifact={artifact} />)
+
+  fireEvent.click(screen.getByTestId('artifact-rename-button'))
+  fireEvent.change(screen.getByTestId('artifact-rename-input'), {
+    target: { value: 'Draft rename' },
+  })
+  rerender(
+    <ArtifactViewer
+      {...props}
+      artifact={{
+        ...artifact,
+        title: 'Refetched title',
+        updated_at: '2026-07-26T12:02:00+08:00',
+      }}
+    />
+  )
+
+  expect(screen.getByTestId('artifact-rename-input')).toHaveValue('Draft rename')
+})

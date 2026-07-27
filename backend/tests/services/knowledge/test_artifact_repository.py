@@ -140,7 +140,7 @@ def test_terminal_state_cannot_regress_to_running(db: Session):
     stale_running.updated_at = datetime.now().astimezone()
     rejected = repository.update_execution(stale_running)
     persisted = repository.get(12, "artifact-1")
-    assert rejected.status == KnowledgeArtifactStatus.SUCCEEDED
+    assert rejected is None
     assert persisted.status == KnowledgeArtifactStatus.SUCCEEDED
     assert persisted.content == "最终结果"
 
@@ -169,7 +169,7 @@ def test_retry_claim_is_atomic_and_invalidates_old_attempt(db: Session):
     assert second_claim.attempt == 2
     old_attempt.status = KnowledgeArtifactStatus.SUCCEEDED
     rejected = repository.update_execution(old_attempt)
-    assert rejected.attempt == 2
+    assert rejected is None
     assert repository.get(12, "artifact-1").status == KnowledgeArtifactStatus.QUEUED
 
 

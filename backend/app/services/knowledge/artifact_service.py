@@ -30,7 +30,10 @@ from app.schemas.knowledge_artifact import (
 )
 from app.services.knowledge.artifact_repository import KnowledgeArtifactRepository
 from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_service import (
+    KnowledgeDocumentScopeValidationError,
+    KnowledgeService,
+)
 from app.stores.tasks import SubtaskStore, TaskStore, subtask_store, task_store
 
 _JSON_BLOCK = re.compile(r"```json\s*(.*?)```", re.IGNORECASE | re.DOTALL)
@@ -548,20 +551,22 @@ class ArtifactService:
         knowledge_base_id: int,
         requested_ids: list[int],
     ) -> list[int]:
+        ordered_ids = list(dict.fromkeys(requested_ids))
         query = self.db.query(KnowledgeDocument).filter(
             KnowledgeDocument.kind_id == knowledge_base_id,
             KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
             KnowledgeDocument.is_active.is_(True),
         )
-        if requested_ids:
-            ordered_ids = list(dict.fromkeys(requested_ids))
-            documents = query.filter(KnowledgeDocument.id.in_(ordered_ids)).all()
-            found_ids = {document.id for document in documents}
-            if found_ids != set(ordered_ids):
-                raise ArtifactValidationError(
-                    "Documents must belong to this knowledge base and be indexed"
+        if ordered_ids:
+            try:
+                return KnowledgeService.resolve_usable_document_ids(
+                    self.db,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=self.user.id,
+                    document_ids=ordered_ids,
                 )
-            return ordered_ids
+            except KnowledgeDocumentScopeValidationError as exc:
+                raise ArtifactValidationError(str(exc)) from exc
 
         document_ids = [
             row[0]
@@ -658,6 +663,4 @@ class ArtifactService:
     def _default_title(request: KnowledgeArtifactCreate) -> str:
         if request.title and request.title.strip():
             return request.title.strip()
-        if request.artifact_type == KnowledgeArtifactType.MIND_MAP:
-            return "知识库思维导图"
-        return "知识库简报"
+        return ""

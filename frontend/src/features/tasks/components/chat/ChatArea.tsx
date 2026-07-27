@@ -23,10 +23,10 @@ import { ScrollbarMarkers } from './ScrollbarMarkers'
 import { GuidedQuestions } from '@/features/knowledge/document/components/GuidedQuestions'
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
-import { useChatStreamHandlers } from './useChatStreamHandlers'
+import { useChatStreamHandlers, type SendMessageOptions } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { InteractiveFormAnswerPayload, Team, SubtaskContextBrief, TaskType } from '@/types/api'
+import type { Team, SubtaskContextBrief, TaskType } from '@/types/api'
 import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, ExternalKnowledgeRef, QueueMessageContext } from '@/types/context'
@@ -72,7 +72,7 @@ import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
-import type { ArtifactNodeContext, ArtifactPromptRequest } from '@/types/knowledge-artifact'
+import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
 
 /**
@@ -107,11 +107,6 @@ function buildExternalContextId(ref: ExternalKnowledgeRef) {
 
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
-
-type SendMessageOptions = {
-  interactiveFormAnswer?: InteractiveFormAnswerPayload
-  artifactContext?: ArtifactNodeContext
-}
 
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
   'attachment',

@@ -81,9 +81,30 @@ it('keeps select, collapse, and ask as independent buttons', () => {
   render(<InteractiveMindMap content={content} onAskNode={onAskNode} />)
 
   expect(screen.getByTestId('mind-map-node-root').tagName).toBe('BUTTON')
+  expect(screen.getByTestId('mind-map-toggle-root')).toHaveClass('h-11', 'w-11', 'md:h-9', 'md:w-9')
+  expect(screen.getByTestId('mind-map-ask-root')).toHaveClass('h-11', 'w-11', 'md:h-9', 'md:w-9')
   fireEvent.click(screen.getByTestId('mind-map-ask-root'))
   expect(onAskNode).toHaveBeenCalledWith('root')
 
   fireEvent.click(screen.getByTestId('mind-map-toggle-root'))
   expect(screen.queryByTestId('mind-map-node-child')).not.toBeInTheDocument()
+})
+
+it('terminates safely when parent links contain a cycle', () => {
+  render(
+    <InteractiveMindMap
+      content={{
+        schema_version: 1,
+        root_id: 'a',
+        nodes: [
+          { id: 'a', parent_id: 'b', title: 'A' },
+          { id: 'b', parent_id: 'a', title: 'B' },
+        ],
+      }}
+      onAskNode={jest.fn()}
+    />
+  )
+
+  expect(screen.getByTestId('mind-map-node-a')).toBeInTheDocument()
+  expect(screen.getByTestId('mind-map-node-b')).toBeInTheDocument()
 })

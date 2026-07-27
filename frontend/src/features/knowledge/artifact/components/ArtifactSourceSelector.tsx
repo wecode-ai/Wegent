@@ -120,8 +120,7 @@ export function ArtifactSourceSelector({
     const next = new Set(selectedDocumentIds)
     if (checked) next.add(documentId)
     else next.delete(documentId)
-    if (next.size === 0) return
-    onScopeChange({ mode: 'selected', documentIds: next })
+    onScopeChange(next.size === 0 ? { mode: 'all' } : { mode: 'selected', documentIds: next })
   }
 
   const toggleDocumentsExpanded = () => {

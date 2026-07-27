@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, BookPlus, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { Button } from '@/components/ui/button'
@@ -59,17 +59,45 @@ export function ArtifactViewer({
   const [isSaveOpen, setIsSaveOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const artifactId = artifact?.artifact_id
+  const selectedArtifactRef = useRef(artifact)
+  const onAskNodeRef = useRef(onAskNode)
+  selectedArtifactRef.current = artifact
+  onAskNodeRef.current = onAskNode
 
   useEffect(() => {
-    setTitle(artifact?.title ?? '')
+    setTitle(selectedArtifactRef.current?.title ?? '')
     setIsEditing(false)
-  }, [artifact])
+  }, [artifactId])
+
+  const mindMapContent = useMemo(
+    () =>
+      artifact?.artifact_type === 'mind_map' && artifact.content
+        ? parseMindMapContent(artifact.content)
+        : null,
+    [artifact?.artifact_type, artifact?.content]
+  )
+  const handleAskNode = useCallback(
+    (nodeId: string) => {
+      if (!artifactId || !mindMapContent) return
+      const message = buildMindMapQuestion(mindMapContent, nodeId, t)
+      if (!message || !onAskNodeRef.current) return
+      onAskNodeRef.current({
+        requestId: createPromptRequestId(artifactId, nodeId),
+        message,
+        artifactContext: {
+          artifact_id: artifactId,
+          node_id: nodeId,
+        },
+      })
+    },
+    [artifactId, mindMapContent, t]
+  )
 
   if (!artifact) return null
-  const mindMapContent =
-    artifact.artifact_type === 'mind_map' && artifact.content
-      ? parseMindMapContent(artifact.content)
-      : null
+  const displayTitle =
+    artifact.title ||
+    t(`artifact.type.${artifact.artifact_type === 'mind_map' ? 'mindMap' : 'briefing'}`)
 
   const handleRename = async () => {
     if (!title.trim()) return
@@ -101,6 +129,7 @@ export function ArtifactViewer({
                   data-testid="artifact-rename-input"
                 />
                 <Button
+                  variant="primary"
                   size="sm"
                   onClick={() => void handleRename()}
                   disabled={isSaving || !title.trim()}
@@ -111,7 +140,7 @@ export function ArtifactViewer({
               </>
             ) : (
               <>
-                <DialogTitle className="truncate">{artifact.title}</DialogTitle>
+                <DialogTitle className="truncate">{displayTitle}</DialogTitle>
                 {canManage && (
                   <Button
                     variant="ghost"
@@ -136,18 +165,7 @@ export function ArtifactViewer({
                 <InteractiveMindMap
                   key={artifact.artifact_id}
                   content={mindMapContent}
-                  onAskNode={nodeId => {
-                    const message = buildMindMapQuestion(mindMapContent, nodeId, t)
-                    if (!message || !onAskNode) return
-                    onAskNode({
-                      requestId: createPromptRequestId(artifact.artifact_id, nodeId),
-                      message,
-                      artifactContext: {
-                        artifact_id: artifact.artifact_id,
-                        node_id: nodeId,
-                      },
-                    })
-                  }}
+                  onAskNode={handleAskNode}
                 />
               ) : (
                 <div
@@ -193,9 +211,7 @@ export function ArtifactViewer({
                 <Button
                   variant="ghost"
                   className="text-error"
-                  onClick={() => {
-                    if (window.confirm(t('artifact.deleteConfirm'))) void onDelete()
-                  }}
+                  onClick={() => void onDelete()}
                   data-testid="artifact-delete-button"
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
@@ -204,8 +220,7 @@ export function ArtifactViewer({
               )}
             </div>
             <div className="flex items-center gap-2">
-              {canManage &&
-                artifact.status === 'succeeded' &&
+              {artifact.status === 'succeeded' &&
                 artifact.artifact_type === 'briefing' &&
                 artifact.content && (
                   <Button
@@ -218,7 +233,11 @@ export function ArtifactViewer({
                   </Button>
                 )}
               {artifact.can_retry && (
-                <Button onClick={() => void onRetry()} data-testid="artifact-retry-button">
+                <Button
+                  variant="primary"
+                  onClick={() => void onRetry()}
+                  data-testid="artifact-retry-button"
+                >
                   <RefreshCw className="mr-2 h-4 w-4" />
                   {t('artifact.retry')}
                 </Button>
@@ -232,7 +251,7 @@ export function ArtifactViewer({
           open={isSaveOpen}
           onOpenChange={setIsSaveOpen}
           knowledgeBaseId={artifact.knowledge_base_id}
-          initialTitle={artifact.title}
+          initialTitle={displayTitle}
           initialContent={artifact.content}
           onSaved={() =>
             toast({

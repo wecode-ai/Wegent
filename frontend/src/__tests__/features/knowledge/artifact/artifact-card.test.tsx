@@ -66,3 +66,11 @@ it('hides the menu when deletion is not allowed', () => {
 
   expect(screen.queryByTestId('artifact-menu-artifact-1')).not.toBeInTheDocument()
 })
+
+it('localizes an omitted backend title from the artifact type', () => {
+  render(
+    <ArtifactCard artifact={{ ...artifact, title: '' }} onOpen={jest.fn()} onDelete={jest.fn()} />
+  )
+
+  expect(screen.getByText('artifact.type.briefing')).toBeInTheDocument()
+})

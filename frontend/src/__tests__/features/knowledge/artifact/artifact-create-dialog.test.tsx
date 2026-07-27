@@ -116,4 +116,27 @@ describe('ArtifactCreateDialog', () => {
     expect(screen.getByTestId('artifact-instruction-input')).toHaveValue('Draft instruction')
     expect(screen.getByText('artifact.selectedDocuments:2')).toBeInTheDocument()
   })
+
+  it('keeps the dialog retryable when creation is rejected', async () => {
+    const onCreate = jest.fn().mockRejectedValue(new Error('creation failed'))
+    const onOpenChange = jest.fn()
+    render(
+      <ArtifactCreateDialog
+        open
+        onOpenChange={onOpenChange}
+        artifactType="briefing"
+        selectedDocumentIds={[]}
+        knowledgeBaseDocumentCount={1}
+        onAdjustSources={jest.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('artifact-create-submit'))
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByTestId('artifact-create-submit')).toBeEnabled())
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(screen.getByTestId('artifact-create-dialog')).toBeInTheDocument()
+  })
 })

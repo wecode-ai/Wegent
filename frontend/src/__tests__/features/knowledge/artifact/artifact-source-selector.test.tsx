@@ -209,7 +209,7 @@ describe('ArtifactSourceSelector', () => {
     )
   })
 
-  it('keeps the final selection until the user explicitly chooses the whole knowledge base', () => {
+  it('falls back to the whole knowledge base after removing the final selection', () => {
     const onScopeChange = jest.fn()
 
     render(
@@ -224,7 +224,7 @@ describe('ArtifactSourceSelector', () => {
     )
 
     fireEvent.click(screen.getByTestId('artifact-source-document-11'))
-    expect(onScopeChange).not.toHaveBeenCalled()
+    expect(onScopeChange).toHaveBeenCalledWith({ mode: 'all' })
   })
 
   it('refreshes an expanded browser on focus and while documents are processing', () => {

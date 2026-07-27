@@ -178,11 +178,6 @@ export function DocumentPanel({
 
   const handleSourceDialogOpenChange = useCallback((open: boolean) => {
     setSourceDialogOpen(open)
-    if (!open) {
-      const continuation = sourceApplyContinuationRef.current
-      sourceApplyContinuationRef.current = null
-      continuation?.()
-    }
   }, [])
 
   const handleInlineSourceScopeChange = (scope: ArtifactSourceScope) => {
