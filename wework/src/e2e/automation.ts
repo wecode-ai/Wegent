@@ -224,6 +224,14 @@ function seedDesktopE2ECloudConnection() {
             toolProfile: 'function' as const,
             requestPath: '/v1/messages',
           },
+          {
+            id: 'desktop-e2e-luna-overseas',
+            displayName: 'GPT 5.6 Luna (海外)',
+            modelId: 'gpt-5.6-luna',
+            apiFormat: 'openai-responses' as const,
+            toolProfile: 'custom' as const,
+            requestPath: '/v1/responses',
+          },
         ]
       : []
   for (const model of localModels) {

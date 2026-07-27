@@ -179,7 +179,7 @@ async fn codex_app_server_engine_routes_provider_overrides_through_local_proxy()
     assert!(args.iter().any(|value| {
         value.as_str().is_some_and(|value| {
             value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-                && value.contains("/v1/codex-router/model-")
+                && value.contains("/v1/codex-router/task-")
         })
     }));
     assert!(!args.iter().any(|value| {

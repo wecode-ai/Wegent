@@ -15,7 +15,6 @@ mod history;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    hash::{DefaultHasher, Hash, Hasher},
     pin::Pin,
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
@@ -49,7 +48,6 @@ where
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalModelProxyUpstream {
-    pub registration_id: String,
     pub base_url: String,
     pub request_url: Option<String>,
     pub api_format: String,
@@ -65,14 +63,15 @@ pub(crate) struct LocalModelProxyUpstream {
 struct RegisteredUpstream {
     upstream: LocalModelProxyUpstream,
     history: std::sync::Arc<history::CodexToolHistory>,
+    thread_ids: HashSet<String>,
     last_used: Instant,
     active_references: usize,
 }
 
 const REGISTRY_IDLE_TTL: Duration = Duration::from_secs(60 * 60);
 
-pub(crate) fn register(upstream: LocalModelProxyUpstream) -> String {
-    let token = registration_token(&upstream);
+pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> String {
+    let token = registration_token(route_scope);
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -84,11 +83,16 @@ pub(crate) fn register(upstream: LocalModelProxyUpstream) -> String {
         .get(&token)
         .map(|registered| registered.history.clone())
         .unwrap_or_default();
+    let thread_ids = registry
+        .get(&token)
+        .map(|registered| registered.thread_ids.clone())
+        .unwrap_or_default();
     registry.insert(
         token.clone(),
         RegisteredUpstream {
             upstream,
             history,
+            thread_ids,
             last_used: Instant::now(),
             active_references,
         },
@@ -98,9 +102,29 @@ pub(crate) fn register(upstream: LocalModelProxyUpstream) -> String {
         &[
             ("active_registrations", registry.len().to_string()),
             ("active_references", active_references.to_string()),
+            ("route_scope", route_scope.to_owned()),
         ],
     );
     token
+}
+
+pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let registered = registry
+        .get_mut(token)
+        .ok_or_else(|| "local model proxy task route is not registered".to_owned())?;
+    registered.thread_ids.insert(thread_id.to_owned());
+    registered.last_used = Instant::now();
+    log_executor_event(
+        "local model proxy bound task thread",
+        &[
+            ("thread_id", thread_id.to_owned()),
+            ("bound_threads", registered.thread_ids.len().to_string()),
+        ],
+    );
+    Ok(())
 }
 
 pub(crate) fn unregister(token: &str) {
@@ -128,20 +152,16 @@ pub(crate) fn unregister(token: &str) {
     );
 }
 
-fn registration_token(upstream: &LocalModelProxyUpstream) -> String {
-    let mut hasher = DefaultHasher::new();
-    std::process::id().hash(&mut hasher);
-    upstream.registration_id.hash(&mut hasher);
-    upstream.base_url.hash(&mut hasher);
-    upstream.request_url.hash(&mut hasher);
-    upstream.api_format.hash(&mut hasher);
-    upstream.convert_custom_tools.hash(&mut hasher);
-    upstream.api_key.hash(&mut hasher);
-    upstream.default_headers.hash(&mut hasher);
-    upstream.proxy_url.hash(&mut hasher);
-    upstream.model_id.hash(&mut hasher);
-    upstream.routing_model_id.hash(&mut hasher);
-    format!("model-{}-{:016x}", std::process::id(), hasher.finish())
+fn registration_token(route_scope: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(std::process::id().to_le_bytes());
+    hasher.update(route_scope.as_bytes());
+    let digest = hasher.finalize();
+    let suffix = digest[..12]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("task-{}-{suffix}", std::process::id())
 }
 
 fn prune_registry(registry: &mut HashMap<String, RegisteredUpstream>) {
@@ -194,21 +214,15 @@ async fn handle_for_token(
             .lock()
             .expect("local model proxy registry should not be poisoned");
         prune_registry(&mut registry);
-        let original = registry.get(&token).ok_or_else(|| HttpError {
+        let registered = registry.get_mut(&token).ok_or_else(|| HttpError {
             status: StatusCode::NOT_FOUND,
             detail: "unknown or expired local model proxy token".to_owned(),
         })?;
-        let selected_token = requested_model(&body)
-            .as_deref()
-            .and_then(|model| matching_route_token(&registry, original, model))
-            .unwrap_or(&token)
-            .clone();
-        let registered = registry
-            .get_mut(&selected_token)
-            .expect("selected local model proxy route should remain registered");
+        authorize_task_thread(registered, &body)?;
         registered.last_used = Instant::now();
         (registered.upstream.clone(), registered.history.clone())
     };
+    log_stale_requested_model(&upstream, &body);
     let request_url = upstream
         .request_url
         .clone()
@@ -224,6 +238,7 @@ async fn handle_for_token(
         history.as_ref(),
     )
     .await?;
+    let request_body = prepare_model_switch_request(&upstream, request_body)?;
     log_executor_event(
         "local model proxy request started",
         &[
@@ -435,20 +450,175 @@ fn requested_model(body: &[u8]) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn matching_route_token<'a>(
-    registry: &'a HashMap<String, RegisteredUpstream>,
-    original: &RegisteredUpstream,
-    requested_model: &str,
-) -> Option<&'a String> {
-    registry
-        .iter()
-        .filter(|(_, candidate)| {
-            candidate.upstream.base_url == original.upstream.base_url
-                && candidate.upstream.api_key == original.upstream.api_key
-                && candidate.upstream.routing_model_id.as_deref() == Some(requested_model)
-        })
-        .max_by_key(|(_, candidate)| (candidate.active_references > 0, candidate.last_used))
-        .map(|(token, _)| token)
+fn authorize_task_thread(
+    registered: &mut RegisteredUpstream,
+    body: &[u8],
+) -> Result<(), HttpError> {
+    if registered.thread_ids.is_empty() {
+        return Ok(());
+    }
+    let identity = request_thread_identity(body).ok_or_else(|| HttpError {
+        status: StatusCode::CONFLICT,
+        detail: "Codex Responses request is missing task thread metadata".to_owned(),
+    })?;
+    if registered.thread_ids.contains(&identity.thread_id) {
+        return Ok(());
+    }
+    if identity
+        .parent_thread_id
+        .as_ref()
+        .is_some_and(|parent| registered.thread_ids.contains(parent))
+    {
+        registered.thread_ids.insert(identity.thread_id);
+        return Ok(());
+    }
+    Err(HttpError {
+        status: StatusCode::CONFLICT,
+        detail: "Codex Responses request thread does not belong to the task route".to_owned(),
+    })
+}
+
+struct RequestThreadIdentity {
+    thread_id: String,
+    parent_thread_id: Option<String>,
+}
+
+fn request_thread_identity(body: &[u8]) -> Option<RequestThreadIdentity> {
+    let request = serde_json::from_slice::<Value>(body).ok()?;
+    let metadata = request.get("client_metadata")?.as_object()?;
+    let thread_id = metadata.get("thread_id")?.as_str()?.to_owned();
+    let parent_thread_id = metadata
+        .get("parent_thread_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            metadata
+                .get("x-codex-turn-metadata")
+                .and_then(Value::as_str)
+                .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                .and_then(|value| {
+                    value
+                        .get("parent_thread_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+        });
+    Some(RequestThreadIdentity {
+        thread_id,
+        parent_thread_id,
+    })
+}
+
+fn stale_requested_model(
+    upstream: &LocalModelProxyUpstream,
+    body: &[u8],
+) -> Option<(String, String)> {
+    let Some(expected_model) = upstream.routing_model_id.as_deref() else {
+        return None;
+    };
+    let requested_model = requested_model(body)?;
+    if requested_model == expected_model {
+        return None;
+    }
+    Some((requested_model, expected_model.to_owned()))
+}
+
+fn log_stale_requested_model(upstream: &LocalModelProxyUpstream, body: &[u8]) {
+    let Some((requested_model, selected_model)) = stale_requested_model(upstream, body) else {
+        return;
+    };
+    log_executor_event(
+        "local model proxy ignored stale codex model",
+        &[
+            ("requested_model", requested_model),
+            ("selected_model", selected_model),
+        ],
+    );
+}
+
+fn prepare_model_switch_request(
+    upstream: &LocalModelProxyUpstream,
+    body: Vec<u8>,
+) -> Result<Vec<u8>, HttpError> {
+    if upstream.api_format != "openai-responses" {
+        return Ok(body);
+    }
+    let mut request = serde_json::from_slice::<Value>(&body).map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: format!("Invalid Codex Responses request: {error}"),
+    })?;
+    if !contains_model_switch_marker(&request) {
+        return Ok(body);
+    }
+    let Some(object) = request.as_object_mut() else {
+        return Ok(body);
+    };
+    let Some(items) = object.get_mut("input").and_then(Value::as_array_mut) else {
+        return Ok(body);
+    };
+    let before = items.len();
+    items.retain(|item| !has_encrypted_model_state(item));
+    let removed_items = before.saturating_sub(items.len());
+    if removed_items == 0 {
+        return Ok(body);
+    }
+    let removed_previous_response_id = object.remove("previous_response_id").is_some();
+    log_executor_event(
+        "local model proxy removed encrypted history for model switch",
+        &[
+            (
+                "requested_model",
+                requested_model(&body).unwrap_or_default(),
+            ),
+            (
+                "upstream_model",
+                upstream.model_id.clone().unwrap_or_default(),
+            ),
+            ("removed_items", removed_items.to_string()),
+            (
+                "removed_previous_response_id",
+                removed_previous_response_id.to_string(),
+            ),
+        ],
+    );
+    serde_json::to_vec(&request).map_err(|error| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: format!("Failed to encode model switch request: {error}"),
+    })
+}
+
+fn contains_model_switch_marker(request: &Value) -> bool {
+    request
+        .get("input")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|content| content.get("text").and_then(Value::as_str))
+        .any(|text| text.contains("<model_switch>"))
+}
+
+fn has_encrypted_model_state(item: &Value) -> bool {
+    let item_type = item.get("type").and_then(Value::as_str);
+    let direct = item
+        .get("encrypted_content")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty());
+    let nested = item
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|part| {
+            part.get("encrypted_content")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty())
+        });
+    matches!(
+        item_type,
+        Some("reasoning" | "compaction" | "context_compaction" | "agent_message")
+    ) && (direct || nested)
 }
 
 fn rewrite_request_model(body: &[u8], model_id: &str) -> Result<Vec<u8>, HttpError> {
@@ -782,6 +952,7 @@ where
                                 rewrite_responses_event(&event, &state.expanded_browser_tools);
                             normalize_responses_event(&rewritten)
                         };
+                        log_responses_event_diagnostics(&normalized);
                         state
                             .output
                             .push_back(Ok(Bytes::from(format!("{}\n\n", normalized))));
@@ -798,15 +969,156 @@ where
                         let trailing = std::mem::take(&mut state.pending);
                         let trailing = trailing.trim_end();
                         state.terminal_seen |= is_responses_terminal_event(trailing);
-                        state.output.push_back(Ok(Bytes::from(format!(
-                            "{}\n\n",
-                            normalize_responses_event(trailing)
-                        ))));
+                        let normalized = normalize_responses_event(trailing);
+                        log_responses_event_diagnostics(&normalized);
+                        state
+                            .output
+                            .push_back(Ok(Bytes::from(format!("{}\n\n", normalized))));
                     }
                 }
             }
         }
     })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ResponsesEventDiagnostic {
+    ToolCall {
+        phase: &'static str,
+        tool_name: String,
+        namespace: String,
+        custom_tool: bool,
+        arguments_bytes: usize,
+    },
+    Terminal {
+        status: String,
+        output_items: usize,
+        tool_calls: usize,
+        empty_output: bool,
+    },
+}
+
+fn log_responses_event_diagnostics(event: &str) {
+    for diagnostic in responses_event_diagnostics(event) {
+        match diagnostic {
+            ResponsesEventDiagnostic::ToolCall {
+                phase,
+                tool_name,
+                namespace,
+                custom_tool,
+                arguments_bytes,
+            } => {
+                log_executor_event(
+                    &format!("local model proxy responses tool call {phase}"),
+                    &[
+                        ("tool_name", tool_name),
+                        ("namespace", namespace),
+                        ("custom_tool", custom_tool.to_string()),
+                        ("arguments_bytes", arguments_bytes.to_string()),
+                    ],
+                );
+            }
+            ResponsesEventDiagnostic::Terminal {
+                status,
+                output_items,
+                tool_calls,
+                empty_output,
+            } => {
+                log_executor_event(
+                    "local model proxy responses completion summary",
+                    &[
+                        ("status", status),
+                        ("output_items", output_items.to_string()),
+                        ("tool_calls", tool_calls.to_string()),
+                        ("empty_output", empty_output.to_string()),
+                    ],
+                );
+            }
+        }
+    }
+}
+
+fn responses_event_diagnostics(event: &str) -> Vec<ResponsesEventDiagnostic> {
+    let mut diagnostics = Vec::new();
+    for value in responses_event_values(event) {
+        let event_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let phase = match event_type {
+            "response.output_item.added" => Some("started"),
+            "response.output_item.done" => Some("completed"),
+            _ => None,
+        };
+        if let Some(phase) = phase {
+            if let Some(item) = value.get("item") {
+                let item_type = item.get("type").and_then(Value::as_str);
+                if matches!(
+                    item_type,
+                    Some("function_call" | "custom_tool_call" | "tool_search_call")
+                ) {
+                    diagnostics.push(ResponsesEventDiagnostic::ToolCall {
+                        phase,
+                        tool_name: item
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        namespace: item
+                            .get("namespace")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        custom_tool: item_type == Some("custom_tool_call"),
+                        arguments_bytes: item
+                            .get("arguments")
+                            .or_else(|| item.get("input"))
+                            .and_then(Value::as_str)
+                            .map_or(0, str::len),
+                    });
+                }
+            }
+        }
+        if matches!(
+            event_type,
+            "response.completed" | "response.failed" | "response.incomplete"
+        ) {
+            let output = value
+                .pointer("/response/output")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            diagnostics.push(ResponsesEventDiagnostic::Terminal {
+                status: value
+                    .pointer("/response/status")
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| event_type.trim_start_matches("response."))
+                    .to_owned(),
+                output_items: output.len(),
+                tool_calls: output
+                    .iter()
+                    .filter(|item| {
+                        matches!(
+                            item.get("type").and_then(Value::as_str),
+                            Some("function_call" | "custom_tool_call" | "tool_search_call")
+                        )
+                    })
+                    .count(),
+                empty_output: output.is_empty(),
+            });
+        }
+    }
+    diagnostics
+}
+
+fn responses_event_values(event: &str) -> Vec<Value> {
+    event
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("data:"))
+        .map(str::trim_start)
+        .filter(|data| *data != "[DONE]")
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .collect()
 }
 
 pub(super) fn is_responses_terminal_event(event: &str) -> bool {
@@ -977,6 +1289,142 @@ mod tests {
         let normalized = normalize_responses_event(&event);
         assert!(normalized.contains("cached_tokens"));
         assert!(normalized.contains("reasoning_tokens"));
+    }
+
+    #[test]
+    fn extracts_native_responses_tool_diagnostics_without_arguments() {
+        let started = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{",
+            "\"type\":\"function_call\",\"name\":\"exec_command\",",
+            "\"namespace\":\"functions\",\"arguments\":\"\"}}"
+        );
+        let completed = concat!(
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{",
+            "\"type\":\"function_call\",\"name\":\"exec_command\",",
+            "\"namespace\":\"functions\",\"arguments\":\"{\\\"cmd\\\":\\\"secret\\\"}\"}}"
+        );
+        let terminal = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{",
+            "\"status\":\"completed\",\"output\":[",
+            "{\"type\":\"function_call\"},{\"type\":\"message\"}]}}"
+        );
+
+        assert_eq!(
+            responses_event_diagnostics(started),
+            vec![ResponsesEventDiagnostic::ToolCall {
+                phase: "started",
+                tool_name: "exec_command".to_owned(),
+                namespace: "functions".to_owned(),
+                custom_tool: false,
+                arguments_bytes: 0,
+            }]
+        );
+        assert_eq!(
+            responses_event_diagnostics(completed),
+            vec![ResponsesEventDiagnostic::ToolCall {
+                phase: "completed",
+                tool_name: "exec_command".to_owned(),
+                namespace: "functions".to_owned(),
+                custom_tool: false,
+                arguments_bytes: 16,
+            }]
+        );
+        assert_eq!(
+            responses_event_diagnostics(terminal),
+            vec![ResponsesEventDiagnostic::Terminal {
+                status: "completed".to_owned(),
+                output_items: 2,
+                tool_calls: 1,
+                empty_output: false,
+            }]
+        );
+        assert!(!format!("{:?}", responses_event_diagnostics(completed)).contains("secret"));
+    }
+
+    #[test]
+    fn removes_encrypted_history_before_an_explicit_model_switch() {
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("gpt-5.6-luna".to_owned()),
+            routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+        };
+        let body = serde_json::to_vec(&json!({
+            "model": "wework-gpt-5.6-sol",
+            "previous_response_id": "resp_previous",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [],
+                    "encrypted_content": "encrypted-old-model-state"
+                },
+                {
+                    "type": "context_compaction",
+                    "encrypted_content": "encrypted-old-compaction"
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "<model_switch>Use the new model instructions.</model_switch>"
+                    }]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "continue"}]
+                }
+            ]
+        }))
+        .expect("request body");
+
+        let prepared =
+            prepare_model_switch_request(&upstream, body).expect("model switch should prepare");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared request");
+
+        assert_eq!(prepared["input"].as_array().unwrap().len(), 2);
+        assert!(prepared.get("previous_response_id").is_none());
+        assert_eq!(prepared["input"][0]["role"], "developer");
+        assert_eq!(prepared["input"][1]["role"], "user");
+    }
+
+    #[test]
+    fn preserves_encrypted_history_without_a_model_switch_marker() {
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("gpt-5.6-sol".to_owned()),
+            routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+        };
+        let body = serde_json::to_vec(&json!({
+            "model": "wework-gpt-5.6-sol",
+            "previous_response_id": "resp_previous",
+            "input": [{
+                "type": "reasoning",
+                "summary": [],
+                "encrypted_content": "encrypted-same-model-state"
+            }]
+        }))
+        .expect("request body");
+
+        let prepared =
+            prepare_model_switch_request(&upstream, body.clone()).expect("request should prepare");
+
+        assert_eq!(prepared, body);
     }
 
     #[test]
@@ -1183,26 +1631,48 @@ mod tests {
     }
 
     #[test]
-    fn registration_is_stable_and_reference_counted_for_persistent_threads() {
-        let upstream = LocalModelProxyUpstream {
-            registration_id: "unregister-test".to_owned(),
-            base_url: "https://example.com".to_owned(),
+    fn registration_is_stable_and_updates_upstream_for_a_task() {
+        let initial = LocalModelProxyUpstream {
+            base_url: "https://luna.example.com".to_owned(),
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
-            api_key: "secret".to_owned(),
+            api_key: "luna-secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
-            model_id: None,
-            routing_model_id: None,
+            model_id: Some("gpt-5.6-luna".to_owned()),
+            routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
         };
-        let token = register(upstream.clone());
-        let repeated_token = register(upstream.clone());
-        assert_eq!(repeated_token, token);
-        assert!(registry()
+        let token = register("stable-task-route", initial);
+        let original_history = registry()
             .lock()
             .expect("registry lock")
-            .contains_key(&token));
+            .get(&token)
+            .expect("task route")
+            .history
+            .clone();
+        let updated = LocalModelProxyUpstream {
+            base_url: "https://sol.example.com".to_owned(),
+            request_url: Some("https://sol.example.com/v1/responses".to_owned()),
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "sol-secret".to_owned(),
+            default_headers: vec![("x-route".to_owned(), "sol".to_owned())],
+            proxy_url: None,
+            model_id: Some("gpt-5.6-sol".to_owned()),
+            routing_model_id: Some("gpt-5.6-sol".to_owned()),
+        };
+        let repeated_token = register("stable-task-route", updated.clone());
+
+        assert_eq!(repeated_token, token);
+        {
+            let entries = registry().lock().expect("registry lock");
+            let route = entries.get(&token).expect("updated task route");
+            assert_eq!(route.upstream.base_url, updated.base_url);
+            assert_eq!(route.upstream.api_key, updated.api_key);
+            assert_eq!(route.upstream.model_id, updated.model_id);
+            assert!(std::sync::Arc::ptr_eq(&route.history, &original_history));
+        }
 
         unregister(&token);
         assert!(registry()
@@ -1221,88 +1691,123 @@ mod tests {
             assert!(!entries.contains_key(&token));
         }
 
-        let resumed_token = register(upstream);
+        let resumed_token = register("stable-task-route", updated);
         assert_eq!(resumed_token, token);
         unregister(&resumed_token);
     }
 
     #[test]
-    fn registration_token_changes_when_the_upstream_changes() {
+    fn task_routes_use_distinct_stable_tokens() {
+        assert_eq!(registration_token("task-a"), registration_token("task-a"));
+        assert_ne!(registration_token("task-a"), registration_token("task-b"));
+    }
+
+    #[test]
+    fn task_route_recognizes_the_model_selected_for_that_task() {
         let upstream = LocalModelProxyUpstream {
-            registration_id: "upstream-change-test".to_owned(),
-            base_url: "https://one.example.com".to_owned(),
+            base_url: "https://example.com".to_owned(),
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
-            model_id: None,
-            routing_model_id: None,
+            model_id: Some("upstream-sol".to_owned()),
+            routing_model_id: Some("gpt-5.6-sol".to_owned()),
         };
-        let first = registration_token(&upstream);
-        let mut changed = upstream;
-        changed.base_url = "https://two.example.com".to_owned();
 
-        assert_ne!(registration_token(&changed), first);
+        assert_eq!(
+            stale_requested_model(&upstream, br#"{"model":"gpt-5.6-sol"}"#),
+            None
+        );
     }
 
     #[test]
-    fn selects_the_requested_model_route_within_the_same_credential_scope() {
-        let original = registered_upstream("source", "shared-secret");
-        let mut target = registered_upstream("target", "shared-secret");
-        target.upstream.routing_model_id = Some("target-model".to_owned());
-        let registry = HashMap::from([
-            ("source-token".to_owned(), original),
-            ("target-token".to_owned(), target),
-        ]);
+    fn task_route_detects_but_does_not_select_by_a_stale_requested_model() {
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("upstream-sol".to_owned()),
+            routing_model_id: Some("gpt-5.6-sol".to_owned()),
+        };
 
-        let selected = matching_route_token(
-            &registry,
-            registry.get("source-token").expect("source route"),
-            "target-model",
+        assert_eq!(
+            stale_requested_model(&upstream, br#"{"model":"gpt-5.6-luna"}"#),
+            Some(("gpt-5.6-luna".to_owned(), "gpt-5.6-sol".to_owned()))
         );
-
-        assert_eq!(selected.map(String::as_str), Some("target-token"));
     }
 
     #[test]
-    fn does_not_route_a_model_request_across_credentials() {
-        let original = registered_upstream("source", "source-secret");
-        let mut target = registered_upstream("target", "other-user-secret");
-        target.upstream.routing_model_id = Some("target-model".to_owned());
-        let registry = HashMap::from([
-            ("source-token".to_owned(), original),
-            ("target-token".to_owned(), target),
-        ]);
-
-        let selected = matching_route_token(
-            &registry,
-            registry.get("source-token").expect("source route"),
-            "target-model",
-        );
-
-        assert!(selected.is_none());
-    }
-
-    fn registered_upstream(registration_id: &str, api_key: &str) -> RegisteredUpstream {
-        RegisteredUpstream {
-            upstream: LocalModelProxyUpstream {
-                registration_id: registration_id.to_owned(),
-                base_url: "https://shared.example.com".to_owned(),
+    fn task_route_only_accepts_bound_threads_and_their_children() {
+        let token = register(
+            "thread-bound-task-route",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
-                api_key: api_key.to_owned(),
+                api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
                 model_id: None,
-                routing_model_id: None,
+                routing_model_id: Some("gpt-5.6-sol".to_owned()),
             },
-            history: Default::default(),
-            last_used: Instant::now(),
-            active_references: 1,
-        }
+        );
+        bind_thread(&token, "thread-root").expect("root thread should bind");
+        let mut entries = registry().lock().expect("registry lock");
+        let route = entries.get_mut(&token).expect("task route");
+
+        authorize_task_thread(route, br#"{"client_metadata":{"thread_id":"thread-root"}}"#)
+            .expect("bound root should be accepted");
+        authorize_task_thread(
+            route,
+            br#"{"client_metadata":{"thread_id":"thread-child","x-codex-turn-metadata":"{\"parent_thread_id\":\"thread-root\"}"}}"#,
+        )
+        .expect("child of a bound root should be accepted");
+        assert!(route.thread_ids.contains("thread-child"));
+
+        let error = authorize_task_thread(
+            route,
+            br#"{"client_metadata":{"thread_id":"thread-unrelated"}}"#,
+        )
+        .expect_err("unrelated thread must not use the task route");
+        assert_eq!(error.status, StatusCode::CONFLICT);
+
+        drop(entries);
+        unregister(&token);
+    }
+
+    #[test]
+    fn task_route_rejects_missing_thread_metadata_after_binding() {
+        let token = register(
+            "missing-thread-metadata-task-route",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            },
+        );
+        bind_thread(&token, "thread-root").expect("root thread should bind");
+        let mut entries = registry().lock().expect("registry lock");
+        let route = entries.get_mut(&token).expect("task route");
+
+        let error = authorize_task_thread(route, br#"{"model":"gpt-5.6-sol"}"#)
+            .expect_err("bound task route requires thread metadata");
+        assert_eq!(error.status, StatusCode::CONFLICT);
+
+        drop(entries);
+        unregister(&token);
     }
 
     #[test]
@@ -1342,18 +1847,20 @@ mod tests {
             .await
             .expect("upstream server");
         });
-        let token = register(LocalModelProxyUpstream {
-            registration_id: "non-success-test".to_owned(),
-            base_url: format!("http://{address}"),
-            request_url: Some(format!("http://{address}/chat/completions")),
-            api_format: "openai-chat-completions".to_owned(),
-            convert_custom_tools: false,
-            api_key: "secret".to_owned(),
-            default_headers: Vec::new(),
-            proxy_url: None,
-            model_id: None,
-            routing_model_id: None,
-        });
+        let token = register(
+            "non-success-test",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/chat/completions")),
+                api_format: "openai-chat-completions".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+            },
+        );
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -1393,18 +1900,20 @@ mod tests {
             .await
             .expect("upstream server");
         });
-        let token = register(LocalModelProxyUpstream {
-            registration_id: "non-sse-test".to_owned(),
-            base_url: format!("http://{address}"),
-            request_url: Some(format!("http://{address}/chat/completions")),
-            api_format: "openai-chat-completions".to_owned(),
-            convert_custom_tools: false,
-            api_key: "secret".to_owned(),
-            default_headers: Vec::new(),
-            proxy_url: None,
-            model_id: None,
-            routing_model_id: None,
-        });
+        let token = register(
+            "non-sse-test",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/chat/completions")),
+                api_format: "openai-chat-completions".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+            },
+        );
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -1467,18 +1976,20 @@ mod tests {
             .await
             .expect("upstream server");
         });
-        let token = register(LocalModelProxyUpstream {
-            registration_id: "native-non-sse-test".to_owned(),
-            base_url: format!("http://{address}"),
-            request_url: Some(format!("http://{address}/responses")),
-            api_format: "openai-responses".to_owned(),
-            convert_custom_tools: false,
-            api_key: "secret".to_owned(),
-            default_headers: Vec::new(),
-            proxy_url: None,
-            model_id: None,
-            routing_model_id: None,
-        });
+        let token = register(
+            "native-non-sse-test",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/responses")),
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+            },
+        );
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -1524,18 +2035,20 @@ mod tests {
             "/chat/completions"
         };
         let request_url = format!("{}{default_path}", base_url.trim_end_matches('/'));
-        let token = register(LocalModelProxyUpstream {
-            registration_id: "external-model-test".to_owned(),
-            base_url,
-            request_url: Some(request_url),
-            api_format,
-            convert_custom_tools: false,
-            api_key,
-            default_headers: Vec::new(),
-            proxy_url: None,
-            model_id: Some(model_id.clone()),
-            routing_model_id: None,
-        });
+        let token = register(
+            "external-model-test",
+            LocalModelProxyUpstream {
+                base_url,
+                request_url: Some(request_url),
+                api_format,
+                convert_custom_tools: false,
+                api_key,
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some(model_id.clone()),
+                routing_model_id: None,
+            },
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test proxy should bind");

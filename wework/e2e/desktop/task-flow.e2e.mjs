@@ -180,6 +180,15 @@ const LOCAL_MODEL_SWITCH_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_COMPLETE'
 const LOCAL_MODEL_SWITCH_INVALID_CALL_ID = 'functions.exec_command:0'
 const LOCAL_MODEL_SWITCH_ARTIFACT = 'wework-model-switch-protocol.txt'
 const LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT = 'WEWORK_MODEL_SWITCH_PROTOCOL_EXEC_COMMAND'
+const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
+const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
+const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
+const PROVIDER_SWITCH_SOL_OPTION_ID = 'gpt-5.6-sol'
+const PROVIDER_SWITCH_SOL_LABEL = 'GPT 5.6 Sol'
+const PROVIDER_SWITCH_PROMPT =
+  'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with Sol.'
+const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
+const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_SOL_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
@@ -1743,6 +1752,52 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
     snapshot => !snapshot.testIds.includes('model-selector-menu'),
     'The model selector menu did not close after selecting the E2E model'
   )
+}
+
+async function verifyProviderSwitchRetry(control, composerSelector) {
+  control.setScenario('provider_switch_retry')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(
+    control,
+    PROVIDER_SWITCH_LUNA_OPTION_ID,
+    PROVIDER_SWITCH_LUNA_LABEL
+  )
+  await sendPrompt(control, composerSelector, PROVIDER_SWITCH_PROMPT)
+  await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
+    visible: true,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  assert.equal(
+    control.scenarioRequests.get('provider_switch_retry')?.length,
+    1,
+    'The failed Luna turn was unexpectedly sent more than once'
+  )
+
+  await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
+  await control.command('clickWhenEnabled', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, PROVIDER_SWITCH_SOL_OPTION_ID, PROVIDER_SWITCH_SOL_LABEL)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PROVIDER_SWITCH_COMPLETION,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  assert.equal(
+    control.scenarioRequests.get('provider_switch_retry')?.length,
+    2,
+    'The provider-switch retry did not make exactly one Luna request and one Sol request'
+  )
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    text: PROVIDER_SWITCH_SOL_LABEL,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
@@ -3665,6 +3720,7 @@ class DesktopE2EServer {
         'cloud_initial',
         'cloud_follow_up',
         'model_protocol_matrix',
+        'provider_switch_retry',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -4021,6 +4077,11 @@ class DesktopE2EServer {
 
     if (this.scenario === 'model_protocol_matrix') {
       this.handleModelProtocolMatrixResponse(response, protocol, body, request.headers)
+      return
+    }
+
+    if (this.scenario === 'provider_switch_retry') {
+      this.handleProviderSwitchRetryResponse(response, protocol, body, modelRequest)
       return
     }
 
@@ -4674,6 +4735,52 @@ class DesktopE2EServer {
     }
 
     throw new Error(`Unexpected desktop E2E scenario: ${this.scenario}`)
+  }
+
+  handleProviderSwitchRetryResponse(response, protocol, body, modelRequest) {
+    assert.equal(protocol, 'responses', 'The provider-switch request reached the wrong endpoint')
+    const requestKind = codexRequestKind(body)
+    if (requestKind === 'prewarm' || requestKind === 'compaction') {
+      const responseId = `provider-switch-background-${this.modelRequests.length}`
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    assert.ok(
+      JSON.stringify(body).includes(PROVIDER_SWITCH_PROMPT),
+      'The provider-switch request lost the user prompt'
+    )
+    this.recordScenarioRequest('provider_switch_retry', modelRequest)
+    const promptRequestCount = this.scenarioRequests.get('provider_switch_retry').length
+    if (promptRequestCount === 1) {
+      assert.equal(
+        body.model,
+        PROVIDER_SWITCH_LUNA_MODEL_ID,
+        'The initial provider-switch turn did not reach Luna'
+      )
+      json(response, 400, {
+        error: {
+          type: 'invalid_request_error',
+          message: PROVIDER_SWITCH_FAILURE,
+        },
+      })
+      return
+    }
+    if (promptRequestCount === 2) {
+      assert.equal(
+        body.model,
+        PROVIDER_SWITCH_SOL_OPTION_ID,
+        `The provider-switch retry was still routed to ${String(body.model)}`
+      )
+      const responseId = 'provider-switch-sol-complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PROVIDER_SWITCH_COMPLETION),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    throw new Error(`The provider-switch prompt was sent ${promptRequestCount} times`)
   }
 
   handleModelProtocolMatrixResponse(response, protocol, body, headers) {
@@ -7317,6 +7424,8 @@ async function main() {
           await captureVerificationScreenshot(control, 'model-switch-retry-04-completed.png')
         }
       }
+      phase = 'provider-switch-retry'
+      await verifyProviderSwitchRetry(control, composerSelector)
       await writeFile(
         join(resultDir, 'model-switch-protocol-verification.json'),
         `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
