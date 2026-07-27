@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models.delivery import Delivery, DeliveryAsset
+from app.models.delivery import CloudProject, Delivery, DeliveryAsset
 from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
@@ -120,6 +120,130 @@ def test_cloud_project_generates_key_when_omitted(
     assert isinstance(created.json()["id"], str)
     assert created.json()["project_key"].startswith("PRJ")
     assert 2 <= len(created.json()["project_key"]) <= 16
+
+
+def test_cloud_project_persists_external_task_provider_and_encrypted_token(
+    test_client: TestClient, test_db: Session, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "name": "GitHub issues",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "wecode-ai/Wegent",
+                "domain": "github.com",
+                "token": "github-secret",
+            },
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["project_store"] == "backend"
+    assert created.json()["task_provider"] == "github"
+    assert created.json()["provider_config"] == {
+        "repository": "wecode-ai/Wegent",
+        "domain": "github.com",
+        "credential_configured": True,
+    }
+
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(test_token))
+    match = next(
+        item for item in listed.json()["items"] if item["id"] == created.json()["id"]
+    )
+    assert match["task_provider"] == "github"
+    assert match["provider_config"]["repository"] == "wecode-ai/Wegent"
+    assert match["provider_config"]["credential_configured"] is True
+
+    stored = (
+        test_db.query(CloudProject)
+        .filter(CloudProject.id == created.json()["id"])
+        .one()
+    )
+    serialized = str(stored.metadata_json)
+    assert "github-secret" not in serialized
+    assert "ciphertext" in serialized
+
+    credential = test_client.get(
+        f"/api/v1/cloud-projects/{created.json()['id']}/provider-credential",
+        headers=_auth(test_token),
+    )
+    assert credential.status_code == 200
+    assert credential.json() == {"token": "github-secret"}
+    assert credential.headers["cache-control"] == "no-store"
+
+
+def test_cloud_project_can_add_missing_provider_token(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "name": "Existing GitLab project",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "group/project",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+            },
+        },
+    ).json()
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "provider_config": {
+                "repository": "group/project",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+                "token": "gitlab-secret",
+            },
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["provider_config"]["credential_configured"] is True
+    credential = test_client.get(
+        f"/api/v1/cloud-projects/{created['id']}/provider-credential",
+        headers=_auth(test_token),
+    )
+    assert credential.json() == {"token": "gitlab-secret"}
+
+
+def test_external_cloud_project_rejects_internal_loop_item_routes(
+    test_client: TestClient, test_token: str
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "name": "GitLab issues",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "group/project",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+            },
+        },
+    ).json()
+
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+    )
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Must be created in GitLab"},
+    )
+
+    assert listed.status_code == 409
+    assert created.status_code == 409
+    assert "use the local Issue provider" in created.json()["detail"]
 
 
 def test_cloud_project_can_link_local_workspace(

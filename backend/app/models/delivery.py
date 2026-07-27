@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql import func
 
+from app.core.provider_credentials import mask_provider_config
 from app.db.base import Base
 from shared.models.db.types import big_integer_id_type
 
@@ -146,6 +147,26 @@ class CloudProject(LoopNode):
         if not isinstance(tags, list):
             return []
         return [str(tag) for tag in tags]
+
+    @property
+    def project_store(self) -> str:
+        return "backend"
+
+    @property
+    def task_provider(self) -> str:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return "local"
+        provider = metadata.get("task_provider")
+        return provider if provider in {"local", "github", "gitlab"} else "local"
+
+    @property
+    def provider_config(self) -> dict[str, object]:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return {}
+        config = metadata.get("provider_config")
+        return mask_provider_config(config)
 
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("status", "active")

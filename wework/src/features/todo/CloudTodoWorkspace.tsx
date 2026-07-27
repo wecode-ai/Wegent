@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -17,8 +17,10 @@ import {
   ChevronRight,
   CircleUserRound,
   Cloud,
-  Folder,
+  GitBranch,
+  HardDrive,
   ListTodo,
+  LockKeyhole,
   Plus,
   Search,
   Tag,
@@ -33,7 +35,11 @@ import { ApiError } from '@/api/http'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type {
+  DeliveryApi,
+  ProjectSpaceLocation,
+  WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type {
@@ -46,6 +52,7 @@ import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { CloudFilesView } from './CloudFilesView'
+import { repositoryProviderConfig } from './projectProviderConfig'
 import { TodoEditor } from './TodoEditor'
 import {
   columnDotClasses,
@@ -55,9 +62,18 @@ import {
   reorderLaneItems,
 } from './todoShared'
 
-type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 type ProjectView = 'board' | 'files' | 'manage'
 type RootView = 'projects' | 'my-work'
+type ProjectTaskProvider = 'local' | 'github' | 'gitlab'
+
+interface LocatedCloudProject extends CloudProject {
+  location: ProjectSpaceLocation
+}
+
+interface AvailableProjectSpaceApi {
+  api: DeliveryApi
+  location: ProjectSpaceLocation
+}
 
 interface CloudTaskRunRequest {
   project: ProjectWithTasks
@@ -84,13 +100,6 @@ const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
   in_review: '等待确认的任务会显示在这里',
   completed: '已完成的任务会归档在这里',
 }
-
-const sidebarProjectDotClasses = [
-  'bg-indigo-500',
-  'bg-amber-500',
-  'bg-emerald-500',
-  'bg-violet-500',
-]
 
 function boardStatusFromDropId(id: string | number | undefined): CloudLoopItem['status'] | null {
   if (typeof id !== 'string' || !id.startsWith('todo-column:')) return null
@@ -259,30 +268,54 @@ function cloudProjectRequestError(cause: unknown): string {
 }
 
 function ProjectDialog({
-  api,
+  availableApis,
+  defaultLocation,
   onClose,
   onCreated,
 }: {
-  api: DeliveryApi
+  availableApis: AvailableProjectSpaceApi[]
+  defaultLocation: ProjectSpaceLocation
   onClose: () => void
-  onCreated: (project: CloudProject) => void
+  onCreated: (project: CloudProject, location: ProjectSpaceLocation) => void
 }) {
+  const initialLocation =
+    availableApis.find(option => option.location === defaultLocation)?.location ??
+    availableApis[0]?.location ??
+    'local'
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [location, setLocation] = useState<ProjectSpaceLocation>(initialLocation)
+  const [taskProvider, setTaskProvider] = useState<ProjectTaskProvider>('local')
+  const [repositoryAddress, setRepositoryAddress] = useState('')
+  const [token, setToken] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const externalProvider = taskProvider !== 'local'
+  const canSubmit = Boolean(
+    name.trim() && (!externalProvider || repositoryAddress.trim()) && !saving
+  )
 
   async function submit() {
-    if (!name.trim() || saving) return
+    if (!canSubmit) return
     setSaving(true)
     setError(null)
     try {
-      onCreated(
-        await api.createCloudProject({
-          name: name.trim(),
-          description: description.trim(),
-        })
-      )
+      const selectedApi = availableApis.find(option => option.location === location)?.api
+      if (!selectedApi) throw new Error('所选项目空间位置当前不可用')
+      const providerConfig =
+        taskProvider === 'local'
+          ? {}
+          : {
+              ...repositoryProviderConfig(repositoryAddress, taskProvider),
+              ...(token.trim() ? { token: token.trim() } : {}),
+            }
+      const project = await selectedApi.createCloudProject({
+        name: name.trim(),
+        description: description.trim(),
+        task_provider: taskProvider,
+        provider_config: providerConfig,
+      })
+      onCreated(project, location)
     } catch (cause) {
       setError(cloudProjectRequestError(cause))
     } finally {
@@ -291,33 +324,171 @@ function ProjectDialog({
   }
 
   return (
-    <Modal title="新建项目空间" onClose={onClose}>
-      <div className="space-y-4 p-5">
-        <p className="rounded-lg bg-muted px-3 py-2.5 text-xs text-text-muted">
-          项目空间包含共享任务、文件与交付；成员可以关联各自不同的本地工作区。
-        </p>
-        <label className="block text-xs font-medium text-text-secondary">
-          项目名称
+    <Modal title="新建项目空间" width="wide" onClose={onClose}>
+      <div className="min-h-0 space-y-5 overflow-y-auto px-5 pb-5 pt-4">
+        <label className="block text-sm font-medium text-text-primary">
+          名称
           <input
             data-testid="cloud-project-name"
             value={name}
-            onChange={event => setName(event.target.value)}
-            className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal text-text-primary outline-none focus:border-text-muted"
+            onChange={event => {
+              setName(event.target.value)
+              setError(null)
+            }}
+            className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-base font-normal text-text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-focus/15"
             placeholder="例如：Wegent V4"
+            autoFocus
           />
-          <span className="mt-1.5 block text-xs font-normal text-text-muted">
-            项目标识将在创建时自动生成。
-          </span>
         </label>
-        <label className="block text-xs font-medium text-text-secondary">
-          项目说明
+
+        <section>
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="text-sm font-medium text-text-primary">保存位置</h3>
+            <p className="text-xs text-text-muted">创建后不可更改</p>
+          </div>
+          <div
+            className={cn(
+              'mt-2 grid gap-2',
+              availableApis.length > 1 ? 'grid-cols-2' : 'grid-cols-1'
+            )}
+          >
+            {availableApis.map(option => {
+              const selected = location === option.location
+              const isLocal = option.location === 'local'
+              const LocationIcon = isLocal ? HardDrive : Cloud
+              return (
+                <button
+                  key={option.location}
+                  type="button"
+                  data-testid={`cloud-project-location-${option.location}`}
+                  aria-pressed={selected}
+                  onClick={() => {
+                    setLocation(option.location)
+                    setError(null)
+                  }}
+                  className={cn(
+                    'flex min-h-16 items-start gap-3 rounded-xl border px-3 py-3 text-left transition',
+                    selected
+                      ? 'border-text-primary bg-muted/70 ring-1 ring-text-primary/10'
+                      : 'border-border hover:bg-muted/40'
+                  )}
+                >
+                  <LocationIcon className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-text-primary">
+                      {isLocal ? '本地空间' : '云端空间'}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-4 text-text-muted">
+                      {isLocal
+                        ? '保存在当前设备，可接入 GitHub 或 GitLab Issues'
+                        : '保存在 Wegent 云端，可在不同设备访问'}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-sm font-medium text-text-primary">任务来源</h3>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {(
+              [
+                ['local', ListTodo, '内置任务', location === 'local' ? '保存在本机' : '保存在云端'],
+                ['github', GitBranch, 'GitHub', '读取 Issues'],
+                ['gitlab', GitBranch, 'GitLab', '读取 Issues'],
+              ] as const
+            ).map(([value, ProviderIcon, label, detail]) => (
+              <button
+                key={value}
+                type="button"
+                data-testid={`cloud-project-task-provider-${value}`}
+                aria-pressed={taskProvider === value}
+                onClick={() => {
+                  setTaskProvider(value)
+                  setError(null)
+                }}
+                className={cn(
+                  'rounded-xl border px-3 py-2.5 text-left transition',
+                  taskProvider === value
+                    ? 'border-text-primary bg-muted/70 ring-1 ring-text-primary/10'
+                    : 'border-border hover:bg-muted/40'
+                )}
+              >
+                <ProviderIcon className="h-4 w-4 text-text-secondary" />
+                <span className="mt-2 block text-sm font-medium">{label}</span>
+                <span className="mt-0.5 block text-xs text-text-muted">{detail}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {externalProvider && (
+          <section className="space-y-4 rounded-xl bg-muted/40 p-3">
+            <label className="block text-sm font-medium text-text-primary">
+              仓库地址
+              <input
+                data-testid="cloud-project-provider-repository"
+                value={repositoryAddress}
+                onChange={event => {
+                  setRepositoryAddress(event.target.value)
+                  setError(null)
+                }}
+                className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal text-text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-focus/15"
+                placeholder={
+                  taskProvider === 'github'
+                    ? 'https://github.com/owner/repository'
+                    : 'https://gitlab.com/group/project'
+                }
+              />
+              <span className="mt-1.5 block text-xs font-normal text-text-muted">
+                支持 HTTPS、SSH 或 owner/repository 格式；自托管地址会自动识别。
+              </span>
+            </label>
+            <label className="block text-sm font-medium text-text-primary">
+              访问令牌
+              <span className="ml-1 text-xs font-normal text-text-muted">可选</span>
+              <div className="relative mt-2">
+                <LockKeyhole className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-text-muted" />
+                <input
+                  data-testid="cloud-project-provider-token"
+                  type="password"
+                  autoComplete="new-password"
+                  value={token}
+                  onChange={event => setToken(event.target.value)}
+                  className="h-10 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm font-normal text-text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-focus/15"
+                  placeholder="私有仓库需要访问令牌"
+                />
+              </div>
+              <span className="mt-1.5 block text-xs font-normal text-text-muted">
+                {location === 'cloud'
+                  ? '令牌会加密保存在 Wegent Backend，并安全下发给本地 Executor。'
+                  : '令牌会加密保存在当前设备，不会写入项目文件。'}
+              </span>
+            </label>
+          </section>
+        )}
+
+        <label className="block text-sm font-medium text-text-primary">
+          说明
+          <span className="ml-1 text-xs font-normal text-text-muted">可选</span>
           <textarea
             value={description}
             onChange={event => setDescription(event.target.value)}
-            className="mt-1.5 h-20 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm font-normal text-text-primary outline-none focus:border-text-muted"
+            className="mt-2 h-20 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm font-normal text-text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-focus/15"
+            placeholder="这个项目空间用于什么？"
           />
         </label>
-        {error && <p className="text-xs text-destructive">{error}</p>}
+
+        {error && (
+          <p
+            className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            role="alert"
+          >
+            {error}
+          </p>
+        )}
       </div>
       <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3.5">
         <button
@@ -330,7 +501,7 @@ function ProjectDialog({
         <button
           type="button"
           data-testid="cloud-project-create-confirm"
-          disabled={!name.trim() || saving}
+          disabled={!canSubmit}
           onClick={() => void submit()}
           className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
         >
@@ -425,8 +596,22 @@ export function CloudTodoWorkspace({
   onRunTodo,
   onOpenRuntimeTask,
 }: CloudTodoWorkspaceProps) {
-  const api = services.deliveryApi!
-  const [projects, setProjects] = useState<CloudProject[]>([])
+  const projectSpaceApis = useMemo(() => {
+    if (services.projectSpaceApis) return services.projectSpaceApis
+    return {
+      cloud: services.deliveryApi,
+      defaultLocation: 'cloud' as const,
+    }
+  }, [services])
+  const availableProjectSpaceApis = useMemo(
+    () =>
+      (['local', 'cloud'] as const).flatMap(location => {
+        const api = projectSpaceApis[location]
+        return api ? [{ api, location }] : []
+      }),
+    [projectSpaceApis]
+  )
+  const [projects, setProjects] = useState<LocatedCloudProject[]>([])
   const [projectCounts, setProjectCounts] = useState<Record<string, number>>({})
   const [projectMembers, setProjectMembers] = useState<Record<string, CloudProjectMember[]>>({})
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
@@ -455,6 +640,19 @@ export function CloudTodoWorkspace({
   const [boardError, setBoardError] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const selectedProject = projects.find(project => project.id === selectedProjectId) ?? null
+  const apiForProjectId = useCallback(
+    (projectId: string) => {
+      const project = projects.find(candidate => candidate.id === projectId)
+      return (
+        (project ? projectSpaceApis[project.location] : undefined) ??
+        services.deliveryApi ??
+        availableProjectSpaceApis[0]?.api
+      )
+    },
+    [availableProjectSpaceApis, projectSpaceApis, projects, services.deliveryApi]
+  )
+  const selectedProjectApi = selectedProject ? apiForProjectId(selectedProject.id) : undefined
+  const selectedItemApi = selectedItem ? apiForProjectId(selectedItem.cloud_project_id) : undefined
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
   const detailAllItems =
@@ -462,6 +660,7 @@ export function CloudTodoWorkspace({
   const createTodoProject = createTodoParent
     ? (projects.find(project => project.id === createTodoParent.cloud_project_id) ?? null)
     : selectedProject
+  const createTodoApi = createTodoProject ? apiForProjectId(createTodoProject.id) : undefined
   const boardParent = items.find(item => item.id === boardParentId) ?? null
   const boardLayerCount = items.filter(item => item.parent_id === boardParentId).length
   // Distinct tags across the project (registry plus item usage), used by the
@@ -495,11 +694,12 @@ export function CloudTodoWorkspace({
 
   useEffect(() => {
     let active = true
-    void api
-      .listCloudProjects()
-      .then(async response => {
+    void Promise.all(
+      availableProjectSpaceApis.map(async ({ api, location }) => {
+        const response = await api.listCloudProjects()
+        const projects = response.items.map(project => ({ ...project, location }))
         const details = await Promise.all(
-          response.items.map(async project => {
+          projects.map(async project => {
             const [loopItems, members] = await Promise.all([
               api.listLoopItems(project.id),
               api.listCloudProjectMembers(project.id),
@@ -507,8 +707,13 @@ export function CloudTodoWorkspace({
             return [project.id, loopItems.items.length, members] as const
           })
         )
+        return { details, projects }
+      })
+    )
+      .then(results => {
         if (!active) return
-        setProjects(response.items)
+        const details = results.flatMap(result => result.details)
+        setProjects(results.flatMap(result => result.projects))
         setProjectCounts(Object.fromEntries(details.map(([id, count]) => [id, count])))
         setProjectMembers(Object.fromEntries(details.map(([id, , members]) => [id, members])))
       })
@@ -518,12 +723,12 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [api])
+  }, [availableProjectSpaceApis])
   useEffect(() => {
-    if (!selectedProjectId) return
+    if (!selectedProjectId || !selectedProjectApi) return
     let active = true
     const refreshItems = () => {
-      void api.listLoopItems(selectedProjectId).then(response => {
+      void selectedProjectApi.listLoopItems(selectedProjectId).then(response => {
         if (!active) return
         setItems(response.items)
         // Only sync the open drawer when it belongs to this project; a drawer
@@ -543,22 +748,27 @@ export function CloudTodoWorkspace({
       active = false
       window.clearInterval(interval)
     }
-  }, [api, selectedProjectId])
+  }, [selectedProjectApi, selectedProjectId])
   useEffect(() => {
-    if (rootView === 'my-work') void api.listMyWork().then(response => setMyWork(response.items))
-  }, [api, rootView])
+    if (rootView !== 'my-work') return
+    void Promise.all(availableProjectSpaceApis.map(({ api }) => api.listMyWork())).then(responses =>
+      setMyWork(responses.flatMap(response => response.items))
+    )
+  }, [availableProjectSpaceApis, rootView])
   // Load the drawer project's items when the drawer shows a todo from a project
   // other than the one on the board, so subtasks and parent options stay correct.
   useEffect(() => {
     if (!selectedItem || selectedItem.cloud_project_id === selectedProjectId) return
+    const detailApi = apiForProjectId(selectedItem.cloud_project_id)
+    if (!detailApi) return
     let active = true
-    void api.listLoopItems(selectedItem.cloud_project_id).then(response => {
+    void detailApi.listLoopItems(selectedItem.cloud_project_id).then(response => {
       if (active) setDetailItems(response.items)
     })
     return () => {
       active = false
     }
-  }, [api, selectedItem, selectedProjectId])
+  }, [apiForProjectId, selectedItem, selectedProjectId])
 
   async function startTask(project: ProjectWithTasks, item: CloudLoopItem, message: string) {
     if (!onRunTodo) return
@@ -571,9 +781,11 @@ export function CloudTodoWorkspace({
       cloudProjectId: item.cloud_project_id,
     })
     if (!address) return
-    await api.bindTask(item.id, address, item.title)
+    const itemApi = apiForProjectId(item.cloud_project_id)
+    if (!itemApi) throw new Error('项目空间当前不可用')
+    await itemApi.bindTask(item.id, address, item.title)
     if (item.status === 'completed') {
-      const reopened = await api.updateLoopItem(item.id, {
+      const reopened = await itemApi.updateLoopItem(item.id, {
         version: item.version,
         status: 'in_progress',
       })
@@ -596,8 +808,10 @@ export function CloudTodoWorkspace({
     setItems(reordered.items)
     setBoardError(null)
     try {
+      const itemApi = apiForProjectId(item.cloud_project_id)
+      if (!itemApi) throw new Error('项目空间当前不可用')
       if (item.status !== status) {
-        const updated = await api.updateLoopItem(item.id, {
+        const updated = await itemApi.updateLoopItem(item.id, {
           version: item.version,
           status,
         })
@@ -606,7 +820,7 @@ export function CloudTodoWorkspace({
         )
         setSelectedItem(current => (current?.id === updated.id ? updated : current))
       }
-      await api.reorderLoopItems(item.cloud_project_id, {
+      await itemApi.reorderLoopItems(item.cloud_project_id, {
         parent_id: item.parent_id,
         status,
         item_ids: reordered.laneIds,
@@ -747,35 +961,33 @@ export function CloudTodoWorkspace({
                   .toLowerCase()
                   .includes(searchQuery.trim().toLowerCase())
               )
-              .map((project, index) => (
-                <button
-                  key={project.id}
-                  type="button"
-                  onClick={() => {
-                    selectProject(project.id)
-                    setRootView('projects')
-                    setProjectView('board')
-                    setSelectedItem(null)
-                  }}
-                  className={cn(
-                    'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
-                    rootView === 'projects' && selectedProjectId === project.id
-                      ? 'bg-muted font-medium text-text-primary'
-                      : 'text-text-secondary hover:bg-muted/60'
-                  )}
-                >
-                  <span
+              .map(project => {
+                const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
+                return (
+                  <button
+                    key={project.id}
+                    type="button"
+                    onClick={() => {
+                      selectProject(project.id)
+                      setRootView('projects')
+                      setProjectView('board')
+                      setSelectedItem(null)
+                    }}
                     className={cn(
-                      'h-1.5 w-1.5 shrink-0 rounded-full',
-                      sidebarProjectDotClasses[index % sidebarProjectDotClasses.length]
+                      'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
+                      rootView === 'projects' && selectedProjectId === project.id
+                        ? 'bg-muted font-medium text-text-primary'
+                        : 'text-text-secondary hover:bg-muted/60'
                     )}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
-                  {projectCounts[project.id] ? (
-                    <span className="text-xs text-text-muted">{projectCounts[project.id]}</span>
-                  ) : null}
-                </button>
-              ))}
+                  >
+                    <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                    <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                    {projectCounts[project.id] ? (
+                      <span className="text-xs text-text-muted">{projectCounts[project.id]}</span>
+                    ) : null}
+                  </button>
+                )
+              })}
           </div>
         </div>
       </aside>
@@ -874,54 +1086,55 @@ export function CloudTodoWorkspace({
                       .toLowerCase()
                       .includes(searchQuery.trim().toLowerCase())
                   )
-                  .map((project, index) => (
-                    <button
-                      key={project.id}
-                      type="button"
-                      onClick={() => selectProject(project.id)}
-                      className="grid h-12 w-full grid-cols-[minmax(0,1fr)_80px_120px_170px] items-center border-t border-border px-4 text-left transition-colors hover:bg-muted/60"
-                    >
-                      <span className="flex min-w-0 items-center gap-2.5">
-                        <span
-                          className={cn(
-                            'h-1.5 w-1.5 shrink-0 rounded-full',
-                            sidebarProjectDotClasses[index % sidebarProjectDotClasses.length]
-                          )}
-                        />
-                        <span className="truncate text-sm font-medium">{project.name}</span>
-                      </span>
-                      <span className="text-xs text-text-muted">
-                        {projectCounts[project.id] ?? '—'}
-                      </span>
-                      <span className="text-xs text-text-muted">
-                        {project.updated_at.slice(5, 10)}
-                      </span>
-                      <span className="flex items-center">
-                        {(projectMembers[project.id] ?? [])
-                          .slice(0, 3)
-                          .map((member, memberIndex) => (
-                            <span
-                              key={member.user_id}
-                              className={cn(
-                                'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background ring-2 ring-background',
-                                memberAvatarClasses[memberIndex % memberAvatarClasses.length],
-                                memberIndex > 0 && '-ml-1.5'
-                              )}
-                            >
-                              {member.user_name.slice(0, 1).toUpperCase()}
-                            </span>
-                          ))}
-                        <span className="ml-2 text-xs text-text-muted">
-                          {projectMembers[project.id]
-                            ? `${projectMembers[project.id].length} 人`
-                            : '—'}
+                  .map(project => {
+                    const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
+                    return (
+                      <button
+                        key={project.id}
+                        type="button"
+                        onClick={() => selectProject(project.id)}
+                        className="grid h-12 w-full grid-cols-[minmax(0,1fr)_80px_120px_170px] items-center border-t border-border px-4 text-left transition-colors hover:bg-muted/60"
+                      >
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <ProjectLocationIcon className="h-4 w-4 shrink-0 text-text-muted" />
+                          <span className="truncate text-sm font-medium">{project.name}</span>
+                          <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                            {project.location === 'local' ? '本地' : '云端'}
+                          </span>
                         </span>
-                      </span>
-                    </button>
-                  ))}
+                        <span className="text-xs text-text-muted">
+                          {projectCounts[project.id] ?? '—'}
+                        </span>
+                        <span className="text-xs text-text-muted">
+                          {project.updated_at.slice(5, 10)}
+                        </span>
+                        <span className="flex items-center">
+                          {(projectMembers[project.id] ?? [])
+                            .slice(0, 3)
+                            .map((member, memberIndex) => (
+                              <span
+                                key={member.user_id}
+                                className={cn(
+                                  'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background ring-2 ring-background',
+                                  memberAvatarClasses[memberIndex % memberAvatarClasses.length],
+                                  memberIndex > 0 && '-ml-1.5'
+                                )}
+                              >
+                                {member.user_name.slice(0, 1).toUpperCase()}
+                              </span>
+                            ))}
+                          <span className="ml-2 text-xs text-text-muted">
+                            {projectMembers[project.id]
+                              ? `${projectMembers[project.id].length} 人`
+                              : '—'}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  })}
               </div>
               <p className="mt-5 text-xs text-text-muted">
-                项目空间只包含共享协作数据；本地目录、Git 与未关联会话仍留在成员设备上。
+                本地空间保存在当前设备；云端空间可与项目成员共享任务、文件和交付。
               </p>
             </div>
           </div>
@@ -935,9 +1148,16 @@ export function CloudTodoWorkspace({
               )}
             >
               <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
-              <Folder className="relative z-10 h-4 w-4 text-text-muted" />
+              {selectedProject.location === 'local' ? (
+                <HardDrive className="relative z-10 h-4 w-4 text-text-muted" />
+              ) : (
+                <Cloud className="relative z-10 h-4 w-4 text-text-muted" />
+              )}
               <span className="relative z-10 ml-2 text-base font-semibold">
                 {selectedProject.name}
+              </span>
+              <span className="relative z-10 ml-2 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                {selectedProject.location === 'local' ? '本地' : '云端'}
               </span>
               <nav className="relative z-10 ml-8 flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
                 <button
@@ -1016,15 +1236,19 @@ export function CloudTodoWorkspace({
                 </>
               )}
             </header>
-            {projectView === 'files' ? (
-              <CloudFilesView api={api} project={selectedProject} />
-            ) : projectView === 'manage' ? (
+            {projectView === 'files' && selectedProjectApi ? (
+              <CloudFilesView api={selectedProjectApi} project={selectedProject} />
+            ) : projectView === 'manage' && selectedProjectApi ? (
               <CloudProjectManageView
-                api={api}
+                api={selectedProjectApi}
                 project={selectedProject}
                 onProjectUpdated={updated =>
                   setProjects(current =>
-                    current.map(project => (project.id === updated.id ? updated : project))
+                    current.map(project =>
+                      project.id === updated.id
+                        ? { ...updated, location: project.location }
+                        : project
+                    )
                   )
                 }
               />
@@ -1183,11 +1407,11 @@ export function CloudTodoWorkspace({
         )}
       </main>
 
-      {selectedItem && (
+      {selectedItem && selectedItemApi && (
         <TodoEditor
           key={`${selectedItem.id}:${selectedItem.version}`}
           mode="edit"
-          api={api}
+          api={selectedItemApi}
           item={selectedItem}
           project={projects.find(project => project.id === selectedItem.cloud_project_id)}
           allItems={detailAllItems}
@@ -1208,24 +1432,29 @@ export function CloudTodoWorkspace({
       )}
       {createProjectOpen && (
         <ProjectDialog
-          api={api}
+          availableApis={availableProjectSpaceApis}
+          defaultLocation={projectSpaceApis.defaultLocation}
           onClose={() => setCreateProjectOpen(false)}
-          onCreated={project => {
-            setProjects(current => [project, ...current])
-            void api
-              .listCloudProjectMembers(project.id)
-              .then(members =>
-                setProjectMembers(current => ({ ...current, [project.id]: members }))
-              )
+          onCreated={(project, location) => {
+            const locatedProject = { ...project, location }
+            const projectApi = projectSpaceApis[location]
+            setProjects(current => [locatedProject, ...current])
+            if (projectApi) {
+              void projectApi
+                .listCloudProjectMembers(project.id)
+                .then(members =>
+                  setProjectMembers(current => ({ ...current, [project.id]: members }))
+                )
+            }
             selectProject(project.id)
             setCreateProjectOpen(false)
           }}
         />
       )}
-      {createTodoOpen && createTodoProject && (
+      {createTodoOpen && createTodoProject && createTodoApi && (
         <TodoEditor
           mode="create"
-          api={api}
+          api={createTodoApi}
           project={createTodoProject}
           initialParent={createTodoParent}
           initialStatus={createTodoStatus}

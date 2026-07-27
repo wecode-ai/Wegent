@@ -19,6 +19,13 @@ async fn main() {
         }
         return;
     }
+    if wegent_executor::task_runtime::mcp::is_task_mcp_command() {
+        if let Err(error) = wegent_executor::task_runtime::mcp::run().await {
+            eprintln!("task MCP server failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Err(error) = wegent_executor::app::run_from_env().await {
         wegent_executor::logging::write_executor_error_line(&error.to_string());
         std::process::exit(error.exit_code());
