@@ -471,7 +471,19 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn shell_environment_loader_times_out() {
-        let result = capture_shell_environment("/usr/bin/yes", Duration::from_millis(50));
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temp directory should be created");
+        let script_path = directory.path().join("slow-shell");
+        std::fs::write(&script_path, "#!/bin/sh\nexec /bin/sleep 10\n")
+            .expect("script should be written");
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
+            .expect("script should be executable");
+
+        let result = capture_shell_environment(
+            &script_path.display().to_string(),
+            Duration::from_millis(50),
+        );
 
         assert!(result
             .expect_err("environment load should time out")
