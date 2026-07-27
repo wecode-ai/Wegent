@@ -240,6 +240,7 @@ function ScrollableMessagePaneContent({
   const followingBottomKeyRef = useRef<string | null>(null)
   const userScrollPausedAutoFollowRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
+  const lastScrollTopRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
@@ -403,6 +404,13 @@ function ScrollableMessagePaneContent({
     [currentScrollKey, messages.length]
   )
 
+  useLayoutEffect(
+    () => () => {
+      saveCurrentScrollPosition()
+    },
+    [saveCurrentScrollPosition]
+  )
+
   const updateScrollState = useCallback(
     (options: { forceSave?: boolean; skipSave?: boolean } = {}) => {
       const element = activeScrollRefRef.current.current
@@ -418,6 +426,9 @@ function ScrollableMessagePaneContent({
       const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
       const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
+      const scrolledUp =
+        lastScrollTopRef.current !== null && element.scrollTop < lastScrollTopRef.current - 0.5
+      lastScrollTopRef.current = element.scrollTop
       isAtBottomRef.current = isAtBottom
       if (isScrolledToBottom) {
         userScrollPausedAutoFollowRef.current = false
@@ -425,11 +436,7 @@ function ScrollableMessagePaneContent({
       } else if (options.forceSave) {
         userScrollPausedAutoFollowRef.current = true
       }
-      if (
-        !isAtBottom &&
-        restoringScrollKeyRef.current !== currentScrollKey &&
-        followingBottomKeyRef.current !== currentScrollKey
-      ) {
+      if (!isScrolledToBottom && options.forceSave && scrolledUp) {
         clearScheduledScrolls()
       }
       if (
@@ -456,6 +463,7 @@ function ScrollableMessagePaneContent({
       } else {
         element.scrollTop = element.scrollHeight
       }
+      lastScrollTopRef.current = element.scrollTop
       if (options.saveSnapshot) {
         saveCurrentScrollPosition(element.scrollHeight)
       }
@@ -482,6 +490,7 @@ function ScrollableMessagePaneContent({
     } else {
       element.scrollTop = nextScrollTop
     }
+    lastScrollTopRef.current = element.scrollTop
 
     const overflow = element.scrollHeight > element.clientHeight + 8
     const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
@@ -654,6 +663,7 @@ function ScrollableMessagePaneContent({
     const offsetDelta = offsetFromScrollerTop - anchor.offsetFromScrollerTop
     if (Math.abs(offsetDelta) < 0.5) return
     scroller.scrollTop += offsetDelta
+    lastScrollTopRef.current = scroller.scrollTop
   }, [])
 
   useEffect(() => {
@@ -719,23 +729,12 @@ function ScrollableMessagePaneContent({
     scrollToBottom('smooth', { saveSnapshot: true })
   }
 
-  const pauseAutoFollowForUserScroll = useCallback(() => {
-    userScrollPausedAutoFollowRef.current = true
-    clearScheduledScrolls()
-    captureUserViewportAnchor()
-  }, [captureUserViewportAnchor, clearScheduledScrolls])
-
   const handleScroll = useCallback(() => {
-    if (restoringScrollKeyRef.current === currentScrollKey) {
-      updateScrollState({ skipSave: true })
-      return
-    }
-    restoringScrollKeyRef.current = null
     updateScrollState({ forceSave: true })
     if (userScrollPausedAutoFollowRef.current) {
       captureUserViewportAnchor()
     }
-  }, [captureUserViewportAnchor, currentScrollKey, updateScrollState])
+  }, [captureUserViewportAnchor, updateScrollState])
 
   useEffect(() => {
     const externalScroller = externalScrollRef?.current
@@ -791,12 +790,6 @@ function ScrollableMessagePaneContent({
             '[overflow-anchor:none]',
           scrollerClassName
         )}
-        onWheel={event => {
-          if (event.deltaY < 0) {
-            pauseAutoFollowForUserScroll()
-          }
-        }}
-        onTouchMove={pauseAutoFollowForUserScroll}
         onScroll={handleScroll}
       >
         <div
