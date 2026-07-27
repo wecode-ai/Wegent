@@ -1020,6 +1020,97 @@ fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
 }
 
 #[test]
+fn codex_run_state_uses_latest_completed_agent_message_in_same_turn() {
+    let mut state = CodexRunState::default();
+
+    for (id, text) in [
+        ("msg-before-tool", "I found the failing step."),
+        (
+            "msg-after-tool",
+            "The failure is caused by a stale lockfile.",
+        ),
+    ] {
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": id,
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "text": text
+                    }
+                }
+            }))
+            .is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "The failure is caused by a stale lockfile.".to_owned()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_does_not_duplicate_completed_text_after_matching_delta() {
+    let mut state = CodexRunState::default();
+
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-final",
+                "delta": "Done."
+            }
+        }))
+        .is_none());
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-final",
+                    "type": "agentMessage",
+                    "role": "assistant",
+                    "text": "Done."
+                }
+            }
+        }))
+        .is_none());
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Done.".to_owned()
+        }
+    );
+}
+
+#[test]
 fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
     let mut request = ExecutionRequest {
         prompt: Value::String("plan this".to_owned()),

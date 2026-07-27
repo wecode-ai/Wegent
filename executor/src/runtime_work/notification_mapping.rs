@@ -29,6 +29,7 @@ pub(crate) enum TextChunkMapping {
         delta: String,
     },
     FinalDelta {
+        item_id: Option<String>,
         delta: String,
     },
     ProcessCompleted {
@@ -38,6 +39,7 @@ pub(crate) enum TextChunkMapping {
         text: String,
     },
     FinalCompleted {
+        item_id: Option<String>,
         text: String,
     },
 }
@@ -54,7 +56,9 @@ pub(crate) fn map_text_chunk(
     resolved_phase: Option<&str>,
 ) -> Result<Option<TextChunkMapping>, &'static str> {
     match method {
-        "item/reasoning/delta" | "item/reasoningSummary/delta" => {
+        "item/reasoning/delta"
+        | "item/reasoningSummary/delta"
+        | "item/reasoning/summaryTextDelta" => {
             let delta = raw_string_field(params, "delta")
                 .or_else(|| string_field(params, "delta"))
                 .or_else(|| reasoning_content(params))
@@ -79,7 +83,10 @@ pub(crate) fn map_text_chunk(
                     delta,
                 }))
             } else {
-                Ok(Some(TextChunkMapping::FinalDelta { delta }))
+                Ok(Some(TextChunkMapping::FinalDelta {
+                    item_id: notification_item_id(params),
+                    delta,
+                }))
             }
         }
         "item/completed" => {
@@ -96,7 +103,10 @@ pub(crate) fn map_text_chunk(
                     }))
                 }
                 CompletedAssistantTextKind::Final(text) => {
-                    Ok(Some(TextChunkMapping::FinalCompleted { text }))
+                    Ok(Some(TextChunkMapping::FinalCompleted {
+                        item_id: notification_item_id(params),
+                        text,
+                    }))
                 }
             }
         }

@@ -1642,7 +1642,7 @@ describe('MessageList', () => {
     expect(screen.getByText('ls output')).toBeInTheDocument()
   })
 
-  test('keeps completed assistant turns that only have processing blocks', () => {
+  test('hides completed assistant turns that only contain reasoning text', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -1669,9 +1669,40 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-assistant')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('thinking-toggle-button'))
-    expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-assistant')).not.toBeInTheDocument()
+    expect(screen.queryByText('正在执行 pwd')).not.toBeInTheDocument()
+  })
+
+  test('shows only the generic thinking indicator while reasoning is streaming', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'thinking-1',
+        subtaskId: 11,
+        type: 'thinking',
+        content: '不应展示的模型思考字符',
+        status: 'streaming',
+        createdAt: 1770000000000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-blocks',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByText('不应展示的模型思考字符')).not.toBeInTheDocument()
+    expect(screen.queryByText('思考过程')).not.toBeInTheDocument()
   })
 
   test('keeps completed process text inside the message-level processing group', () => {

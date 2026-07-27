@@ -97,6 +97,10 @@ Before sending a user message, Wework generates a stable client message ID and r
 
 Tool state follows app-server lifecycle events: `item/started` creates a running tool block, while `item/completed` must settle the matching block to `done` unless the item explicitly failed. Some standalone tool items, including image view, sleep, and web search, do not carry a `status` field. The executor normalizes these terminal items to `done` in both live event mapping and transcript restoration so Wework does not keep showing a running state or advancing timer after the tool completes.
 
+A Codex turn may interleave reasoning, assistant text, and tool calls. The executor must track streaming offsets and completed snapshots for each assistant text segment by provider item ID. A `delta` and `completed` event for the same item represent an incremental stream and its snapshot and must be deduplicated. Completed text from a different item must still be forwarded as subsequent text even when it occurs in the same turn; it cannot be discarded merely because an earlier item emitted deltas. Before Wework moves current assistant text into a tool or processing block, it clears that text stream's offset state so the next assistant segment after the tool starts at offset 0 and preserves transcript event order.
+
+Reasoning content may remain in the runtime transcript for diagnostics and restoration, but Wework does not display reasoning characters or character counts. While the turn is active, the UI shows only the generic “Thinking” status. The task state machine and visible message or tool content determine when that indicator appears and disappears.
+
 ### Backend Device Chat Task REST Entrypoint
 
 The web device chat page still sends messages through WebSocket. For external systems or curl-based callers that need to create the same kind of task, Backend exposes a REST entrypoint:
