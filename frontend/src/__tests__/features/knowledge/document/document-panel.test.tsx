@@ -79,12 +79,20 @@ describe('DocumentPanel', () => {
 
     fireEvent.click(screen.getByTestId('mock-read-only-permission'))
     expect(mockArtifactSourceSelector).toHaveBeenLastCalledWith(
-      expect.objectContaining({ defaultDocumentsExpanded: true })
+      expect.objectContaining({
+        defaultDocumentsExpanded: true,
+        purpose: 'question',
+      })
     )
+    expect(screen.getByText('artifact.sourceBrowser.documents')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('mock-editor-permission'))
     expect(mockArtifactSourceSelector).toHaveBeenLastCalledWith(
-      expect.objectContaining({ defaultDocumentsExpanded: false })
+      expect.objectContaining({
+        defaultDocumentsExpanded: false,
+        purpose: 'workspace',
+      })
     )
+    expect(screen.getByText('artifact.source')).toBeInTheDocument()
   })
 })

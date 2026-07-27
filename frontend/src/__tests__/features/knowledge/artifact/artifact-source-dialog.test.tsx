@@ -88,6 +88,12 @@ describe('ArtifactSourceDialog', () => {
     )
 
     expect(screen.getByText('artifact.sourceDialog.allHint:1')).toBeInTheDocument()
+    expect(useDocuments).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        initialPageSize: 20,
+        serverPaginationOnly: true,
+      })
+    )
     fireEvent.click(screen.getByTestId('artifact-source-apply'))
     expect(onApply).toHaveBeenCalledWith([])
   })

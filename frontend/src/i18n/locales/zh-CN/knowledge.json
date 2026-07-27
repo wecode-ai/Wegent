@@ -933,7 +933,9 @@
     "adjustSources": "调整",
     "sourceBrowser": {
       "documents": "知识库文档",
-      "selectHint": "勾选后仅使用指定文档"
+      "questionHint": "提问仅基于已选文档",
+      "workspaceHint": "对话和生成仅使用已选文档",
+      "generationHint": "仅使用已选文档生成"
     },
     "action": {
       "briefing": "生成简报",
@@ -941,14 +943,13 @@
     },
     "sourceDialog": {
       "title": "选择知识来源",
-      "description": "默认使用整个知识库，也可以只使用指定文档。",
-      "all": "整个知识库",
+      "description": "默认使用全部可用文档，也可以只使用指定文档。",
+      "all": "全部可用文档",
       "allHint": "使用当前 {{count}} 篇可用文档",
-      "selected": "指定文档",
       "selectedHint": "已选择 {{count}} 篇文档",
       "search": "搜索文档...",
       "empty": "没有找到文档",
-      "clear": "清除选择",
+      "clear": "使用全部文档",
       "apply": "应用来源",
       "status": {
         "not_indexed": "未索引",

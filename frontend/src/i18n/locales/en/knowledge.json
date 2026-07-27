@@ -933,7 +933,9 @@
     "adjustSources": "Adjust",
     "sourceBrowser": {
       "documents": "Knowledge base documents",
-      "selectHint": "Select documents to use only those sources"
+      "questionHint": "Questions use only selected documents",
+      "workspaceHint": "Chat and generation use only selected documents",
+      "generationHint": "Generate using only selected documents"
     },
     "action": {
       "briefing": "Generate briefing",
@@ -941,14 +943,13 @@
     },
     "sourceDialog": {
       "title": "Choose knowledge sources",
-      "description": "Use the entire knowledge base by default, or choose specific documents.",
-      "all": "Entire knowledge base",
+      "description": "Use all available documents by default, or choose specific documents.",
+      "all": "All available documents",
       "allHint": "Use the current {{count}} available documents",
-      "selected": "Specific documents",
       "selectedHint": "{{count}} documents selected",
       "search": "Search documents...",
       "empty": "No documents found",
-      "clear": "Clear selection",
+      "clear": "Use all documents",
       "apply": "Apply sources",
       "status": {
         "not_indexed": "Not indexed",

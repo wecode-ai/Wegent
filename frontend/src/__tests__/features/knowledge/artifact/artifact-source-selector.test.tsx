@@ -21,7 +21,10 @@ jest.mock('@/features/knowledge/document/hooks/useDocuments', () => ({
   useDocuments: jest.fn(),
 }))
 
-const document = (id: number, overrides: Partial<KnowledgeDocument> = {}): KnowledgeDocument => ({
+const createDocument = (
+  id: number,
+  overrides: Partial<KnowledgeDocument> = {}
+): KnowledgeDocument => ({
   id,
   kind_id: 1,
   attachment_id: 1,
@@ -45,7 +48,7 @@ describe('ArtifactSourceSelector', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     ;(useDocuments as jest.Mock).mockReturnValue({
-      documents: [document(11), document(12, { index_status: 'indexing' })],
+      documents: [createDocument(11), createDocument(12, { index_status: 'indexing' })],
       loading: false,
       error: null,
       page: 1,
@@ -73,7 +76,8 @@ describe('ArtifactSourceSelector', () => {
       />
     )
 
-    expect(screen.getByText('artifact.sourceBrowser.documents')).toBeInTheDocument()
+    expect(screen.getByText('artifact.sourceDialog.all')).toBeInTheDocument()
+    expect(screen.queryByTestId('artifact-source-all')).not.toBeInTheDocument()
     expect(screen.queryByTestId('artifact-source-open-document-11')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('artifact-source-selected'))
@@ -146,6 +150,38 @@ describe('ArtifactSourceSelector', () => {
     expect(screen.queryByTestId('artifact-source-search')).not.toBeInTheDocument()
   })
 
+  it('lets read-only users select documents for questions and preview other documents', () => {
+    const onScopeChange = jest.fn()
+    const onOpenDocument = jest.fn()
+
+    const props = {
+      knowledgeBaseId: 12,
+      availableDocumentCount: 1,
+      compact: true,
+      purpose: 'question' as const,
+      defaultDocumentsExpanded: true,
+      onScopeChange,
+      onOpenDocument,
+    }
+    const { rerender } = render(<ArtifactSourceSelector {...props} scope={{ mode: 'all' }} />)
+
+    expect(screen.getByTestId('artifact-source-document-11')).toBeEnabled()
+    expect(screen.getByTestId('artifact-source-document-12')).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('artifact-source-open-document-12'))
+    expect(onOpenDocument).toHaveBeenCalledWith(expect.objectContaining({ id: 12 }))
+    fireEvent.click(screen.getByTestId('artifact-source-document-11'))
+    expect(onScopeChange).toHaveBeenCalledWith({
+      mode: 'selected',
+      documentIds: new Set([11]),
+    })
+
+    rerender(
+      <ArtifactSourceSelector {...props} scope={{ mode: 'selected', documentIds: new Set([11]) }} />
+    )
+    expect(screen.getByText('artifact.sourceBrowser.questionHint')).toBeInTheDocument()
+  })
+
   it('requests documents only after the browser expands', () => {
     const props = {
       knowledgeBaseId: 12,
@@ -160,7 +196,7 @@ describe('ArtifactSourceSelector', () => {
       expect.objectContaining({
         autoLoad: false,
         serverPaginationOnly: true,
-        initialPageSize: 20,
+        initialPageSize: 10,
       })
     )
 
@@ -173,7 +209,7 @@ describe('ArtifactSourceSelector', () => {
     )
   })
 
-  it('returns to the whole knowledge base when the final selection is cleared', () => {
+  it('keeps the final selection until the user explicitly chooses the whole knowledge base', () => {
     const onScopeChange = jest.fn()
 
     render(
@@ -188,7 +224,7 @@ describe('ArtifactSourceSelector', () => {
     )
 
     fireEvent.click(screen.getByTestId('artifact-source-document-11'))
-    expect(onScopeChange).toHaveBeenCalledWith({ mode: 'all' })
+    expect(onScopeChange).not.toHaveBeenCalled()
   })
 
   it('refreshes an expanded browser on focus and while documents are processing', () => {

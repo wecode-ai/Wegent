@@ -314,13 +314,18 @@ export function DocumentPanel({
         </div>
 
         <div className="mx-4 mt-4 shrink-0" data-testid="artifact-source-summary">
-          <h3 className="mb-2 text-sm font-semibold">{t('artifact.source')}</h3>
+          <h3 className="mb-2 text-sm font-semibold">
+            {t(
+              canManageArtifacts === false ? 'artifact.sourceBrowser.documents' : 'artifact.source'
+            )}
+          </h3>
           <ArtifactSourceSelector
             knowledgeBaseId={knowledgeBase.id}
             scope={sourceScope}
             availableDocumentCount={availableDocumentCount ?? knowledgeBase.document_count}
             processingDocumentCount={processingDocumentCount}
             compact
+            purpose={canManageArtifacts === false ? 'question' : 'workspace'}
             defaultDocumentsExpanded={canManageArtifacts === null ? undefined : !canManageArtifacts}
             onScopeChange={handleInlineSourceScopeChange}
             onOpenDocument={setViewingDocument}

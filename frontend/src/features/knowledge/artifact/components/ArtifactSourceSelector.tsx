@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Database, FileText, Search } from 'lucide-react'
+import { ChevronDown, FileText, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -16,6 +16,7 @@ import { useDocuments } from '@/features/knowledge/document/hooks/useDocuments'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
 export type ArtifactSourceScope = { mode: 'all' } | { mode: 'selected'; documentIds: Set<number> }
+export type ArtifactSourcePurpose = 'question' | 'workspace' | 'generation'
 
 interface ArtifactSourceSelectorProps {
   knowledgeBaseId: number
@@ -24,12 +25,13 @@ interface ArtifactSourceSelectorProps {
   processingDocumentCount?: number
   active?: boolean
   compact?: boolean
+  purpose?: ArtifactSourcePurpose
   defaultDocumentsExpanded?: boolean
   onScopeChange: (scope: ArtifactSourceScope) => void
   onOpenDocument?: (document: KnowledgeDocument) => void
 }
 
-const canUseAsArtifactSource = (document: KnowledgeDocument) =>
+const canUseAsKnowledgeSource = (document: KnowledgeDocument) =>
   document.is_active && document.index_status === 'success'
 
 const getSourceStatusKey = (document: KnowledgeDocument) => {
@@ -46,6 +48,7 @@ export function ArtifactSourceSelector({
   processingDocumentCount = 0,
   active = true,
   compact = false,
+  purpose = 'generation',
   defaultDocumentsExpanded,
   onScopeChange,
   onOpenDocument,
@@ -63,7 +66,7 @@ export function ArtifactSourceSelector({
       autoLoad: active && documentsExpanded,
       paginationEnabled: true,
       serverPaginationOnly: true,
-      initialPageSize: 20,
+      initialPageSize: compact ? 10 : 20,
       loadAll: false,
       keyword: searchQuery,
       sortBy: 'name',
@@ -117,7 +120,8 @@ export function ArtifactSourceSelector({
     const next = new Set(selectedDocumentIds)
     if (checked) next.add(documentId)
     else next.delete(documentId)
-    onScopeChange(next.size > 0 ? { mode: 'selected', documentIds: next } : { mode: 'all' })
+    if (next.size === 0) return
+    onScopeChange({ mode: 'selected', documentIds: next })
   }
 
   const toggleDocumentsExpanded = () => {
@@ -126,31 +130,7 @@ export function ArtifactSourceSelector({
   }
 
   return (
-    <div className="grid min-h-0 gap-2" data-testid="artifact-source-selector">
-      <button
-        type="button"
-        className={`flex min-h-11 items-center gap-3 rounded-xl border text-left transition-colors ${
-          compact ? 'px-3 py-2' : 'p-4'
-        } ${scope.mode === 'all' ? 'border-primary bg-primary/5' : 'border-border hover:bg-hover'}`}
-        onClick={() => onScopeChange({ mode: 'all' })}
-        data-testid="artifact-source-all"
-      >
-        <div className="rounded-lg bg-primary/10 p-2 text-primary">
-          <Database className={compact ? 'h-4 w-4' : 'h-5 w-5'} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-medium">{t('artifact.sourceDialog.all')}</span>
-            {scope.mode === 'all' && <Check className="h-4 w-4 shrink-0 text-primary" />}
-          </div>
-          <p className="truncate text-xs text-text-secondary">
-            {t('artifact.sourceDialog.allHint', {
-              count: availableDocumentCount ?? 0,
-            })}
-          </p>
-        </div>
-      </button>
-
+    <div className="min-h-0" data-testid="artifact-source-selector">
       <div
         className={`flex min-h-0 flex-col rounded-xl border ${
           scope.mode === 'selected' ? 'border-primary' : 'border-border'
@@ -169,22 +149,25 @@ export function ArtifactSourceSelector({
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">
-                {t(compact ? 'artifact.sourceBrowser.documents' : 'artifact.sourceDialog.selected')}
+                {t(
+                  scope.mode === 'all'
+                    ? 'artifact.sourceDialog.all'
+                    : 'artifact.sourceDialog.selectedHint',
+                  scope.mode === 'selected' ? { count: selectedDocumentIds.size } : undefined
+                )}
               </span>
-              {documentsExpanded ? (
-                <ChevronDown className="h-4 w-4 shrink-0 rotate-180 text-text-muted transition-transform" />
-              ) : compact ? (
-                <ChevronDown className="h-4 w-4 shrink-0 text-text-muted transition-transform" />
-              ) : (
-                scope.mode === 'selected' && <Check className="h-4 w-4 shrink-0 text-primary" />
-              )}
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
+                  documentsExpanded ? 'rotate-180' : ''
+                }`}
+              />
             </div>
             <p className="truncate text-xs text-text-secondary">
-              {scope.mode === 'all' && compact
-                ? t('artifact.sourceBrowser.selectHint')
-                : t('artifact.sourceDialog.selectedHint', {
-                    count: selectedDocumentIds.size,
-                  })}
+              {scope.mode === 'all'
+                ? t('artifact.sourceDialog.allHint', {
+                    count: availableDocumentCount ?? 0,
+                  })
+                : t(`artifact.sourceBrowser.${purpose}Hint`)}
             </p>
           </div>
         </button>
@@ -215,12 +198,12 @@ export function ArtifactSourceSelector({
                 value={searchQuery}
                 onChange={event => setSearchQuery(event.target.value)}
                 placeholder={t('artifact.sourceDialog.search')}
-                className="h-10 pl-9"
+                className="h-11 pl-9"
                 data-testid="artifact-source-search"
               />
             </div>
 
-            <div className={`${compact ? 'max-h-36' : 'max-h-72'} space-y-1 overflow-auto`}>
+            <div className="space-y-1">
               {loading ? (
                 <div className="flex justify-center py-8">
                   <Spinner />
@@ -233,7 +216,7 @@ export function ArtifactSourceSelector({
                 </p>
               ) : (
                 documents.map(document => {
-                  const eligible = canUseAsArtifactSource(document)
+                  const eligible = canUseAsKnowledgeSource(document)
                   const isSelected = selectedDocumentIds.has(document.id)
                   const canToggle = eligible || isSelected
                   return (
