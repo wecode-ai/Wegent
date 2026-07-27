@@ -134,7 +134,9 @@
       "active": "Active",
       "inactive": "Inactive",
       "advanced": "Advanced",
-      "standard": "Standard"
+      "standard": "Standard",
+      "wework_available": "wework available",
+      "wework_unavailable": "wework unavailable"
     },
     "columns": {
       "id": "ID",
@@ -155,7 +157,8 @@
       "model_sub_group_placeholder": "Enter secondary group",
       "config": "Model Configuration",
       "config_placeholder": "Enter model configuration as JSON",
-      "is_advanced": "Advanced Model"
+      "is_advanced": "Advanced Model",
+      "is_wework_available": "Available in wework"
     },
     "confirm": {
       "delete_title": "Delete Model",

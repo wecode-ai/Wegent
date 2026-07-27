@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
-import type { WorkbenchPaneIdentity } from './workbenchPaneStack'
+import type { WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 import { requestProjectCreateMode, requestProjectWorkspaceBinding } from './workbenchShellEvents'
 
 export function useWorkbenchProjectWorkControls({
@@ -32,6 +32,7 @@ export function useWorkbenchProjectWorkControls({
       currentProjectId: currentProject?.id,
       currentStandaloneDeviceId: state.standaloneDeviceId,
       currentRuntimeDeviceId: pane.currentRuntimeTask?.deviceId ?? null,
+      currentRuntimeTask: pane.currentRuntimeTask,
       selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
       executionMode: projectExecutionMode,

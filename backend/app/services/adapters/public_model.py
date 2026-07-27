@@ -10,10 +10,26 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Model, Shell
+from app.schemas.kind import Model, ModelSpec, Shell
 from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.base import BaseService
+from app.services.model_capabilities import normalize_model_capabilities
+
+
+def _split_model_config_protocol(
+    config: Dict[str, Any],
+) -> tuple[Dict[str, Any], Optional[str], Optional[str]]:
+    """Move protocol/apiFormat from modelConfig to spec level if present.
+
+    Older clients and bulk-import payloads may place protocol/apiFormat inside
+    the modelConfig dict. The Model CRD schema keeps them at spec level, so
+    normalize them here to keep adapter-created models consistent with CRD
+    models created by the frontend.
+    """
+    protocol = config.pop("protocol", None) if isinstance(config, dict) else None
+    api_format = config.pop("apiFormat", None) if isinstance(config, dict) else None
+    return config, protocol, api_format
 
 
 class ModelAdapter:
@@ -30,25 +46,43 @@ class ModelAdapter:
         config = {}
         display_name = None
         is_advanced = False
+        is_wework_available = False
         model_category_type = "llm"
         model_group = None
         model_sub_group = None
+        context_window = None
+        max_output_tokens = None
+        cost_index = None
+        model_capabilities = None
         if isinstance(kind.json, dict):
             # Check if json has proper CRD structure (metadata and spec)
             if "metadata" in kind.json and "spec" in kind.json:
                 try:
                     model_crd = Model.model_validate(kind.json)
-                    config = model_crd.spec.modelConfig
+                    legacy_model_capabilities = model_crd.spec.modelConfig.get(
+                        "modelCapabilities"
+                    )
+                    config = {
+                        key: value
+                        for key, value in model_crd.spec.modelConfig.items()
+                        if key != "modelCapabilities"
+                    }
                     display_name = model_crd.metadata.displayName
                     is_advanced = (
                         bool(model_crd.spec.isAdvanced)
                         if model_crd.spec.isAdvanced
                         else False
                     )
+                    is_wework_available = (
+                        bool(model_crd.spec.isWeworkAvailable) or False
+                    )
                     if model_crd.spec.modelType:
                         model_category_type = model_crd.spec.modelType.value
                     model_group = model_crd.spec.modelGroup
                     model_sub_group = model_crd.spec.modelSubGroup
+                    context_window = model_crd.spec.context_window
+                    max_output_tokens = model_crd.spec.max_output_tokens
+                    cost_index = model_crd.spec.costIndex
                     if model_crd.spec.protocol:
                         config = {**config, "protocol": model_crd.spec.protocol}
                     if model_crd.spec.apiFormat:
@@ -56,6 +90,16 @@ class ModelAdapter:
                             **config,
                             "apiFormat": model_crd.spec.apiFormat.value,
                         }
+                    if model_crd.spec.modelCapabilities:
+                        model_capabilities = (
+                            model_crd.spec.modelCapabilities.model_dump(
+                                exclude_none=True
+                            )
+                        )
+                    elif legacy_model_capabilities is not None:
+                        model_capabilities = normalize_model_capabilities(
+                            legacy_model_capabilities
+                        )
                     # Include type-specific config for non-LLM models
                     if model_category_type == "video":
                         if model_crd.spec.videoConfig:
@@ -75,6 +119,25 @@ class ModelAdapter:
                 if isinstance(spec, dict):
                     model_group = spec.get("modelGroup")
                     model_sub_group = spec.get("modelSubGroup")
+                    cost_index = spec.get("costIndex")
+                    model_config = spec.get("modelConfig")
+                    if isinstance(model_config, dict):
+                        context_window = ModelSpec._model_config_token_limit(
+                            model_config.get("context_window")
+                        )
+                        max_output_tokens = ModelSpec._model_config_token_limit(
+                            model_config.get("max_output_tokens")
+                        )
+                    capabilities = normalize_model_capabilities(
+                        spec.get("modelCapabilities")
+                    )
+                    if capabilities:
+                        model_capabilities = capabilities
+
+        if model_capabilities is None and isinstance(config, dict):
+            model_capabilities = normalize_model_capabilities(
+                config.get("modelCapabilities")
+            )
 
         # Extract provider and model_id from env before stripping
         env = config.get("env", {}) if isinstance(config, dict) else {}
@@ -84,6 +147,10 @@ class ModelAdapter:
         # Strip sensitive env from public model config
         if isinstance(config, dict) and "env" in config:
             config = {**config, "env": {}}
+        if isinstance(config, dict) and "modelCapabilities" in config:
+            config = {k: v for k, v in config.items() if k != "modelCapabilities"}
+        if model_capabilities:
+            config = {**config, "modelCapabilities": model_capabilities}
 
         return {
             "id": kind.id,
@@ -94,8 +161,13 @@ class ModelAdapter:
             "model_id": model_id_value,
             "is_active": kind.is_active,
             "is_advanced": is_advanced,
+            "is_wework_available": is_wework_available,
             "modelGroup": model_group,
             "modelSubGroup": model_sub_group,
+            "contextWindow": context_window,
+            "maxOutputTokens": max_output_tokens,
+            "costIndex": cost_index,
+            "modelCapabilities": model_capabilities,
             "model_category_type": model_category_type,
             "created_at": kind.created_at,
             "updated_at": kind.updated_at,
@@ -137,10 +209,20 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
         if existed:
             raise HTTPException(status_code=400, detail="Model name already exists")
 
-        # Convert config to JSON format matching kinds table structure
+        # Convert config to JSON format matching kinds table structure.
+        # Pull protocol/apiFormat up to spec level if the caller nested them
+        # inside the config dict.
+        model_config, protocol, api_format = _split_model_config_protocol(
+            dict(obj_in.config) if obj_in.config else {}
+        )
+        spec: Dict[str, Any] = {"modelConfig": model_config}
+        if protocol:
+            spec["protocol"] = protocol
+        if api_format:
+            spec["apiFormat"] = api_format
         json_data = {
             "kind": "Model",
-            "spec": {"modelConfig": obj_in.config},
+            "spec": spec,
             "status": {"state": "Available"},
             "metadata": {"name": obj_in.name, "namespace": "default"},
             "apiVersion": "agent.wecode.io/v1",
@@ -189,18 +271,31 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                         model_crd.spec.modelConfig["env"] = (
                             dict(it.env) if isinstance(it.env, dict) else {}
                         )
-                        existed.json = model_crd.model_dump()
+                        if it.wework_available is not None:
+                            model_crd.spec.isWeworkAvailable = it.wework_available
+                        if it.protocol is not None:
+                            model_crd.spec.protocol = it.protocol
+                        if it.api_format is not None:
+                            model_crd.spec.apiFormat = it.api_format
+                        existed.json = model_crd.model_dump(exclude_none=True)
                     else:
                         # Fallback for invalid JSON
+                        spec: Dict[str, Any] = {
+                            "modelConfig": {
+                                "env": (
+                                    dict(it.env) if isinstance(it.env, dict) else {}
+                                )
+                            }
+                        }
+                        if it.wework_available is not None:
+                            spec["isWeworkAvailable"] = it.wework_available
+                        if it.protocol is not None:
+                            spec["protocol"] = it.protocol
+                        if it.api_format is not None:
+                            spec["apiFormat"] = it.api_format
                         json_data = {
                             "kind": "Model",
-                            "spec": {
-                                "modelConfig": {
-                                    "env": (
-                                        dict(it.env) if isinstance(it.env, dict) else {}
-                                    )
-                                }
-                            },
+                            "spec": spec,
                             "status": {"state": "Available"},
                             "metadata": {"name": it.name, "namespace": "default"},
                             "apiVersion": "agent.wecode.io/v1",
@@ -216,9 +311,16 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     updated.append(existed)
                 else:
                     # Create new
+                    spec: Dict[str, Any] = {"modelConfig": {"env": it.env}}
+                    if it.wework_available is not None:
+                        spec["isWeworkAvailable"] = it.wework_available
+                    if it.protocol is not None:
+                        spec["protocol"] = it.protocol
+                    if it.api_format is not None:
+                        spec["apiFormat"] = it.api_format
                     json_data = {
                         "kind": "Model",
-                        "spec": {"modelConfig": {"env": it.env}},
+                        "spec": spec,
                         "status": {"state": "Available"},
                         "metadata": {"name": it.name, "namespace": "default"},
                         "apiVersion": "agent.wecode.io/v1",
@@ -450,10 +552,18 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                     model_crd.metadata.name = value
                     model.json = model_crd.model_dump()
             elif field == "config":
-                # Update modelConfig in json
+                # Update modelConfig in json and pull protocol/apiFormat up to
+                # spec level if the caller nested them inside the config dict.
                 if isinstance(model.json, dict):
                     model_crd = Model.model_validate(model.json)
-                    model_crd.spec.modelConfig = value
+                    model_config, protocol, api_format = _split_model_config_protocol(
+                        dict(value) if value else {}
+                    )
+                    model_crd.spec.modelConfig = model_config
+                    if protocol:
+                        model_crd.spec.protocol = protocol
+                    if api_format:
+                        model_crd.spec.apiFormat = api_format
                     model.json = model_crd.model_dump()
             else:
                 setattr(model, field, value)

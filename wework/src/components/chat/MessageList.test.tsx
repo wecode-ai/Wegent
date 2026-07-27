@@ -12,14 +12,64 @@ const tauriCoreMock = vi.hoisted(() => ({
   isTauri: vi.fn(() => false),
 }))
 const openExternalUrlMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
+const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 vi.mock('@/lib/external-links', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/external-links')>()),
   openExternalUrl: openExternalUrlMock,
 }))
+vi.mock('@/lib/embedded-browser', () => ({
+  requestEmbeddedBrowserOpen: requestEmbeddedBrowserOpenMock,
+}))
 
 describe('MessageList', () => {
+  test('renders a generated Codex inline visualization from the changed workspace file', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-inline-visualization',
+            role: 'assistant',
+            content: [
+              '已生成折线图。',
+              '',
+              '::codex-inline-vis{file="weekly-values-line-chart.html"}',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-07-23T10:00:00Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'artifact-inline-visualization',
+              device_id: 'device-1',
+              workspace_path: '/Users/dev/workspace',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [
+                {
+                  path: '.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html',
+                  change_type: 'created',
+                  additions: 1,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已生成折线图。')).toBeInTheDocument()
+    expect(screen.queryByText('::codex-inline-vis')).not.toBeInTheDocument()
+    expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/dev/workspace/.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html'
+    )
+  })
+
   test('offers conversation actions for text selected inside one message body', async () => {
     const onAddSelectionToConversation = vi.fn()
     const onAskSelectionInSidebar = vi.fn()
@@ -254,7 +304,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
-  test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {
+  test('uses browser-native content visibility without message window placeholders', () => {
     render(
       <MessageList
         messages={[
@@ -278,12 +328,10 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('message-user').className).toContain('[content-visibility:auto]')
     expect(screen.getByTestId('message-assistant').className).toContain('[content-visibility:auto]')
-    expect(
-      screen.getByTestId('message-user').style.getPropertyValue('contain-intrinsic-size')
-    ).toContain('0 ')
-    expect(
-      screen.getByTestId('message-assistant').style.getPropertyValue('contain-intrinsic-size')
-    ).toContain('0 ')
+    expect(screen.getByTestId('message-user')).toHaveTextContent('hello')
+    expect(screen.getByTestId('message-assistant')).toHaveTextContent('world')
+    expect(screen.getByTestId('message-user').style.containIntrinsicSize).toBe('')
+    expect(screen.getByTestId('message-assistant').style.containIntrinsicSize).toBe('')
   })
 
   test('does not use message row content visibility in the Tauri app', () => {
@@ -322,6 +370,45 @@ describe('MessageList', () => {
     }
   })
 
+  test('windows oversized streaming Markdown before mounting every chunk', () => {
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    class IntersectionObserverMock {
+      constructor() {}
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '800px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+    const content = Array.from(
+      { length: 60 },
+      (_, index) => `### Streaming section ${index + 1}\n\n${'content '.repeat(40)}\n`
+    ).join('\n')
+
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-windowed',
+            role: 'assistant',
+            content,
+            status: 'streaming',
+            createdAt: '2026-06-11T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    const chunks = Array.from(container.querySelectorAll('[data-markdown-window-chunk]'))
+    expect(chunks.length).toBeGreaterThan(2)
+    expect(chunks[0]).not.toBeEmptyDOMElement()
+    expect(chunks.at(-1)).not.toBeEmptyDOMElement()
+    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
+  })
+
   test('keeps message row containment during a plain text click', () => {
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
     getSelectionSpy.mockReturnValue({
@@ -354,7 +441,7 @@ describe('MessageList', () => {
       fireEvent.pointerUp(document)
 
       expect(article.className).toContain('[content-visibility:auto]')
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+      expect(article.style.containIntrinsicSize).toBe('')
       expect(article.style.contentVisibility).toBe('')
     } finally {
       getSelectionSpy.mockRestore()
@@ -531,69 +618,11 @@ describe('MessageList', () => {
 
       await waitFor(() => {
         expect(article.className).toContain('[content-visibility:auto]')
-        expect(article.style.getPropertyValue('contain-intrinsic-size')).toContain('0 ')
+        expect(article.style.containIntrinsicSize).toBe('')
       })
     } finally {
       getSelectionSpy.mockRestore()
       requestAnimationFrameSpy.mockRestore()
-    }
-  })
-
-  test('coalesces intrinsic size recalculation during message list resize', async () => {
-    vi.useFakeTimers()
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    const originalResizeObserver = globalThis.ResizeObserver
-
-    class ResizeObserverMock {
-      constructor(callback: ResizeObserverCallback) {
-        resizeCallbacks.push(callback)
-      }
-
-      observe = vi.fn()
-      disconnect = vi.fn()
-    }
-
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
-
-    try {
-      render(
-        <MessageList
-          messages={[
-            {
-              id: 'assistant-resize',
-              role: 'assistant',
-              content: 'x'.repeat(2000),
-              status: 'done',
-              createdAt: '2026-06-11T10:00:01Z',
-            },
-          ]}
-        />
-      )
-
-      const article = screen.getByTestId('message-assistant')
-      const list = article.parentElement as HTMLElement
-      const initialIntrinsicSize = article.style.getPropertyValue('contain-intrinsic-size')
-      Object.defineProperty(list, 'clientWidth', {
-        configurable: true,
-        value: 640,
-      })
-
-      act(() => {
-        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-        vi.advanceTimersByTime(119)
-      })
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe(initialIntrinsicSize)
-
-      act(() => {
-        vi.advanceTimersByTime(1)
-      })
-
-      expect(article.style.getPropertyValue('contain-intrinsic-size')).not.toBe(
-        initialIntrinsicSize
-      )
-    } finally {
-      vi.useRealTimers()
-      vi.stubGlobal('ResizeObserver', originalResizeObserver)
     }
   })
 
@@ -1097,7 +1126,7 @@ describe('MessageList', () => {
     ).toBeInTheDocument()
   })
 
-  test('hides thinking after partial streaming assistant content becomes visible', () => {
+  test('shows thinking after partial streaming assistant content becomes visible', () => {
     render(
       <MessageList
         messages={[
@@ -1114,7 +1143,7 @@ describe('MessageList', () => {
 
     const content = screen.getByTestId('message-assistant').querySelector('p')
     expect(content).toHaveTextContent('我已经完成前面的检查，继续等最后结果。')
-    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
   test('shows only the running block after partial content', () => {
@@ -2075,6 +2104,99 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
+  test('routes assistant folder links to the workspace directory panel', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-folder-link',
+            role: 'assistant',
+            content: '[docs](folder://%2FUsers%2Fdev%2Frepo%2Fdocs)',
+            status: 'done',
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs', {
+      isDirectory: true,
+    })
+  })
+
+  test('opens local HTML file links in the Wework built-in browser', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-html-file-link',
+            role: 'assistant',
+            content: '[trend.html](/Users/dev/workspace/trend.html)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
+      'asset://localhost/Users/dev/workspace/trend.html'
+    )
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+  })
+
+  test('treats local filesystem paths encoded as Tauri URLs as file links', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-tauri-file-link',
+            role: 'assistant',
+            content: '[report](tauri://localhost/Users/dev/workspace/report.md)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/workspace/report.md')
+  })
+
+  test('opens Tauri-encoded local HTML paths in the Wework built-in browser', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-tauri-html-file-link',
+            role: 'assistant',
+            content: '[trend](tauri://localhost/Users/dev/workspace/trend.html)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
+      'asset://localhost/Users/dev/workspace/trend.html'
+    )
+  })
+
   test('removes angle brackets from assistant file link destinations', () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
@@ -2760,6 +2882,42 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-image-attachment-strip')).toHaveClass(
       'ml-auto',
       'justify-end'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  test('restores historical image previews from persisted local paths', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachment: Attachment = {
+      id: -1,
+      filename: 'historical.png',
+      file_size: 1024,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-06-26T15:33:00.000+08:00',
+      local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/42/historical.png',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'historical-image',
+            role: 'user',
+            content: '查看历史图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-06-26T15:33:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/me/.wegent-executor/workspace/attachments/draft/42/historical.png'
     )
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -3812,6 +3970,33 @@ describe('MessageList', () => {
     expect(writeText).toHaveBeenCalledWith('好的，以下是作文内容。')
   })
 
+  test('continues a completed Codex turn in a new task', async () => {
+    let resolveFork: (() => void) | undefined
+    const onForkMessage = vi.fn(() => new Promise<void>(resolve => (resolveFork = resolve)))
+    const message = {
+      id: 'assistant-turn-1',
+      role: 'assistant' as const,
+      content: '已完成当前修改。',
+      status: 'done' as const,
+      turnId: 'turn-1',
+      createdAt: '2026-05-25T18:38:00.000+08:00',
+    }
+
+    render(<MessageList messages={[message]} onForkMessage={onForkMessage} />)
+
+    const button = screen.getByTestId('fork-message-button')
+    expect(button).toHaveAttribute('aria-label', '在新任务中继续')
+    await userEvent.click(button)
+    expect(onForkMessage).toHaveBeenCalledWith(message)
+    expect(button).toBeDisabled()
+
+    await userEvent.click(button)
+    expect(onForkMessage).toHaveBeenCalledTimes(1)
+
+    resolveFork?.()
+    await waitFor(() => expect(button).not.toBeDisabled())
+  })
+
   test('hides assistant hover actions while the response is streaming', () => {
     render(
       <MessageList
@@ -3829,7 +4014,7 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
   test('renders only thinking before the first streamed response arrives', () => {
@@ -3854,7 +4039,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows full-width processing status without trailing thinking once final text starts streaming', () => {
+  test('shows trailing thinking once final text starts streaming', () => {
     render(
       <MessageList
         messages={[
@@ -3871,7 +4056,7 @@ describe('MessageList', () => {
 
     const status = screen.getByText('1 秒')
 
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
     expect(status.parentElement).toHaveAttribute('data-testid', 'processing-summary-header')
     expect(status.parentElement).not.toHaveClass('border-b')
@@ -3925,6 +4110,25 @@ describe('MessageList', () => {
     expect(thinkingIndicator).toHaveTextContent('正在思考')
     expect(thinkingIndicator).not.toHaveClass('bg-surface')
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+  })
+
+  test('shows thinking between active Goal turns after the previous assistant message settles', () => {
+    render(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '本轮完成，准备继续',
+            status: 'done',
+            createdAt: '2026-05-25T18:45:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
   test('keeps the retry card visible while waiting for the retried response', () => {
@@ -4016,7 +4220,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('collapses tool rows once final text is visible without trailing thinking', () => {
+  test('collapses tool rows and shows trailing thinking once final text is visible', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -4042,7 +4246,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
@@ -4636,6 +4840,58 @@ describe('MessageList', () => {
     expect(
       screen.queryByText(/plugin:\/\/documents@openai-primary-runtime/)
     ).not.toBeInTheDocument()
+  })
+
+  test('renders cloud references in user messages without exposing the internal URI', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content:
+              '[$WEG0001-1](cloud://projects/3/todos/WEG0001-1) 结合代码分析，这个问题可能是因为什么',
+            status: 'done',
+            createdAt: '2026-07-23T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const cloudLink = screen.getByTestId('sent-cloud-token-WEG0001-1')
+
+    expect(cloudLink).toHaveAttribute('href', 'cloud://projects/3/todos/WEG0001-1')
+    expect(cloudLink).toHaveAttribute('data-cloud-resource-kind', 'todo')
+    expect(screen.getByTestId('sent-cloud-icon-WEG0001-1')).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent(
+      'WEG0001-1 结合代码分析，这个问题可能是因为什么'
+    )
+    expect(screen.queryByText(/cloud:\/\/projects\/3\/todos/)).not.toBeInTheDocument()
+  })
+
+  test('renders conversation references in user messages without exposing the internal URI', () => {
+    const href =
+      'wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22runtime-42%22%7D'
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: `[$修复登录流程](${href}) 继续分析`,
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const conversationLink = screen.getByTestId(/^sent-conversation-token-/)
+
+    expect(conversationLink).toHaveAttribute('href', href)
+    expect(screen.getByTestId(/^sent-conversation-icon-/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent('修复登录流程 继续分析')
+    expect(screen.queryByText(/wework-conversation:\/\//)).not.toBeInTheDocument()
   })
 })
 

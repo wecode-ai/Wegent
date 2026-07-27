@@ -15,17 +15,17 @@ vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (
       key: string,
-      options?: string | { action?: string; count?: number; device?: string; location?: string }
+      options?: string | { action?: string; count?: number; device?: string; location?: string },
+      interpolation?: { model?: string }
     ) => {
-      if (typeof options === 'string') return options
+      if (typeof options === 'string') {
+        return interpolation?.model ? options.replace('{{model}}', interpolation.model) : options
+      }
       if (key === 'workbench.code_comment_count') {
         return `${options?.count ?? 0} 个评论`
       }
       if (key === 'workbench.project_work_trigger_device_aria') {
         return `${options?.action ?? ''}，当前设备 ${options?.device ?? ''}`
-      }
-      if (key === 'workbench.composer_execution_device_label') {
-        return `运行于${options?.location ?? ''} · ${options?.device ?? ''}`
       }
       if (key === 'workbench.environment_cloud_device') return '云设备'
       if (key === 'workbench.environment_local') return '本机'
@@ -427,6 +427,61 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
   })
 
+  test('distinguishes the active model from the next-turn model while streaming', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'local-model:second',
+      type: 'runtime',
+      displayName: 'Second Model',
+      isActive: true,
+    }
+
+    const projectChat = projectChatControls({
+      models: [activeModel, selectedModel],
+      activeModel,
+      selectedModel,
+    })
+    const { rerender } = render(
+      <ChatInput
+        value="换模型继续"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+        projectChat={projectChat}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Next · Second Model')
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+    expect(screen.getByTestId('guide-current-turn-option')).toHaveTextContent(
+      'Guide current response · First Model'
+    )
+    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent(
+      'Interrupt and use Second Model'
+    )
+
+    rerender(
+      <ChatInput
+        value="换模型继续"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming={false}
+        projectChat={projectChat}
+      />
+    )
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Second Model')
+    expect(screen.getByTestId('model-selector-button')).not.toHaveTextContent('Next')
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {
@@ -484,6 +539,46 @@ describe('ChatInput', () => {
     expect(onInterruptAndSendQueuedMessage).toHaveBeenNthCalledWith(2, 'queued-1')
     expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
+  })
+
+  test('restores queued message text into the composer when editing', async () => {
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queuedMessages, setQueuedMessages] = useState<QueuedWorkbenchMessage[]>([
+        {
+          id: 'queued-1',
+          content: '先检查引导条里的文本',
+          status: 'queued',
+          createdAt: '2026-05-25T15:08:00.000+08:00',
+        },
+      ])
+
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          queuedMessages={queuedMessages}
+          onEditQueuedMessage={id => {
+            const message = queuedMessages.find(item => item.id === id)
+            if (!message) return
+            setValue(message.content)
+            setQueuedMessages(current => current.filter(item => item.id !== id))
+          }}
+        />
+      )
+    }
+
+    render(<Harness />)
+
+    await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-message-input')).toHaveTextContent('先检查引导条里的文本')
+    )
   })
 
   test('shows lightweight interrupt action while guidance is sending', async () => {
@@ -753,6 +848,7 @@ describe('ChatInput', () => {
       'py-[14px]',
       'scrollbar-none',
       'text-chat',
+      'text-text-primary',
       'leading-5'
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
@@ -1234,16 +1330,8 @@ describe('ChatInput', () => {
     }
     const cloudModel: UnifiedModel = {
       ...model,
-      name: 'cloud:user:cloud-gpt-5.5',
+      name: 'cloud-gpt-5.5',
       displayName: '云端:gpt-5.5',
-      config: {
-        ...model.config,
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'cloud-gpt-5.5',
-          modelType: 'user',
-        },
-      },
     }
     const setSelectedModel = vi.fn()
     render(
@@ -1318,8 +1406,8 @@ describe('ChatInput', () => {
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
-    expect(modelOption.querySelectorAll('span')).toHaveLength(1)
-    expect(screen.getByTestId('model-option-cloud:user:cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
+    expect(modelOption.querySelectorAll('span')).toHaveLength(2)
+    expect(screen.getByTestId('model-option-cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
     expect(
       screen
         .getByTestId('model-control-menu-model')
@@ -2277,7 +2365,7 @@ describe('ChatInput', () => {
     expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
   })
 
-  test('flattens model families while keeping controls from the selected GPT model', async () => {
+  test('lists models by family in the second-level menu while keeping selected controls', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -2434,6 +2522,14 @@ describe('ChatInput', () => {
     expect(menu.getByText('设置 WeWork 将持续努力实现的目标')).toBeInTheDocument()
     expect(menu.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
     expect(menu.queryByText('插件')).not.toBeInTheDocument()
+    expect(screen.getByTestId('attach-files-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
+    expect(screen.getByTestId('set-plan-mode-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
 
     await userEvent.click(screen.getByTestId('set-plan-mode-button'))
 
@@ -3281,81 +3377,6 @@ describe('ChatInput', () => {
     expect(
       screen.queryByTestId('standalone-device-selected-icon-cloud-online')
     ).not.toBeInTheDocument()
-  })
-
-  test('shows a subtle cloud-device control and opens device selection for a new task', async () => {
-    const devices: DeviceInfo[] = [
-      {
-        id: 1,
-        device_id: 'cloud-online',
-        name: 'Cloud Online',
-        status: 'online',
-        is_default: false,
-        device_type: 'cloud',
-      },
-    ]
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          devices,
-          currentStandaloneDeviceId: 'cloud-online',
-        })}
-      />
-    )
-
-    const deviceButton = screen.getByTestId('composer-execution-device-button')
-    expect(deviceButton).toHaveAccessibleName('运行于云设备 · Cloud Online')
-    expect(deviceButton).toBeEnabled()
-
-    await userEvent.click(deviceButton)
-    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
-  })
-
-  test('shows the actual runtime device without allowing an active task to switch it', () => {
-    const devices: DeviceInfo[] = [
-      {
-        id: 1,
-        device_id: 'local-online',
-        name: 'Local Online',
-        status: 'online',
-        is_default: false,
-        device_type: 'local',
-      },
-      {
-        id: 2,
-        device_id: 'cloud-online',
-        name: 'Cloud Online',
-        status: 'online',
-        is_default: false,
-        device_type: 'cloud',
-      },
-    ]
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        showProjectWorkBar={false}
-        projectWork={projectWorkControls({
-          devices,
-          currentStandaloneDeviceId: 'local-online',
-          currentRuntimeDeviceId: 'cloud-online',
-        })}
-      />
-    )
-
-    const deviceButton = screen.getByTestId('composer-execution-device-button')
-    expect(deviceButton).toHaveAccessibleName('运行于云设备 · Cloud Online')
-    expect(deviceButton).toHaveAttribute('aria-disabled', 'true')
   })
 
   test('uses the project work action as the standalone trigger accessible name', () => {

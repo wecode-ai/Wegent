@@ -95,6 +95,7 @@ import {
 } from './settings-cloud-api'
 
 const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
+const keepConnectionsSettingsOpen = () => undefined
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -555,15 +556,7 @@ function CloudDeviceConnectionInfoDialog({
   )
 }
 
-function DeviceCard({
-  device,
-  onChanged,
-  onCloudDesktopOpened,
-}: {
-  device: DeviceInfo
-  onChanged: () => void
-  onCloudDesktopOpened: () => void
-}) {
+function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
   const cloudConnection = useOptionalCloudConnection()
   const remoteTerminalClientFactory = useMemo(
     () =>
@@ -808,7 +801,7 @@ function DeviceCard({
                   <CloudDesktopDeviceAction
                     deviceId={device.device_id}
                     disabled={!isOnline}
-                    onOpened={onCloudDesktopOpened}
+                    onOpened={keepConnectionsSettingsOpen}
                   />
                 )}
               </>
@@ -927,13 +920,11 @@ function DeviceSection({
   title,
   devices,
   onChanged,
-  onCloudDesktopOpened,
   icon: Icon,
 }: {
   title: string
   devices: DeviceInfo[]
   onChanged: () => void
-  onCloudDesktopOpened: () => void
   icon: ComponentType<{ className?: string }>
 }) {
   return (
@@ -947,12 +938,7 @@ function DeviceSection({
       </div>
       <div className="space-y-3">
         {devices.map(device => (
-          <DeviceCard
-            key={device.device_id}
-            device={device}
-            onChanged={onChanged}
-            onCloudDesktopOpened={onCloudDesktopOpened}
-          />
+          <DeviceCard key={device.device_id} device={device} onChanged={onChanged} />
         ))}
       </div>
     </section>
@@ -1180,10 +1166,8 @@ function ConnectorApplicationsSection() {
 
 function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
-  onCloudDesktopOpened,
 }: {
   autoOpenAddCloudDeviceDialog?: boolean
-  onCloudDesktopOpened: () => void
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -1381,7 +1365,6 @@ function ConnectionsDeviceSettingsPage({
                       devices={cloudDevices}
                       icon={Cloud}
                       onChanged={fetchDevices}
-                      onCloudDesktopOpened={onCloudDesktopOpened}
                     />
                   )}
                   {remoteDevices.length > 0 && (
@@ -1390,7 +1373,6 @@ function ConnectionsDeviceSettingsPage({
                       devices={remoteDevices}
                       icon={Server}
                       onChanged={fetchDevices}
-                      onCloudDesktopOpened={onCloudDesktopOpened}
                     />
                   )}
                 </>
@@ -1590,7 +1572,6 @@ export function ConnectionsSettingsPage({
         ) : (
           <ConnectionsDeviceSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
-            onCloudDesktopOpened={onBack}
           />
         )}
       </main>

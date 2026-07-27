@@ -14,13 +14,10 @@ export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
 }
 
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
-  return (
-    task.completedAt ||
-    (!task.running ? task.updatedAt : null) ||
-    task.createdAt ||
-    task.updatedAt ||
-    undefined
-  )
+  const candidates = [task.completedAt, task.updatedAt, task.createdAt]
+    .map(value => (value ? new Date(value).getTime() : Number.NaN))
+    .filter(value => !Number.isNaN(value))
+  return candidates.length > 0 ? Math.max(...candidates) : undefined
 }
 
 export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {
@@ -117,6 +114,7 @@ export function getRuntimeTaskWorkspacePath(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
 ) {
+  if (!isRuntimeWorktreeTask(task) && task.workspacePath) return task.workspacePath
   if (isRuntimeWorktreeWorkspace(workspace)) return workspace.workspacePath
   return task.workspacePath || workspace.workspacePath
 }

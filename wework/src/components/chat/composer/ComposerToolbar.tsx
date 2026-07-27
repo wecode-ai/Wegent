@@ -1,14 +1,5 @@
-import {
-  ArrowUp,
-  ChevronDown,
-  ClipboardList,
-  Clock3,
-  Cloud,
-  CornerDownRight,
-  Laptop,
-  Zap,
-} from 'lucide-react'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -26,8 +17,10 @@ interface ComposerToolbarProps {
   disabled?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => void
@@ -46,12 +39,7 @@ interface ComposerToolbarProps {
   onPause?: () => void
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
-  executionDevice?: {
-    kind: 'cloud' | 'local'
-    label: string
-    selectable: boolean
-    onSelect?: () => void
-  }
+  leadingContext?: ReactNode
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -62,8 +50,10 @@ export function ComposerToolbar({
   disabled = false,
   models,
   selectedModel,
+  activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
+  onModelSelectorOpenChange,
   isModelSelectionReady,
   contextUsage,
   onSelectModel,
@@ -82,11 +72,20 @@ export function ComposerToolbar({
   onPause,
   onQuickPhraseSelect,
   onSubmit,
-  executionDevice,
+  leadingContext,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
   const [compact, setCompact] = useState(false)
+  const modelChangePending = Boolean(
+    activeModel &&
+    (!selectedModel ||
+      activeModel.name !== selectedModel.name ||
+      activeModel.type !== selectedModel.type)
+  )
+  const activeModelLabel = activeModel?.displayName || activeModel?.name
+  const selectedModelLabel =
+    selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
 
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current
@@ -117,6 +116,7 @@ export function ComposerToolbar({
         />
         <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
         <PluginPickerMenu disabled={disabled} iconOnly={compact} />
+        {leadingContext}
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (
@@ -133,23 +133,6 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-1.5">
-        {executionDevice && (
-          <button
-            type="button"
-            data-testid="composer-execution-device-button"
-            onClick={executionDevice.onSelect}
-            aria-disabled={!executionDevice.selectable}
-            title={executionDevice.label}
-            aria-label={executionDevice.label}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-muted hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 aria-disabled:cursor-default aria-disabled:hover:bg-transparent aria-disabled:hover:text-text-muted"
-          >
-            {executionDevice.kind === 'cloud' ? (
-              <Cloud className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <Laptop className="h-4 w-4" aria-hidden="true" />
-            )}
-          </button>
-        )}
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}
@@ -160,7 +143,9 @@ export function ComposerToolbar({
             models={models}
             selectedModel={selectedModel}
             selectedModelOptions={selectedModelOptions}
+            nextTurn={isStreaming && modelChangePending}
             openSignal={modelSelectorOpenSignal}
+            onOpenChange={onModelSelectorOpenChange}
             disabled={disabled}
             onSelectModel={onSelectModel}
             onSelectModelAndOptions={onSelectModelAndOptions}
@@ -205,13 +190,31 @@ export function ComposerToolbar({
                   onSelect: () => onSubmit(),
                 },
                 {
-                  label: t('workbench.guide_current_turn', '引导当前回复'),
+                  label:
+                    modelChangePending && activeModelLabel
+                      ? t(
+                          'workbench.guide_current_turn_with_model',
+                          'Guide current response · {{model}}',
+                          {
+                            model: activeModelLabel,
+                          }
+                        )
+                      : t('workbench.guide_current_turn', '引导当前回复'),
                   icon: CornerDownRight,
                   testId: 'guide-current-turn-option',
                   onSelect: () => onSubmit({ guideWhenBusy: true }),
                 },
                 {
-                  label: t('workbench.interrupt_and_send', '打断并立即发送'),
+                  label:
+                    modelChangePending && selectedModelLabel
+                      ? t(
+                          'workbench.interrupt_and_send_with_model',
+                          'Interrupt and use {{model}}',
+                          {
+                            model: selectedModelLabel,
+                          }
+                        )
+                      : t('workbench.interrupt_and_send', '打断并立即发送'),
                   icon: Zap,
                   testId: 'interrupt-and-send-option',
                   onSelect: () => onSubmit({ interruptWhenBusy: true }),

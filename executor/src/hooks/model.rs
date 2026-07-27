@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,8 +17,15 @@ pub enum HookEventName {
     PostToolUse,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookUser {
+    pub id: Option<String>,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PostToolUseInput {
+    pub user: HookUser,
     pub session_id: String,
     pub turn_id: String,
     pub agent_id: Option<String>,
@@ -64,6 +71,8 @@ pub struct CommandHookConfig {
     pub handler_type: String,
     pub command: String,
     pub command_windows: Option<String>,
+    #[serde(default)]
+    pub commands: BTreeMap<String, String>,
     #[serde(default = "default_timeout")]
     pub timeout: u64,
     #[serde(rename = "async", default)]

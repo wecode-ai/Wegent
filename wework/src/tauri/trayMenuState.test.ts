@@ -6,6 +6,7 @@ import type {
 } from '@/types/api'
 import { buildTrayMenuTaskGroups } from './trayMenuState'
 import { parseTrayTaskMenuId } from './trayTaskMenuId'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 
 function task(overrides: Partial<RuntimeTaskSummary>): RuntimeTaskSummary {
   return {
@@ -34,6 +35,12 @@ function runtimeWork(overrides: Partial<RuntimeWorkListResponse>): RuntimeWorkLi
     totalTasks: 0,
     ...overrides,
   }
+}
+
+function lifecycle(work: RuntimeWorkListResponse) {
+  const store = new RuntimeTaskLifecycleStore('tray-test')
+  store.syncRuntimeWork(work)
+  return store.getSnapshot()
 }
 
 describe('buildTrayMenuTaskGroups', () => {
@@ -92,7 +99,7 @@ describe('buildTrayMenuTaskGroups', () => {
       totalTasks: 4,
     })
 
-    const groups = buildTrayMenuTaskGroups(work)
+    const groups = buildTrayMenuTaskGroups(work, { lifecycle: lifecycle(work) })
 
     expect(groups.running.map(item => item.title)).toEqual(['Running task'])
     expect(groups.running.map(item => item.projectName)).toEqual(['Project 1'])
@@ -179,16 +186,24 @@ describe('buildTrayMenuTaskGroups', () => {
                   updatedAt: '2026-01-05T00:00:00Z',
                   running: true,
                 }),
+                task({
+                  taskId: 'goal-gap',
+                  title: 'Goal between turns',
+                  updatedAt: '2026-01-06T00:00:00Z',
+                  running: true,
+                  goalStatus: 'active',
+                }),
               ],
             }),
           ],
-          totalTasks: 2,
+          totalTasks: 3,
         },
       ],
-      totalTasks: 2,
+      totalTasks: 3,
     })
 
     const groups = buildTrayMenuTaskGroups(work, {
+      lifecycle: lifecycle(work),
       reminders: {
         unreadTaskKeys: new Set(['device-a\0unread']),
         unreadCount: 1,
@@ -200,8 +215,8 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.unreadCount).toBe(1)
     expect(groups.hasRunningTasks).toBe(true)
     expect(groups.showRunningStatus).toBe(true)
-    expect(groups.runningCount).toBe(1)
-    expect(groups.activeTaskCount).toBe(1)
+    expect(groups.runningCount).toBe(2)
+    expect(groups.activeTaskIds).toEqual(['goal-gap', 'running'])
   })
 
   test('hides unread and running task groups when tray status switches are off', () => {
@@ -237,6 +252,7 @@ describe('buildTrayMenuTaskGroups', () => {
     })
 
     const groups = buildTrayMenuTaskGroups(work, {
+      lifecycle: lifecycle(work),
       reminders: {
         unreadTaskKeys: new Set(['device-a\0unread']),
         unreadCount: 1,
@@ -250,10 +266,24 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.unreadCount).toBe(0)
     expect(groups.running).toEqual([])
     expect(groups.runningCount).toBe(0)
-    expect(groups.activeTaskCount).toBe(1)
+    expect(groups.activeTaskIds).toEqual(['running'])
     expect(groups.hasRunningTasks).toBe(false)
     expect(groups.showRunningStatus).toBe(false)
     expect(groups.recent.map(item => item.title)).toEqual(['Running task', 'Unread task'])
+  })
+
+  test('ignores stale reminder running state when executor tasks are idle', () => {
+    const groups = buildTrayMenuTaskGroups(runtimeWork(), {
+      reminders: {
+        unreadTaskKeys: new Set(),
+        unreadCount: 0,
+        hasRunningTasks: true,
+      },
+    })
+
+    expect(groups.hasRunningTasks).toBe(false)
+    expect(groups.runningCount).toBe(0)
+    expect(groups.activeTaskIds).toEqual([])
   })
 
   test('limits pinned tasks to three and reports more pinned tasks', () => {

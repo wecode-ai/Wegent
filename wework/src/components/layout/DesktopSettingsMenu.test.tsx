@@ -82,6 +82,15 @@ describe('DesktopSettingsMenu', () => {
     expect(mockCheckNow).toHaveBeenCalledTimes(1)
   })
 
+  test('uses subdued regular text for normal menu actions', () => {
+    renderMenu()
+
+    expect(screen.getByTestId('settings-menu-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
+  })
+
   test('does not render the old account or quota summary row', () => {
     renderMenu()
 

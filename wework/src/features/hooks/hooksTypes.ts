@@ -24,6 +24,7 @@ export interface CommandHookConfig {
   type: 'command'
   command: string
   commandWindows?: string
+  commands?: Record<string, string>
   timeout: number
   async: boolean
   statusMessage?: string

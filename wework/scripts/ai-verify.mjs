@@ -17,6 +17,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const defaultTimeoutMs = 30_000
 const startupTimeoutMs = 60_000
+const commandResultGraceMs = 5_000
 const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -59,6 +60,14 @@ function parseArgs(argv) {
   return { command, options }
 }
 
+export function resolveStartupTimeout(timeout) {
+  const configuredTimeout = timeout === undefined ? startupTimeoutMs : Number(timeout)
+  if (!Number.isFinite(configuredTimeout) || configuredTimeout <= 0) {
+    throw new Error('--timeout must be a finite positive number')
+  }
+  return configuredTimeout
+}
+
 function json(response, status, value) {
   response.writeHead(status, {
     ...corsHeaders,
@@ -99,6 +108,16 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
+export function takeWritableCommandPoll(commandPolls) {
+  let poll = commandPolls.shift()
+  while (poll) {
+    clearTimeout(poll.timer)
+    if (!poll.closed && !poll.response.destroyed && !poll.response.writableEnded) return poll
+    poll = commandPolls.shift()
+  }
+  return undefined
+}
+
 async function stopOwnedSessionProcesses(session) {
   if (!Number.isInteger(session.launcherPid)) return
   await signalProcessGroup(session.launcherPid, 'TERM')
@@ -118,6 +137,7 @@ function signalProcessGroup(processGroupId, signal) {
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
+  const commandPolls = []
   const pending = new Map()
   let ready = null
   let app = null
@@ -137,11 +157,28 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
-        if (!command) {
+        if (command) return json(response, 200, command)
+
+        const poll = { response, timer: undefined, closed: false }
+        poll.timer = setTimeout(() => {
+          const index = commandPolls.indexOf(poll)
+          if (index >= 0) commandPolls.splice(index, 1)
           response.writeHead(204, corsHeaders)
-          return response.end()
-        }
-        return json(response, 200, command)
+          response.end()
+        }, defaultTimeoutMs)
+        commandPolls.push(poll)
+        response.once('close', () => {
+          poll.closed = true
+          const index = commandPolls.indexOf(poll)
+          if (index < 0) return
+          commandPolls.splice(index, 1)
+          clearTimeout(poll.timer)
+        })
+        return
+      }
+      if (request.method === 'GET' && url.pathname === '/control-tick') {
+        response.writeHead(204, corsHeaders)
+        return response.end()
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
@@ -158,6 +195,9 @@ async function runServer(sessionPath, token) {
           ready: Boolean(ready),
           readyInfo: ready,
           pid: app?.pid ?? null,
+          queuedCommands: queue.length,
+          commandPolls: commandPolls.length,
+          pendingCommands: pending.size,
         })
       }
       if (request.method === 'POST' && url.pathname === '/command') {
@@ -168,11 +208,21 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        queue.push({ id, ...command })
+        const nextCommand = { id, ...command }
+        const poll = takeWritableCommandPoll(commandPolls)
+        if (poll) {
+          json(poll.response, 200, nextCommand)
+        } else {
+          queue.push(nextCommand)
+        }
         try {
           return json(response, 200, {
             ok: true,
-            value: await withTimeout(result, timeoutMs, `Timed out running ${command.action}`),
+            value: await withTimeout(
+              result,
+              timeoutMs + commandResultGraceMs,
+              `Timed out running ${command.action}`
+            ),
           })
         } catch (error) {
           pending.delete(id)
@@ -290,9 +340,16 @@ async function main() {
       { detached: true, stdio: 'ignore' }
     )
     child.unref()
-    const startupDeadline = Date.now() + startupTimeoutMs
+    const startupDeadline = Date.now() + resolveStartupTimeout(options.timeout)
     while (Date.now() < startupDeadline) {
-      const session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      let session
+      try {
+        session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        continue
+      }
       if (session.controlUrl) {
         try {
           const status = await request(session, token, '/status')
@@ -391,7 +448,9 @@ async function main() {
   console.log(typeof value.value === 'string' ? value.value : JSON.stringify(value.value, null, 2))
 }
 
-main().catch(error => {
-  console.error(`ai:verify: ${error.message ?? error}`)
-  process.exitCode = 1
-})
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`ai:verify: ${error.message ?? error}`)
+    process.exitCode = 1
+  })
+}

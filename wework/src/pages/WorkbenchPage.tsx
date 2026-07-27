@@ -14,10 +14,12 @@ import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskRe
 import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
 import { syncTrayMenuState } from '@/tauri/trayNavigation'
 import { useRuntimeTaskRouteRestoration } from '@/features/workbench/useRuntimeTaskRouteRestoration'
+import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 export function WorkbenchPage() {
   const isMobileViewport = useIsMobile()
   const isTauri = isTauriRuntime()
   const { state, runtimeTaskReminders } = useWorkbench()
+  const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   useRuntimeTaskRouteRestoration()
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const { trayUnreadEnabled, trayRunningEnabled, trayUsageEnabled } = taskReminders.preferences
@@ -27,14 +29,15 @@ export function WorkbenchPage() {
     () =>
       buildTrayMenuTaskGroups(state.runtimeWork, {
         reminders: taskReminders,
+        lifecycle,
         showUnread: trayUnreadEnabled,
         showRunning: trayRunningEnabled,
       }),
-    [state.runtimeWork, taskReminders, trayUnreadEnabled, trayRunningEnabled]
+    [lifecycle, state.runtimeWork, taskReminders, trayUnreadEnabled, trayRunningEnabled]
   )
   const trayTooltip = useMemo(() => {
     const parts = []
-    if (trayRunningEnabled && taskReminders.hasRunningTasks) {
+    if (trayMenuTaskGroups.hasRunningTasks) {
       parts.push(i18nLabel('running'))
     }
     if (trayUnreadEnabled && taskReminders.unreadCount > 0) {
@@ -44,9 +47,8 @@ export function WorkbenchPage() {
     return parts.length > 0 ? parts.join('\n') : null
   }, [
     codexUsage.tooltip,
-    taskReminders.hasRunningTasks,
     taskReminders.unreadCount,
-    trayRunningEnabled,
+    trayMenuTaskGroups.hasRunningTasks,
     trayUnreadEnabled,
     showTrayUsage,
   ])

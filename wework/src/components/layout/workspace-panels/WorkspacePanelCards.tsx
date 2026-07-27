@@ -1,34 +1,26 @@
-import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal } from 'lucide-react'
+import { File, FileDiff, Globe2, Loader2, SquareTerminal } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import type { CloudDesktopLaunchAction } from '@/extensions/cloud-desktop-contract'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
-  type LocalWorkspaceOpenerId,
-} from '@/lib/local-workspace-openers'
-import {
   supportsCloudSessions,
   supportsLocalTerminalLaunch,
-  supportsRemoteSessions,
   supportsRemoteTerminalSessions,
 } from '@/lib/device-capabilities'
-import { openExternalUrl } from '@/lib/external-links'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
   isLocalTerminalAvailable,
   localPathExists,
-  openLocalWorkspace,
   startLocalTerminal,
 } from '@/lib/local-terminal'
+import { cn } from '@/lib/utils'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
-import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
-import type { DeviceSessionResponse } from '@/types/devices'
+import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
-import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
 import type { WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceTerminalWindow } from './WorkspaceTerminalWindow'
 import {
@@ -89,7 +81,6 @@ interface LocalTerminalCheckState {
 function createAvailableTools(): WorkspaceToolAvailability {
   return {
     terminal: true,
-    ide: true,
   }
 }
 
@@ -114,7 +105,6 @@ export function WorkspacePanelCards({
   workspaceSessionApi,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
-  const cloudConnection = useOptionalCloudConnection()
   const testId = useCallback(
     (value: string) => (testIdsEnabled ? value : undefined),
     [testIdsEnabled]
@@ -147,14 +137,8 @@ export function WorkspacePanelCards({
   const remoteTerminalAvailable = Boolean(
     projectDevice && supportsRemoteTerminalSessions(projectDevice, activeWorkspaceDeviceId)
   )
-  const remoteIdeAvailable = Boolean(
-    projectDevice &&
-    (supportsCloudSessions(projectDevice, activeWorkspaceDeviceId) ||
-      supportsRemoteSessions(projectDevice, activeWorkspaceDeviceId) ||
-      remoteTerminalAvailable)
-  )
   const remoteWorkspaceSession = Boolean(
-    workspaceTarget?.workspaceSource === 'remote' || remoteIdeAvailable
+    workspaceTarget?.workspaceSource === 'remote' || cloudToolsAvailable || remoteTerminalAvailable
   )
   const localProjectConfigTerminal =
     workspaceSource !== 'runtime' && (preferLocalTerminal || usesLocalProjectConfig(currentProject))
@@ -205,25 +189,16 @@ export function WorkspacePanelCards({
   )
   const localTerminalLaunchable = Boolean(localTerminalSupported && localTerminalRuntimeAvailable)
   const useDeviceTerminalSession = Boolean(remoteWorkspaceSession && workspaceTarget)
-  const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
-  const localIdeLaunchable = Boolean(
-    !remoteWorkspaceSession &&
-    localTerminalLaunchable &&
-    activeWorkspacePath?.trim() &&
-    localTerminalSupported
-  )
   const projectTerminalAvailable =
     localTerminalLaunchable ||
     (!localTerminalSupported &&
       (Boolean(currentProject) || Boolean(workspaceSource === 'runtime' && activeWorkspacePath)) &&
       remoteTerminalAvailable)
-  const projectIdeAvailable = remoteIdeAvailable || localIdeLaunchable
   const hasLimitedProjectTools = Boolean(
     hasWorkspaceContext &&
     !cloudToolsAvailable &&
     !localTerminalCheckPending &&
-    !projectTerminalAvailable &&
-    !projectIdeAvailable
+    !projectTerminalAvailable
   )
   const projectKey = hasWorkspaceContext
     ? [
@@ -233,7 +208,10 @@ export function WorkspacePanelCards({
         preferLocalTerminal ? 'local' : 'configured',
       ].join(':')
     : ''
-  const latestProjectKeyRef = useRef(projectKey)
+  const cloudDesktopAvailable = Boolean(
+    cloudToolsAvailable && cloudDesktopExtension.available && activeWorkspaceDeviceId
+  )
+  const cloudDesktopLaunchActionRef = useRef<CloudDesktopLaunchAction | null>(null)
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
   const error = toolError.projectKey === projectKey ? toolError.message : null
@@ -244,10 +222,6 @@ export function WorkspacePanelCards({
     terminalSessions[0] ??
     null
   const activeTerminalTitle = getTerminalSessionLabel(activeTerminalSession)
-
-  useEffect(() => {
-    latestProjectKeyRef.current = projectKey
-  }, [projectKey])
 
   useEffect(() => {
     terminalSessionsRef.current = terminalSessions
@@ -584,135 +558,23 @@ export function WorkspacePanelCards({
     }
   }
 
-  const handleIdeClick = useCallback(
-    async (
-      opener: LocalWorkspaceOpenerId = DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
-      closePanelOnSuccess = true
-    ) => {
-      if (loadingTool || !availableTools.ide) return
-      setLoadingToolState({ tool: 'ide', projectKey })
-      setProjectError(null)
-      let opened = false
-      try {
-        if (localIdeLaunchable) {
-          if (!activeWorkspacePath) {
-            throw new Error('Local workspace path is missing')
-          }
-          await openLocalWorkspace({
-            opener,
-            path: activeWorkspacePath,
-          })
-          opened = true
-          return
-        }
-
-        if (!workspaceSessionApi) {
-          throw new Error('Remote workspace session service is unavailable')
-        }
-        let session: ProjectDeviceSessionResponse | DeviceSessionResponse | null
-        if (useDeviceCodeServerSession) {
-          if (!activeWorkspaceDeviceId || !activeWorkspacePath) {
-            throw new Error('Remote workspace target is missing')
-          }
-          session = await workspaceSessionApi.startDeviceCodeServer(
-            activeWorkspaceDeviceId,
-            activeWorkspacePath
-          )
-        } else {
-          session = currentProject
-            ? await workspaceSessionApi.startProjectCodeServer(currentProject.id)
-            : null
-        }
-        if (!session) {
-          throw new Error('IDE session target is missing')
-        }
-        if (!session.url) {
-          throw new Error('IDE session URL is missing')
-        }
-        await openExternalUrl(session.url, { target: 'system' })
-        opened = true
-      } catch (e) {
-        console.error('Failed to start project IDE:', e)
-        markToolUnavailable('ide')
-        setProjectError(getSessionStartErrorMessage())
-      } finally {
-        setLoadingToolState(current =>
-          current?.tool === 'ide' && current.projectKey === projectKey ? null : current
-        )
-        if (opened && closePanelOnSuccess) {
-          onRequestClose?.()
-        }
-      }
+  const handleDesktopBusyChange = useCallback(
+    (busy: boolean) => {
+      setLoadingToolState(current => {
+        if (busy) return { tool: 'extension', projectKey }
+        return current?.tool === 'extension' && current.projectKey === projectKey ? null : current
+      })
     },
-    [
-      activeWorkspaceDeviceId,
-      activeWorkspacePath,
-      availableTools.ide,
-      currentProject,
-      getSessionStartErrorMessage,
-      loadingTool,
-      localIdeLaunchable,
-      markToolUnavailable,
-      onRequestClose,
-      projectKey,
-      setProjectError,
-      useDeviceCodeServerSession,
-      workspaceSessionApi,
-    ]
+    [projectKey]
   )
 
-  const handleDesktopClick = useCallback(
-    async (closePanelOnSuccess = true) => {
-      if (
-        loadingTool ||
-        !cloudDesktopExtension.available ||
-        !cloudToolsAvailable ||
-        !activeWorkspaceDeviceId ||
-        projectDevice?.status !== 'online'
-      ) {
-        return
-      }
+  const handleDesktopOpened = useCallback(() => {
+    onRequestClose?.()
+  }, [onRequestClose])
 
-      setLoadingToolState({ tool: 'extension', projectKey })
-      setProjectError(null)
-      try {
-        const opened = await cloudDesktopExtension.open({
-          connection: {
-            apiBaseUrl: cloudConnection.apiBaseUrl,
-            isConnected: cloudConnection.isConnected,
-            socketBaseUrl: cloudConnection.socketBaseUrl,
-            token: cloudConnection.token,
-          },
-          deviceId: activeWorkspaceDeviceId,
-          isCurrent: () => latestProjectKeyRef.current === projectKey,
-        })
-        if (opened && closePanelOnSuccess) {
-          onRequestClose?.()
-        }
-      } catch (e) {
-        console.error('Failed to open project desktop:', e)
-        setProjectError(getSessionStartErrorMessage())
-      } finally {
-        setLoadingToolState(current =>
-          current?.tool === 'extension' && current.projectKey === projectKey ? null : current
-        )
-      }
-    },
-    [
-      activeWorkspaceDeviceId,
-      cloudConnection.apiBaseUrl,
-      cloudConnection.isConnected,
-      cloudConnection.socketBaseUrl,
-      cloudConnection.token,
-      cloudToolsAvailable,
-      getSessionStartErrorMessage,
-      loadingTool,
-      onRequestClose,
-      projectDevice?.status,
-      projectKey,
-      setProjectError,
-    ]
-  )
+  const handleDesktopLaunchActionChange = useCallback((action: CloudDesktopLaunchAction | null) => {
+    cloudDesktopLaunchActionRef.current = action
+  }, [])
 
   const menuActions = useMemo<WorkspacePanelMenuActions>(
     () => ({
@@ -721,28 +583,18 @@ export function WorkspacePanelCards({
         disabled: toolsDisabled || !availableTools.terminal,
         run: startTerminalSession,
       },
-      ide: {
-        visible: projectIdeAvailable,
-        disabled: toolsDisabled || !availableTools.ide,
-        run: () => handleIdeClick(DEFAULT_LOCAL_WORKSPACE_OPENER_ID, false),
-      },
       desktop: {
-        visible: Boolean(
-          cloudToolsAvailable && cloudDesktopExtension.available && activeWorkspaceDeviceId
-        ),
+        visible: cloudDesktopAvailable,
         disabled: toolsDisabled || projectDevice?.status !== 'online',
-        run: () => handleDesktopClick(false),
+        run: async () => {
+          await cloudDesktopLaunchActionRef.current?.({ notifyOpened: false })
+        },
       },
     }),
     [
-      activeWorkspaceDeviceId,
-      availableTools.ide,
       availableTools.terminal,
-      cloudToolsAvailable,
-      handleDesktopClick,
-      handleIdeClick,
+      cloudDesktopAvailable,
       projectDevice?.status,
-      projectIdeAvailable,
       projectTerminalAvailable,
       startTerminalSession,
       toolsDisabled,
@@ -842,40 +694,42 @@ export function WorkspacePanelCards({
           {error}
         </p>
       )}
-      {!activeTerminalSession && (
-        <div
-          data-testid={testId('workspace-tool-launcher')}
-          className="flex h-full min-h-0 w-full flex-col"
-        >
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-8 py-6">
-            {!hasWorkspaceContext && (
-              <p className="text-center text-sm leading-[18px] text-text-secondary">
-                {t('workbench.project_tool_requires_project', '请选择项目后使用')}
+      <div
+        data-testid={activeTerminalSession ? undefined : testId('workspace-tool-launcher')}
+        className={cn('h-full min-h-0 w-full flex-col', activeTerminalSession ? 'hidden' : 'flex')}
+      >
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-8 py-6">
+          {!hasWorkspaceContext && (
+            <p className="text-center text-sm leading-[18px] text-text-secondary">
+              {t('workbench.project_tool_requires_project', '请选择项目后使用')}
+            </p>
+          )}
+          {error && (
+            <p className="text-center text-sm leading-[18px] text-red-500" role="alert">
+              {error}
+            </p>
+          )}
+          {hasLimitedProjectTools && (
+            <div
+              data-testid={testId('workspace-local-device-limited-tools')}
+              className="rounded-lg border border-border bg-surface px-4 py-5 text-center"
+            >
+              <p className="text-sm font-semibold text-text-primary">
+                {t('workbench.local_device_limited_tools_title')}
               </p>
-            )}
-            {error && (
-              <p className="text-center text-sm leading-[18px] text-red-500" role="alert">
-                {error}
+              <p className="mt-2 text-sm leading-[18px] text-text-secondary">
+                {t('workbench.local_device_limited_tools_desc')}
               </p>
-            )}
-            {hasLimitedProjectTools && (
-              <div
-                data-testid={testId('workspace-local-device-limited-tools')}
-                className="rounded-lg border border-border bg-surface px-4 py-5 text-center"
-              >
-                <p className="text-sm font-semibold text-text-primary">
-                  {t('workbench.local_device_limited_tools_title')}
-                </p>
-                <p className="mt-2 text-sm leading-[18px] text-text-secondary">
-                  {t('workbench.local_device_limited_tools_desc')}
-                </p>
-              </div>
-            )}
-            {projectTerminalAvailable && (
-              <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
+            </div>
+          )}
+          {(projectTerminalAvailable || cloudDesktopAvailable) && (
+            <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
+              {projectTerminalAvailable && (
                 <button
                   type="button"
-                  data-testid={testId('workspace-terminal-card')}
+                  data-testid={
+                    activeTerminalSession ? undefined : testId('workspace-terminal-card')
+                  }
                   onClick={handleTerminalClick}
                   disabled={toolsDisabled || !availableTools.terminal}
                   className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
@@ -894,105 +748,23 @@ export function WorkspacePanelCards({
                       : t('workbench.project_tool_unavailable', '暂不可用')}
                   </span>
                 </button>
-                {projectIdeAvailable && (
-                  <>
-                    {localIdeLaunchable ? (
-                      <div
-                        data-testid={testId('workspace-ide-card')}
-                        className="relative min-h-[132px] rounded-lg bg-surface text-center hover:bg-muted"
-                      >
-                        <button
-                          type="button"
-                          data-testid={testId('workspace-ide-primary-button')}
-                          onClick={() => void handleIdeClick()}
-                          disabled={toolsDisabled || !availableTools.ide}
-                          className="flex h-full min-h-[132px] w-full flex-col items-center justify-center rounded-lg px-4 text-center disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {loadingTool === 'ide' ? (
-                            <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                          ) : (
-                            <LocalWorkspaceOpenerIcon
-                              opener="vscode"
-                              className="mb-5 h-7 w-7 rounded-lg"
-                            />
-                          )}
-                          <span className="text-sm font-semibold text-text-primary">
-                            {t('workbench.ide', 'IDE')}
-                          </span>
-                          <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-                            {availableTools.ide
-                              ? t('workbench.open_project_ide_with', {
-                                  opener: 'VS Code',
-                                })
-                              : t('workbench.project_tool_unavailable', '暂不可用')}
-                          </span>
-                        </button>
-                        <LocalWorkspaceOpenerPicker
-                          ariaLabel={t('workbench.choose_project_ide')}
-                          buttonTestId={testId('workspace-ide-picker-button')}
-                          menuTestId={testId('workspace-ide-picker-menu')}
-                          optionTestIdPrefix={testId('workspace-ide-option')}
-                          disabled={toolsDisabled || !availableTools.ide}
-                          buttonClassName="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                          onSelect={handleIdeClick}
-                        />
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        data-testid={testId('workspace-ide-card')}
-                        onClick={() => void handleIdeClick()}
-                        disabled={toolsDisabled || !currentProject || !availableTools.ide}
-                        className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {loadingTool === 'ide' ? (
-                          <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                        ) : (
-                          <LocalWorkspaceOpenerIcon
-                            opener="vscode"
-                            className="mb-5 h-7 w-7 rounded-lg"
-                          />
-                        )}
-                        <span className="text-sm font-semibold text-text-primary">
-                          {t('workbench.ide', 'IDE')}
-                        </span>
-                        <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-                          {availableTools.ide
-                            ? t('workbench.open_project_ide', '打开项目 IDE')
-                            : t('workbench.project_tool_unavailable', '暂不可用')}
-                        </span>
-                      </button>
-                    )}
-                    {cloudToolsAvailable &&
-                      cloudDesktopExtension.available &&
-                      activeWorkspaceDeviceId && (
-                        <button
-                          type="button"
-                          data-testid={testId('workspace-desktop-card')}
-                          onClick={() => void handleDesktopClick()}
-                          disabled={toolsDisabled || projectDevice?.status !== 'online'}
-                          className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {loadingTool === 'extension' ? (
-                            <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                          ) : (
-                            <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
-                          )}
-                          <span className="text-sm font-semibold text-text-primary">
-                            {t('workbench.desktop', '桌面')}
-                          </span>
-                          <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-                            {t('workbench.open_project_desktop', '打开项目桌面')}
-                          </span>
-                        </button>
-                      )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
+              )}
+              {cloudDesktopAvailable && activeWorkspaceDeviceId && (
+                <cloudDesktopExtension.WorkspaceAction
+                  contextKey={projectKey}
+                  deviceId={activeWorkspaceDeviceId}
+                  disabled={toolsDisabled || projectDevice?.status !== 'online'}
+                  onBusyChange={handleDesktopBusyChange}
+                  onErrorChange={setProjectError}
+                  onLaunchActionChange={handleDesktopLaunchActionChange}
+                  onOpened={handleDesktopOpened}
+                  testIdsEnabled={testIdsEnabled && !activeTerminalSession}
+                />
+              )}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

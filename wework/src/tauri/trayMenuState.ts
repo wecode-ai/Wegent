@@ -10,6 +10,10 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import {
+  getRuntimeTaskLifecycleKey,
+  type RuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import {
   getRuntimeTaskReminderItemKey,
   type RuntimeTaskReminderState,
 } from '@/features/workbench/runtimeTaskReminders'
@@ -29,7 +33,7 @@ export interface TrayMenuTaskGroups {
   hasRunningTasks: boolean
   showRunningStatus: boolean
   runningCount: number
-  activeTaskCount: number
+  activeTaskIds: string[] | null
   unreadCount: number
   pinned: TrayMenuTaskItem[]
   pinnedMore: TrayMenuTaskItem[]
@@ -49,7 +53,7 @@ export const EMPTY_TRAY_MENU_TASK_GROUPS: TrayMenuTaskGroups = {
   hasRunningTasks: false,
   showRunningStatus: false,
   runningCount: 0,
-  activeTaskCount: 0,
+  activeTaskIds: null,
   unreadCount: 0,
   pinned: [],
   pinnedMore: [],
@@ -59,6 +63,7 @@ export const EMPTY_TRAY_MENU_TASK_GROUPS: TrayMenuTaskGroups = {
 
 export interface TrayMenuTaskGroupOptions {
   reminders?: Pick<RuntimeTaskReminderState, 'unreadTaskKeys' | 'unreadCount' | 'hasRunningTasks'>
+  lifecycle?: RuntimeTaskLifecycleStoreSnapshot
   showUnread?: boolean
   showRunning?: boolean
 }
@@ -151,7 +156,13 @@ export function buildTrayMenuTaskGroups(
 ): TrayMenuTaskGroups {
   const { reminders, showUnread = true, showRunning = true } = options
   const items = collectRuntimeTaskItems(runtimeWork)
-  const activeTasks = items.filter(({ task }) => task.running)
+  const activeTasks = options.lifecycle
+    ? items.filter(({ workspace, task }) =>
+        options.lifecycle?.runningTaskKeys.has(
+          getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+        )
+      )
+    : []
   const running = showRunning ? activeTasks : []
   const unread =
     showUnread && reminders
@@ -170,10 +181,10 @@ export function buildTrayMenuTaskGroups(
     runningMore: runningTasks.more,
     unread: unreadTasks.visible,
     unreadMore: unreadTasks.more,
-    hasRunningTasks: showRunning ? (reminders?.hasRunningTasks ?? running.length > 0) : false,
+    hasRunningTasks: showRunning && activeTasks.length > 0,
     showRunningStatus: showRunning,
     runningCount: running.length,
-    activeTaskCount: activeTasks.length,
+    activeTaskIds: activeTasks.map(({ task }) => task.taskId),
     unreadCount: showUnread ? (reminders?.unreadCount ?? unread.length) : 0,
     pinned: pinnedTasks.visible,
     pinnedMore: pinnedTasks.more,

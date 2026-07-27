@@ -16,6 +16,7 @@ Key changes from the original trigger_ai_response:
 - Supports custom ResultEmitter for different output modes (WebSocket, SSE, Callback)
 """
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
     from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
+
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 CODEX_RUNTIME = "codex"
 RUNTIME_MODEL_TYPE = "runtime"
@@ -121,6 +123,55 @@ def _service_tier_from_model_options(payload: Any) -> Optional[str]:
     return SERVICE_TIER_ALIASES.get(str(speed).strip().lower())
 
 
+def _model_options_from_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    """Return model_options dict from a chat send payload, if present."""
+    if payload is None:
+        return None
+    model_options = getattr(payload, "model_options", None)
+    if isinstance(model_options, dict):
+        return model_options
+    return None
+
+
+def _model_options_from_task(task: TaskResource) -> Optional[Dict[str, Any]]:
+    """Return model_options dict persisted in task metadata labels."""
+    task_json = task.json if isinstance(task.json, dict) else {}
+    metadata = task_json.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return None
+    labels = metadata.get("labels") or {}
+    if not isinstance(labels, dict):
+        return None
+    model_options_raw = labels.get("modelOptions")
+    if not model_options_raw:
+        return None
+    if isinstance(model_options_raw, dict):
+        return model_options_raw
+    try:
+        return json.loads(model_options_raw)
+    except Exception:
+        return None
+
+
+def _catalog_model_id_from_model_options(
+    model_options: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Extract catalog model id override from UI model options."""
+    if not model_options:
+        return None
+    catalog_id = (
+        model_options.get("weworkCloudModelCatalogModelId")
+        or model_options.get("codex_catalog_model_id")
+        or model_options.get("codexCatalogModelId")
+    )
+    result = (
+        catalog_id.strip()
+        if isinstance(catalog_id, str) and catalog_id.strip()
+        else None
+    )
+    return result
+
+
 def _should_ignore_unavailable_task_model_override(payload: Any) -> bool:
     """Return whether a caller can fall back when task model labels are stale."""
     return bool(
@@ -170,6 +221,7 @@ def _build_codex_runtime_model_config(
     provider_name = options.get("codexProviderName") or options.get(
         "codex_provider_name"
     )
+    catalog_model_id = _catalog_model_id_from_model_options(options)
 
     # Official Codex runtime model: keep the existing minimal config.
     if model_name == CODEX_RUNTIME_MODEL_NAME:
@@ -183,6 +235,8 @@ def _build_codex_runtime_model_config(
             config["model_provider"] = str(provider_id)
         if provider_name:
             config["provider_name"] = str(provider_name)
+        if catalog_model_id:
+            config["codex_catalog_model_id"] = catalog_model_id
         return config
 
     resolved_config: Optional[Dict[str, Any]] = None
@@ -233,6 +287,8 @@ def _build_codex_runtime_model_config(
         resolved_config["model_provider"] = str(provider_id)
     if provider_name:
         resolved_config["provider_name"] = str(provider_name)
+    if catalog_model_id:
+        resolved_config["codex_catalog_model_id"] = catalog_model_id
     return resolved_config
 
 
@@ -530,41 +586,54 @@ async def build_execution_request(
                 force_override,
                 override_model_type,
             )
-            if (
-                force_override
-                and override_model_name
-                and (override_model_type == RUNTIME_MODEL_TYPE)
-            ):
-                runtime_model_config = _build_codex_runtime_model_config(
-                    override_model_name,
-                    db=db,
-                    user_id=user.id,
-                )
-                logger.info(
-                    "[build_execution_request] Using runtime model config: "
-                    "selectedModel=%s, executorModel=%s",
-                    override_model_name,
-                    runtime_model_config.get("model_id"),
-                )
-                override_model_name = None
-                force_override = False
-            elif (
-                force_override
-                and override_model_name
-                and _should_ignore_unavailable_task_model_override(payload)
-                and not _task_model_override_available(
-                    db,
-                    model_name=override_model_name,
-                    user_id=user.id,
-                )
-            ):
-                logger.info(
-                    "[build_execution_request] Ignoring unavailable task model "
-                    "override for payload fallback: modelId=%s",
-                    override_model_name,
-                )
-                override_model_name = None
-                force_override = False
+
+        # Extract model options from payload or task labels (retry path may not have payload)
+        model_options = _model_options_from_payload(
+            payload
+        ) or _model_options_from_task(task)
+        catalog_model_id = _catalog_model_id_from_model_options(model_options)
+        if catalog_model_id:
+            logger.info(
+                "[build_execution_request] Extracted catalog model id override: %s",
+                catalog_model_id,
+            )
+
+        if (
+            force_override
+            and override_model_name
+            and (override_model_type == RUNTIME_MODEL_TYPE)
+        ):
+            runtime_model_config = _build_codex_runtime_model_config(
+                override_model_name,
+                model_options=model_options,
+                db=db,
+                user_id=user.id,
+            )
+            logger.info(
+                "[build_execution_request] Using runtime model config: "
+                "selectedModel=%s, executorModel=%s",
+                override_model_name,
+                runtime_model_config.get("model_id"),
+            )
+            override_model_name = None
+            force_override = False
+        elif (
+            force_override
+            and override_model_name
+            and _should_ignore_unavailable_task_model_override(payload)
+            and not _task_model_override_available(
+                db,
+                model_name=override_model_name,
+                user_id=user.id,
+            )
+        ):
+            logger.info(
+                "[build_execution_request] Ignoring unavailable task model "
+                "override for payload fallback: modelId=%s",
+                override_model_name,
+            )
+            override_model_name = None
+            force_override = False
 
         request = builder.build(
             subtask=assistant_subtask,
@@ -624,6 +693,18 @@ async def build_execution_request(
             )
 
         _apply_user_runtime_config(db, request, user)
+
+        # Apply UI-selected or Model CRD catalog model id override for Codex-compatible models.
+        effective_catalog_model_id = catalog_model_id or request.model_config.get(
+            "codex_catalog_model_id"
+        )
+        if effective_catalog_model_id and _is_codex_model_config(request.model_config):
+            request.model_config["codex_catalog_model_id"] = effective_catalog_model_id
+            request.model_config["codex_responses_compat_proxy"] = True
+            logger.info(
+                "[build_execution_request] Applied catalog model id override: %s",
+                effective_catalog_model_id,
+            )
 
         # Store reasoning_config in ExecutionRequest for downstream access
         request.reasoning_config = (

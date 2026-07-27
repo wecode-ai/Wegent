@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from '@/hooks/useTranslation'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
+import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
   openNativeWorkspacePathPicker,
@@ -19,8 +20,10 @@ import {
   filterSlashCommands,
   findStandaloneTrigger,
   hasDraftTextForSlashCommands,
+  parseCloudProjectScopeQuery,
 } from './composerAutocomplete'
 import {
+  matchesMentionQuery,
   slashAppTestId,
   slashSkillTestId,
   type ComposerMentionCandidate,
@@ -63,6 +66,11 @@ export function ComposerTextarea({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates = [],
+  conversationMentionCandidates = [],
+  cloudProjectCandidates = [],
+  cloudSpaceEnabled = false,
+  onSelectCloudProject,
   onListLocalSkills,
   onListLocalApps,
   models = [],
@@ -107,6 +115,7 @@ export function ComposerTextarea({
   const [loadError, setLoadError] = useState(false)
   const [appsLoading, setAppsLoading] = useState(false)
   const [appsLoadError, setAppsLoadError] = useState(false)
+  const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
   const canPickNativeWorkspacePaths =
     canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
 
@@ -119,7 +128,11 @@ export function ComposerTextarea({
       apps,
       skills,
       selectedModel,
-      activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention' ? activeMenu.trigger.query : ''
+      activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention'
+        ? activeMenu.trigger.query
+        : '',
+      cloudMentionCandidates,
+      conversationMentionCandidates
     )
 
   const workspaceSearch = useWorkspaceMentionSearch(
@@ -127,6 +140,40 @@ export function ComposerTextarea({
     workspaceTarget,
     workspaceFileApi
   )
+
+  // The `@项目空间:keyword` scope syntax drills straight into the cloud project
+  // list without clicking the menu entry, matching the other mention flows.
+  const cloudProjectScopeLabels = useMemo(
+    () => [
+      t('workbench.mention_cloud_project_space', '项目空间'),
+      '项目空间',
+      'project space',
+      'project-space',
+    ],
+    [t]
+  )
+  const cloudProjectScopeLabelsRef = useRef(cloudProjectScopeLabels)
+  useEffect(() => {
+    cloudProjectScopeLabelsRef.current = cloudProjectScopeLabels
+  }, [cloudProjectScopeLabels])
+  const cloudProjectScopeKeyword =
+    activeMenu?.kind === 'mention'
+      ? parseCloudProjectScopeQuery(activeMenu.trigger.query, cloudProjectScopeLabels)
+      : null
+  const cloudProjectScopeActive = cloudSpaceEnabled && cloudProjectScopeKeyword !== null
+  const filteredCloudProjectCandidates = useMemo(
+    () =>
+      cloudProjectScopeActive
+        ? cloudProjectCandidates.filter(candidate =>
+            matchesMentionQuery(candidate, cloudProjectScopeKeyword ?? '')
+          )
+        : cloudProjectCandidates,
+    [cloudProjectCandidates, cloudProjectScopeActive, cloudProjectScopeKeyword]
+  )
+  // The direct cloud space reference inserted by the `项目空间` row. Selecting it
+  // never binds a project; it just tags the message with the generic
+  // `cloud://projects` capability reference.
+  const cloudSpaceDirectReference = `[$${t('workbench.mention_cloud_project_space', '项目空间')}](cloud://projects)`
 
   const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onSelectModel) && models.length > 0
   const openSlashModelMenu = useCallback(() => {
@@ -246,13 +293,36 @@ export function ComposerTextarea({
       return filteredMentionCandidates.map(candidate => ({ kind: 'candidate', candidate }))
     }
     if (!activeMenu?.trigger.query.trim()) {
+      const nonCloudCandidates = filteredMentionCandidates.filter(
+        candidate => candidate.kind !== 'cloud'
+      )
+      if (cloudProjectsOpen && cloudProjectCandidates.length > 0) {
+        return [
+          { kind: 'cloud-back-action' },
+          ...cloudProjectCandidates.map(
+            candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
+          ),
+        ]
+      }
       return [
         { kind: 'files-action' },
         ...(onSetGoal ? ([{ kind: 'goal-action' }] as MentionMenuRow[]) : []),
         ...(!planModeActive && onSetPlanMode
           ? ([{ kind: 'plan-action' }] as MentionMenuRow[])
           : []),
-        ...filteredMentionCandidates.map(
+        ...(cloudSpaceEnabled ? ([{ kind: 'cloud-space-direct-action' }] as MentionMenuRow[]) : []),
+        ...(cloudSpaceEnabled && cloudProjectCandidates.length > 0
+          ? ([{ kind: 'cloud-projects-action' }] as MentionMenuRow[])
+          : []),
+        ...nonCloudCandidates.map(
+          candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
+        ),
+      ]
+    }
+    if (cloudProjectScopeActive) {
+      return [
+        { kind: 'cloud-space-direct-action' },
+        ...filteredCloudProjectCandidates.map(
           candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
         ),
       ]
@@ -265,6 +335,11 @@ export function ComposerTextarea({
     ]
   }, [
     activeMenu,
+    cloudProjectCandidates,
+    cloudProjectScopeActive,
+    cloudProjectsOpen,
+    cloudSpaceEnabled,
+    filteredCloudProjectCandidates,
     filteredMentionCandidates,
     onSetGoal,
     onSetPlanMode,
@@ -417,7 +492,16 @@ export function ComposerTextarea({
       if (!current) return
 
       const nextTrigger = chooseNearestTrigger([
-        findStandaloneTrigger(current.value, current.selectionOffset, '@', 'mention'),
+        findStandaloneTrigger(
+          current.value,
+          current.selectionOffset,
+          '@',
+          'mention',
+          // Keep the trigger alive across whitespace once the query is inside
+          // the `@项目空间 keyword` scope so typed phrases like
+          // `@项目空间 新建项目` keep filtering instead of closing the menu.
+          query => parseCloudProjectScopeQuery(query, cloudProjectScopeLabelsRef.current) !== null
+        ),
         onListLocalSkills
           ? findStandaloneTrigger(current.value, current.selectionOffset, '$', 'skill')
           : null,
@@ -442,6 +526,7 @@ export function ComposerTextarea({
         if (!triggerUnchanged) {
           setSelectedIndex(0)
           highlightedIndexRef.current = 0
+          setCloudProjectsOpen(false)
         }
         if (
           nextTrigger.kind === 'skill' ||
@@ -551,10 +636,38 @@ export function ComposerTextarea({
       if (!trigger || !editor) return false
       if (row.kind === 'candidate') {
         if (!row.candidate.enabled) return false
-        return selectMentionCandidate(row.candidate)
+        const selected = selectMentionCandidate(row.candidate, trigger)
+        if (selected && row.candidate.kind === 'cloud' && row.candidate.project) {
+          onSelectCloudProject?.(row.candidate.project)
+        }
+        return selected
+      }
+      if (row.kind === 'cloud-projects-action') {
+        setCloudProjectsOpen(true)
+        setSelectedIndex(0)
+        highlightedIndexRef.current = 0
+        return true
+      }
+      if (row.kind === 'cloud-back-action') {
+        setCloudProjectsOpen(false)
+        setSelectedIndex(0)
+        highlightedIndexRef.current = 0
+        return true
       }
 
       const snapshot = editor.getSnapshot()
+      if (row.kind === 'cloud-space-direct-action') {
+        const replacement = replaceComposerMentionTrigger(
+          snapshot.value,
+          cloudSpaceDirectReference,
+          trigger.start,
+          snapshot.selectionEnd
+        )
+        commitEditorValue(replacement.value, replacement.cursor)
+        closeAutocompleteMenu()
+        editor.focus()
+        return true
+      }
       if (row.kind === 'path') {
         const path = resolveComposerWorkspacePath(row.item.root, row.item.path)
         const reference = createComposerPathReference(path, row.item.matchType === 'directory')
@@ -608,7 +721,9 @@ export function ComposerTextarea({
     },
     [
       closeAutocompleteMenu,
+      cloudSpaceDirectReference,
       commitEditorValue,
+      onSelectCloudProject,
       onSetGoal,
       onSetPlanMode,
       selectMentionCandidate,
@@ -708,6 +823,27 @@ export function ComposerTextarea({
     window.addEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
     return () => {
       window.removeEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
+    }
+  }, [closeAutocompleteMenu])
+
+  useEffect(() => {
+    let focusFrame: number | null = null
+    const handleNewChatFocusRequest = () => {
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
+      focusFrame = window.requestAnimationFrame(() => {
+        focusFrame = null
+        const editor = editorRef.current
+        if (!editor) return
+        editor.setValue(valueRef.current, valueRef.current.length)
+        editor.focus()
+        closeAutocompleteMenu()
+      })
+    }
+
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
+    return () => {
+      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
+      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
     }
   }, [closeAutocompleteMenu])
 
@@ -951,6 +1087,7 @@ export function ComposerTextarea({
           selectedIndex={highlightedIndex}
           className={skillMenuClassName}
           mentionMode={activeMenu?.kind === 'mention'}
+          projectSpaceScope={cloudProjectsOpen || cloudProjectScopeActive}
           loading={isMentionLoading || workspaceSearch.loading}
           error={hasMentionLoadError || workspaceSearch.error}
           canBrowseFiles={canPickNativeWorkspacePaths}

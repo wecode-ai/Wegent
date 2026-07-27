@@ -30,6 +30,12 @@ Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器�
 
 这种绑定保证“用户看到的浏览器”和“agent 控制的浏览器”是同一个对象。
 
+## 主界面浮层与地址栏同步
+
+嵌入式浏览器是独立的原生 WebView，不能通过主 React WebView 的 `z-index` 覆盖。当主界面的 dialog、menu、listbox 或系统级浮层与浏览器区域相交时，浏览器面板必须把原生 WebView 设为不可见；浮层移除或不再相交后再恢复显示。自定义浮层无法通过语义 role 或共享层级类识别时，应添加 `data-embedded-browser-occlusion`，不要在各业务组件中重复调用原生显示命令。
+
+页面状态轮询维护的是浏览器真实 URL，地址栏维护的是用户输入草稿。地址栏聚焦期间，轮询可以更新页面 URL、标题和图标，但不得覆盖输入草稿；失焦时再恢复真实 URL。新增导航或页面状态同步路径时必须保留这条边界。
+
 ## WebView 兼容性
 
 - 浏览器 WebView 使用固定的独立数据存储标识和应用数据目录，不能与 Wework 主界面的登录存储混用。浏览器设置中的清理操作只作用于这个数据存储。
@@ -39,9 +45,9 @@ Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器�
 
 ## 可选云桌面扩展
 
-公开版 Wework 只定义云桌面的扩展契约和不可用时的默认实现，不包含具体远程桌面协议、鉴权接口、代理、页面或第三方客户端资源。工作台和设备设置页只能通过 `src/extensions/cloud-desktop-contract.ts` 使用该能力；默认实现的 `available` 为 `false`，因此不会展示桌面入口。
+公开版 Wework 只定义云桌面的 UI 插槽、内部页面识别契约和不可用时的默认实现，不包含连接凭据、打开目标、打开流程、具体远程桌面协议、鉴权接口、代理、页面或第三方客户端资源。工作台和设备设置页只能通过 `src/extensions/cloud-desktop-contract.ts` 使用该能力；默认实现的 `available` 为 `false`，因此不会展示桌面入口。
 
-产品发行版可以在构建时为 `@extensions/cloud-desktop` 提供实现。通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口；具体实现负责连接、异步状态和在内置浏览器中打开页面，并通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求。公共 Wework 只提供不可用的空实现，不应包含具体远程桌面协议、页面或资源。
+产品发行版可以在构建时为 `@extensions/cloud-desktop` 提供实现。通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口；具体实现自行持有连接类型、打开目标、异步状态和打开流程，并通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求。公共 Wework 只提供不可用的空实现，不应包含具体远程桌面协议、页面、资源或专用文案。
 
 ## 批注流程
 

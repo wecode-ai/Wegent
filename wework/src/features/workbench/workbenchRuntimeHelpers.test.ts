@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import {
   buildRuntimeTaskTitle,
+  findProjectDeviceWorkspace,
+  getDefaultProjectDeviceWorkspaceId,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
   projectTaskAddresses,
   readLastProjectId,
+  removeRuntimeTasks,
   truncateRuntimeTaskTitle,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -93,6 +96,38 @@ describe('workbenchRuntimeHelpers', () => {
     ])
   })
 
+  test('removes an archived device task even when its workspace path was normalized', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'device-1',
+          workspacePath: '/home/user/Documents/Codex/task',
+          available: true,
+          tasks: [
+            {
+              taskId: 'standalone-chat',
+              workspacePath: '/home/user/Documents/Codex/task',
+              title: 'Standalone chat',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+
+    expect(
+      removeRuntimeTasks(runtimeWork, [
+        {
+          deviceId: 'device-1',
+          taskId: 'standalone-chat',
+          workspacePath: '/workspace/repository',
+        },
+      ]).totalTasks
+    ).toBe(0)
+  })
+
   test('stores the last project per user and ignores invalid values', () => {
     writeLastProjectId(7, 42)
 
@@ -104,5 +139,67 @@ describe('workbenchRuntimeHelpers', () => {
 
     localStorage.setItem('wework.lastProjectId.7', 'not-a-project')
     expect(readLastProjectId(7)).toBeUndefined()
+  })
+
+  test('selects the primary root for a multi-root local project', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: 'product',
+            name: 'Product',
+            source: 'local_project',
+            roots: [
+              { kind: 'local', path: '/workspace/web/' },
+              { kind: 'local', path: '/workspace/api' },
+            ],
+          },
+          deviceWorkspaces: [
+            {
+              id: 12,
+              deviceId: 'device-1',
+              workspacePath: '/workspace/api',
+              available: true,
+              tasks: [],
+            },
+            {
+              id: 11,
+              deviceId: 'device-1',
+              workspacePath: '/workspace/web',
+              available: true,
+              tasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    expect(getDefaultProjectDeviceWorkspaceId(runtimeWork, 7)).toBe(11)
+    expect(findProjectDeviceWorkspace(runtimeWork, 7, null)?.workspacePath).toBe('/workspace/web')
+  })
+
+  test('keeps multi-location non-local projects explicit', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 7, key: 'remote-product', name: 'Product', source: 'remote_project' },
+          deviceWorkspaces: ['/workspace/web', '/workspace/api'].map((workspacePath, index) => ({
+            id: 11 + index,
+            deviceId: `device-${index + 1}`,
+            workspacePath,
+            available: true,
+            tasks: [],
+          })),
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    expect(getDefaultProjectDeviceWorkspaceId(runtimeWork, 7)).toBeNull()
+    expect(findProjectDeviceWorkspace(runtimeWork, 7, null)).toBeNull()
   })
 })

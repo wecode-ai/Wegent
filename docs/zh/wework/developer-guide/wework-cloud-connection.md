@@ -19,7 +19,9 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 
 用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在内置授权窗打开该云端授权页，并携带 `poll_token` 轮询会话结果。
 
-当用户连接的地址与打包时的 `VITE_WEGENT_BACKEND_URL` 或 `VITE_API_BASE_URL` 一致时，Wework 使用打包配置中的 `VITE_SOCKET_BASE_URL` 和 `VITE_SOCKET_PATH`，支持 HTTP API 与 Socket.IO 分域部署。这也覆盖 `VITE_WEGENT_BACKEND_URL` 未配置、用户手动输入打包 API 对应 Backend 的场景。升级前已经保存为同源 Socket 地址的连接会在启动时自动迁移；用户手动输入的其他 Backend 仍按同源规则解析。
+桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。授权窗使用 Wework 主窗口作为原生父窗口，因此在授权期间始终位于 Wework 之上；它不会设置为跨应用全局置顶，切换到其他应用时仍遵循系统窗口层级。
+
+Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。
 
 本地 Wework 不渲染云端账号密码表单，也不调用 `/auth/login` 或 `/auth/admin-password/setup`。云端登录、OIDC 和管理员初始化都发生在云端 Wegent Web 授权页中。用户登录后必须明确点击“授权 Wework”，Backend 才会把一次性可领取的云端 JWT 写入授权会话；本地 Wework 领取成功后继续读取 `/users/me` 校验用户并保存云端连接状态。
 
@@ -81,17 +83,11 @@ wework /path/to/project
 
 `wework` 和 `wework .` 会把当前目录解析为绝对路径，并请求 Wework 打开该目录作为本机 workspace。release 构建通过 macOS app single-instance 机制把请求转发给已有窗口；debug 构建仍允许多实例，CLI 会启动当前 debug executable 并携带 `--open-workspace <path>` 参数。
 
-## 模型命名
+## 模型身份与执行传输
 
-前端合并层必须避免本机 Codex、用户配置本地模型和云端同步 Codex 的模型名冲突。UI 使用唯一名称：
+模型在 UI、任务状态和执行请求中始终使用同一份规范身份：`name`、`type`、`namespace` 和 `resourceUserId`。前端不得为了区分本机与远程执行而添加 `local:`、`cloud:` 前缀，也不得在模型配置中保存额外的 transport source。模型目录合并时，如果 Backend 合成的 runtime Codex 模型与 Executor 实时目录具有相同 `modelId`，保留 Executor 实时模型。
 
-```text
-local:runtime:codex-gpt-5.5
-local:runtime:local-model:<config-id>
-cloud:runtime:codex-gpt-5.5
-```
-
-执行前通过模型上的 `weworkExecution` 元数据映射回原始 `modelName` 和 `modelType`。本地 IPC 执行边界再把本机 Codex UI 模型名规范化为 Codex app-server 接受的真实模型 id，例如 `codex-gpt-5.5` 会在发送前转换为 `gpt-5.5`。用户配置的本地模型使用 `local-model:<config-id>`，只允许投递到本机 device；如果目标是云端任务，前端会阻止发送并提示用户切换设备或模型。云端 relay 仍按模型来源传递原始执行模型名。
+目标设备只决定传输方式：本机设备通过 IPC 调用 Executor，远程设备通过 WebSocket relay 调用 Executor。两条路径都使用相同的 `runtime.tasks.*` 协议和模型选择。公共、个人和组模型的资源身份会随请求传给 Executor，由同一个模型网关解析。用户配置的本地模型使用 `local-model:<config-id>`，由于配置只存在本机，投递到远程设备时前端会阻止发送并提示用户切换设备或模型。
 
 本机 Codex 模型目录只跟随当前 Codex 配置中的 active provider。executor 通过 Codex app-server 读取一次 `config/read` 获取当前 `model_provider` 和展示名，再调用一次 `model/list` 获取该 provider 对应的模型列表。即使 `config.toml` 中配置了多个 `[model_providers.*]`，Wework 也不把它们枚举成多个并列模型组，因为 Codex 的 `model/list` 不提供按 provider 查询的稳定协议。需要在 Wework 中展示多个模型接口时，应使用下方的本地模型配置。
 
@@ -125,7 +121,7 @@ API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` be
 
 本地设备代理保存后不会立即中断正在运行的 Codex 任务。界面会提示用户手动重启 Codex；用户确认后，Wework 只重启当前 App 本机 executor 内维护的 persistent Codex app-server，不会终止机器上其他 Codex 进程。新 Codex app-server 启动时会获得代理相关环境变量，后续新对话会使用该代理。
 
-Codex Responses 兼容模型可能通过 executor 内置的 `codex responses proxy` 转发到上游模型服务。该转发器也必须使用同一份本地设备代理；否则模型请求会绕过 Codex app-server 进程环境。日志只记录是否配置代理，不输出代理 URL。
+Codex Responses 兼容模型可能通过 executor 内置的 `codex responses proxy` 转发到上游模型服务。对于用户在 Codex `config.toml` 中配置的自定义模型 provider，该转发器会使用任务携带的同一份本地设备代理访问上游；否则模型请求会绕过 Codex app-server 进程环境。日志只记录是否配置代理，不输出代理 URL。
 
 ## 本机认证状态
 

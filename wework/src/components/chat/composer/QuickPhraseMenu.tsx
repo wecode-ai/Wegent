@@ -225,13 +225,15 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
             ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-muted disabled:opacity-40'
             : iconOnly
               ? 'flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted disabled:opacity-40'
-              : 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40'
+              : 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-normal text-text-primary hover:bg-muted disabled:opacity-40'
         }
         aria-label={t('workbench.quick_phrases', '快捷短语')}
         aria-expanded={open}
       >
-        <MessageSquareText className="h-4 w-4" />
-        {!compact && !iconOnly && <span>{t('workbench.quick_phrases', '快捷短语')}</span>}
+        <MessageSquareText className="h-4 w-4 text-text-secondary" />
+        {!compact && !iconOnly && (
+          <span className="text-text-primary">{t('workbench.quick_phrases', '快捷短语')}</span>
+        )}
       </button>
       {open && (
         <div
@@ -320,7 +322,7 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
                 className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ${selectedIndex === stashed.length + index ? 'bg-muted' : 'hover:bg-muted'}`}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{phrase.title}</span>
+                  <span className="block truncate text-sm font-normal">{phrase.title}</span>
                   <span className="block truncate text-xs text-text-muted">
                     {phrase.content ||
                       t('workbench.quick_phrase_attachment_count', '{{count}} 个附件', {

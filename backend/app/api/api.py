@@ -7,10 +7,12 @@ from app.api.endpoints import (
     api_keys,
     attachments_open,
     auth,
+    cloud_projects,
     connector_app_projection,
     connector_apps,
     connector_runtime,
     deep_research,
+    deliveries,
     device_chat_tasks,
     devices,
     dingtalk_docs,
@@ -130,6 +132,10 @@ api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
+api_router.include_router(
+    cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
+)
+api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
 api_router.include_router(

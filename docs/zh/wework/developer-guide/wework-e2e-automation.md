@@ -38,10 +38,16 @@ pnpm --filter wework e2e:desktop:cloud
 pnpm --filter wework e2e:desktop:plugins
 ```
 
-在 macOS 上运行桌面流式输出内存回归：
+在 macOS 上运行桌面内存回归，包括流式输出增长和 10 个并发任务的整机内存检查：
 
 ```bash
 pnpm --filter wework e2e:desktop:memory
+```
+
+仅验证助手已有流式文本时，其下方持续显示“正在思考”，并在响应完成后消失：
+
+```bash
+pnpm --filter wework e2e:desktop:streaming-text
 ```
 
 该命令会通过 `wework/playwright.config.ts` 启动测试专用 Vite 服务：
@@ -82,9 +88,22 @@ node e2e/utils/mock-connector-upstream-server.mjs
 5. 在同一会话中发送连续追问，并校验对应请求和页面回复。
 6. 启动流式回复后通过桌面端 UI 取消，校验任务已停止、停止提示已渲染，并在发送后续消息时恢复输入。
 7. 让模型首次请求确定性失败，点击错误卡中的重试，并校验重试请求和最终回复。
-8. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
+8. 创建两轮短对话，切换到新对话后重新打开原对话，校验 2 条用户消息、2 条助手消息和 4 个统一虚拟行仍完整挂载，并确认首条消息靠近消息视口顶部，防止缓存恢复时丢失消息或留下大块顶部空白。
+9. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
 
-测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行“发送 → `apply_patch` → 工具结果回传 → 追问”，工具调用仍由真实 Codex 在隔离工作区内执行。
+测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实 provider 账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行文本回复以及“发送 → `apply_patch` → 工具结果回传 → 完成回复”，工具调用仍由真实 Codex 在隔离工作区内执行。
+
+模型协议矩阵按“执行位置 × 模型来源 × 协议”定义 18 个组合：
+
+- 本机执行覆盖本机自定义模型、Codex 内置模型和云端 Model CRD，每种模型来源分别覆盖三种协议，共 9 个完整文本与工具链路。
+- 云端执行覆盖 Codex 内置模型和云端 Model CRD 的三种协议，共 6 个完整文本与工具链路。
+- 本机自定义模型不能用于云端执行；对应三种协议的 3 个组合断言模型不会出现在云端项目的选择器中。
+
+矩阵提交等待上限为 10 秒。如果编辑器已经显示提交错误，runner 会立即抛出该错误；否则在协议阶段未按时推进时输出当前阶段和已捕获请求，避免失败后长时间无反馈。
+
+`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景先验证“正在思考”位于可见回复下方，再在长回复持续追加时向上滚动，记录一个可见文本锚点，断言后续流式增量不会改变该锚点的视口位置；释放响应后还会验证“正在思考”消失。该场景会保存就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
+
+主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 
@@ -96,11 +115,17 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 可选的 `WEWORK_E2E_EXECUTOR_BIN` 和 `WEWORK_E2E_APP_BIN` 分别允许复用已经构建的真实 Executor 和真实 Tauri 应用。传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在 `wework/test-results/desktop-e2e/`。
 
-云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。测试只模拟 Codex 使用的模型 Responses API；不得模拟 Backend HTTP 或 WebSocket 接口。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
+云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
+
+云端场景在验证连接账号下的本机执行模型之前，会通过当前“项目 → 本地项目”入口选择隔离目录，并在本地项目创建对话框中确认名称。桌面 E2E 应复用这个产品主流程，不得继续依赖已经移除的“已有项目”测试入口。
+
+GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright 缓存后加载预构建 Docker 镜像。该 job 必须先删除不使用的 hosted-runner SDK（.NET、Android、GHC 和 CodeQL）并记录磁盘用量，为镜像解压保留稳定空间；清理逻辑不得删除正在运行的 MySQL 或 Redis service 镜像。
 
 插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、在对话编辑器中插入插件引用及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。四个关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
 
-内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 512 MiB、完成后的稳定态增长不超过 256 MiB、稳定期继续增长不超过 32 MiB；前两个阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 调整。
+内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试先等待 Web Content 内存基线稳定，再每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 384 MiB、完成后的稳定态增长不超过 224 MiB、稳定窗口内最大波动范围不超过 16 MiB。DOM 门禁检查虚拟列表收敛后的稳定窗口，默认不得保留超过 900 个节点；流式渲染期间的瞬时峰值仍会记录在诊断中，但不会把收敛前的短暂渲染误判为泄漏。各阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES` 调整。
+
+并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、WebKit Web Content/GPU/Networking、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。门禁要求整个进程组峰值低于 800 MiB，可通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB` 调整；场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
 
 ## Responses API Mock
 
@@ -279,6 +304,11 @@ xvfb-run -a pnpm --filter wework e2e:desktop
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
 
+GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩阵并行运行。
+每个场景使用独立 runner、HOME、Executor Home、端口和诊断 artifact，保留原有
+真实 Tauri、Executor 与 Codex 验证语义，同时避免三个场景在同一个 job 中串行等待。
+矩阵关闭 fail-fast，使一个场景失败时其他场景仍能完成并上传各自诊断。
+
 内存门禁依赖 macOS 的 WebKit 进程关联和 physical footprint 采样，必须在 macOS runner 上单独运行：
 
 ```bash
@@ -287,5 +317,9 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
+普通 Draft PR 不运行浏览器或 Linux 桌面 E2E。macOS 内存门禁默认只在 `main`、
+定时任务和手动任务中运行；需要在 PR 中验证内存边界时，添加 `ci:memory` 标签。
+添加该标签只触发内存门禁，不会重复运行浏览器或 Linux 桌面 E2E。workflow 每天
+UTC 04:00 运行一次完整回归。
 
 登录后流程应在测试前通过后端 API 创建测试用户和测试数据，再使用真实登录或真实 token 注入。不要在 Playwright 中 mock 后端 HTTP 响应。

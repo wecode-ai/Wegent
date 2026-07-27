@@ -1664,6 +1664,17 @@ fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
         return Vec::new();
     };
     let mut overrides = vec![format!("{key}.url={}", toml_value(url))];
+    if let Some(headers) = object.get("headers").and_then(Value::as_object) {
+        for (header_name, header_value) in headers {
+            if let Some(header_value) = header_value.as_str() {
+                overrides.push(format!(
+                    "{key}.http_headers.{}={}",
+                    toml_key_segment(header_name),
+                    toml_value(header_value)
+                ));
+            }
+        }
+    }
     for (source_key, target_key) in [
         ("bearer_token_env_var", "bearer_token_env_var"),
         ("bearerTokenEnvVar", "bearer_token_env_var"),

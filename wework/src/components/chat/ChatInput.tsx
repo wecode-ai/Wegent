@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
@@ -14,6 +14,7 @@ import type {
   RuntimeContextUsage,
   RuntimeGoal,
   RuntimePlanEventPayload,
+  RuntimeTaskAddress,
   RuntimeWorkListResponse,
   SkillRef,
   UnifiedModel,
@@ -21,6 +22,12 @@ import type {
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import type { CloudProject } from '@/api/deliveries'
+import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
+import {
+  buildConversationMentionCandidates,
+  type ConversationMentionCandidate,
+} from '@/lib/conversation-mentions'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
@@ -30,9 +37,11 @@ import { TaskPlanProgress } from './composer/TaskPlanProgress'
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 export interface ProjectChatControls {
+  scopeKey?: string
   models: UnifiedModel[]
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
@@ -43,6 +52,7 @@ export interface ProjectChatControls {
   contextUsage?: RuntimeContextUsage
   isOptionsLocked: boolean
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   setSelectedModelOption: (optionId: string, value: string) => void
@@ -64,6 +74,7 @@ export interface ProjectWorkControls {
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
   currentRuntimeDeviceId?: string | null
+  currentRuntimeTask?: RuntimeTaskAddress | null
   selectedDeviceWorkspaceId?: number | null
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
@@ -120,8 +131,13 @@ export interface ChatInputProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
   onPause?: () => void
+  toolbarLeadingContext?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
@@ -224,8 +240,13 @@ export function ChatInput({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
+  cloudProjectCandidates,
+  cloudSpaceEnabled,
+  onSelectCloudProject,
   isStreaming = false,
   onPause,
+  toolbarLeadingContext,
   onCompactContext,
   goal,
   goalContinuing = false,
@@ -268,6 +289,14 @@ export function ChatInput({
     listLocalSkills: async () => [],
     listLocalApps: async () => [],
   }
+  const conversationMentionCandidates = useMemo(
+    () =>
+      buildConversationMentionCandidates(
+        projectWork?.runtimeWork,
+        projectWork?.currentRuntimeTask
+      ).map(candidate => conversationMentionCandidate(candidate, t)),
+    [projectWork?.currentRuntimeTask, projectWork?.runtimeWork, t]
+  )
 
   const planModeActive = controls.selectedModelOptions.collaborationMode === 'plan'
   const handleSetPlanMode = () => {
@@ -328,6 +357,11 @@ export function ChatInput({
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,
+    cloudMentionCandidates,
+    conversationMentionCandidates,
+    cloudProjectCandidates,
+    cloudSpaceEnabled,
+    onSelectCloudProject,
   }
   const errorBanner = error ? (
     <div
@@ -382,8 +416,10 @@ export function ChatInput({
           {...composerProps}
           models={controls.models}
           selectedModel={controls.selectedModel}
+          activeModel={controls.activeModel}
           selectedModelOptions={controls.selectedModelOptions}
           modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
+          onModelSelectorOpenChange={controls.onModelSelectorOpenChange}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           attachments={controls.attachments}
           codeComments={codeComments}
@@ -433,6 +469,7 @@ export function ChatInput({
           onListLocalApps={controls.listLocalApps}
           isStreaming={isStreaming}
           onPause={onPause}
+          toolbarLeadingContext={toolbarLeadingContext}
         />
         {queueResumeDialog}
       </div>
@@ -478,6 +515,7 @@ export function ChatInput({
         onListLocalApps={controls.listLocalApps}
         models={controls.models}
         selectedModel={controls.selectedModel}
+        activeModel={controls.activeModel}
         selectedModelOptions={controls.selectedModelOptions}
         onSelectModel={controls.setSelectedModel}
         onBlockedModelSelect={controls.onBlockedModelSelect}
@@ -488,6 +526,30 @@ export function ChatInput({
       {queueResumeDialog}
     </div>
   )
+}
+
+function conversationMentionCandidate(
+  candidate: ConversationMentionCandidate,
+  t: ReturnType<typeof useTranslation>['t']
+) {
+  const workspaceLabel =
+    candidate.projectName || candidate.address.workspacePath || candidate.address.deviceId
+  return {
+    kind: 'conversation' as const,
+    key: candidate.key,
+    title: candidate.title,
+    description: workspaceLabel,
+    metaLabel: t('workbench.mention_conversation', 'Conversation'),
+    testId: candidate.testId,
+    enabled: true,
+    reference: candidate.reference,
+    searchAliases: [
+      candidate.title,
+      candidate.projectName ?? '',
+      candidate.address.workspacePath ?? '',
+    ],
+    conversation: candidate,
+  }
 }
 
 function QueueResumeDialog({

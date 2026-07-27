@@ -1,4 +1,6 @@
 const PROCESS_STOP_TIMEOUT_MS = 10_000
+const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
+const PROCESS_GROUP_POLL_INTERVAL_MS = 25
 
 function withTimeout(promise, timeoutMs, message) {
   let timeout
@@ -15,6 +17,25 @@ function waitForProcessExit(child, timeoutMs) {
     timeoutMs,
     `Timed out waiting for process ${child.pid ?? 'unknown'} to exit`
   )
+}
+
+function isProcessGroupRunning(processGroupId) {
+  try {
+    process.kill(-processGroupId, 0)
+    return true
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false
+    throw error
+  }
+}
+
+async function waitForProcessGroupExit(processGroupId, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!isProcessGroupRunning(processGroupId)) return true
+    await new Promise(resolvePromise => setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS))
+  }
+  return !isProcessGroupRunning(processGroupId)
 }
 
 export async function stopProcess(child) {
@@ -35,17 +56,22 @@ export async function stopProcessGroup(child) {
     return
   }
 
-  signalProcessGroup(child.pid, 'SIGTERM')
+  const processGroupId = child.pid
+  signalProcessGroup(processGroupId, 'SIGTERM')
   if (child.exitCode === null && child.signalCode === null) {
     try {
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
     } catch {
-      signalProcessGroup(child.pid, 'SIGKILL')
+      signalProcessGroup(processGroupId, 'SIGKILL')
       await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
       return
     }
   }
-  signalProcessGroup(child.pid, 'SIGKILL')
+  if (await waitForProcessGroupExit(processGroupId, PROCESS_GROUP_GRACE_PERIOD_MS)) return
+  signalProcessGroup(processGroupId, 'SIGKILL')
+  if (!(await waitForProcessGroupExit(processGroupId, PROCESS_STOP_TIMEOUT_MS))) {
+    throw new Error(`Timed out waiting for process group ${processGroupId} to exit`)
+  }
 }
 
 function signalProcessGroup(processGroupId, signal) {

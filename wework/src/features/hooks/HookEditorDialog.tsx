@@ -56,6 +56,7 @@ export function HookEditorDialog({
                         type: 'command',
                         command,
                         ...(commandWindows ? { commandWindows } : {}),
+                        ...(first?.config.commands ? { commands: first.config.commands } : {}),
                         timeout,
                         async: asynchronous,
                         ...(statusMessage ? { statusMessage } : {}),

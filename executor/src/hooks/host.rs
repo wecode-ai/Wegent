@@ -16,7 +16,7 @@ use super::{
     command::execute_command_hook,
     matcher::matches_tool,
     model::{
-        HookEventName, HookHealth, HookRunStatus, HookRunSummary, PostToolUseInput,
+        HookEventName, HookHealth, HookRunStatus, HookRunSummary, HookUser, PostToolUseInput,
         ResolvedHookPluginView,
     },
     registry::HookRegistryStore,
@@ -145,6 +145,10 @@ impl HookService {
             .find(|hook| hook.handler_id == handler_id)
             .ok_or("hook handler not found")?;
         let input = PostToolUseInput {
+            user: HookUser {
+                id: None,
+                name: "anonymous".to_owned(),
+            },
             session_id: "hook-test-session".to_owned(),
             turn_id: "hook-test-turn".to_owned(),
             agent_id: None,

@@ -227,8 +227,21 @@ frontend/src/__tests__/
 ### GitHub Actions Workflow
 
 The `.github/workflows/test.yml` workflow runs automatically on:
-- Push to `main`, `master`, or `develop` branches
-- Pull requests to these branches
+- Pushes to `main`
+- Pull requests targeting `main`
+
+CI first runs `.github/scripts/classify-ci-changes.sh` to select module jobs from
+the changed paths. Dependency relationships are included. For example, a
+`shared/` change runs the Backend, Executor Manager, Knowledge Engine, Shared,
+and CLI suites, while a `packages/chat-core/` change runs both Frontend and
+Wework checks. Changes to the test workflows or the classifier itself select
+every module so CI orchestration changes receive full validation.
+
+Feature-branch pushes do not run a duplicate CI suite; the `pull_request` event
+validates the branch after a PR is opened. A newer commit to the same PR or to
+`main` cancels the older in-progress run. `test-summary` and `lint-summary`
+always appear and verify that every selected job actually succeeded. Skipped,
+unrelated modules do not make the summary fail.
 
 ### Workflow Jobs
 
@@ -250,7 +263,15 @@ Regular PR checks must cover module tests; E2E jobs do not replace them:
 E2E coverage lives in dedicated workflows: `.github/workflows/e2e-tests.yml`
 covers product end-to-end flows, while `.github/workflows/wework-e2e.yml` covers
 Wework flows. They add cross-module verification and do not replace the module
-tests in `.github/workflows/test.yml`.
+tests in `.github/workflows/test.yml`. Platform E2E runs only when Backend,
+Frontend, Executor, Executor Manager, Shared, Chat Shell, Chat Core, Docker, or
+related build configuration changes, so a Wework-only PR no longer starts an
+unrelated platform E2E suite. Draft PRs skip expensive E2E and run it after they
+become ready for review.
+
+The full platform E2E suite runs daily at 02:00 UTC, and the full Wework E2E
+suite runs daily at 04:00 UTC. Scheduled runs use a different concurrency group
+from `main` pushes, so they do not cancel each other.
 
 ### Coverage Reports
 

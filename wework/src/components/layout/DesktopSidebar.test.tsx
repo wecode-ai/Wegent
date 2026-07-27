@@ -15,6 +15,10 @@ import {
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
 import { openLocalWorkspace } from '@/lib/local-terminal'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -100,8 +104,14 @@ function renderSidebar(
   appUpdate?: Partial<AppUpdateContextValue>
 ) {
   const props: Parameters<typeof DesktopSidebar>[0] = createSidebarProps(overrides)
+  const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-test')
+  lifecycleStore.syncRuntimeWork(props.runtimeWork)
 
-  let tree = <DesktopSidebar {...props} />
+  let tree = (
+    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+      <DesktopSidebar {...props} />
+    </RuntimeTaskLifecycleProvider>
+  )
   if (appUpdate) {
     const value: AppUpdateContextValue = {
       availableUpdate: null,
@@ -3368,7 +3378,14 @@ describe('DesktopSidebar', () => {
       totalTasks: count,
     })
 
-    const view = renderSidebar({ runtimeWork: runtimeWorkWithTaskCount(6) })
+    const initialProps = createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(6) })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-growing-list-test')
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
 
     await userEvent.click(screen.getByTestId('project-item-button'))
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
@@ -3377,8 +3394,12 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('project-runtime-tasks-expand-7')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
 
+    const nextProps = createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(16) })
+    act(() => lifecycleStore.syncRuntimeWork(nextProps.runtimeWork))
     view.rerender(
-      <DesktopSidebar {...createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(16) })} />
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...nextProps} />
+      </RuntimeTaskLifecycleProvider>
     )
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)

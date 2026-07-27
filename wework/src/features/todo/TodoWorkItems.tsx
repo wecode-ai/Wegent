@@ -38,11 +38,14 @@ interface TodoWorkItemsProps {
   onDisplayChange: (display: TodoDisplaySettings) => void
   onCloseDisplay: () => void
   onSelectItem: (item: TodoDetailItem) => void
-  onCreate: (state: TodoViewState) => void
+  onCreate: (state: TodoViewState, title: string) => void
+  createRequest?: { state: TodoViewState; token: number } | null
+  onMoveItem?: (itemId: string, state: TodoViewState) => void
 }
 
-const STATES: TodoViewState[] = ['backlog', 'started', 'review', 'completed']
+const STATES: TodoViewState[] = ['inbox', 'backlog', 'started', 'review', 'completed']
 const STATE_META: Record<TodoViewState, { labelKey: string; fallback: string; color: string }> = {
+  inbox: { labelKey: 'todo.state_inbox', fallback: '收集箱', color: '#858E97' },
   backlog: { labelKey: 'todo.state_backlog', fallback: '待处理', color: '#858E97' },
   started: { labelKey: 'todo.state_started', fallback: '进行中', color: '#F59E0B' },
   review: { labelKey: 'todo.state_review', fallback: '待确认', color: '#8B5CF6' },
@@ -69,6 +72,8 @@ export function TodoWorkItems({
   onCloseDisplay,
   onSelectItem,
   onCreate,
+  createRequest,
+  onMoveItem,
 }: TodoWorkItemsProps) {
   const filteredItems = useMemo(
     () => filterAndSortItems(items, filters, display.order),
@@ -85,6 +90,8 @@ export function TodoWorkItems({
           display={display}
           onSelectItem={onSelectItem}
           onCreate={onCreate}
+          createRequest={createRequest}
+          onMoveItem={onMoveItem}
         />
       ) : (
         <TodoList
@@ -378,12 +385,16 @@ function TodoBoard({
   display,
   onSelectItem,
   onCreate,
+  createRequest,
+  onMoveItem,
 }: {
   items: TodoDetailItem[]
   stateFilter: TodoFilters['state']
   display: TodoDisplaySettings
   onSelectItem: (item: TodoDetailItem) => void
-  onCreate: (state: TodoViewState) => void
+  onCreate: (state: TodoViewState, title: string) => void
+  createRequest?: { state: TodoViewState; token: number } | null
+  onMoveItem?: (itemId: string, state: TodoViewState) => void
 }) {
   const [collapsedStates, setCollapsedStates] = useState<Set<TodoViewState>>(new Set())
   const states = (stateFilter === 'all' ? STATES : [stateFilter]).filter(
@@ -394,10 +405,10 @@ function TodoBoard({
       data-testid="todo-board-scroll"
       className="min-h-0 flex-1 overflow-auto bg-[#F7F8F9] p-3 dark:bg-background"
     >
-      <div data-testid="todo-board-grid" className="flex min-h-full min-w-[900px] gap-2.5">
+      <div data-testid="todo-board-grid" className="flex min-h-full min-w-[1100px] gap-2.5">
         {states.map(state => (
           <TodoColumn
-            key={state}
+            key={`${state}:${createRequest?.state === state ? createRequest.token : 0}`}
             state={state}
             items={items.filter(item => item.state === state)}
             display={display}
@@ -411,7 +422,9 @@ function TodoBoard({
               })
             }
             onSelectItem={onSelectItem}
-            onCreate={() => onCreate(state)}
+            onCreate={title => onCreate(state, title)}
+            forceCreateToken={createRequest?.state === state ? createRequest.token : 0}
+            onMoveItem={onMoveItem}
           />
         ))}
       </div>
@@ -427,6 +440,8 @@ function TodoColumn({
   onToggleCollapsed,
   onSelectItem,
   onCreate,
+  forceCreateToken,
+  onMoveItem,
 }: {
   state: TodoViewState
   items: TodoDetailItem[]
@@ -434,11 +449,22 @@ function TodoColumn({
   collapsed: boolean
   onToggleCollapsed: () => void
   onSelectItem: (item: TodoDetailItem) => void
-  onCreate: () => void
+  onCreate: (title: string) => void
+  forceCreateToken: number
+  onMoveItem?: (itemId: string, state: TodoViewState) => void
 }) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [quickCreateOpen, setQuickCreateOpen] = useState(forceCreateToken > 0)
+  const [quickCreateTitle, setQuickCreateTitle] = useState('')
   const meta = STATE_META[state]
+  const submitQuickCreate = () => {
+    const title = quickCreateTitle.trim()
+    if (!title) return
+    onCreate(title)
+    setQuickCreateTitle('')
+    setQuickCreateOpen(false)
+  }
   if (collapsed) {
     return (
       <section
@@ -463,7 +489,18 @@ function TodoColumn({
     )
   }
   return (
-    <section data-testid={`todo-column-${state}`} className="relative min-w-[210px] flex-1 basis-0">
+    <section
+      data-testid={`todo-column-${state}`}
+      className="relative min-w-[210px] flex-1 basis-0"
+      onDragOver={event => {
+        if (onMoveItem) event.preventDefault()
+      }}
+      onDrop={event => {
+        event.preventDefault()
+        const itemId = event.dataTransfer.getData('text/work-item-id')
+        if (itemId) onMoveItem?.(itemId, state)
+      }}
+    >
       <header className="flex h-[34px] items-center justify-between px-1.5">
         <div className="flex items-center gap-2">
           <span className="h-3 w-3 rounded-full" style={{ backgroundColor: meta.color }} />
@@ -476,9 +513,9 @@ function TodoColumn({
           <button
             type="button"
             data-testid={`todo-column-add-${state}`}
-            onClick={onCreate}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-[#EAECED]"
-            aria-label={t('todo.create_action', '新建 TODO')}
+            onClick={() => setQuickCreateOpen(true)}
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-[#EAECED] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            aria-label={t('todo.create_action', '新建任务')}
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -504,12 +541,12 @@ function TodoColumn({
             data-testid={`todo-column-menu-add-${state}`}
             onClick={() => {
               setMenuOpen(false)
-              onCreate()
+              setQuickCreateOpen(true)
             }}
             className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
           >
             <Plus className="h-3.5 w-3.5" />
-            {t('todo.create_action', '新建 TODO')}
+            {t('todo.create_action', '新建任务')}
           </button>
           <button
             type="button"
@@ -526,18 +563,52 @@ function TodoColumn({
         </div>
       )}
       <div className="space-y-2.5">
+        {quickCreateOpen && (
+          <div className="flex items-center rounded-lg border border-primary/40 bg-surface p-2 shadow-sm">
+            <input
+              autoFocus
+              data-testid={`todo-quick-create-${state}`}
+              value={quickCreateTitle}
+              onChange={event => setQuickCreateTitle(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') submitQuickCreate()
+                if (event.key === 'Escape') {
+                  setQuickCreateTitle('')
+                  setQuickCreateOpen(false)
+                }
+              }}
+              onBlur={() => {
+                if (!quickCreateTitle.trim()) setQuickCreateOpen(false)
+              }}
+              placeholder={t('todo.quick_create_placeholder', '输入事项标题，回车创建')}
+              className="h-8 min-w-0 flex-1 bg-transparent px-1 text-xs text-text-primary outline-none placeholder:text-text-muted"
+            />
+            <button
+              type="button"
+              data-testid={`todo-quick-create-submit-${state}`}
+              onMouseDown={event => event.preventDefault()}
+              onClick={submitQuickCreate}
+              disabled={!quickCreateTitle.trim()}
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-contrast disabled:opacity-40"
+              aria-label={t('todo.add', '添加')}
+            >
+              <Check className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         {items.map(item => (
           <TodoCard
             key={item.id}
             item={item}
             display={display}
             onClick={() => onSelectItem(item)}
+            onMoveItem={onMoveItem}
           />
         ))}
         <button
           type="button"
           data-testid={`todo-column-bottom-add-${state}`}
-          onClick={onCreate}
+          onClick={() => setQuickCreateOpen(true)}
           className="flex h-[34px] w-full items-center gap-2 rounded-md px-2 text-xs text-[#7B848C] hover:bg-[#ECEEEF] hover:text-[#4E565E]"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -559,9 +630,11 @@ function TodoList({
   stateFilter: TodoFilters['state']
   display: TodoDisplaySettings
   onSelectItem: (item: TodoDetailItem) => void
-  onCreate: (state: TodoViewState) => void
+  onCreate: (state: TodoViewState, title: string) => void
 }) {
   const { t } = useTranslation('common')
+  const [quickCreateState, setQuickCreateState] = useState<TodoViewState | null>(null)
+  const [quickCreateTitle, setQuickCreateTitle] = useState('')
   const states = (stateFilter === 'all' ? STATES : [stateFilter]).filter(
     state => display.showEmptyGroups || items.some(item => item.state === state)
   )
@@ -588,16 +661,39 @@ function TodoList({
                 <button
                   type="button"
                   data-testid={`todo-list-add-${state}`}
-                  onClick={() => onCreate(state)}
+                  onClick={() => setQuickCreateState(state)}
                   className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-[#68717A] hover:bg-white dark:hover:bg-background"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  {t('todo.create_action', '新建 TODO')}
+                  {t('todo.create_action', '新建任务')}
                 </button>
               </header>
+              {quickCreateState === state && (
+                <div className="border-b border-border bg-surface px-3 py-2">
+                  <input
+                    autoFocus
+                    data-testid={`todo-list-quick-create-${state}`}
+                    value={quickCreateTitle}
+                    onChange={event => setQuickCreateTitle(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' && quickCreateTitle.trim()) {
+                        onCreate(state, quickCreateTitle.trim())
+                        setQuickCreateTitle('')
+                        setQuickCreateState(null)
+                      }
+                      if (event.key === 'Escape') {
+                        setQuickCreateTitle('')
+                        setQuickCreateState(null)
+                      }
+                    }}
+                    placeholder={t('todo.quick_create_placeholder', '输入事项标题，回车创建')}
+                    className="h-8 w-full rounded-md border border-primary/40 bg-background px-3 text-xs outline-none"
+                  />
+                </div>
+              )}
               {stateItems.length === 0 ? (
                 <div className="flex h-12 items-center px-4 text-xs text-[#9AA2A9]">
-                  {t('todo.no_matching_items', '暂无符合条件的 TODO')}
+                  {t('todo.no_matching_items', '暂无符合条件的任务')}
                 </div>
               ) : (
                 stateItems.map(item => (
@@ -636,16 +732,32 @@ function TodoCard({
   item,
   display,
   onClick,
+  onMoveItem,
 }: {
   item: TodoDetailItem
   display: TodoDisplaySettings
   onClick: () => void
+  onMoveItem?: (itemId: string, state: TodoViewState) => void
 }) {
+  const { t } = useTranslation('common')
   const labelColor = item.runtime.toLowerCase().includes('codex') ? '#14B8A6' : '#9B6BE8'
   const initials = item.assigneeType === 'human' ? 'HY' : 'AI'
+  const children = item.children ?? []
+  const completedChildren = children.filter(child => child.state === 'completed').length
+  const activeChildren = children.filter(child => child.state === 'started')
+  const currentChildren =
+    activeChildren.length > 0
+      ? activeChildren
+      : children.filter(child => child.state !== 'completed').slice(0, 2)
+  const fileCount = item.attachments?.length ?? 0
   return (
     <button
       type="button"
+      draggable={Boolean(onMoveItem && item.kind === 'draft')}
+      onDragStart={event => {
+        event.dataTransfer.setData('text/work-item-id', item.id)
+        event.dataTransfer.effectAllowed = 'move'
+      }}
       data-testid={`todo-card-${item.id}`}
       onClick={onClick}
       className="flex min-h-[150px] w-full flex-col gap-2.5 rounded-lg border border-[#DDE1E4] bg-white p-3 text-left shadow-[0_1px_3px_rgba(17,24,39,0.06)] transition-colors hover:border-[#BFC6CB] dark:border-border dark:bg-surface"
@@ -656,6 +768,27 @@ function TodoCard({
       </span>
       {display.showObjective && item.objective && (
         <span className="line-clamp-2 text-xs leading-4 text-[#6F7880]">{item.objective}</span>
+      )}
+      {children.length > 0 && (
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-text-secondary">
+          <span className="rounded bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
+            {currentChildren.map(child => child.workTypeName || child.title).join(' · ') ||
+              t('todo.all_stages_completed', '全部完成')}
+          </span>
+          <span className="ml-auto tabular-nums text-text-muted">
+            {completedChildren}/{children.length} {t('todo.stages', '阶段')}
+          </span>
+        </span>
+      )}
+      {item.blocker && (
+        <span className="line-clamp-2 rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">
+          {t('todo.blocked', '阻塞')}：{item.blocker}
+        </span>
+      )}
+      {item.nextAction && (
+        <span className="line-clamp-1 text-xs text-text-secondary">
+          {t('todo.next_action', '下一步')}：{item.nextAction}
+        </span>
       )}
       {(display.showPriority || display.showAssignee) && (
         <span className="flex min-w-0 items-center gap-1.5">
@@ -679,7 +812,12 @@ function TodoCard({
       <span className="mt-auto flex w-full items-center justify-between">
         <span className="flex min-w-0 items-center gap-1 text-xs text-[#727B83]">
           <CircleDot className="h-3 w-3 shrink-0" />
-          <span className="max-w-[120px] truncate">{item.workspace}</span>
+          <span className="max-w-[90px] truncate">{item.workspace}</span>
+          {fileCount > 0 && (
+            <span>
+              {fileCount} {t('todo.collaboration_files', '个协作文件')}
+            </span>
+          )}
           {display.showUpdated && (
             <>
               <ListChecks className="ml-1 h-3 w-3 shrink-0" />

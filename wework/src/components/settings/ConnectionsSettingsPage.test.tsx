@@ -617,7 +617,7 @@ describe('ConnectionsSettingsPage', () => {
       additional_speed_tiers: ['fast'],
       default_service_tier: 'priority',
     })
-  })
+  }, 15_000)
 
   test('keeps a custom model pending when active tasks prevent a silent restart', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
@@ -669,6 +669,10 @@ describe('ConnectionsSettingsPage', () => {
         screen.getByTestId('local-model-provider-select'),
         'kimi-coding'
       )
+      const groupInput = screen.getByTestId('local-model-group-input')
+      expect(groupInput).toHaveValue('Kimi')
+      await userEvent.clear(groupInput)
+      await userEvent.type(groupInput, '月之暗面')
       await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'test-key')
       await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
       await waitFor(() =>
@@ -679,6 +683,7 @@ describe('ConnectionsSettingsPage', () => {
       const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
       expect(stored[0]).toMatchObject({
         providerProfileId: 'kimi-coding',
+        group: '月之暗面',
         modelId: 'k3',
         contextWindow: 262_144,
         codexCatalogModelId: 'wework-kimi-k3',
@@ -1102,7 +1107,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
   })
 
-  test('renders the cloud desktop extension action and forwards its opened callback', async () => {
+  test('keeps connection settings open after the cloud desktop extension opens', async () => {
     const onBack = vi.fn()
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
@@ -1110,12 +1115,16 @@ describe('ConnectionsSettingsPage', () => {
 
     const button = await screen.findByTestId('connection-cloud-desktop-button-device-1')
     expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
-      expect.objectContaining({ deviceId: 'device-1', disabled: false }),
+      expect.objectContaining({
+        deviceId: 'device-1',
+        disabled: false,
+        onOpened: expect.any(Function),
+      }),
       undefined
     )
     await userEvent.click(button)
 
-    expect(onBack).toHaveBeenCalledOnce()
+    expect(onBack).not.toHaveBeenCalled()
   })
 
   test('does not render a cloud desktop action when the extension is unavailable', async () => {

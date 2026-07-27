@@ -7,13 +7,8 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import type { DragEventHandler } from 'react'
-import { useMemo, useState } from 'react'
+import { useState, type DragEventHandler, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { isCloudDevice } from '@/lib/device-selection'
-import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
-import { findProjectDeviceWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
-import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -23,6 +18,11 @@ import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { readDroppedFiles } from '@/tauri/droppedFiles'
+import type { CloudProject } from '@/api/deliveries'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
 
 interface ProjectChatComposerProps {
   value: string
@@ -34,8 +34,10 @@ interface ProjectChatComposerProps {
   placeholder: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   attachments: Attachment[]
   codeComments?: CodeCommentContext[]
@@ -50,6 +52,11 @@ interface ProjectChatComposerProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  onSelectCloudProject?: (project: CloudProject) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -65,6 +72,7 @@ interface ProjectChatComposerProps {
   showProjectWorkBar?: boolean
   isStreaming?: boolean
   onPause?: () => void
+  toolbarLeadingContext?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -81,8 +89,10 @@ export function ProjectChatComposer({
   placeholder,
   models,
   selectedModel,
+  activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
+  onModelSelectorOpenChange,
   isModelSelectionReady,
   attachments,
   codeComments = [],
@@ -97,6 +107,11 @@ export function ProjectChatComposer({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
+  conversationMentionCandidates,
+  cloudProjectCandidates,
+  cloudSpaceEnabled,
+  onSelectCloudProject,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -112,46 +127,14 @@ export function ProjectChatComposer({
   showProjectWorkBar = true,
   isStreaming = false,
   onPause,
+  toolbarLeadingContext,
 }: ProjectChatComposerProps) {
-  const { t } = useTranslation('common')
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
-  const [deviceMenuOpenSignal, setDeviceMenuOpenSignal] = useState(0)
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
     !disabled &&
     !submitDisabled
-  const executionDevice = useMemo(() => {
-    const selectedProjectWorkspace = findProjectDeviceWorkspace(
-      projectWork.runtimeWork,
-      projectWork.currentProject?.id,
-      projectWork.selectedDeviceWorkspaceId
-    )
-    const deviceId =
-      projectWork.currentRuntimeDeviceId ??
-      selectedProjectWorkspace?.deviceId ??
-      getProjectDeviceId(projectWork.currentProject) ??
-      projectWork.currentStandaloneDeviceId
-    const device = findWorkbenchDevice(projectWork.devices, deviceId)
-    if (!deviceId || !device) return undefined
-    const cloud = isCloudDevice(device)
-    const location = cloud
-      ? t('workbench.environment_cloud_device', '云设备')
-      : t('workbench.environment_local', '本机')
-    const deviceName = device.name?.trim() || device.device_id
-    return {
-      kind: cloud ? ('cloud' as const) : ('local' as const),
-      label: t('workbench.composer_execution_device_label', {
-        location,
-        device: deviceName,
-      }),
-      selectable: showProjectWorkBar && !projectWork.currentRuntimeDeviceId,
-      onSelect:
-        showProjectWorkBar && !projectWork.currentRuntimeDeviceId
-          ? () => setDeviceMenuOpenSignal(signal => signal + 1)
-          : undefined,
-    }
-  }, [projectWork, showProjectWorkBar, t])
   const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
@@ -222,7 +205,6 @@ export function ProjectChatComposer({
           worktreeBranch={projectWork.worktreeBranch}
           onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
           projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
-          externalMenuOpenSignal={deviceMenuOpenSignal}
           projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
           className="min-h-10 rounded-t-[26px] bg-surface px-4"
           buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
@@ -286,7 +268,12 @@ export function ProjectChatComposer({
           onOpenSkillFile={onOpenSkillFile}
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-secondary outline-none placeholder:text-text-muted/55"
+          cloudMentionCandidates={cloudMentionCandidates}
+          conversationMentionCandidates={conversationMentionCandidates}
+          cloudProjectCandidates={cloudProjectCandidates}
+          cloudSpaceEnabled={cloudSpaceEnabled}
+          onSelectCloudProject={onSelectCloudProject}
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           onListLocalApps={onListLocalApps}
@@ -305,8 +292,10 @@ export function ProjectChatComposer({
           disabled={disabled}
           models={models}
           selectedModel={selectedModel}
+          activeModel={activeModel}
           selectedModelOptions={selectedModelOptions}
           modelSelectorOpenSignal={modelSelectorOpenSignal}
+          onModelSelectorOpenChange={onModelSelectorOpenChange}
           isModelSelectionReady={isModelSelectionReady}
           onSelectModel={onSelectModel}
           onSelectModelAndOptions={onSelectModelAndOptions}
@@ -325,7 +314,7 @@ export function ProjectChatComposer({
           onPause={onPause}
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
-          executionDevice={executionDevice}
+          leadingContext={toolbarLeadingContext}
         />
       </form>
     </div>

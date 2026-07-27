@@ -2,9 +2,46 @@ name: E2E Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    paths:
+      - ".github/workflows/e2e-tests.yml"
+      - ".github/scripts/archive-executor-e2e-runtime.sh"
+      - ".github/scripts/archive-frontend-e2e-build.sh"
+      - ".github/scripts/restore-executor-e2e-runtime.sh"
+      - ".github/scripts/restore-frontend-e2e-build.sh"
+      - ".github/scripts/start-frontend-e2e-server.sh"
+      - "backend/**"
+      - "chat_shell/**"
+      - "docker/**"
+      - "executor/**"
+      - "executor_manager/**"
+      - "frontend/**"
+      - "package.json"
+      - "packages/chat-core/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "shared/**"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/workflows/e2e-tests.yml"
+      - ".github/scripts/archive-executor-e2e-runtime.sh"
+      - ".github/scripts/archive-frontend-e2e-build.sh"
+      - ".github/scripts/restore-executor-e2e-runtime.sh"
+      - ".github/scripts/restore-frontend-e2e-build.sh"
+      - ".github/scripts/start-frontend-e2e-server.sh"
+      - "backend/**"
+      - "chat_shell/**"
+      - "docker/**"
+      - "executor/**"
+      - "executor_manager/**"
+      - "frontend/**"
+      - "package.json"
+      - "packages/chat-core/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "shared/**"
   schedule:
     # Run daily at 2 AM UTC
     - cron: "0 2 * * *"
@@ -12,12 +49,13 @@ on:
 
 # Cancel in-progress runs for the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-frontend-e2e:
     name: Build Frontend E2E Artifact
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -84,6 +122,7 @@ jobs:
 
   build-executor-e2e-runtime:
     name: Build Executor E2E Runtime Artifact
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -162,9 +201,13 @@ jobs:
           token=$(openssl rand -hex 32)
           bootstrap_admin_password=$(openssl rand -hex 32)
           e2e_admin_password=$(openssl rand -hex 32)
+          git_token_aes_key=$(openssl rand -hex 16)
+          git_token_aes_iv=$(openssl rand -hex 8)
           echo "::add-mask::$token"
           echo "::add-mask::$bootstrap_admin_password"
           echo "::add-mask::$e2e_admin_password"
+          echo "::add-mask::$git_token_aes_key"
+          echo "::add-mask::$git_token_aes_iv"
           {
             echo "E2E_INTERNAL_SERVICE_TOKEN=$token"
             echo "INTERNAL_SERVICE_TOKEN=$token"
@@ -172,6 +215,8 @@ jobs:
             echo "CHAT_SHELL_INTERNAL_SERVICE_TOKEN=$token"
             echo "E2E_BOOTSTRAP_ADMIN_PASSWORD=$bootstrap_admin_password"
             echo "E2E_ADMIN_PASSWORD=$e2e_admin_password"
+            echo "GIT_TOKEN_AES_KEY=$git_token_aes_key"
+            echo "GIT_TOKEN_AES_IV=$git_token_aes_iv"
           } >> "$GITHUB_ENV"
 
       - name: Checkout code
@@ -450,9 +495,13 @@ jobs:
           token=$(openssl rand -hex 32)
           bootstrap_admin_password=$(openssl rand -hex 32)
           e2e_admin_password=$(openssl rand -hex 32)
+          git_token_aes_key=$(openssl rand -hex 16)
+          git_token_aes_iv=$(openssl rand -hex 8)
           echo "::add-mask::$token"
           echo "::add-mask::$bootstrap_admin_password"
           echo "::add-mask::$e2e_admin_password"
+          echo "::add-mask::$git_token_aes_key"
+          echo "::add-mask::$git_token_aes_iv"
           {
             echo "E2E_INTERNAL_SERVICE_TOKEN=$token"
             echo "INTERNAL_SERVICE_TOKEN=$token"
@@ -460,10 +509,17 @@ jobs:
             echo "CHAT_SHELL_INTERNAL_SERVICE_TOKEN=$token"
             echo "E2E_BOOTSTRAP_ADMIN_PASSWORD=$bootstrap_admin_password"
             echo "E2E_ADMIN_PASSWORD=$e2e_admin_password"
+            echo "GIT_TOKEN_AES_KEY=$git_token_aes_key"
+            echo "GIT_TOKEN_AES_IV=$git_token_aes_iv"
           } >> "$GITHUB_ENV"
 
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Free executor E2E runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
 
       - name: Install executor Rust system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
@@ -878,7 +934,7 @@ jobs:
   merge-reports:
     name: Merge Test Reports
     needs: [e2e-tests, executor-e2e-tests]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

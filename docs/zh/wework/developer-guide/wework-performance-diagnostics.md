@@ -68,6 +68,16 @@ Debug 面板的快照会附带当前 runtime pane 的轻量内存摘要，用于
 
 前端显示对话时仍以 transcript/message action 生成的 `WorkbenchMessage` 为准；任务列表和状态轮询只用于状态、标题、运行态和 workspace 信息。排查“列表很慢”或“切换任务内存上涨”时，应优先确认是否又把原始消息或命令输出加入了 runtime list/handle/transcript 元数据路径。
 
+### Pane 缓存与资源生命周期
+
+桌面工作台最多缓存 10 个普通 pane，并按最近使用顺序淘汰。非活跃且已停止运行的 pane 会释放 transcript 消息、历史 DOM、分页范围、导航索引和 processing 展开状态；再次切回时从 runtime transcript 原始数据重新加载。
+
+Tauri 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。虚拟列表通过 `anchorTo: 'end'` 以列表末端为锚点；滚动快照统一表示为“视口底部到列表底部的距离”。库内共享 `ResizeObserver` 测量已挂载消息的真实高度。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
+
+每个对话只缓存有界的 TanStack 测量快照，并与距底部滚动快照一起恢复。修改这套逻辑时，应覆盖短对话、长对话、底部流式跟随、向上滚动后的文本锚点稳定性、历史位置恢复、切换后重开、导航强制挂载和归档缓存淘汰。
+
+Terminal 和内置浏览器属于有状态活动资源，不跟随普通 pane 淘汰。只要 pane 中仍有 Terminal 或浏览器标签，它就保持挂载，以保留终端进程和网页会话；关闭对应资源后，该 pane 才重新受普通缓存上限约束。修改这条边界时，必须同时覆盖普通 pane 的 LRU 淘汰、资源 pane 保活、消息行虚拟化和桌面内存 E2E。
+
 ## 本地 Codex 流式日志
 
 本地 executor 的 Codex 调试日志默认保留 delta 详情，便于定位流式输出顺序、阶段识别和最终内容覆盖问题。默认会记录 Codex 原始 delta 与运行态分类摘要。
@@ -114,19 +124,7 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 
 ## 现场取证
 
-普通 release 包默认不会编译 Tauri Web Inspector。需要排查 release 包时，先构建诊断包：
-
-```bash
-pnpm --filter wework build:mac:devtools
-```
-
-如果需要通过 macOS 发布脚本生成带更新元数据的诊断包，使用：
-
-```bash
-bash wework/scripts/release-mac-app.sh --target local --devtools
-```
-
-也可以设置 `WEWORK_RELEASE_DEVTOOLS=1`。启动诊断包后按隐藏快捷键打开 **Developer Commands**，选择 **Open Web Inspector**。如需启动时自动打开，可以用环境变量：
+release 包默认编译 Tauri Web Inspector 能力，但主 WebView 默认保持不可检查状态，因此其 WebKit 原生右键菜单不包含 Inspect Element。按隐藏快捷键打开 **Developer Commands** 并选择 **Open Web Inspector** 时，原生侧才会动态设置 `WKWebView.isInspectable` 并打开 Inspector；该入口与 Performance Diagnostics 开关相互独立，要求 macOS 13.3 或更高版本。内置浏览器是独立 WebView，会保留右键 Inspect Element。需要构建不含 Inspector 能力的发行包时，设置 `WEWORK_RELEASE_DEVTOOLS=0`。如需在本地诊断启动时自动打开，可以用环境变量：
 
 ```bash
 WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
@@ -148,6 +146,8 @@ window.__WEWORK_PERF__.snapshot();
 - `domNodeCount` 是否持续上涨。
 - 是否存在密集 `longtask` 或 `event-loop-lag`。
 - 是否存在重复的 `slow-react-commit`。
+
+主工作台的全高侧栏和横跨内容区的顶部栏应使用普通语义背景，避免在大面积常驻表面应用 `backdrop-filter`。这类滤镜可能让 WebKit 为整个区域保留额外图形 backing store；排查 Web Content 内存时，应在相同窗口尺寸和页面状态下比较启用前后的 `physical_footprint_kib`，并把 Web Inspector 堆快照产生的短期可回收内存高水位排除在稳定基线之外。
 
 也可以手动打点：
 

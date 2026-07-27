@@ -50,6 +50,7 @@ import {
   saveLocalModelConfig,
   splitLocalModelRequestUrl,
   type LocalModelConfig,
+  type LocalModelCatalogSnapshot,
   type LocalModelApiFormat,
   type LocalModelToolProfile,
   type LocalModelWebSearchMode,
@@ -695,7 +696,9 @@ function LocalModelSettingsSection({
   const [testResult, setTestResult] = useState<LocalModelTestResult | null>(null)
   const [pendingDiscardAction, setPendingDiscardAction] =
     useState<PendingLocalModelFormAction | null>(null)
-  const [catalogRestartConfirmation, setCatalogRestartConfirmation] = useState(false)
+  const [catalogRestartConfirmation, setCatalogRestartConfirmation] = useState<
+    LocalModelCatalogSnapshot[] | null
+  >(null)
   const [restartingCatalog, setRestartingCatalog] = useState(false)
 
   const refreshModels = useCallback(() => {
@@ -956,19 +959,22 @@ function LocalModelSettingsSection({
         enabled: form.enabled,
       })
       if (catalogEntry) {
+        const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+        const writtenCatalogSnapshot = catalogModels.map(({ id: modelId, updatedAt }) => ({
+          id: modelId,
+          updatedAt,
+        }))
         await requestLocalExecutor('runtime.codex.catalog.custom.write', {
-          models: listLocalModelConfigs().flatMap(model =>
-            model.catalogEntry ? [model.catalogEntry] : []
-          ),
+          models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
         })
         const restart = await requestLocalExecutor<{
           restarted: boolean
           requiresConfirmation: boolean
         }>('runtime.codex.app_server.restart', { ifIdle: true })
         if (restart.restarted) {
-          markLocalModelCatalogReady()
+          markLocalModelCatalogReady(writtenCatalogSnapshot)
         } else if (restart.requiresConfirmation) {
-          setCatalogRestartConfirmation(true)
+          setCatalogRestartConfirmation(writtenCatalogSnapshot)
         }
       }
       resetForm()
@@ -982,8 +988,8 @@ function LocalModelSettingsSection({
     setError(null)
     try {
       await requestLocalExecutor('runtime.codex.app_server.restart', { force: true })
-      markLocalModelCatalogReady()
-      setCatalogRestartConfirmation(false)
+      markLocalModelCatalogReady(catalogRestartConfirmation ?? [])
+      setCatalogRestartConfirmation(null)
     } catch (restartError) {
       setError(
         getErrorMessage(
@@ -1221,6 +1227,19 @@ function LocalModelSettingsSection({
                     placeholder={
                       form.modelId || t('workbench.local_model_display_name_placeholder')
                     }
+                    className={LOCAL_MODEL_FIELD_CLASS}
+                  />
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                  {t('workbench.local_model_group_label', '分组（可选）')}
+                  <input
+                    data-testid="local-model-group-input"
+                    value={form.group}
+                    onChange={event => updateForm({ group: event.target.value })}
+                    placeholder={t(
+                      'workbench.local_model_group_optional_placeholder',
+                      '留空则归入自定义模型'
+                    )}
                     className={LOCAL_MODEL_FIELD_CLASS}
                   />
                 </label>
@@ -1710,7 +1729,7 @@ function LocalModelSettingsSection({
       {catalogRestartConfirmation && (
         <LocalModelCatalogRestartDialog
           restarting={restartingCatalog}
-          onLater={() => setCatalogRestartConfirmation(false)}
+          onLater={() => setCatalogRestartConfirmation(null)}
           onRestart={() => void confirmCatalogRestart()}
         />
       )}

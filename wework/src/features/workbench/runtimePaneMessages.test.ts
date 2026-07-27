@@ -6,6 +6,42 @@ import {
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
+describe('runtime transcript status', () => {
+  test('does not infer streaming from an active conversation status', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-history',
+        role: 'assistant',
+        content: 'Finished answer',
+        status: 'active',
+        subtaskId: 'turn-1',
+      },
+    ])
+
+    expect(message.status).toBe('done')
+  })
+
+  test('restores Codex failure details from the runtime transcript', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-failed',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'The upstream response ended before a terminal event.',
+        errorType: 'response.failed',
+      },
+    ])
+
+    expect(message).toMatchObject({
+      status: 'failed',
+      error: 'The upstream response ended before a terminal event.',
+      errorType: 'response.failed',
+    })
+  })
+})
+
 describe('createRuntimeTaskStreamHandlers', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -361,6 +397,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       deviceId: 'device-1',
       offset: 0,
       result: {
+        turnId: 'turn-9',
         value: [
           '当前分支比 origin/main ahead 1，可以直接 push。',
           '',
@@ -373,6 +410,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions[0]).toMatchObject({
       type: 'assistant_done',
       subtaskId: 'subtask-9',
+      turnId: 'turn-9',
       content: '当前分支比 origin/main ahead 1，可以直接 push。',
     })
     expect(info).toHaveBeenCalledWith(

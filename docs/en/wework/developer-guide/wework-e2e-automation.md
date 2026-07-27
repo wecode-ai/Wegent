@@ -38,10 +38,16 @@ Run only the plugin marketplace, install, chat-use, and uninstall flow:
 pnpm --filter wework e2e:desktop:plugins
 ```
 
-Run the desktop streaming-memory regression on macOS:
+Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash
 pnpm --filter wework e2e:desktop:memory
+```
+
+Run only the regression that keeps “Thinking” below already-visible streaming assistant text and removes it after completion:
+
+```bash
+pnpm --filter wework e2e:desktop:streaming-text
 ```
 
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
@@ -82,9 +88,22 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 5. Sends a follow-up in the same conversation and verifies its request and rendered response.
 6. Starts a streaming response, cancels it through the desktop UI, verifies the stopped task state and rendered stop notice, then verifies the composer accepts a subsequent message.
 7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
-8. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
+8. Creates a short two-turn conversation, switches to a new conversation, reopens the original conversation, verifies that both user messages, both assistant messages, and all four unified virtual rows remain mounted, and confirms that the first message stays near the top of the viewport instead of losing content or leaving a large virtual-list gap.
+9. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
 
-The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a send → `apply_patch` → tool result → follow-up lifecycle, while real Codex executes the tool in the isolated workspace.
+The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real provider account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a text response plus a send → `apply_patch` → tool result → completion lifecycle, while real Codex executes the tool in the isolated workspace.
+
+The model protocol matrix defines 18 combinations across execution location, model source, and protocol:
+
+- Local execution covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
+- Cloud execution covers built-in Codex models and cloud Model CRDs across all three protocols, for 6 complete text and tool lifecycles.
+- Local custom models cannot run in cloud execution. The remaining 3 combinations assert that those models are absent from the cloud project's model selector.
+
+Matrix submissions use a 10-second timeout. If the composer already displays a submission error, the runner throws that exact error immediately. Otherwise, a stalled protocol stage reports its current stage and captured requests instead of waiting through the general UI timeout.
+
+`e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The test first verifies that “Thinking” appears below the visible reply, then scrolls upward while a long response continues to append, records a visible text anchor, and asserts that later streaming deltas do not move that anchor within the viewport. It also verifies that “Thinking” disappears after the response is released. The scenario retains screenshots for its ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
+
+The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
@@ -96,11 +115,17 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
 
-The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. Only the model Responses API used by Codex is simulated; Backend HTTP and WebSocket APIs must not be mocked. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
+The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
+
+Before validating local-executor models for a connected account, the cloud scenario selects its isolated directory through the current Projects → Local project entrypoint and confirms the name in the local-project creation dialog. Desktop E2E coverage must follow this primary product flow instead of relying on the removed existing-project test entrypoint.
+
+The GitHub Actions Executor E2E job loads a prebuilt Docker image after restoring Python, Node.js, and Playwright caches. It must first remove unused hosted-runner SDKs (.NET, Android, GHC, and CodeQL) and print disk usage so image extraction has stable headroom. The cleanup must not remove the running MySQL or Redis service images.
 
 The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, insertion of the plugin reference into the chat composer, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for all four critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
 
-The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. Every 500 milliseconds it samples the aggregate physical footprint of all associated WebKit Web Content processes, writing the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 512 MiB, settled growth after completion to 256 MiB, and continued growth during the settled window to 32 MiB. The first two limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` and `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`.
+The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. The test first waits for the Web Content memory baseline to stabilize, then samples the aggregate physical footprint of all associated WebKit Web Content processes every 500 milliseconds. It writes the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 384 MiB, settled growth after completion to 224 MiB, and the full physical-footprint range within the settled window to 16 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 900 retained nodes by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES`.
+
+The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, WebKit Web Content/GPU/Networking processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. The gate requires the whole process group to stay below an 800 MiB peak and can be adjusted with `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB`. The scenario also switches between the first and last tasks and waits for each task's prompt content to reappear.
 
 ## Responses API Mock
 
@@ -279,6 +304,13 @@ xvfb-run -a pnpm --filter wework e2e:desktop
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
 
+GitHub Actions runs the plugins, core, and cloud Linux desktop scenarios as a
+parallel matrix. Each scenario receives an isolated runner, HOME, Executor
+Home, ports, and diagnostic artifact. This preserves the existing real Tauri,
+Executor, and Codex verification semantics while removing the serial wait
+between the three scenarios. Matrix fail-fast is disabled so the remaining
+scenarios can finish and upload diagnostics when one scenario fails.
+
 The memory gate depends on macOS WebKit process association and physical-footprint sampling, so run it separately on a macOS runner:
 
 ```bash
@@ -287,5 +319,10 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
+Regular draft PRs do not run browser or Linux desktop E2E. The macOS memory gate
+runs by default only on `main`, scheduled runs, and manual runs. Add the
+`ci:memory` label when a PR must validate the memory boundary. Applying that
+label starts only the memory gate and does not repeat browser or Linux desktop
+E2E. The workflow also runs a complete regression every day at 04:00 UTC.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.

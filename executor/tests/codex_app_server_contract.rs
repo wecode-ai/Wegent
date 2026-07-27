@@ -447,7 +447,8 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
             "name": "request-docs",
             "type": "streamable-http",
             "url": "https://mcp.example.com/request-docs",
-            "bearer_token_env_var": "REQUEST_DOCS_TOKEN"
+            "bearer_token_env_var": "REQUEST_DOCS_TOKEN",
+            "headers": {"Authorization": "Bearer task-token"}
         })],
         model_config: json!({
             "model": "openai",
@@ -477,6 +478,10 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
     assert_config_arg(
         args,
         "mcp_servers.request-docs.bearer_token_env_var=\"REQUEST_DOCS_TOKEN\"",
+    );
+    assert_config_arg(
+        args,
+        "mcp_servers.request-docs.http_headers.Authorization=\"Bearer task-token\"",
     );
     assert_config_arg(args, "mcp_servers.bot-shell.command=\"uvx\"");
     assert_config_arg(args, "mcp_servers.bot-shell.args=[\"bot-tool\"]");

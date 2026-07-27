@@ -1,7 +1,9 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
+import type { CloudProject } from '@/api/deliveries'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
+import type { ConversationMentionCandidate } from '@/lib/conversation-mentions'
 import { displaySkillNameFromName, localSkillTestId } from './composerMentions'
 
 type CommonTranslate = ReturnType<typeof useTranslation>['t']
@@ -31,9 +33,50 @@ export type ComposerMentionCandidate =
       searchAliases: string[]
       app: LocalDeviceApp
     }
+  | {
+      kind: 'cloud'
+      key: string
+      title: string
+      description?: string
+      metaLabel: string
+      testId: string
+      enabled: boolean
+      reference: string
+      searchAliases: string[]
+      statusLabel?: string
+      project?: CloudProject
+    }
+  | {
+      kind: 'conversation'
+      key: string
+      title: string
+      description?: string
+      metaLabel: string
+      testId: string
+      enabled: boolean
+      reference: string
+      searchAliases: string[]
+      conversation: ConversationMentionCandidate
+    }
 
 export type ComposerSkillMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'skill' }>
 export type ComposerAppMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'app' }>
+export type ComposerCloudMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'cloud' }>
+export type ComposerConversationMentionCandidate = Extract<
+  ComposerMentionCandidate,
+  { kind: 'conversation' }
+>
+
+export function matchesMentionQuery(candidate: ComposerMentionCandidate, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return true
+  const description = candidate.description || ''
+  return (
+    candidate.title.toLowerCase().includes(normalizedQuery) ||
+    description.toLowerCase().includes(normalizedQuery) ||
+    candidate.searchAliases.some(alias => alias.toLowerCase().includes(normalizedQuery))
+  )
+}
 
 export function displaySkillName(skill: LocalDeviceSkill): string {
   return displaySkillNameFromName(skill.name)

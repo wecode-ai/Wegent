@@ -1,4 +1,15 @@
-import { AppWindow, ChevronDown, FileOutput, Folders, Loader2, Pencil, Save, X } from 'lucide-react'
+import {
+  AppWindow,
+  Check,
+  ChevronDown,
+  FileOutput,
+  Folder,
+  Folders,
+  Loader2,
+  Pencil,
+  Save,
+  X,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
@@ -29,9 +40,11 @@ import { WorkspaceFileTree } from './WorkspaceFileTree'
 
 interface FileWorkspacePanelProps {
   target: WorkspaceTarget | null
+  workspaceTargets?: WorkspaceTarget[]
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   onAddCodeComment: (context: CodeCommentContext) => void
+  onSelectWorkspaceTarget?: (target: WorkspaceTarget) => void
 }
 
 interface PreviewLineTarget {
@@ -115,6 +128,12 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
   return root === '/' ? `/${child}` : `${root}/${child}`
 }
 
+function workspaceParentPath(path: string): string {
+  const normalized = path.replace(/\/+$/, '')
+  const separatorIndex = normalized.lastIndexOf('/')
+  return separatorIndex > 0 ? normalized.slice(0, separatorIndex) : '/'
+}
+
 function createPreviewLineTarget(
   filePath: string,
   options?: WorkspaceFileOpenOptions
@@ -129,9 +148,11 @@ function createPreviewLineTarget(
 
 export function FileWorkspacePanel({
   target,
+  workspaceTargets = [],
   workspaceFileApi,
   openFileRequest,
   onAddCodeComment,
+  onSelectWorkspaceTarget,
 }: FileWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const targetDeviceId = target?.deviceId
@@ -158,6 +179,7 @@ export function FileWorkspacePanel({
   const [entriesByPath, setEntriesByPath] = useState<Record<string, WorkspaceFileEntry[]>>({})
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
+  const [selectedPathIsDirectory, setSelectedPathIsDirectory] = useState(false)
   const [preview, setPreview] = useState<WorkspaceTextFileResponse | null>(null)
   const [binaryPreview, setBinaryPreview] = useState<WorkspaceBinaryPreview | null>(null)
   const [previewLineTarget, setPreviewLineTarget] = useState<PreviewLineTarget | null>(null)
@@ -179,6 +201,7 @@ export function FileWorkspacePanel({
     null
   )
   const [fileOpenerMenuOpen, setFileOpenerMenuOpen] = useState(false)
+  const [workspaceTargetMenuOpen, setWorkspaceTargetMenuOpen] = useState(false)
   const [selectedApplicationPath, setSelectedApplicationPath] = useState<string | null>(null)
   const [, setFileOpenerIconCacheVersion] = useState(0)
   const treeRequestSequence = useRef(0)
@@ -187,6 +210,7 @@ export function FileWorkspacePanel({
   const fileRequestSequence = useRef(0)
   const fileOpenerRequestSequence = useRef(0)
   const fileOpenerMenuRef = useRef<HTMLDivElement>(null)
+  const workspaceTargetMenuRef = useRef<HTMLDivElement>(null)
 
   const warmFileOpenerIcons = useCallback(async (openers: LocalFileOpener[]) => {
     for (const opener of openers) {
@@ -295,6 +319,7 @@ export function FileWorkspacePanel({
       const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
       setSelectedFilePath(entry.path)
+      setSelectedPathIsDirectory(false)
       setSelectedApplicationPath(null)
       setPreviewLineTarget(nextLineTarget)
       setPreviewLoading(true)
@@ -376,17 +401,70 @@ export function FileWorkspacePanel({
       const resolvedPath = resolveWorkspaceFilePath(stableTarget, path)
       if (!resolvedPath) return
 
-      void openFile(
-        {
-          name: resolvedPath.split('/').pop() ?? resolvedPath,
-          path: resolvedPath,
-          isDirectory: false,
-          size: 0,
+      const openDirectoryPath = (entries?: WorkspaceFileEntry[]) => {
+        fileRequestSequence.current += 1
+        fileOpenerRequestSequence.current += 1
+        setSelectedFilePath(resolvedPath)
+        setSelectedPathIsDirectory(true)
+        setActiveDirectoryPath(resolvedPath)
+        setDirectoryTreeVisible(true)
+        setPreview(null)
+        setBinaryPreview(null)
+        setPreviewLineTarget(null)
+        setPreviewError(null)
+        setPreviewLoading(false)
+        setEditing(false)
+        setEditedContent('')
+        setSaveError(null)
+        setFileOpeners(null)
+        setFileOpenerMenuOpen(false)
+        setSelectedApplicationPath(null)
+        if (entries) {
+          setEntriesByPath(previous => ({
+            ...previous,
+            [resolvedPath]: entries,
+          }))
+          directoryLoadedAtByPath.current.set(resolvedPath, Date.now())
+          setExpandedPaths(previous => new Set(previous).add(resolvedPath))
+        } else {
+          void loadTree(resolvedPath)
+        }
+      }
+
+      if (options?.isDirectory) {
+        openDirectoryPath()
+        return
+      }
+
+      const openAsFile = () =>
+        void openFile(
+          {
+            name: resolvedPath.split('/').pop() ?? resolvedPath,
+            path: resolvedPath,
+            isDirectory: false,
+            size: 0,
+          },
+          options
+        )
+
+      if (options?.lineStart !== undefined) {
+        openAsFile()
+        return
+      }
+
+      void listWorkspaceEntries(stableTarget.deviceId, workspaceParentPath(resolvedPath)).then(
+        result => {
+          const entry = result.entries.find(candidate => candidate.path === resolvedPath)
+          if (entry?.isDirectory) {
+            openDirectoryPath()
+            return
+          }
+          openAsFile()
         },
-        options
+        openAsFile
       )
     },
-    [openFile, stableTarget]
+    [listWorkspaceEntries, loadTree, openFile, stableTarget]
   )
 
   const dirty = editing && preview !== null && editedContent !== preview.content
@@ -438,6 +516,7 @@ export function FileWorkspacePanel({
         setExpandedPaths(new Set())
         setActiveDirectoryPath(stableTarget.path)
         setSelectedFilePath(null)
+        setSelectedPathIsDirectory(false)
         setPreview(null)
         setEditing(false)
         setEditedContent('')
@@ -464,6 +543,7 @@ export function FileWorkspacePanel({
           openFilePath(openFileRequest.path, {
             lineStart: openFileRequest.lineStart,
             lineEnd: openFileRequest.lineEnd,
+            isDirectory: openFileRequest.isDirectory,
           })
         })
       }
@@ -477,6 +557,7 @@ export function FileWorkspacePanel({
     openFileRequest?.id,
     openFileRequest?.lineEnd,
     openFileRequest?.lineStart,
+    openFileRequest?.isDirectory,
     openFileRequest?.path,
   ])
 
@@ -512,6 +593,26 @@ export function FileWorkspacePanel({
     }
   }, [fileOpenerMenuOpen])
 
+  useEffect(() => {
+    if (!workspaceTargetMenuOpen) return
+
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      if (!workspaceTargetMenuRef.current?.contains(event.target as Node)) {
+        setWorkspaceTargetMenuOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setWorkspaceTargetMenuOpen(false)
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointerDown)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointerDown)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [workspaceTargetMenuOpen])
+
   if (!stableTarget) {
     return (
       <section className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-text-muted">
@@ -528,9 +629,13 @@ export function FileWorkspacePanel({
     Boolean(selectedFilePath) &&
     isLocalTerminalAvailable()
   const compatibleFileOpeners =
-    fileOpeners?.filePath === selectedFilePath ? fileOpeners.applications : []
+    !selectedPathIsDirectory && fileOpeners?.filePath === selectedFilePath
+      ? fileOpeners.applications
+      : []
   const defaultApplicationPath =
-    fileOpeners?.filePath === selectedFilePath ? fileOpeners.default_path : null
+    !selectedPathIsDirectory && fileOpeners?.filePath === selectedFilePath
+      ? fileOpeners.default_path
+      : null
   const activeApplication = compatibleFileOpeners.find(
     opener => opener.path === (selectedApplicationPath ?? defaultApplicationPath)
   )
@@ -557,6 +662,18 @@ export function FileWorkspacePanel({
   const directoryTreeToggleLabel = directoryTreeVisible
     ? t('workbench.workspace_file_hide_tree')
     : t('workbench.workspace_file_show_tree')
+  const selectableWorkspaceTargets = workspaceTargets.filter(
+    (candidate, index, targets) =>
+      targets.findIndex(
+        item => item.deviceId === candidate.deviceId && item.path === candidate.path
+      ) === index
+  )
+  const selectedWorkspaceTargetLabel =
+    stableTarget.path
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .at(-1) || stableTarget.path
 
   const toggleFileOpenerMenu = async () => {
     if (fileOpenerMenuOpen) {
@@ -565,6 +682,7 @@ export function FileWorkspacePanel({
     }
     if (!selectedFilePath || !canOpenFile) return
     setFileOpenerMenuOpen(true)
+    if (selectedPathIsDirectory) return
     if (fileOpeners?.filePath === selectedFilePath) return
     void loadFileOpeners(selectedFilePath)
   }
@@ -582,6 +700,60 @@ export function FileWorkspacePanel({
           {displayPath}
         </p>
         <div className="flex shrink-0 items-center gap-1">
+          {selectableWorkspaceTargets.length > 1 && onSelectWorkspaceTarget && (
+            <div ref={workspaceTargetMenuRef} className="relative">
+              <button
+                type="button"
+                data-testid="workspace-file-root-selector"
+                aria-expanded={workspaceTargetMenuOpen}
+                aria-label={t('workbench.workspace_file_choose_root')}
+                onClick={() => setWorkspaceTargetMenuOpen(open => !open)}
+                className="flex h-[30px] max-w-52 items-center gap-1.5 rounded-lg border border-border bg-background px-2 text-sm text-text-primary hover:bg-muted"
+              >
+                <Folder className="h-4 w-4 shrink-0 text-text-secondary" />
+                <span className="min-w-0 truncate">{selectedWorkspaceTargetLabel}</span>
+                <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
+              </button>
+              {workspaceTargetMenuOpen && (
+                <div
+                  data-testid="workspace-file-root-menu"
+                  role="menu"
+                  className="absolute right-0 top-9 z-system-popover w-64 rounded-xl border border-border bg-popover p-1.5 shadow-lg"
+                >
+                  {selectableWorkspaceTargets.map(candidate => {
+                    const selected =
+                      candidate.deviceId === stableTarget.deviceId &&
+                      candidate.path === stableTarget.path
+                    const label =
+                      candidate.path
+                        .replace(/[\\/]+$/, '')
+                        .split(/[\\/]/)
+                        .filter(Boolean)
+                        .at(-1) || candidate.path
+                    return (
+                      <button
+                        key={`${candidate.deviceId}:${candidate.path}`}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={selected}
+                        data-testid={`workspace-file-root-option-${candidate.path}`}
+                        title={candidate.path}
+                        onClick={() => {
+                          setWorkspaceTargetMenuOpen(false)
+                          onSelectWorkspaceTarget(candidate)
+                        }}
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
+                      >
+                        <Folder className="h-4 w-4 shrink-0 text-text-secondary" />
+                        <span className="min-w-0 flex-1 truncate">{label}</span>
+                        {selected && <Check className="h-4 w-4 shrink-0" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
           {preview?.editable && writeWorkspaceTextFile && !editing && (
             <button
               type="button"
