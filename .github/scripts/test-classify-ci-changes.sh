@@ -54,4 +54,14 @@ all_true="${all_false//false/true}"
 assert_case "workflow changes validate all modules" "$all_true" \
   ".github/workflows/test.yml"
 
+for workflow in e2e-tests.yml wework-e2e.yml; do
+  if ! sed -n '/^  pull_request:/,/^  [a-z_]*:/p' \
+    "$script_dir/../workflows/$workflow" |
+    grep -q "ready_for_review"; then
+    printf '%s must run E2E when a draft PR becomes ready for review\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+done
+
 printf 'CI change classifier tests passed\n'
