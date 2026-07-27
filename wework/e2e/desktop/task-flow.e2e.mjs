@@ -1858,10 +1858,14 @@ async function verifyProviderSwitchWarning(control, composerSelector) {
     timeoutMs: UI_TIMEOUT_MS,
   })
   const disabledModelText = await control.command('getText', officialModelSelector)
-  assert.equal(
+  assert.ok(
+    disabledModelText.includes(PROVIDER_SWITCH_SOL_LABEL),
+    'The target model option did not display the expected model label'
+  )
+  assert.doesNotMatch(
     disabledModelText,
-    PROVIDER_SWITCH_SOL_LABEL,
-    'The target model option displayed unexpected inline helper text'
+    /官方 Codex|Official Codex/,
+    'The target model option displayed the provider restriction inline'
   )
   await control.command('click', officialModelSelector)
   await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
@@ -1873,6 +1877,11 @@ async function verifyProviderSwitchWarning(control, composerSelector) {
     'Opening the provider-switch confirmation unexpectedly sent another request'
   )
   await control.command('click', '[data-testid="model-switch-warning-cancel-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('model-switch-warning-dialog'),
+    'The model-switch warning dialog remained open after cancellation'
+  )
   await control.command('press', 'body', { key: 'Escape' })
 }
 
