@@ -3,24 +3,39 @@ import type {
   InstalledPluginListResponse,
   InstalledPluginUpdateRequest,
   PluginMarketplaceInstallResponse,
+  PluginMarketplaceCapabilities,
   PluginMarketplaceListResponse,
-  PluginMarketplacePublishResponse,
+  PluginSubmissionCompleteResponse,
+  PluginSubmissionInitRequest,
+  PluginSubmissionInitResponse,
+  PluginSubmissionItem,
 } from '@/types/api'
 import type { HttpClient } from './http'
+import { shouldUseTauriFetch } from './http'
+import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 
 export function createPluginApi(client: HttpClient) {
+  const deviceQuery = (deviceId?: string) => {
+    const normalized = deviceId?.trim()
+    return normalized ? `?device_id=${encodeURIComponent(normalized)}` : ''
+  }
+
   return {
-    listInstalledPlugins(): Promise<InstalledPluginListResponse> {
-      return client.get('/plugins/installed')
+    getCapabilities(): Promise<PluginMarketplaceCapabilities> {
+      return client.get('/plugins/capabilities')
+    },
+    listInstalledPlugins(deviceId?: string): Promise<InstalledPluginListResponse> {
+      return client.get(`/plugins/installed${deviceQuery(deviceId)}`)
     },
     updateInstalledPlugin(
       id: string | number,
-      data: InstalledPluginUpdateRequest
+      data: InstalledPluginUpdateRequest,
+      deviceId?: string
     ): Promise<InstalledPlugin> {
-      return client.put(`/plugins/installed/${id}`, data)
+      return client.put(`/plugins/installed/${id}${deviceQuery(deviceId)}`, data)
     },
-    uninstallInstalledPlugin(id: string | number): Promise<void> {
-      return client.delete(`/plugins/installed/${id}`)
+    uninstallInstalledPlugin(id: string | number, deviceId?: string): Promise<void> {
+      return client.delete(`/plugins/installed/${id}${deviceQuery(deviceId)}`)
     },
     uploadPlugin(file: File, enabled = true): Promise<InstalledPlugin> {
       const formData = new FormData()
@@ -29,27 +44,68 @@ export function createPluginApi(client: HttpClient) {
       return client.post('/plugins/upload', formData)
     },
     listMarketplacePlugins(
-      params: { q?: string; source?: string } = {}
+      params: { q?: string; source?: string; deviceId?: string } = {}
     ): Promise<PluginMarketplaceListResponse> {
       const query = new URLSearchParams()
       if (params.q?.trim()) query.set('q', params.q.trim())
       if (params.source) query.set('source', params.source)
+      if (params.deviceId?.trim()) query.set('device_id', params.deviceId.trim())
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/plugins/marketplace${suffix}`)
     },
-    installMarketplacePlugin(id: string | number): Promise<PluginMarketplaceInstallResponse> {
-      return client.post(`/plugins/marketplace/${id}/install`)
+    installMarketplacePlugin(
+      id: string | number,
+      deviceId?: string
+    ): Promise<PluginMarketplaceInstallResponse> {
+      return client.post(`/plugins/marketplace/${id}/install${deviceQuery(deviceId)}`)
     },
-    publishMarketplacePlugin(
+    updateMarketplacePlugin(
+      installedId: string | number,
+      releaseId: number,
+      deviceId?: string
+    ): Promise<InstalledPlugin> {
+      return client.put(`/plugins/installed/${installedId}${deviceQuery(deviceId)}`, { releaseId })
+    },
+    initSubmission(data: PluginSubmissionInitRequest): Promise<PluginSubmissionInitResponse> {
+      return client.post('/plugins/submissions/init', data)
+    },
+    completeSubmission(id: number): Promise<PluginSubmissionCompleteResponse> {
+      return client.post(`/plugins/submissions/${id}/complete`)
+    },
+    getSubmission(id: number): Promise<PluginSubmissionItem> {
+      return client.get(`/plugins/submissions/${id}`)
+    },
+    async publishSubmission(
       file: File,
-      visibility: 'personal' | 'workspace' | 'public' = 'workspace',
-      featured = false
-    ): Promise<PluginMarketplacePublishResponse> {
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('visibility', visibility)
-      formData.append('featured', String(featured))
-      return client.post('/plugins/marketplace/publish', formData)
+      metadata: Pick<
+        PluginSubmissionInitRequest,
+        'slug' | 'displayName' | 'version' | 'listingType'
+      >
+    ): Promise<PluginSubmissionItem> {
+      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+      const sha256 = Array.from(new Uint8Array(digest), byte =>
+        byte.toString(16).padStart(2, '0')
+      ).join('')
+      const initialized = await client.post<PluginSubmissionInitResponse>(
+        '/plugins/submissions/init',
+        {
+          ...metadata,
+          filename: file.name,
+          sha256,
+          sizeBytes: file.size,
+        }
+      )
+      const uploadTransport = shouldUseTauriFetch() ? tauriFetch : globalThis.fetch.bind(globalThis)
+      const upload = await uploadTransport(initialized.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/zip' },
+        body: file,
+      })
+      if (!upload.ok) throw new Error(`Plugin upload failed with HTTP ${upload.status}`)
+      const completed = await client.post<PluginSubmissionCompleteResponse>(
+        `/plugins/submissions/${initialized.submissionId}/complete`
+      )
+      return completed.submission
     },
   }
 }

@@ -5,6 +5,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { createHttpClient } from '@/api/http'
 import { createMcpApi } from '@/api/mcps'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { createPluginApi } from '@/api/plugins'
 import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
@@ -26,6 +27,11 @@ import {
   type InstalledPluginItem,
   type InstalledSkillItem,
 } from './PluginManagementRows'
+import {
+  installedPluginSourceLabel,
+  isCloudManagedInstalledPlugin,
+  mergeInstalledPlugins,
+} from './installedPluginMerge'
 import { PluginCreateMenu } from './PluginCreateMenu'
 import { PluginDetailView } from './PluginDetailView'
 import { SkillUploadDialog } from './SkillUploadDialog'
@@ -133,6 +139,9 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
     description: item.spec.description,
     enabled: item.spec.enabled,
     version: item.spec.version,
+    origin: item.spec.origin ?? (item.spec.source.type === 'local' ? 'created' : 'market'),
+    sourceLabel: installedPluginSourceLabel(item),
+    updateAvailable: item.spec.installState === 'update_available',
     componentCounts: {
       skills: components.skills.length,
       apps: components.apps?.length ?? 0,
@@ -211,8 +220,10 @@ export function PluginManagementWorkspace({
   const [activeTab, setActiveTab] = useState<ManagementTab>('plugins')
   const [query, setQuery] = useState('')
   const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
-  const pluginApi = useMemo(() => {
-    return createLocalCodexPluginApi()
+  const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const cloudPluginApi = useMemo(() => {
+    const { apiBaseUrl } = getRuntimeConfig()
+    return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
   }, [])
   const mcpApi = useMemo(() => {
     const { apiBaseUrl } = getRuntimeConfig()
@@ -237,6 +248,7 @@ export function PluginManagementWorkspace({
   const [isLoadingMcps, setIsLoadingMcps] = useState(true)
   const [isLoadingPlugins, setIsLoadingPlugins] = useState(true)
   const [isLoadingSkills, setIsLoadingSkills] = useState(true)
+  const [currentDeviceId, setCurrentDeviceId] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
 
   useEffect(() => {
@@ -269,17 +281,34 @@ export function PluginManagementWorkspace({
         setIsLoadingMcps(false)
       })
 
-    pluginApi
-      .listInstalledPlugins()
-      .then(response => {
+    localPluginApi
+      .readState()
+      .then(state => {
         if (!isCurrent) return
-        setInstalledPlugins(response.items.map(toInstalledPluginItem))
-        setIsLoadingPlugins(false)
+        setCurrentDeviceId(state.deviceId)
+        const localItems = state.installedPlugins
+        return cloudPluginApi
+          .listInstalledPlugins(state.deviceId)
+          .then(cloudInstalled =>
+            mergeInstalledPlugins(cloudInstalled.items, localItems, state.deviceId).map(
+              toInstalledPluginItem
+            )
+          )
+          .catch(() => {
+            if (!isCurrent) return
+            return mergeInstalledPlugins([], localItems, state.deviceId).map(toInstalledPluginItem)
+          })
+      })
+      .then(items => {
+        if (!isCurrent || !items) return
+        setInstalledPlugins(items)
       })
       .catch(() => {
         if (!isCurrent) return
         setInstalledPlugins([])
-        setIsLoadingPlugins(false)
+      })
+      .finally(() => {
+        if (isCurrent) setIsLoadingPlugins(false)
       })
 
     mcpApi
@@ -296,7 +325,7 @@ export function PluginManagementWorkspace({
     return () => {
       isCurrent = false
     }
-  }, [mcpApi, pluginApi, systemSkillApi])
+  }, [cloudPluginApi, localPluginApi, mcpApi, systemSkillApi])
 
   const filteredInstalledSkills = useMemo(
     () =>
@@ -425,7 +454,14 @@ export function PluginManagementWorkspace({
     setInstalledPlugins(previous =>
       previous.map(item => (item.id === id ? { ...item, enabled: !item.enabled } : item))
     )
-    pluginApi.updateInstalledPlugin(id, { enabled: !plugin.enabled }).catch(() => {
+    const updatePromise = isCloudManagedInstalledPlugin(plugin.raw)
+      ? cloudPluginApi.updateInstalledPlugin(
+          id,
+          { enabled: !plugin.enabled },
+          currentDeviceId || undefined
+        )
+      : localPluginApi.updateInstalledPlugin(id, { enabled: !plugin.enabled })
+    updatePromise.catch(() => {
       setInstalledPlugins(previous =>
         previous.map(item => (item.id === id ? { ...item, enabled: plugin.enabled } : item))
       )
@@ -454,8 +490,14 @@ export function PluginManagementWorkspace({
           : item
       )
     )
-    pluginApi
-      .updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
+    const updatePromise = isCloudManagedInstalledPlugin(plugin.raw)
+      ? cloudPluginApi.updateInstalledPlugin(
+          id,
+          { componentStates: { [componentKey]: enabled } },
+          currentDeviceId || undefined
+        )
+      : localPluginApi.updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
+    updatePromise
       .then(updated => {
         const nextItem = toInstalledPluginItem(updated)
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
@@ -471,8 +513,10 @@ export function PluginManagementWorkspace({
 
     setInstalledPlugins(previous => previous.filter(item => item.id !== id))
     setSelectedPluginId(current => (current === id ? null : current))
-    pluginApi
-      .uninstallInstalledPlugin(id)
+    const uninstallPromise = isCloudManagedInstalledPlugin(plugin.raw)
+      ? cloudPluginApi.uninstallInstalledPlugin(id, currentDeviceId || undefined)
+      : localPluginApi.uninstallInstalledPlugin(id)
+    uninstallPromise
       .then(() => notifyLocalPluginSkillsChanged())
       .catch(() => {
         setInstalledPlugins(previous => [...previous, plugin])
@@ -660,7 +704,7 @@ export function PluginManagementWorkspace({
               onToggle={() => setIsCreateMenuOpen(previous => !previous)}
               onCreateSkill={() => {
                 setIsCreateMenuOpen(false)
-                setShowSkillUploadDialog(true)
+                navigateTo('/plugins/create?type=skill')
               }}
               onCreateMcp={() => {
                 setIsCreateMenuOpen(false)

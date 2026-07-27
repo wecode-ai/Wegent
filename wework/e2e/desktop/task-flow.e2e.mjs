@@ -531,23 +531,33 @@ async function verifyPluginLifecycle(control, marketplacePath) {
   const initialSnapshot = await waitForSnapshot(
     control,
     snapshot =>
+      snapshot.testIds.includes('plugins-search-input') ||
+      snapshot.testIds.includes('plugins-marketplace-tab-default') ||
       snapshot.testIds.includes('plugins-add-custom-marketplace-empty-button') ||
       snapshot.testIds.includes('plugins-add-marketplace-button'),
     'The plugin marketplace controls did not become ready'
   )
+
   if (initialSnapshot.testIds.includes('plugins-add-custom-marketplace-empty-button')) {
     await control.command('click', '[data-testid="plugins-add-custom-marketplace-empty-button"]')
+    await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
+      value: marketplacePath,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
   } else {
     await control.command('click', '[data-testid="plugins-add-marketplace-button"]')
     await control.command('click', '[data-testid="plugins-add-custom-marketplace-button"]')
+    await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
+      value: marketplacePath,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
   }
-  await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
-    value: marketplacePath,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
 
   const marketplaceSnapshot = await waitForSnapshot(
     control,

@@ -18,6 +18,13 @@ from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
+from app.models.plugin_marketplace import (
+    Plugin,
+    PluginDeviceInstallation,
+    PluginRelease,
+    PluginSubmission,
+    PluginUpstream,
+)
 from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
@@ -64,6 +71,11 @@ __all__ = [
     "APIKey",
     "KnowledgeDocument",
     "Project",
+    "Plugin",
+    "PluginRelease",
+    "PluginUpstream",
+    "PluginSubmission",
+    "PluginDeviceInstallation",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",
     "BackgroundExecution",

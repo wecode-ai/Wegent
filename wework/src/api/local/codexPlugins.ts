@@ -20,6 +20,7 @@ export interface LocalCodexPluginsState {
   selectedMarketplaceId: string
   marketplacePath: string
   installRegistryPath: string
+  deviceId: string
 }
 
 export interface LocalCodexHomeMigrationStatus {
@@ -70,6 +71,7 @@ export interface LocalCodexPluginApi {
   migrateNativeCodexHome(remoteAppsEnabled?: boolean): Promise<LocalCodexHomeMigrationStatus>
   readCodexLocalConfig(): Promise<LocalCodexLocalConfig>
   updateCodexLocalConfig(patch: LocalCodexLocalConfigPatch): Promise<LocalCodexLocalConfig>
+  packageCreatedPlugin(plugin: InstalledPlugin): Promise<File>
   readState(params?: {
     q?: string
     marketplaceId?: string
@@ -103,6 +105,7 @@ const emptyState: LocalCodexPluginsState = {
   selectedMarketplaceId: '',
   marketplacePath: '',
   installRegistryPath: '',
+  deviceId: '',
 }
 
 interface CodexPluginMarketplaceEntry {
@@ -397,6 +400,7 @@ function toInstalledPlugin(
   detail?: CodexPluginDetail | null
 ): InstalledPlugin {
   const components = pluginComponents(detail)
+  const isCreated = marketplace.name === 'wegent-personal'
   const skillStates = Object.fromEntries(
     (detail?.skills ?? []).map(skill => [`skill:${skill.name}`, skill.enabled])
   )
@@ -410,11 +414,12 @@ function toInstalledPlugin(
     },
     spec: {
       source: {
-        type: 'marketplace',
+        type: isCreated ? 'local' : 'marketplace',
         providerKey: marketplace.name,
         pluginKey: plugin.name,
         catalogItemId: plugin.remotePluginId ?? plugin.id,
       },
+      origin: isCreated ? 'created' : 'market',
       displayName: pluginDisplayName(plugin),
       description: pluginDescription(plugin, detail),
       version: plugin.localVersion ?? null,
@@ -433,7 +438,10 @@ function toInstalledPlugin(
       components,
       interface: plugin.interface ?? null,
       packageRef: null,
-      sourcePayload: sourcePayload(marketplace, plugin),
+      sourcePayload: {
+        ...sourcePayload(marketplace, plugin),
+        localId: isCreated ? plugin.id : null,
+      },
     },
     status: { state: plugin.enabled ? 'enabled' : 'disabled' },
   }
@@ -480,6 +488,7 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isTauriRuntime()) return emptyState
+  const executorStatus = await ensureLocalExecutorStarted()
   const requestedMarketplaceId = params.marketplaceId?.trim() || selectedMarketplaceId()
   const [availableResponse, installedResponse] = await Promise.all([
     codexAppServerRequest<{
@@ -520,6 +529,7 @@ async function readState(
       availableMarketplaces.find(marketplace => marketplace.name === selectedId)?.path ??
       selectedId,
     installRegistryPath: '',
+    deviceId: executorStatus.deviceId?.trim() ?? '',
   }
   cachedState = state
   rememberSelectedMarketplaceId(selectedId)
@@ -584,6 +594,27 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         return Promise.resolve({ ...defaultCodexLocalConfig, ...patch })
       }
       return invoke<LocalCodexLocalConfig>('local_executor_update_codex_local_config', { patch })
+    },
+    async packageCreatedPlugin(plugin) {
+      if (!isTauriRuntime()) {
+        throw new Error('Packaging a local plugin requires the Wework desktop app')
+      }
+      const sourcePayload = plugin.spec.sourcePayload ?? {}
+      const marketplacePath = sourcePayload.marketplacePath
+      const pluginName = sourcePayload.pluginName
+      if (typeof marketplacePath !== 'string' || !marketplacePath.trim()) {
+        throw new Error('Local plugin marketplace path is unavailable')
+      }
+      if (typeof pluginName !== 'string' || !pluginName.trim()) {
+        throw new Error('Local plugin name is unavailable')
+      }
+      const packaged = await invoke<{ name: string; bytes: number[] }>(
+        'local_executor_package_plugin',
+        { marketplacePath, pluginName }
+      )
+      return new File([new Uint8Array(packaged.bytes)], packaged.name, {
+        type: 'application/zip',
+      })
     },
     readState(params = {}) {
       return readState({

@@ -170,7 +170,7 @@ async fn default_local_backend_runner_wires_capability_sync_and_code_server_sess
 }
 
 #[tokio::test]
-async fn http_capability_provider_encodes_namespace_and_rejects_external_package_urls() {
+async fn http_capability_provider_supports_signed_external_package_urls_without_auth() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let backend_url = serve_one_http_response(skill_zip_bytes(), Arc::clone(&requests)).await;
     let provider = HttpPackageProvider::new(backend_url, "secret-token");
@@ -212,11 +212,27 @@ async fn http_capability_provider_encodes_namespace_and_rejects_external_package
         "{request}"
     );
 
-    let error = provider
-        .download_plugin("https://example.com/not-backend.zip")
+    let external_requests = Arc::new(Mutex::new(Vec::new()));
+    let external_url =
+        serve_one_http_response(skill_zip_bytes(), Arc::clone(&external_requests)).await;
+    let package = provider
+        .download_plugin(&format!(
+            "{external_url}/signed-plugin.zip?token=short-lived"
+        ))
         .await
-        .unwrap_err();
-    assert!(error.to_string().contains("backend origin"));
+        .unwrap();
+    assert!(!package.is_empty());
+    let external_request = external_requests.lock().unwrap().first().cloned().unwrap();
+    assert!(
+        external_request.starts_with("GET /signed-plugin.zip?token=short-lived HTTP/1.1"),
+        "{external_request}"
+    );
+    assert!(
+        !external_request
+            .to_ascii_lowercase()
+            .contains("authorization:"),
+        "{external_request}"
+    );
 }
 
 #[tokio::test]

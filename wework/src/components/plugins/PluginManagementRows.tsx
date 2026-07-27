@@ -24,6 +24,9 @@ export interface InstalledPluginItem {
   description: string
   enabled: boolean
   version?: string | null
+  origin: 'created' | 'market'
+  sourceLabel: string
+  updateAvailable: boolean
   componentCounts: Record<string, number>
   raw: InstalledPlugin
 }
@@ -181,6 +184,17 @@ export function InstalledPluginRow({
           {plugin.version && (
             <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
               {plugin.version}
+            </span>
+          )}
+          <span
+            data-testid={`installed-plugin-origin-${plugin.id}`}
+            className="rounded-md border border-border px-2 py-0.5 text-xs font-medium text-text-muted"
+          >
+            {plugin.sourceLabel}
+          </span>
+          {plugin.updateAvailable && (
+            <span className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
+              {t('workbench.plugins_update_available', '可更新')}
             </span>
           )}
         </div>

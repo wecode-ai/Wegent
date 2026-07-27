@@ -51,9 +51,18 @@ const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = if cfg!(debug_assertions) { 60 } 
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
+const MAX_PLUGIN_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
+const MAX_PLUGIN_EXPANDED_BYTES: u64 = 200 * 1024 * 1024;
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalPluginPackage {
+    name: String,
+    bytes: Vec<u8>,
+}
 
 pub struct LocalExecutorState {
     inner: SharedExecutorInner,
@@ -2132,6 +2141,124 @@ pub async fn local_executor_migrate_native_codex_home() -> Result<CodexHomeMigra
     .await
 }
 
+fn collect_plugin_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    fn visit(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+        let mut entries = fs::read_dir(directory)
+            .map_err(|error| format!("Failed to read {}: {error}", directory.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Failed to read {}: {error}", directory.display()))?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "Plugin package cannot contain symbolic links: {}",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir() {
+                visit(root, &path, files)?;
+            } else if metadata.is_file() {
+                path.strip_prefix(root)
+                    .map_err(|_| "Plugin file escaped its package root".to_string())?;
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    visit(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn package_local_plugin(
+    marketplace_path: &Path,
+    plugin_name: &str,
+) -> Result<LocalPluginPackage, String> {
+    let normalized_name = plugin_name.trim();
+    if normalized_name.is_empty()
+        || normalized_name.contains('/')
+        || normalized_name.contains('\\')
+        || normalized_name == "."
+        || normalized_name == ".."
+    {
+        return Err("Plugin name is invalid".to_string());
+    }
+    let marketplace_root = marketplace_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve local marketplace: {error}"))?;
+    let candidates = [
+        marketplace_root.join("plugins").join(normalized_name),
+        marketplace_root.join(normalized_name),
+    ];
+    let plugin_root = candidates
+        .iter()
+        .find(|candidate| candidate.join(".codex-plugin/plugin.json").is_file())
+        .ok_or_else(|| "Local plugin is missing .codex-plugin/plugin.json".to_string())?
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve local plugin: {error}"))?;
+    if !plugin_root.starts_with(&marketplace_root) {
+        return Err("Local plugin is outside its marketplace".to_string());
+    }
+
+    let files = collect_plugin_files(&plugin_root)?;
+    let expanded_size = files.iter().try_fold(0_u64, |total, path| {
+        let size = fs::metadata(path)
+            .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+            .len();
+        total
+            .checked_add(size)
+            .ok_or_else(|| "Plugin package size overflow".to_string())
+    })?;
+    if expanded_size > MAX_PLUGIN_EXPANDED_BYTES {
+        return Err("Expanded plugin package exceeds 200 MB".to_string());
+    }
+
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut archive = zip::ZipWriter::new(cursor);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for path in files {
+        let relative = path
+            .strip_prefix(&plugin_root)
+            .map_err(|_| "Plugin file escaped its package root".to_string())?;
+        let archive_path = relative.to_string_lossy().replace('\\', "/");
+        archive
+            .start_file(&archive_path, options)
+            .map_err(|error| format!("Failed to add {archive_path}: {error}"))?;
+        let mut file = fs::File::open(&path)
+            .map_err(|error| format!("Failed to open {}: {error}", path.display()))?;
+        std::io::copy(&mut file, &mut archive)
+            .map_err(|error| format!("Failed to package {archive_path}: {error}"))?;
+    }
+    let bytes = archive
+        .finish()
+        .map_err(|error| format!("Failed to finish plugin package: {error}"))?
+        .into_inner();
+    if bytes.len() > MAX_PLUGIN_PACKAGE_BYTES {
+        return Err("Plugin ZIP exceeds 50 MB".to_string());
+    }
+    Ok(LocalPluginPackage {
+        name: format!("{normalized_name}.zip"),
+        bytes,
+    })
+}
+
+#[tauri::command]
+pub async fn local_executor_package_plugin(
+    marketplace_path: String,
+    plugin_name: String,
+) -> Result<LocalPluginPackage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        package_local_plugin(Path::new(&marketplace_path), &plugin_name)
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin packaging task: {error}"))?
+}
+
 #[tauri::command]
 pub async fn local_executor_import_external_content(
     options: ExternalContentImportOptions,
@@ -2281,6 +2408,28 @@ mod tests {
         } else {
             std::env::remove_var(key);
         }
+    }
+
+    #[test]
+    fn packages_a_personal_codex_plugin_without_manual_zip_selection() {
+        let root = import_test_root("package-plugin");
+        let plugin_root = root.join("plugins/gitlab");
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
+        fs::create_dir_all(plugin_root.join("skills/review")).unwrap();
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            r#"{"name":"gitlab","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        fs::write(plugin_root.join("skills/review/SKILL.md"), "# Review").unwrap();
+
+        let package = package_local_plugin(&root, "gitlab").unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package.bytes)).unwrap();
+
+        assert_eq!(package.name, "gitlab.zip");
+        assert!(archive.by_name(".codex-plugin/plugin.json").is_ok());
+        assert!(archive.by_name("skills/review/SKILL.md").is_ok());
+        let _ = fs::remove_dir_all(root);
     }
 
     fn import_test_root(label: &str) -> PathBuf {

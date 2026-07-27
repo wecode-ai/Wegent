@@ -522,6 +522,13 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
 
+    # Plugin marketplace package storage and controlled publishing.
+    PLUGIN_STORAGE_BUCKET: str = "plugins"
+    PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
+    PLUGIN_PUBLISH_ENABLED: bool = False
+    PLUGIN_PUBLISH_USER_IDS: list[int] = []
+    PLUGIN_LEGACY_UPLOAD_ENABLED: bool = False
+
     # Attachment encryption configuration
     # Enable/disable AES-256-CBC encryption for attachment binary data
     # When enabled, all newly uploaded attachments will be encrypted

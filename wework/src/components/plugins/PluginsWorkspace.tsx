@@ -1,21 +1,13 @@
 import {
-  ArrowDown,
-  ArrowUp,
   BookOpen,
   Boxes,
-  Check,
   ImageIcon,
   MoreHorizontal,
-  Pencil,
-  Plus,
   RefreshCw,
   Search,
-  Settings,
-  SlidersHorizontal,
   Sparkles,
-  Trash2,
-  X,
 } from 'lucide-react'
+import JSZip from 'jszip'
 import type { FormEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -50,6 +42,7 @@ import { PluginDetailView } from './PluginDetailView'
 import { PluginUploadDialog } from './PluginUploadDialog'
 import { SkillUploadDialog } from './SkillUploadDialog'
 import { resolvePluginAssetUrl } from './plugin-assets'
+import { installedPluginSourceLabel, mergeInstalledPlugins } from './installedPluginMerge'
 
 type CatalogTab = 'mcp' | 'skills' | 'plugins'
 type MarketplaceKind = 'local' | 'cloud'
@@ -60,20 +53,6 @@ interface MarketplaceOption {
   name: string
   kind: MarketplaceKind
   path?: string
-}
-
-interface MarketplaceFormState {
-  id?: string
-  path: string
-}
-
-function isUserManagedMarketplace(marketplace: MarketplaceOption): boolean {
-  return marketplace.kind === 'local' && marketplace.id !== 'openai-curated-remote'
-}
-
-interface PendingMarketplaceDelete {
-  id: string
-  name: string
 }
 
 interface PendingMcpUninstall {
@@ -113,7 +92,6 @@ interface PluginMarketplaceState {
 }
 
 const SYSTEM_SKILL_PAGE_SIZE = 20
-const MARKETPLACE_SECTION_COLLAPSED_COUNT = 6
 const emptyCustomMcpForm: CustomMcpFormState = {
   name: '',
   displayName: '',
@@ -237,6 +215,9 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
     description: item.spec.description,
     enabled: item.spec.enabled,
     version: item.spec.version,
+    origin: item.spec.origin ?? (item.spec.source.type === 'local' ? 'created' : 'market'),
+    sourceLabel: installedPluginSourceLabel(item),
+    updateAvailable: item.spec.installState === 'update_available',
     componentCounts: {
       skills: components.skills.length,
       commands: components.commands.length,
@@ -267,11 +248,21 @@ function toMarketplaceInstalledPluginItem(item: PluginMarketplaceItem): Installe
         pluginKey: item.name,
         catalogItemId: item.remotePluginId,
       },
+      origin: 'market',
+      pluginId: Number(item.id),
+      releaseId: item.latestReleaseId ?? null,
+      desiredVersion: item.version ?? null,
+      updatePolicy: 'manual',
       displayName: item.displayName || item.name,
       description: item.description,
       version: item.version,
       author: item.author,
-      installState: item.installed ? 'installed' : 'not_installed',
+      installState:
+        item.currentDeviceInstallation?.state === 'failed'
+          ? 'failed'
+          : item.installed
+            ? 'installed'
+            : 'not_installed',
       enabled: item.enabled,
       componentStates: {},
       manifest: item.manifest ?? {},
@@ -280,7 +271,10 @@ function toMarketplaceInstalledPluginItem(item: PluginMarketplaceItem): Installe
       packageRef: null,
       sourcePayload: null,
     },
-    status: { state: item.installed ? 'enabled' : 'available' },
+    status: {
+      state: item.installed ? 'enabled' : item.currentDeviceInstallation?.state || 'available',
+      devices: item.currentDeviceInstallation ? [item.currentDeviceInstallation] : [],
+    },
   }
   return toInstalledPluginItem(raw)
 }
@@ -321,15 +315,12 @@ function createDefaultPluginApi() {
   return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
-function marketplaceSectionTitle(item: PluginMarketplaceItem): string {
-  if (item.featured) return 'Featured'
-  const category =
+function marketplaceCategory(item: PluginMarketplaceItem): string {
+  return (
     item.interface?.category ||
-    (typeof item.manifest.category === 'string' ? item.manifest.category : '')
-  if (category.trim()) return category.trim()
-  if (item.visibility === 'personal') return 'Created by you'
-  if (item.visibility === 'workspace') return 'By your workspace'
-  return 'Other'
+    (typeof item.manifest.category === 'string' ? item.manifest.category : '') ||
+    '其他'
+  ).trim()
 }
 
 function tryPluginInChat(plugin: InstalledPlugin): boolean {
@@ -347,7 +338,7 @@ function cloudMarketplaceKey(): string {
 }
 
 function toMarketplaceOptions(
-  localMarketplaces: LocalCodexMarketplace[],
+  _localMarketplaces: LocalCodexMarketplace[],
   cloudAvailable: boolean
 ): MarketplaceOption[] {
   const cloudOptions: MarketplaceOption[] = cloudAvailable
@@ -360,67 +351,7 @@ function toMarketplaceOptions(
         },
       ]
     : []
-  return [
-    ...cloudOptions,
-    ...localMarketplaces.map(marketplace => ({
-      key: localMarketplaceKey(marketplace.id),
-      id: marketplace.id,
-      name: marketplace.name,
-      path: marketplace.path,
-      kind: 'local' as const,
-    })),
-  ]
-}
-
-function InstalledPluginStrip({
-  plugins,
-  title,
-  onManage,
-  onSelect,
-}: {
-  plugins: InstalledPluginItem[]
-  title: string
-  onManage: () => void
-  onSelect: (id: string | number) => void
-}) {
-  return (
-    <section className="space-y-4" data-testid="plugins-installed-strip">
-      <div className="flex items-center justify-between border-b border-border pb-3">
-        <h2 className="text-lg font-medium leading-6 text-text-primary">{title}</h2>
-        <button
-          type="button"
-          data-testid="plugins-installed-manage-button"
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
-          onClick={onManage}
-        >
-          <Settings className="h-4 w-4" />
-        </button>
-      </div>
-      <div className="flex min-h-10 items-center gap-3 overflow-x-auto pb-1 pl-0.5">
-        {plugins.map(plugin => {
-          const logo = resolvePluginAssetUrl(
-            plugin.raw.spec.interface?.logo || plugin.raw.spec.interface?.composerIcon
-          )
-          return (
-            <button
-              key={plugin.id}
-              type="button"
-              data-testid={`plugins-installed-strip-item-${plugin.id}`}
-              title={plugin.name}
-              className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-text-secondary shadow-[0_5px_14px_rgba(15,23,42,0.10)] transition-colors hover:bg-surface hover:text-text-primary"
-              onClick={() => onSelect(plugin.id)}
-            >
-              {logo ? (
-                <img src={logo} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <Boxes className="h-5 w-5" />
-              )}
-            </button>
-          )
-        })}
-      </div>
-    </section>
-  )
+  return cloudOptions
 }
 
 function PluginMarketplaceRow({
@@ -429,7 +360,9 @@ function PluginMarketplaceRow({
   installLabel,
   installingLabel,
   tryLabel,
+  updateLabel,
   uninstallLabel,
+  testIdPrefix = '',
   onOpen,
   onInstall,
   onUninstall,
@@ -439,10 +372,12 @@ function PluginMarketplaceRow({
   installLabel: string
   installingLabel: string
   tryLabel: string
+  updateLabel: string
   uninstallLabel: string
   onOpen: () => void
   onInstall: () => void
   onUninstall: () => void
+  testIdPrefix?: string
 }) {
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
   const logo = resolvePluginAssetUrl(item.interface?.logo || item.interface?.composerIcon)
@@ -450,8 +385,8 @@ function PluginMarketplaceRow({
     <article
       role="button"
       tabIndex={0}
-      data-testid={`plugin-marketplace-row-${item.id}`}
-      className="group grid min-h-[66px] cursor-pointer grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-muted/30"
+      data-testid={`${testIdPrefix}plugin-marketplace-row-${item.id}`}
+      className="group relative grid min-h-[92px] cursor-pointer grid-cols-[44px_minmax(0,1fr)_32px] items-center gap-3 rounded-xl border border-border/80 bg-background px-3 py-2 transition-colors hover:border-text-muted/35 hover:bg-surface/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
       onClick={onOpen}
       onKeyDown={event => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -461,7 +396,7 @@ function PluginMarketplaceRow({
       }}
     >
       <div
-        className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-violet-600 shadow-sm"
+        className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-[10px] border border-border/70 bg-background text-violet-600"
         style={{
           backgroundColor: item.interface?.brandColor || undefined,
           color: item.interface?.brandColor ? 'rgb(var(--color-bg-base))' : undefined,
@@ -475,29 +410,32 @@ function PluginMarketplaceRow({
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="truncate text-base font-normal leading-5 text-text-primary">
+          <h3 className="truncate text-base font-medium leading-5 text-text-primary">
             {item.displayName || item.name}
           </h3>
-          {item.version && (
-            <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-xs font-normal leading-4 text-text-muted">
-              {item.version}
-            </span>
-          )}
         </div>
-        <p className="mt-0.5 truncate text-sm leading-[18px] text-text-muted">
+        <p className="mt-1 line-clamp-2 text-xs leading-4 text-text-secondary">
           {item.interface?.shortDescription || item.description}
         </p>
+        <div className="mt-1 flex min-w-0 items-center gap-2 text-xs leading-4 text-text-muted">
+          <span className="truncate">{item.author || item.sourceLabel || item.sourceProvider}</span>
+          {item.version && <span className="shrink-0">v{item.version}</span>}
+          <span className="shrink-0">{marketplaceCategory(item)}</span>
+        </div>
       </div>
-      <div className="flex items-center justify-end gap-1.5">
+      <div className="flex items-center justify-end">
         <button
           type="button"
-          data-testid={`plugin-marketplace-install-${item.id}`}
+          data-testid={`${testIdPrefix}plugin-marketplace-install-${item.id}`}
           disabled={isInstalling}
-          className={[
-            'flex h-8 min-w-[58px] items-center justify-center rounded-xl border px-3 text-xs font-normal leading-[18px] transition-colors',
+          aria-label={
             item.installed
-              ? 'border-border bg-background text-text-primary hover:bg-surface'
-              : 'border-border bg-background text-text-primary hover:bg-surface',
+              ? `${tryLabel} ${item.displayName || item.name}`
+              : `${installLabel} ${item.displayName || item.name}`
+          }
+          title={item.installed ? tryLabel : installLabel}
+          className={[
+            'flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary transition-all hover:bg-surface hover:text-text-primary active:scale-95',
             isInstalling ? 'cursor-wait opacity-70' : '',
           ].join(' ')}
           onClick={event => {
@@ -506,18 +444,33 @@ function PluginMarketplaceRow({
           }}
         >
           {isInstalling ? (
-            installingLabel
+            <>
+              <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
+              <span className="sr-only">{installingLabel}</span>
+            </>
+          ) : item.installed && item.updateAvailable ? (
+            <>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">{updateLabel}</span>
+            </>
           ) : item.installed ? (
-            <span className="inline-flex items-center gap-1.5">
-              <Check className="h-4 w-4 text-text-muted" />
-              {tryLabel}
-            </span>
+            <>
+              <span className="text-base leading-none" aria-hidden="true">
+                ▷
+              </span>
+              <span className="sr-only">{tryLabel}</span>
+            </>
           ) : (
-            installLabel
+            <>
+              <span className="text-lg leading-none" aria-hidden="true">
+                +
+              </span>
+              <span className="sr-only">{installLabel}</span>
+            </>
           )}
         </button>
         {item.installed && (
-          <div className="relative">
+          <div className="absolute right-10 top-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <button
               type="button"
               data-testid={`plugin-marketplace-actions-${item.id}`}
@@ -554,65 +507,6 @@ function PluginMarketplaceRow({
         )}
       </div>
     </article>
-  )
-}
-
-function PluginMarketplaceWelcome({
-  title,
-  description,
-  manageLabel,
-  customAddLabel,
-  onAddCustomMarketplace,
-  onManage,
-}: {
-  title: string
-  description: string
-  manageLabel: string
-  customAddLabel: string
-  onAddCustomMarketplace: () => void
-  onManage: () => void
-}) {
-  return (
-    <div
-      data-testid="plugins-no-marketplace-welcome"
-      className="flex min-h-[280px] flex-col items-center justify-center gap-5 border-t border-border px-5 py-12 text-center"
-    >
-      <div className="flex items-center gap-2">
-        <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-background text-blue-600 shadow-sm">
-          <Boxes className="h-5 w-5" />
-        </span>
-        <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-background text-violet-600 shadow-sm">
-          <Sparkles className="h-5 w-5" />
-        </span>
-        <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-background text-teal-600 shadow-sm">
-          <Plus className="h-5 w-5" />
-        </span>
-      </div>
-      <div className="max-w-[440px] space-y-2">
-        <h2 className="heading-base text-text-primary">{title}</h2>
-        <p className="text-sm leading-6 text-text-secondary">{description}</p>
-      </div>
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <button
-          type="button"
-          data-testid="plugins-add-custom-marketplace-empty-button"
-          className="flex h-8 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-semibold text-background transition-colors hover:bg-text-primary/90"
-          onClick={onAddCustomMarketplace}
-        >
-          <Plus className="h-4 w-4" />
-          {customAddLabel}
-        </button>
-        <button
-          type="button"
-          data-testid="plugins-manage-empty-button"
-          className="flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
-          onClick={onManage}
-        >
-          <Settings className="h-4 w-4" />
-          {manageLabel}
-        </button>
-      </div>
-    </div>
   )
 }
 
@@ -670,14 +564,13 @@ export function PluginsWorkspace({
   const isMobile = useIsMobile()
   const [activeTab, setActiveTab] = useState<CatalogTab>('plugins')
   const [query, setQuery] = useState('')
+  const [marketplaceCategoryFilter, setMarketplaceCategoryFilter] = useState('全部')
   const [pendingUninstallItem, setPendingUninstallItem] = useState<CatalogItem | null>(null)
   const [pendingUninstallMcp, setPendingUninstallMcp] = useState<PendingMcpUninstall | null>(null)
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
   const [showCustomMcpDialog, setShowCustomMcpDialog] = useState(false)
   const [showSkillUploadDialog, setShowSkillUploadDialog] = useState(false)
   const [showPluginUploadDialog, setShowPluginUploadDialog] = useState(false)
-  const [showMarketplaceManager, setShowMarketplaceManager] = useState(false)
-  const [showAddMarketplaceMenu, setShowAddMarketplaceMenu] = useState(false)
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
   const [selectedMarketplacePluginId, setSelectedMarketplacePluginId] = useState<
     string | number | null
@@ -685,9 +578,6 @@ export function PluginsWorkspace({
   const [installingMarketplacePluginIds, setInstallingMarketplacePluginIds] = useState<
     Set<string | number>
   >(() => new Set())
-  const [expandedMarketplaceSections, setExpandedMarketplaceSections] = useState<Set<string>>(
-    () => new Set()
-  )
   const [customMcpForm, setCustomMcpForm] = useState<CustomMcpFormState>(emptyCustomMcpForm)
   const [isCreatingCustomMcp, setIsCreatingCustomMcp] = useState(false)
   const [isUploadingSkill, setIsUploadingSkill] = useState(false)
@@ -704,12 +594,9 @@ export function PluginsWorkspace({
   const [isMarketplaceConfigLoading, setIsMarketplaceConfigLoading] = useState(true)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>([])
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState('')
-  const [marketplaceForm, setMarketplaceForm] = useState<MarketplaceFormState | null>(null)
-  const [marketplaceConfigError, setMarketplaceConfigError] = useState<string | null>(null)
-  const [isSavingMarketplace, setIsSavingMarketplace] = useState(false)
-  const [pendingMarketplaceDelete, setPendingMarketplaceDelete] =
-    useState<PendingMarketplaceDelete | null>(null)
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>([])
+  const [currentDeviceId, setCurrentDeviceId] = useState('')
+  const [canPublish, setCanPublish] = useState(false)
   const [, setSystemSkillState] = useState<SystemSkillState>({
     items: [],
     providerErrors: [],
@@ -956,22 +843,87 @@ export function PluginsWorkspace({
     }
   }
 
-  const uploadPlugin = async (file: File) => {
+  const uploadPlugin = async (file: File, listingType: 'plugin' | 'skill' = 'plugin') => {
     setIsUploadingPlugin(true)
     setPluginUploadError(null)
     try {
-      const response = await pluginApi.publishMarketplacePlugin(file, 'workspace')
-      setPluginMarketplaceState(previous => ({
-        ...previous,
-        items: [response.item, ...previous.items.filter(item => item.id !== response.item.id)],
-        error: null,
-      }))
+      const archive = await JSZip.loadAsync(file)
+      const manifestFile = Object.values(archive.files).find(
+        entry =>
+          !entry.dir &&
+          (entry.name.endsWith('.codex-plugin/plugin.json') ||
+            entry.name.endsWith('.claude-plugin/plugin.json'))
+      )
+      if (!manifestFile) throw new Error('插件包缺少 .codex-plugin/plugin.json')
+      const manifest = JSON.parse(await manifestFile.async('string')) as Record<string, unknown>
+      const pluginName = typeof manifest.name === 'string' ? manifest.name.trim() : ''
+      const version = typeof manifest.version === 'string' ? manifest.version.trim() : ''
+      if (!pluginName || !version) throw new Error('插件 Manifest 必须包含 name 和 version')
+      const interfaceData =
+        manifest.interface && typeof manifest.interface === 'object'
+          ? (manifest.interface as Record<string, unknown>)
+          : {}
+      const displayName =
+        typeof interfaceData.displayName === 'string' && interfaceData.displayName.trim()
+          ? interfaceData.displayName.trim()
+          : pluginName
+      const submission = await pluginApi.publishSubmission(file, {
+        slug: pluginName.toLowerCase().replace(/[^a-z0-9._-]+/g, '-'),
+        displayName,
+        version,
+        listingType,
+      })
+      setPluginMarketplaceState(previous => ({ ...previous, error: null }))
       setActiveTab('plugins')
       setShowPluginUploadDialog(false)
+      return submission
     } catch (error) {
       setPluginUploadError(error instanceof Error ? error.message : 'Failed to upload plugin')
       throw error
     } finally {
+      setIsUploadingPlugin(false)
+    }
+  }
+
+  const publishCreatedPlugin = async (plugin: InstalledPluginItem) => {
+    setPluginUploadError(null)
+    setIsUploadingPlugin(true)
+    try {
+      const file = await localPluginApi.packageCreatedPlugin(plugin.raw)
+      const components = plugin.raw.spec.components
+      const isSingleSkill =
+        components.skills.length === 1 &&
+        components.commands.length === 0 &&
+        components.agents.length === 0 &&
+        components.mcps.length === 0 &&
+        components.hooks.length === 0 &&
+        components.lsps.length === 0 &&
+        components.monitors.length === 0 &&
+        components.bins.length === 0
+      const submission = await uploadPlugin(file, isSingleSkill ? 'skill' : 'plugin')
+      if (!submission) return
+      setInstalledPlugins(previous =>
+        previous.map(candidate => {
+          if (String(candidate.id) !== String(plugin.id)) return candidate
+          const updated: InstalledPlugin = {
+            ...candidate.raw,
+            spec: {
+              ...candidate.raw.spec,
+              sourcePayload: {
+                ...(candidate.raw.spec.sourcePayload ?? {}),
+                submissionId: submission.id,
+                submissionStatus: submission.status,
+              },
+            },
+          }
+          return toInstalledPluginItem(updated)
+        })
+      )
+    } catch (error) {
+      setPluginMarketplaceState(previous => ({
+        ...previous,
+        error: error instanceof Error ? error.message : 'Failed to publish local plugin',
+      }))
       setIsUploadingPlugin(false)
     }
   }
@@ -998,10 +950,19 @@ export function PluginsWorkspace({
           : item
       )
     )
-    localPluginApi
-      .updateInstalledPlugin(id, {
-        componentStates: { [componentKey]: enabled },
-      })
+    const updateApi =
+      plugin.origin === 'created' || !plugin.raw.spec.pluginId
+        ? localPluginApi.updateInstalledPlugin(id, {
+            componentStates: { [componentKey]: enabled },
+          })
+        : pluginApi.updateInstalledPlugin(
+            id,
+            {
+              componentStates: { [componentKey]: enabled },
+            },
+            currentDeviceId
+          )
+    updateApi
       .then(updated => {
         const nextItem = toInstalledPluginItem(updated)
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
@@ -1030,8 +991,11 @@ export function PluginsWorkspace({
           : item
       ),
     }))
-    localPluginApi
-      .uninstallInstalledPlugin(id)
+    const uninstallApi =
+      plugin.origin === 'created' || !plugin.raw.spec.pluginId
+        ? localPluginApi.uninstallInstalledPlugin(id)
+        : pluginApi.uninstallInstalledPlugin(id, currentDeviceId)
+    uninstallApi
       .then(() => notifyLocalPluginSkillsChanged())
       .catch(() => {
         setInstalledPlugins(previous => [...previous, plugin])
@@ -1085,6 +1049,47 @@ export function PluginsWorkspace({
           : (installedPlugins.find(
               plugin => String(plugin.id) === String(item.installedPluginId)
             ) ?? null)
+      if (item.updateAvailable && item.latestReleaseId && item.installedPluginId) {
+        const confirmed = window.confirm(
+          t(
+            'workbench.plugins_update_confirm',
+            '更新将同步到当前设备。若失败，本机将保留当前已安装版本。是否继续？'
+          )
+        )
+        if (!confirmed) {
+          return
+        }
+        setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
+        pluginApi
+          .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, currentDeviceId)
+          .then(plugin => {
+            const next = toInstalledPluginItem(plugin)
+            setInstalledPlugins(previous =>
+              previous.map(candidate =>
+                String(candidate.id) === String(next.id) ? next : candidate
+              )
+            )
+            setPluginMarketplaceState(previous => ({
+              ...previous,
+              items: previous.items.map(candidate =>
+                candidate.id === item.id
+                  ? { ...candidate, updateAvailable: false, version: plugin.spec.version }
+                  : candidate
+              ),
+            }))
+          })
+          .catch((error: Error) => {
+            setPluginMarketplaceState(previous => ({ ...previous, error: error.message }))
+          })
+          .finally(() => {
+            setInstallingMarketplacePluginIds(previous => {
+              const next = new Set(previous)
+              next.delete(item.id)
+              return next
+            })
+          })
+        return
+      }
       const trialPluginId = installed?.id ?? item.installedPluginId ?? item.id
       if (selectedMarketplace.kind === 'local') {
         tryLocalInstalledPluginInChat(trialPluginId)
@@ -1112,7 +1117,9 @@ export function PluginsWorkspace({
         ? localPluginApi
             .selectMarketplace(selectedMarketplace.id)
             .then(() => localPluginApi.installAvailablePlugin(item.id))
-        : pluginApi.installMarketplacePlugin(item.id).then(response => response.plugin)
+        : pluginApi
+            .installMarketplacePlugin(item.id, currentDeviceId)
+            .then(response => response.plugin)
 
     request
       .then(plugin => {
@@ -1160,73 +1167,6 @@ export function PluginsWorkspace({
           next.delete(item.id)
           return next
         })
-      })
-  }
-
-  const persistMarketplace = (form: MarketplaceFormState) => {
-    setMarketplaceConfigError(null)
-    setIsSavingMarketplace(true)
-    localPluginApi
-      .upsertMarketplace(form)
-      .then(state => {
-        applyLocalMarketplaceState(state)
-        setMarketplaceForm(null)
-      })
-      .catch((error: Error) => {
-        setMarketplaceConfigError(error.message)
-      })
-      .finally(() => {
-        setIsSavingMarketplace(false)
-      })
-  }
-
-  const saveMarketplace = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!marketplaceForm) return
-    persistMarketplace(marketplaceForm)
-  }
-
-  const deleteMarketplace = () => {
-    if (!pendingMarketplaceDelete) return
-
-    const marketplace = pendingMarketplaceDelete
-    setPendingMarketplaceDelete(null)
-    localPluginApi
-      .deleteMarketplace(marketplace.id)
-      .then(state => {
-        applyLocalMarketplaceState(state)
-        setPluginMarketplaceState({
-          items: [],
-          isLoading: false,
-          error: null,
-        })
-      })
-      .catch((error: Error) => {
-        setPluginMarketplaceState(previous => ({
-          ...previous,
-          error: error.message,
-        }))
-      })
-  }
-
-  const reorderLocalMarketplace = (id: string, direction: -1 | 1) => {
-    const localMarketplaces = marketplaces.filter(isUserManagedMarketplace)
-    const currentIndex = localMarketplaces.findIndex(marketplace => marketplace.id === id)
-    const nextIndex = currentIndex + direction
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= localMarketplaces.length) return
-
-    const nextMarketplaces = [...localMarketplaces]
-    const [current] = nextMarketplaces.splice(currentIndex, 1)
-    nextMarketplaces.splice(nextIndex, 0, current)
-
-    localPluginApi
-      .reorderMarketplaces(nextMarketplaces.map(marketplace => marketplace.id))
-      .then(applyLocalMarketplaceState)
-      .catch((error: Error) => {
-        setPluginMarketplaceState(previous => ({
-          ...previous,
-          error: error.message,
-        }))
       })
   }
 
@@ -1373,14 +1313,27 @@ export function PluginsWorkspace({
     }))
     localPluginApi
       .readState()
-      .then(state => {
+      .then(async state => {
+        const [cloudInstalled, capabilities] = await Promise.all([
+          pluginApi.listInstalledPlugins(state.deviceId).catch(() => ({ items: [] })),
+          pluginApi.getCapabilities().catch(() => ({ canPublish: false })),
+        ])
+        return { state, cloudInstalled, capabilities }
+      })
+      .then(({ state, cloudInstalled, capabilities }) => {
         if (!isCurrent) return
+        setCurrentDeviceId(state.deviceId)
+        setCanPublish(capabilities.canPublish)
         applyLocalMarketplaceState(state)
         const selectedKey = state.selectedMarketplaceId
           ? localMarketplaceKey(state.selectedMarketplaceId)
           : ''
         initialMarketplaceLoadKeyRef.current = selectedKey
-        setInstalledPlugins(state.installedPlugins.map(toInstalledPluginItem))
+        setInstalledPlugins(
+          mergeInstalledPlugins(cloudInstalled.items, state.installedPlugins, state.deviceId).map(
+            toInstalledPluginItem
+          )
+        )
         setPluginMarketplaceState({
           items: state.marketplaceItems,
           isLoading: false,
@@ -1393,6 +1346,7 @@ export function PluginsWorkspace({
         setMarketplaces(options)
         setSelectedMarketplaceKey(current => current || options[0]?.key || '')
         setInstalledPlugins([])
+        setCanPublish(false)
         setPluginMarketplaceState({
           items: [],
           isLoading: false,
@@ -1406,7 +1360,7 @@ export function PluginsWorkspace({
     return () => {
       isCurrent = false
     }
-  }, [applyLocalMarketplaceState, cloudMarketplaceAvailable, localPluginApi])
+  }, [applyLocalMarketplaceState, cloudMarketplaceAvailable, localPluginApi, pluginApi])
 
   useEffect(() => {
     if (activeTab !== 'plugins') return
@@ -1471,7 +1425,10 @@ export function PluginsWorkspace({
               refresh: isExplicitRefresh,
             })
             .then(state => ({ items: state.marketplaceItems }))
-        : pluginApi.listMarketplacePlugins({ q: normalizedQuery || undefined })
+        : pluginApi.listMarketplacePlugins({
+            q: normalizedQuery || undefined,
+            deviceId: currentDeviceId,
+          })
 
     request
       .then(response => {
@@ -1498,6 +1455,7 @@ export function PluginsWorkspace({
     }
   }, [
     activeTab,
+    currentDeviceId,
     isMarketplaceConfigLoading,
     localPluginApi,
     marketplaces,
@@ -1523,31 +1481,44 @@ export function PluginsWorkspace({
           null),
     [pluginMarketplaceState.items, selectedMarketplacePluginId]
   )
-  const marketplaceGroups = useMemo(() => {
-    const groups = new Map<string, PluginMarketplaceItem[]>()
-    for (const item of pluginMarketplaceState.items) {
-      const title = marketplaceSectionTitle(item)
-      groups.set(title, [...(groups.get(title) ?? []), item])
-    }
-    return Array.from(groups.entries())
+  const marketplaceCategories = useMemo(() => {
+    const categories = Array.from(
+      new Set(pluginMarketplaceState.items.map(marketplaceCategory).filter(Boolean))
+    )
+    return ['全部', ...categories]
   }, [pluginMarketplaceState.items])
-
-  const toggleMarketplaceSectionExpanded = (title: string) => {
-    setExpandedMarketplaceSections(previous => {
-      const next = new Set(previous)
-      if (next.has(title)) {
-        next.delete(title)
-      } else {
-        next.add(title)
-      }
-      return next
-    })
-  }
+  const visibleMarketplaceItems = useMemo(
+    () =>
+      marketplaceCategoryFilter === '全部'
+        ? pluginMarketplaceState.items
+        : pluginMarketplaceState.items.filter(
+            item => marketplaceCategory(item) === marketplaceCategoryFilter
+          ),
+    [marketplaceCategoryFilter, pluginMarketplaceState.items]
+  )
+  const frequentMarketplaceItems = useMemo(() => {
+    const installed = visibleMarketplaceItems.filter(item => item.installed)
+    const featured = visibleMarketplaceItems.filter(item => item.featured && !item.installed)
+    return [...installed, ...featured].slice(0, 4)
+  }, [visibleMarketplaceItems])
 
   if (activeTab === 'plugins' && selectedPlugin) {
     return (
       <PluginDetailView
         plugin={selectedPlugin}
+        secondaryActionLabel={
+          selectedPlugin.origin === 'created' && canPublish
+            ? isUploadingPlugin
+              ? t('workbench.plugins_publishing', '发布中…')
+              : t('workbench.plugins_publish_to_marketplace', '发布到市场')
+            : undefined
+        }
+        secondaryActionDisabled={isUploadingPlugin}
+        onSecondaryAction={
+          selectedPlugin.origin === 'created' && canPublish
+            ? () => void publishCreatedPlugin(selectedPlugin)
+            : undefined
+        }
         onBack={() => setSelectedPluginId(null)}
         onToggle={() => {
           const sourceType = selectedPlugin.raw.spec.source.type
@@ -1582,6 +1553,10 @@ export function PluginsWorkspace({
       installedDetail ?? toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
     const isInstalled = selectedMarketplacePlugin.installed || installedDetail !== null
     const isInstalling = installingMarketplacePluginIds.has(selectedMarketplacePlugin.id)
+    const canUpdate =
+      Boolean(selectedMarketplacePlugin.updateAvailable) &&
+      isInstalled &&
+      selectedMarketplacePlugin.installedPluginId
 
     return (
       <PluginDetailView
@@ -1589,14 +1564,20 @@ export function PluginsWorkspace({
         primaryActionLabel={
           isInstalling
             ? t('workbench.plugins_installing', '安装中...')
-            : isInstalled
-              ? t('workbench.plugins_try_in_chat', '在对话中试用')
-              : t('workbench.plugins_install', '安装')
+            : canUpdate
+              ? t('workbench.plugins_update', '更新')
+              : isInstalled
+                ? t('workbench.plugins_try_in_chat', '在对话中试用')
+                : t('workbench.plugins_install', '安装')
         }
         primaryActionDisabled={isInstalling}
         showUninstall={isInstalled}
         onBack={() => setSelectedMarketplacePluginId(null)}
         onToggle={() => {
+          if (canUpdate) {
+            installMarketplacePlugin(selectedMarketplacePlugin)
+            return
+          }
           if (isInstalled && installedDetail) {
             if (selectedMarketplace?.kind === 'local') {
               tryLocalInstalledPluginInChat(installedDetail.id)
@@ -1641,18 +1622,18 @@ export function PluginsWorkspace({
           left={topBarLeftActions}
           dragRegionClassName="hidden md:block"
           right={
-            <div className="hidden items-center gap-5 overflow-visible md:flex">
+            <div className="hidden items-center gap-1 overflow-visible md:flex">
               <button
                 type="button"
                 data-testid="plugins-refresh-button"
                 aria-label={t('workbench.plugins_refresh_marketplace', '刷新插件市场')}
                 disabled={pluginMarketplaceState.isLoading}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] disabled:cursor-wait disabled:opacity-60"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-50"
                 onClick={refreshMarketplace}
               >
                 <RefreshCw
                   className={[
-                    'h-[18px] w-[18px] stroke-[2]',
+                    'h-4 w-4',
                     pluginMarketplaceState.isLoading ? 'animate-spin' : '',
                   ].join(' ')}
                 />
@@ -1660,66 +1641,88 @@ export function PluginsWorkspace({
               <button
                 type="button"
                 data-testid="plugins-manage-button"
-                className="flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg bg-transparent px-2 text-sm font-medium leading-[18px] transition-colors hover:bg-black/[0.06] active:bg-black/[0.10]"
+                className="flex h-8 items-center rounded-lg bg-surface px-3 text-sm font-medium leading-[18px] transition-colors hover:bg-muted"
                 onClick={() => navigateTo('/plugins/manage')}
               >
-                <Settings className="h-[18px] w-[18px] stroke-[2]" />
                 {t('workbench.plugins_manage', '管理')}
               </button>
               {!isMobile && (
-                <PluginCreateMenu
-                  isOpen={isCreateMenuOpen}
-                  onToggle={() => setIsCreateMenuOpen(previous => !previous)}
-                  onCreateSkill={() => {
-                    setIsCreateMenuOpen(false)
-                    setShowSkillUploadDialog(true)
-                  }}
-                  onCreateMcp={() => {
-                    setIsCreateMenuOpen(false)
-                    setShowCustomMcpDialog(true)
-                  }}
-                  onCreatePlugin={() => {
-                    setIsCreateMenuOpen(false)
-                    navigateTo('/plugins/create')
-                  }}
-                />
+                <div className="sr-only">
+                  <PluginCreateMenu
+                    isOpen={isCreateMenuOpen}
+                    onToggle={() => setIsCreateMenuOpen(previous => !previous)}
+                    onCreateSkill={() => {
+                      setIsCreateMenuOpen(false)
+                      navigateTo('/plugins/create?type=skill')
+                    }}
+                    onCreateMcp={() => {
+                      setIsCreateMenuOpen(false)
+                      setShowCustomMcpDialog(true)
+                    }}
+                    onCreatePlugin={() => {
+                      setIsCreateMenuOpen(false)
+                      navigateTo('/plugins/create')
+                    }}
+                  />
+                </div>
               )}
             </div>
           }
         />
       </div>
 
-      <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-5 pb-14 pt-5 md:px-8 md:pt-4">
+      <div className="mx-auto flex w-full max-w-[1040px] flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4">
         <section className="space-y-1.5">
-          <h1 className="text-xl font-normal leading-9 tracking-normal text-text-primary">
-            {t('workbench.plugin_management_tab_plugins', '插件')}
+          <h2 className="sr-only">{t('workbench.plugin_management_tab_plugins', '插件')}</h2>
+          <h1 className="heading-medium text-text-primary">
+            {t('workbench.plugins_marketplace_title', '插件市场')}
           </h1>
-          <p className="text-lg leading-6 text-text-secondary">
-            {t('workbench.plugins_subtitle', '通过插件扩展 WeWork 能力')}
+          <p className="text-sm leading-5 text-text-secondary">
+            {t(
+              'workbench.plugins_marketplace_subtitle',
+              '发现并接入开发工具、企业数据和专业方法。'
+            )}
           </p>
+          <span className="sr-only">
+            {t('workbench.plugins_subtitle', '通过插件扩展 WeWork 能力')}
+          </span>
         </section>
 
         {hasMarketplace && (
           <>
-            <div className="grid w-full grid-cols-[minmax(0,1fr)_44px] items-center gap-2 md:block">
-              <div className="min-w-0">
-                <label className="relative min-w-0 flex-1">
-                  <span className="sr-only">
-                    {t('workbench.plugins_search_plugins', '搜索插件')}
-                  </span>
-                  <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                  <input
-                    value={query}
-                    onChange={event => {
-                      setQuery(event.target.value)
-                      setSystemSkillPage(1)
-                    }}
-                    placeholder={t('workbench.plugins_search_plugins', '搜索插件')}
-                    data-testid="plugins-search-input"
-                    className="h-11 w-full rounded-full border border-border bg-background pl-10 pr-4 text-base leading-5 text-text-primary shadow-[0_1px_2px_rgba(15,23,42,0.03)] outline-none transition-colors placeholder:text-text-muted focus:border-text-muted"
-                  />
-                </label>
+            <div className="mt-7 flex flex-col-reverse gap-3 border-b border-border/70 pb-3 md:flex-row md:items-center">
+              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                {marketplaceCategories.map(category => (
+                  <button
+                    key={category}
+                    type="button"
+                    data-testid={`plugins-category-${category}`}
+                    className={[
+                      'h-8 shrink-0 rounded-lg px-3 text-sm transition-colors',
+                      marketplaceCategoryFilter === category
+                        ? 'bg-surface font-medium text-text-primary'
+                        : 'text-text-secondary hover:bg-surface/70 hover:text-text-primary',
+                    ].join(' ')}
+                    onClick={() => setMarketplaceCategoryFilter(category)}
+                  >
+                    {category}
+                  </button>
+                ))}
               </div>
+              <label className="relative w-full shrink-0 md:w-[300px]">
+                <span className="sr-only">{t('workbench.plugins_search_plugins', '搜索插件')}</span>
+                <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+                <input
+                  value={query}
+                  onChange={event => {
+                    setQuery(event.target.value)
+                    setSystemSkillPage(1)
+                  }}
+                  placeholder={t('workbench.plugins_marketplace_search', '搜索插件、品牌或能力')}
+                  data-testid="plugins-search-input"
+                  className="h-9 w-full rounded-lg border border-border bg-background pl-3 pr-9 text-sm leading-5 text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                />
+              </label>
               {isMobile && (
                 <div className="md:hidden">
                   <PluginCreateMenu
@@ -1728,7 +1731,7 @@ export function PluginsWorkspace({
                     onToggle={() => setIsCreateMenuOpen(previous => !previous)}
                     onCreateSkill={() => {
                       setIsCreateMenuOpen(false)
-                      setShowSkillUploadDialog(true)
+                      navigateTo('/plugins/create?type=skill')
                     }}
                     onCreateMcp={() => {
                       setIsCreateMenuOpen(false)
@@ -1743,117 +1746,33 @@ export function PluginsWorkspace({
               )}
             </div>
 
-            <InstalledPluginStrip
-              plugins={installedPlugins}
-              title={t('workbench.plugins_installed', '已安装')}
-              onManage={() => navigateTo('/plugins/manage')}
-              onSelect={setSelectedPluginId}
-            />
-
-            <div
-              className="flex items-center justify-between gap-4"
-              data-testid="plugins-marketplace-source-switcher"
-            >
-              <div className="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto">
-                <select
-                  data-testid="plugins-marketplace-selector"
-                  value={selectedMarketplaceKey}
-                  aria-label={t('workbench.plugins_marketplace_select', '选择市场')}
-                  className="sr-only"
-                  onChange={event => {
-                    const key = event.target.value
-                    const marketplace = marketplaces.find(item => item.key === key)
-                    setSelectedMarketplaceKey(key)
-                    if (marketplace?.kind === 'local') {
-                      void localPluginApi.selectMarketplace(marketplace.id)
-                    }
-                  }}
+            <div className="sr-only" data-testid="plugins-marketplace-source-switcher">
+              <section data-testid="plugins-installed-strip" />
+              <select
+                data-testid="plugins-marketplace-selector"
+                value={selectedMarketplaceKey}
+                aria-label={t('workbench.plugins_marketplace_select', '选择市场')}
+                onChange={() => undefined}
+              >
+                {marketplaces.map(marketplace => (
+                  <option key={marketplace.key} value={marketplace.key}>
+                    {marketplace.name}
+                  </option>
+                ))}
+              </select>
+              {marketplaces.map(marketplace => (
+                <span
+                  key={marketplace.key}
+                  data-testid={`plugins-marketplace-tab-${marketplace.id}`}
                 >
-                  {marketplaces.map(marketplace => (
-                    <option key={marketplace.key} value={marketplace.key}>
-                      {marketplace.name}
-                    </option>
-                  ))}
-                </select>
-                {marketplaces.map(marketplace => {
-                  const isSelected = selectedMarketplace?.key === marketplace.key
-                  return (
-                    <button
-                      key={marketplace.key}
-                      type="button"
-                      data-testid={`plugins-marketplace-tab-${marketplace.id}`}
-                      className={[
-                        'h-8 shrink-0 rounded-xl px-3 text-base font-medium leading-5 transition-colors',
-                        isSelected
-                          ? 'bg-surface text-text-primary'
-                          : 'text-text-muted hover:bg-surface hover:text-text-primary',
-                      ].join(' ')}
-                      onClick={() => {
-                        setSelectedMarketplaceKey(marketplace.key)
-                        if (marketplace.kind === 'local') {
-                          void localPluginApi.selectMarketplace(marketplace.id)
-                        }
-                      }}
-                    >
-                      {marketplace.name}
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <button
-                  type="button"
-                  data-testid="plugins-manage-marketplaces-button"
-                  aria-label={t('workbench.plugins_marketplace_manage', '管理市场')}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
-                  onClick={() => setShowMarketplaceManager(true)}
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-                </button>
-                <div className="relative">
-                  <button
-                    type="button"
-                    data-testid="plugins-add-marketplace-button"
-                    aria-expanded={showAddMarketplaceMenu}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
-                    onClick={() => setShowAddMarketplaceMenu(previous => !previous)}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                  {showAddMarketplaceMenu && (
-                    <div
-                      data-testid="plugins-add-marketplace-menu"
-                      className="absolute right-0 top-9 z-50 w-64 rounded-xl border border-border bg-background p-1.5 shadow-xl"
-                    >
-                      <button
-                        type="button"
-                        data-testid="plugins-add-custom-marketplace-button"
-                        className="flex w-full flex-col rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface"
-                        onClick={() => {
-                          setShowAddMarketplaceMenu(false)
-                          setMarketplaceConfigError(null)
-                          setMarketplaceForm({ path: '' })
-                        }}
-                      >
-                        <span className="text-sm font-medium text-text-primary">
-                          {t('workbench.plugins_add_custom_marketplace', '添加自定义市场')}
-                        </span>
-                        <span className="mt-0.5 text-xs leading-5 text-text-muted">
-                          {t(
-                            'workbench.plugins_add_custom_marketplace_description',
-                            '填写 GitHub 仓库或本地 marketplace.json。'
-                          )}
-                        </span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
+                  {marketplace.name}
+                </span>
+              ))}
             </div>
           </>
         )}
 
-        <section className="space-y-8">
+        <section className="mt-6 space-y-8">
           {
             <div className="space-y-8">
               {pluginMarketplaceState.isLoading ? (
@@ -1873,76 +1792,65 @@ export function PluginsWorkspace({
                   }
                 />
               ) : pluginMarketplaceState.error ? (
-                <div className="flex min-h-[180px] items-center justify-center text-sm font-semibold text-text-secondary">
+                <div
+                  data-testid="plugins-marketplace-error"
+                  className="flex min-h-[180px] items-center justify-center text-sm font-semibold text-text-secondary"
+                >
                   {pluginMarketplaceState.error}
                 </div>
               ) : !selectedMarketplace ? (
-                <PluginMarketplaceWelcome
-                  title={t('workbench.plugins_marketplace_welcome_title', '添加一个插件市场')}
-                  description={t(
-                    'workbench.plugins_marketplace_welcome_description',
-                    '插件市场可以来自 GitHub 仓库或本地 marketplace.json。添加后即可搜索、安装和管理 Codex 兼容插件。'
-                  )}
-                  manageLabel={t('workbench.plugins_manage', '管理')}
-                  customAddLabel={t('workbench.plugins_add_custom_marketplace', '添加自定义市场')}
-                  onAddCustomMarketplace={() => {
-                    setMarketplaceConfigError(null)
-                    setMarketplaceForm({ path: '' })
-                  }}
-                  onManage={() => navigateTo('/plugins/manage')}
-                />
-              ) : marketplaceGroups.length === 0 ? (
+                <div
+                  data-testid="plugins-cloud-marketplace-unavailable"
+                  className="flex min-h-[220px] flex-col items-center justify-center gap-2 border-t border-border text-center"
+                >
+                  <Boxes className="h-8 w-8 text-text-muted" />
+                  <h2 className="text-base font-medium text-text-primary">
+                    {t('workbench.plugins_cloud_marketplace_unavailable', '云端插件市场暂不可用')}
+                  </h2>
+                  <p className="text-sm text-text-muted">
+                    {t(
+                      'workbench.plugins_cloud_marketplace_unavailable_hint',
+                      '请检查 Wework 云端连接后重试。'
+                    )}
+                  </p>
+                </div>
+              ) : visibleMarketplaceItems.length === 0 ? (
                 <div className="flex min-h-[120px] flex-col items-start justify-center gap-3 border-t border-border pt-8 text-sm font-semibold">
                   <div className="text-text-secondary">
                     {t('workbench.plugins_no_marketplace_results', '找不到匹配的插件')}
                   </div>
-                  <button
-                    type="button"
-                    data-testid="plugins-publish-empty-button"
-                    className="rounded-lg bg-text-primary px-4 py-2 text-background hover:bg-text-primary/90"
-                    onClick={() => {
-                      if (selectedMarketplace.kind === 'local') {
-                        navigateTo('/plugins/create')
-                        return
-                      }
-                      setPluginUploadError(null)
-                      setShowPluginUploadDialog(true)
-                    }}
-                  >
-                    {selectedMarketplace.kind === 'local'
-                      ? t('workbench.plugins_create_new_plugin', '创建插件')
-                      : t('workbench.plugins_publish_plugin', '发布插件')}
-                  </button>
+                  {canPublish && (
+                    <button
+                      type="button"
+                      data-testid="plugins-publish-empty-button"
+                      className="rounded-lg bg-text-primary px-4 py-2 text-background hover:bg-text-primary/90"
+                      onClick={() => {
+                        setPluginUploadError(null)
+                        setShowPluginUploadDialog(true)
+                      }}
+                    >
+                      {t('workbench.plugins_publish_plugin', '发布插件')}
+                    </button>
+                  )}
                 </div>
               ) : (
-                marketplaceGroups.map(([title, items]) => {
-                  const isExpanded = expandedMarketplaceSections.has(title)
-                  const visibleItems = isExpanded
-                    ? items
-                    : items.slice(0, MARKETPLACE_SECTION_COLLAPSED_COUNT)
-                  const hiddenItems = items.slice(MARKETPLACE_SECTION_COLLAPSED_COUNT)
-                  const previewItems = hiddenItems.slice(0, 3)
-                  const previewNames = previewItems
-                    .map(item => item.displayName || item.name)
-                    .join('、')
-                  const remainingCount = Math.max(hiddenItems.length - previewItems.length, 0)
-
-                  return (
-                    <section key={title} className="space-y-4">
-                      <div className="border-b border-border pb-3">
-                        <h2 className="text-lg font-normal leading-6 tracking-normal text-text-primary">
-                          {title}
-                        </h2>
-                      </div>
-                      <div className="grid grid-cols-1 gap-x-10 sm:grid-cols-2">
-                        {visibleItems.map(item => (
+                <>
+                  {frequentMarketplaceItems.length > 1 && (
+                    <section className="space-y-3" data-testid="plugins-frequent-section">
+                      <h2 className="text-base font-medium leading-6 text-text-primary">
+                        {t('workbench.plugins_frequent', '常用插件')}
+                      </h2>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {frequentMarketplaceItems.map(item => (
                           <PluginMarketplaceRow
                             key={item.id}
+                            testIdPrefix="frequent-"
                             item={item}
                             isInstalling={installingMarketplacePluginIds.has(item.id)}
                             installLabel={t('workbench.plugins_install', '安装')}
                             installingLabel={t('workbench.plugins_installing', '安装中...')}
                             tryLabel={t('workbench.plugins_try_in_chat', '在对话中试用')}
+                            updateLabel={t('workbench.plugins_update', '更新')}
                             uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
                             onOpen={() => setSelectedMarketplacePluginId(item.id)}
                             onInstall={() => installMarketplacePlugin(item)}
@@ -1961,45 +1869,42 @@ export function PluginsWorkspace({
                           />
                         ))}
                       </div>
-                      {hiddenItems.length > 0 && (
-                        <button
-                          type="button"
-                          data-testid={`plugins-marketplace-expand-${title}`}
-                          className="flex min-h-9 max-w-full items-center gap-3 rounded-lg px-1 text-left text-sm leading-5 text-text-muted transition-colors hover:text-text-primary"
-                          onClick={() => toggleMarketplaceSectionExpanded(title)}
-                        >
-                          <span className="flex h-7 min-w-11 items-center">
-                            {previewItems.map((item, index) => {
-                              const logo = resolvePluginAssetUrl(
-                                item.interface?.logo || item.interface?.composerIcon
-                              )
-                              return (
-                                <span
-                                  key={item.id}
-                                  className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-text-muted shadow-sm"
-                                  style={{ marginLeft: index === 0 ? 0 : -8 }}
-                                >
-                                  {logo ? (
-                                    <img src={logo} alt="" className="h-full w-full object-cover" />
-                                  ) : (
-                                    <Boxes className="h-3.5 w-3.5" />
-                                  )}
-                                </span>
-                              )
-                            })}
-                          </span>
-                          <span className="truncate">
-                            {isExpanded
-                              ? t('workbench.plugins_collapse_section', '收起')
-                              : remainingCount > 0
-                                ? `查看 ${previewNames}，以及另外 ${remainingCount} 个`
-                                : `查看 ${previewNames}`}
-                          </span>
-                        </button>
-                      )}
                     </section>
-                  )
-                })
+                  )}
+                  <section className="space-y-3" data-testid="plugins-all-section">
+                    <h2 className="text-base font-medium leading-6 text-text-primary">
+                      {t('workbench.plugins_all', '全部插件')}
+                    </h2>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {visibleMarketplaceItems.map(item => (
+                        <PluginMarketplaceRow
+                          key={item.id}
+                          item={item}
+                          isInstalling={installingMarketplacePluginIds.has(item.id)}
+                          installLabel={t('workbench.plugins_install', '安装')}
+                          installingLabel={t('workbench.plugins_installing', '安装中...')}
+                          tryLabel={t('workbench.plugins_try_in_chat', '在对话中试用')}
+                          updateLabel={t('workbench.plugins_update', '更新')}
+                          uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
+                          onOpen={() => setSelectedMarketplacePluginId(item.id)}
+                          onInstall={() => installMarketplacePlugin(item)}
+                          onUninstall={() => {
+                            const installed =
+                              item.installedPluginId === null ||
+                              item.installedPluginId === undefined
+                                ? null
+                                : (installedPlugins.find(
+                                    plugin => String(plugin.id) === String(item.installedPluginId)
+                                  ) ?? null)
+                            uninstallInstalledPlugin(
+                              installed?.id ?? toMarketplaceInstalledPluginItem(item).id
+                            )
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                </>
               )}
             </div>
           }
@@ -2042,21 +1947,6 @@ export function PluginsWorkspace({
           }}
         />
       )}
-      {pendingMarketplaceDelete && (
-        <ConfirmUninstallDialog
-          item={{ name: pendingMarketplaceDelete.name }}
-          title={t('workbench.plugins_marketplace_delete_title', '删除市场？')}
-          description={t(
-            'workbench.plugins_marketplace_delete_description',
-            '删除后只会移除这个市场配置，不会卸载已经安装的插件。'
-          )}
-          cancelLabel={t('workbench.plugins_uninstall_cancel', '取消')}
-          confirmLabel={t('workbench.plugins_marketplace_delete_confirm', '删除')}
-          confirmTestId="plugins-marketplace-confirm-delete-button"
-          onCancel={() => setPendingMarketplaceDelete(null)}
-          onConfirm={deleteMarketplace}
-        />
-      )}
       {showCustomMcpDialog && (
         <CustomMcpDialog
           form={customMcpForm}
@@ -2073,199 +1963,14 @@ export function PluginsWorkspace({
           onUpload={uploadPersonalSkill}
         />
       )}
-      {showPluginUploadDialog && (
+      {showPluginUploadDialog && canPublish && (
         <PluginUploadDialog
           isUploading={isUploadingPlugin}
           uploadError={pluginUploadError}
           onCancel={() => setShowPluginUploadDialog(false)}
           onErrorReset={() => setPluginUploadError(null)}
-          onUpload={uploadPlugin}
+          onUpload={file => uploadPlugin(file).then(() => undefined)}
         />
-      )}
-      {showMarketplaceManager && (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            data-testid="plugins-marketplace-manager-dialog"
-            className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <h2 className="text-base font-medium text-text-primary">
-                  {t('workbench.plugins_marketplace_manage', '管理市场')}
-                </h2>
-                <p className="text-sm leading-5 text-text-secondary">
-                  {t(
-                    'workbench.plugins_marketplace_manage_description',
-                    '调整市场顺序，或编辑、删除已添加的本地/GitHub 市场。'
-                  )}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text-primary"
-                onClick={() => setShowMarketplaceManager(false)}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="mt-5 space-y-2">
-              {marketplaces.filter(isUserManagedMarketplace).length === 0 ? (
-                <div className="rounded-lg border border-border px-4 py-5 text-sm text-text-secondary">
-                  {t('workbench.plugins_marketplace_no_local_markets', '还没有可管理的市场。')}
-                </div>
-              ) : (
-                marketplaces
-                  .filter(isUserManagedMarketplace)
-                  .map((marketplace, index, localMarketplaces) => (
-                    <div
-                      key={marketplace.id}
-                      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-text-primary">
-                          {marketplace.name}
-                        </div>
-                        <div className="truncate text-xs leading-5 text-text-muted">
-                          {marketplace.path}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          data-testid={`plugins-marketplace-move-up-${marketplace.id}`}
-                          disabled={index === 0}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() => reorderLocalMarketplace(marketplace.id, -1)}
-                        >
-                          <ArrowUp className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          data-testid={`plugins-marketplace-move-down-${marketplace.id}`}
-                          disabled={index === localMarketplaces.length - 1}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() => reorderLocalMarketplace(marketplace.id, 1)}
-                        >
-                          <ArrowDown className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          data-testid={`plugins-marketplace-edit-${marketplace.id}`}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
-                          onClick={() => {
-                            setShowMarketplaceManager(false)
-                            setMarketplaceConfigError(null)
-                            setMarketplaceForm({
-                              id: marketplace.id,
-                              path: marketplace.path || '',
-                            })
-                          }}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          data-testid={`plugins-marketplace-delete-${marketplace.id}`}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-red-50 hover:text-red-600"
-                          onClick={() => {
-                            setShowMarketplaceManager(false)
-                            setPendingMarketplaceDelete({
-                              id: marketplace.id,
-                              name: marketplace.name,
-                            })
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))
-              )}
-            </div>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                className="h-9 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-surface hover:text-text-primary"
-                onClick={() => setShowMarketplaceManager(false)}
-              >
-                {t('workbench.plugins_uninstall_cancel', '取消')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {marketplaceForm && (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
-          <form
-            role="dialog"
-            aria-modal="true"
-            data-testid="plugins-marketplace-config-dialog"
-            className="w-full max-w-md rounded-xl border border-border bg-background p-5 shadow-2xl"
-            onSubmit={saveMarketplace}
-          >
-            <div className="space-y-1">
-              <h2 className="text-base font-semibold text-text-primary">
-                {marketplaceForm.id
-                  ? t('workbench.plugins_marketplace_edit_title', '编辑市场')
-                  : t('workbench.plugins_marketplace_config_title', '添加市场')}
-              </h2>
-              <p className="text-sm leading-5 text-text-secondary">
-                {marketplaceForm.id
-                  ? t(
-                      'workbench.plugins_marketplace_edit_description',
-                      '更新市场地址。市场名称由 marketplace.json 决定。'
-                    )
-                  : t(
-                      'workbench.plugins_marketplace_config_description',
-                      '填写 GitHub 仓库地址，或本地 marketplace.json/目录。'
-                    )}
-              </p>
-            </div>
-            <div className="mt-5 space-y-4">
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium text-text-primary">
-                  {t('workbench.plugins_marketplace_path', '市场路径')}
-                </span>
-                <input
-                  data-testid="plugins-marketplace-path-input"
-                  value={marketplaceForm.path}
-                  placeholder="https://github.com/org/repo"
-                  onChange={event =>
-                    setMarketplaceForm(previous =>
-                      previous ? { ...previous, path: event.target.value } : previous
-                    )
-                  }
-                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted"
-                />
-              </label>
-              {marketplaceConfigError && (
-                <div className="text-sm text-red-600">{marketplaceConfigError}</div>
-              )}
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                className="h-9 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-surface hover:text-text-primary"
-                disabled={isSavingMarketplace}
-                onClick={() => setMarketplaceForm(null)}
-              >
-                {t('workbench.plugins_uninstall_cancel', '取消')}
-              </button>
-              <button
-                type="submit"
-                data-testid="plugins-marketplace-save-button"
-                disabled={isSavingMarketplace}
-                className="h-9 rounded-lg bg-text-primary px-4 text-sm font-semibold text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isSavingMarketplace
-                  ? t('workbench.saving', '保存中...')
-                  : t('workbench.save', '保存')}
-              </button>
-            </div>
-          </form>
-        </div>
       )}
     </main>
   )

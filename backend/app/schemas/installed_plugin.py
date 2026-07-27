@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -108,12 +109,41 @@ class InstalledPluginSpec(BaseModel):
     interface: Optional[PluginInterface] = None
     packageRef: Optional[InstalledPluginPackageRef] = None
     sourcePayload: Optional[Dict[str, Any]] = None
+    origin: Literal["created", "market"] = "market"
+    pluginId: Optional[int] = None
+    releaseId: Optional[int] = None
+    desiredVersion: Optional[str] = None
+    updatePolicy: Literal["manual"] = "manual"
+    sourceProvider: Literal["wegent", "codex", "user"] = "wegent"
+    sourceLabel: str = "Wegent 官方"
 
 
 class InstalledPluginStatus(BaseModel):
     """Runtime status for an InstalledPlugin CRD."""
 
     state: str = "Available"
+    devices: List["PluginDeviceInstallationItem"] = Field(default_factory=list)
+
+
+class PluginDeviceInstallationItem(BaseModel):
+    """Materialized installation state for one device."""
+
+    deviceId: str
+    desiredReleaseId: int
+    actualReleaseId: Optional[int] = None
+    state: Literal[
+        "pending",
+        "downloading",
+        "installing",
+        "installed",
+        "failed",
+        "uninstalling",
+    ]
+    errorCode: Optional[str] = None
+    errorMessage: Optional[str] = None
+    attemptCount: int = 0
+    lastSyncAt: Optional[datetime] = None
+    updatedAt: datetime
 
 
 class InstalledPlugin(BaseModel):
@@ -139,6 +169,7 @@ class InstalledPluginUpdateRequest(BaseModel):
     componentStates: Optional[Dict[str, bool]] = None
     displayName: Optional[str] = None
     description: Optional[str] = None
+    releaseId: Optional[int] = None
 
 
 class PluginUploadInfo(BaseModel):
@@ -197,6 +228,13 @@ class PluginMarketplaceItem(BaseModel):
     )
     manifest: Dict[str, Any] = Field(default_factory=dict)
     ownerUserId: int
+    latestReleaseId: Optional[int] = None
+    listingType: Literal["plugin", "skill"] = "plugin"
+    origin: Literal["market"] = "market"
+    sourceProvider: Literal["wegent", "codex", "user"] = "wegent"
+    sourceLabel: str = "Wegent 官方"
+    updateAvailable: bool = False
+    currentDeviceInstallation: Optional["PluginDeviceInstallationItem"] = None
 
 
 class PluginMarketplaceListResponse(BaseModel):
@@ -209,6 +247,110 @@ class PluginMarketplaceInstallResponse(BaseModel):
     """Response for installing a marketplace plugin."""
 
     plugin: InstalledPlugin
+
+
+class PluginMarketplaceCapabilities(BaseModel):
+    """User-specific marketplace operations enabled by server policy."""
+
+    canPublish: bool = False
+
+
+class PluginReleaseItem(BaseModel):
+    """Published immutable release exposed by the marketplace API."""
+
+    id: int
+    pluginId: int
+    version: str
+    releaseNotes: str = ""
+    checksum: str
+    sizeBytes: int
+    publishedAt: Optional[datetime] = None
+
+
+class PluginReleaseListResponse(BaseModel):
+    items: List[PluginReleaseItem]
+
+
+class PluginSubmissionInitRequest(BaseModel):
+    slug: str
+    displayName: str
+    version: str
+    filename: str
+    sha256: str = Field(min_length=64, max_length=64)
+    sizeBytes: int = Field(gt=0, le=50 * 1024 * 1024)
+    listingType: Literal["plugin", "skill"] = "plugin"
+
+
+class PluginSubmissionInitResponse(BaseModel):
+    submissionId: int
+    pluginId: int
+    releaseId: int
+    uploadUrl: str
+    expiresAt: datetime
+
+
+class PluginSubmissionItem(BaseModel):
+    id: int
+    pluginId: int
+    releaseId: int
+    status: Literal[
+        "uploading",
+        "scanning",
+        "pending",
+        "approved",
+        "rejected",
+        "cancelled",
+    ]
+    reviewNote: str = ""
+    submittedAt: datetime
+    reviewedAt: Optional[datetime] = None
+
+
+class PluginSubmissionCompleteResponse(BaseModel):
+    submission: PluginSubmissionItem
+
+
+class PluginSubmissionListResponse(BaseModel):
+    items: List[PluginSubmissionItem]
+
+
+class PluginSubmissionReviewRequest(BaseModel):
+    approved: bool
+    note: str = Field(default="", max_length=5000)
+
+
+class PluginVisibilityGrantRequest(BaseModel):
+    entityType: Literal["user", "namespace"]
+    entityId: str = Field(..., min_length=1, max_length=100)
+
+
+class PluginUpstreamCreateRequest(BaseModel):
+    slug: str
+    displayName: str
+    marketplaceName: str
+    remotePluginId: str
+    upstreamUrl: str
+    licenseInfo: str = ""
+    listingType: Literal["plugin", "skill"] = "plugin"
+
+
+class PluginUpstreamItem(BaseModel):
+    id: int
+    pluginId: int
+    provider: str
+    marketplaceName: str
+    remotePluginId: str
+    upstreamUrl: str
+    licenseInfo: str
+    syncEnabled: bool
+    lastSeenVersion: Optional[str] = None
+    lastCheckedAt: Optional[datetime] = None
+    lastSyncedAt: Optional[datetime] = None
+    lastError: Optional[str] = None
+
+
+class PluginUpstreamListResponse(BaseModel):
+    items: List[PluginUpstreamItem]
 
 
 PluginMarketplacePublishResponse.model_rebuild()

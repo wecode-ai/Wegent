@@ -17,9 +17,9 @@ use wegent_executor::{
     config::device::{ConnectionConfig, DeviceConfig},
     local::capabilities::{
         default_manifest_path, get_project_id, is_project_task,
-        restore_enabled_claude_plugin_cache, CapabilityPackageProvider, CapabilitySyncError,
-        CapabilitySyncHandler, GlobalCapabilityReporter, GlobalCapabilityStore,
-        ManagedCapabilityManifest, SkillSyncSpec,
+        restore_enabled_claude_plugin_cache, CapabilityPackageProvider, CapabilityPluginRuntime,
+        CapabilitySyncError, CapabilitySyncHandler, GlobalCapabilityReporter,
+        GlobalCapabilityStore, ManagedCapabilityManifest, PluginSyncSpec, SkillSyncSpec,
     },
     protocol::ExecutionRequest,
 };
@@ -342,6 +342,163 @@ async fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claud
 }
 
 #[tokio::test]
+async fn plugin_sync_accepts_a_pure_codex_plugin_package() {
+    let temp = TempRoot::new("capability-sync-codex-plugin");
+    let skills_dir = temp.path().join("skills");
+    let plugins_dir = temp.path().join(".claude/plugins");
+    let codex_plugins_dir = temp.path().join(".codex/plugins");
+    let store_dir = temp.path().join("store");
+    let manifest_path = temp.path().join("capabilities.json");
+    let package = zip_bytes(&[
+        (
+            "gitlab/.codex-plugin/plugin.json",
+            r#"{"name":"gitlab","version":"1.0.0"}"#,
+        ),
+        ("gitlab/skills/review/SKILL.md", "---\nname: review\n---\n"),
+    ]);
+    let checksum = sha256_hex(&package);
+    let provider =
+        StaticPackageProvider::default().with_plugin("/api/plugins/installed/20/download", package);
+    let store = GlobalCapabilityStore::new(manifest_path, skills_dir)
+        .with_plugins_dir(plugins_dir)
+        .with_codex_plugins_dir(codex_plugins_dir.clone())
+        .with_store_dir(store_dir.clone());
+    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider);
+
+    let result = handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [{
+                "installed_plugin_id": 20,
+                "name": "gitlab",
+                "marketplace": "wegent",
+                "version": "1.0.0",
+                "download_path": "/api/plugins/installed/20/download",
+                "checksum": checksum
+            }],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["success"], true);
+    assert!(store_dir
+        .join("plugins/20-wegent-gitlab-1.0.0/.codex-plugin/plugin.json")
+        .is_file());
+    assert!(codex_plugins_dir.join("gitlab-wegent").is_symlink());
+}
+
+#[tokio::test]
+async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_authority() {
+    let temp = TempRoot::new("capability-sync-app-server");
+    let skills_dir = temp.path().join("skills");
+    let plugins_dir = temp.path().join(".claude/plugins");
+    let codex_plugins_dir = temp.path().join(".codex/plugins");
+    let store_dir = temp.path().join("store");
+    let manifest_path = temp.path().join("capabilities.json");
+    let gitlab_package = zip_bytes(&[(
+        "gitlab/.codex-plugin/plugin.json",
+        r#"{"name":"gitlab","version":"1.0.0"}"#,
+    )]);
+    let github_package = zip_bytes(&[(
+        "github/.codex-plugin/plugin.json",
+        r#"{"name":"github","version":"2.0.0"}"#,
+    )]);
+    let gitlab_checksum = sha256_hex(&gitlab_package);
+    let github_checksum = sha256_hex(&github_package);
+    let provider = StaticPackageProvider::default()
+        .with_plugin("https://objects/gitlab.zip", gitlab_package)
+        .with_plugin("https://objects/github.zip", github_package);
+    let runtime = RecordingPluginRuntime::default();
+    let calls = runtime.calls.clone();
+    let store = GlobalCapabilityStore::new(manifest_path.clone(), skills_dir)
+        .with_plugins_dir(plugins_dir.clone())
+        .with_codex_plugins_dir(codex_plugins_dir.clone())
+        .with_store_dir(store_dir);
+    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider)
+        .with_plugin_runtime(runtime);
+
+    let installed = handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [
+                {
+                    "installed_plugin_id": 20,
+                    "name": "gitlab",
+                    "marketplace": "wegent",
+                    "version": "1.0.0",
+                    "download_path": "https://objects/gitlab.zip",
+                    "checksum": gitlab_checksum
+                },
+                {
+                    "installed_plugin_id": 21,
+                    "name": "github",
+                    "marketplace": "wegent",
+                    "version": "2.0.0",
+                    "download_path": "https://objects/github.zip",
+                    "checksum": github_checksum
+                }
+            ],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(installed["success"], true);
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        &[
+            format!(
+                "install:gitlab:{}",
+                plugins_dir.join("marketplaces/wegent").display()
+            ),
+            format!(
+                "install:github:{}",
+                plugins_dir.join("marketplaces/wegent").display()
+            ),
+        ]
+    );
+    assert!(!codex_plugins_dir.join("gitlab-wegent").exists());
+    assert_eq!(
+        read_json(&manifest_path)["plugins"]["gitlab@wegent"]["install_authority"],
+        "codex_app_server"
+    );
+    assert_eq!(
+        read_json(plugins_dir.join("marketplaces/wegent/.claude-plugin/marketplace.json"))
+            ["plugins"],
+        json!([
+            {
+                "description": "",
+                "name": "gitlab",
+                "source": "./plugins/gitlab-wegent",
+                "version": "1.0.0"
+            },
+            {
+                "description": "",
+                "name": "github",
+                "source": "./plugins/github-wegent",
+                "version": "2.0.0"
+            }
+        ])
+    );
+
+    handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+    let calls = calls.lock().unwrap();
+    assert!(calls.contains(&"uninstall:gitlab:wegent".to_owned()));
+    assert!(calls.contains(&"uninstall:github:wegent".to_owned()));
+}
+
+#[tokio::test]
 async fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_wegent_store() {
     let temp = TempRoot::new("capability-sync-uploaded-plugin");
     let skills_dir = temp.path().join("skills");
@@ -495,6 +652,30 @@ fn extract_plugin_zip_normalizes_roots_ignores_macos_metadata_and_keeps_existing
     assert!(!install_path.join("superpowers").exists());
     assert!(!install_path.join("__MACOSX").exists());
     assert!(!install_path.join("old.txt").exists());
+}
+
+#[test]
+fn extract_plugin_zip_rejects_duplicate_paths() {
+    let temp = TempRoot::new("capability-sync-plugin-zip-duplicate");
+    let install_path = temp.path().join("plugins/duplicate");
+    fs::create_dir_all(&install_path).unwrap();
+    let store = GlobalCapabilityStore::new(
+        temp.path().join("manifest.json"),
+        temp.path().join("skills"),
+    );
+    let handler = CapabilitySyncHandler::new("token", store);
+    let duplicate = zip_bytes(&[
+        (
+            "duplicate/.claude-plugin/plugin.json",
+            r#"{"name":"duplicate"}"#,
+        ),
+        ("duplicate/skills/a/SKILL.md", "# A"),
+        ("duplicate/skills/a/SKILL.md", "# B"),
+    ]);
+    let error = handler
+        .extract_plugin_zip(&duplicate, &install_path)
+        .unwrap_err();
+    assert!(error.to_string().contains("Duplicate path"));
 }
 
 #[cfg(unix)]
@@ -896,6 +1077,38 @@ fn global_capability_helpers_match_project_and_device_config_contract() {
     );
     let handler = CapabilitySyncHandler::from_device_config(&device, store);
     assert_eq!(handler.auth_token(), "device-config-token");
+}
+
+#[derive(Clone, Default)]
+struct RecordingPluginRuntime {
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+impl CapabilityPluginRuntime for RecordingPluginRuntime {
+    fn install_plugin<'a>(
+        &'a self,
+        spec: &'a PluginSyncSpec,
+        marketplace_path: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
+        self.calls.lock().unwrap().push(format!(
+            "install:{}:{}",
+            spec.name,
+            marketplace_path.display()
+        ));
+        Box::pin(std::future::ready(Ok(())))
+    }
+
+    fn uninstall_plugin<'a>(
+        &'a self,
+        name: &'a str,
+        marketplace: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("uninstall:{name}:{marketplace}"));
+        Box::pin(std::future::ready(Ok(())))
+    }
 }
 
 #[derive(Default)]

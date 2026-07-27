@@ -140,6 +140,7 @@ function mockCodexAppServerInvoke(
       isEnabled?: boolean
       pluginDisplayNames?: string[]
     }>
+    deviceId?: string
   } = {}
 ) {
   const marketplaces = [...(options.marketplaces ?? [])]
@@ -167,7 +168,7 @@ function mockCodexAppServerInvoke(
       })
     }
     if (command === 'local_executor_ensure_started') {
-      return Promise.resolve({ running: true, ready: true })
+      return Promise.resolve({ running: true, ready: true, deviceId: options.deviceId })
     }
     if (command !== 'local_executor_request') return Promise.resolve(undefined)
 
@@ -284,6 +285,9 @@ function mockSystemSkillsFetch(
     installState: 'not_installed' | 'installed' | 'update_available'
     enabled: boolean
     installedSkillId: number | null
+    canPublish: boolean
+    marketplaceInstalled: boolean
+    marketplaceDeviceState: 'installed' | 'failed' | 'pending'
   }> = {}
 ) {
   const personalSkillsResponse = {
@@ -479,9 +483,13 @@ function mockSystemSkillsFetch(
     author: 'OpenAI',
     visibility: 'public',
     featured: false,
-    installed: false,
-    enabled: false,
-    installedPluginId: null,
+    installed:
+      overrides.marketplaceInstalled &&
+      (overrides.marketplaceDeviceState ?? 'installed') === 'installed',
+    enabled:
+      overrides.marketplaceInstalled &&
+      (overrides.marketplaceDeviceState ?? 'installed') === 'installed',
+    installedPluginId: overrides.marketplaceInstalled ? 101 : null,
     interface: {
       displayName: 'Documents',
       shortDescription: 'Create and edit documents',
@@ -513,6 +521,23 @@ function mockSystemSkillsFetch(
     },
     createdAt: null,
     updatedAt: null,
+    latestReleaseId: 1001,
+    currentDeviceInstallation: overrides.marketplaceInstalled
+      ? {
+          deviceId: 'current-device',
+          desiredReleaseId: 1001,
+          actualReleaseId: overrides.marketplaceDeviceState === 'installed' ? 1001 : null,
+          state: overrides.marketplaceDeviceState ?? 'installed',
+          errorCode: overrides.marketplaceDeviceState === 'failed' ? 'PLUGIN_SYNC_FAILED' : null,
+          errorMessage:
+            overrides.marketplaceDeviceState === 'failed'
+              ? 'Codex App Server rejected install'
+              : null,
+          attemptCount: 1,
+          lastSyncAt: null,
+          updatedAt: '2026-07-25T12:00:00',
+        }
+      : null,
   }
   const installedMarketplacePlugin = {
     apiVersion: 'agent.wecode.io/v1',
@@ -532,14 +557,27 @@ function mockSystemSkillsFetch(
       description: 'Create and edit document artifacts',
       version: '1.0.0',
       enabled: true,
-      installState: 'installed',
+      installState:
+        overrides.marketplaceDeviceState === 'failed'
+          ? 'failed'
+          : overrides.marketplaceDeviceState === 'pending'
+            ? 'not_installed'
+            : 'installed',
+      origin: 'market',
+      pluginId: 101,
+      releaseId: 1001,
       componentStates: {},
       components: marketplacePlugin.components,
       interface: marketplacePlugin.interface,
       packageRef: null,
       sourcePayload: null,
     },
-    status: { state: 'Available' },
+    status: {
+      state: overrides.marketplaceDeviceState ?? 'installed',
+      devices: marketplacePlugin.currentDeviceInstallation
+        ? [marketplacePlugin.currentDeviceInstallation]
+        : [],
+    },
   }
   const skill = (page: number) => ({
     id: `@weibo/page-${page}`,
@@ -634,6 +672,23 @@ function mockSystemSkillsFetch(
           json: () => Promise.resolve(customMcpResponse),
         })
       }
+      if (requestUrl.pathname === '/api/plugins/capabilities') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ canPublish: overrides.canPublish ?? false }),
+        })
+      }
+      if (requestUrl.pathname === '/api/plugins/installed') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: overrides.marketplaceInstalled ? [installedMarketplacePlugin] : [],
+            }),
+        })
+      }
       if (requestUrl.pathname === '/api/plugins/marketplace') {
         const keyword = requestUrl.searchParams.get('q')
         return Promise.resolve({
@@ -719,14 +774,13 @@ describe('PluginsWorkspace', () => {
   test('renders a Codex-style plugin marketplace page', async () => {
     render(<PluginsWorkspace />)
 
-    expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
-    expect(screen.getByText('通过插件扩展 WeWork 能力')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '插件市场' })).toBeInTheDocument()
+    expect(screen.getByText('发现并接入开发工具、企业数据和专业方法。')).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-search-input')).toHaveAttribute(
       'placeholder',
-      '搜索插件'
+      '搜索插件、品牌或能力'
     )
-    expect(screen.getByTestId('plugins-search-input')).toHaveClass('h-11', 'rounded-full')
-    expect(screen.getByTestId('plugins-installed-strip')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-search-input')).toHaveClass('h-9', 'rounded-lg')
     expect(screen.getByTestId('plugins-marketplace-source-switcher')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-marketplace-selector')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-refresh-button')).toBeInTheDocument()
@@ -734,13 +788,14 @@ describe('PluginsWorkspace', () => {
       'Wegent 云端市场'
     )
     expect(screen.queryByTestId('plugins-marketplace-source-openai')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugins-add-marketplace-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-add-marketplace-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-manage-marketplaces-button')).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'MCP' })).not.toBeInTheDocument()
     expect(screen.queryByText('帮我整理本周的项目进度并生成可视化报告')).not.toBeInTheDocument()
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     expect(convertFileSrc).toHaveBeenCalledWith('/Users/test/plugins/documents/assets/logo.png')
-    expect(screen.getByText('Productivity')).toBeInTheDocument()
+    expect(screen.getAllByText('Productivity').length).toBeGreaterThan(0)
   })
 
   test('filters the plugin marketplace from the search box', async () => {
@@ -793,6 +848,40 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('does not report an account install as installed when this device failed', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'failed',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
+    expect(screen.queryByTestId('plugins-installed-strip-item-101')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+
+    expect(screen.getByText('0/1 已安装 · 1 失败')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/marketplace?device_id=current-device',
+      expect.objectContaining({ method: 'GET' })
+    )
+  })
+
+  test('shows publishing only when the cloud capability enables it', async () => {
+    mockSystemSkillsFetch({ canPublish: true })
+    render(<PluginsWorkspace />)
+
+    await userEvent.type(await screen.findByTestId('plugins-search-input'), 'missing')
+
+    expect(await screen.findByTestId('plugins-publish-empty-button')).toHaveTextContent('发布插件')
+  })
+
   test('opens installed marketplace plugin actions and uninstalls from the row menu', async () => {
     mockCodexAppServerInvoke({
       marketplaces: [
@@ -820,12 +909,15 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
 
-    expectCodexAppServerRequest('plugin/uninstall', { pluginId: '101' })
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({ method: 'DELETE' })
+    )
     expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
     expect(screen.queryByTestId('plugin-marketplace-actions-101')).not.toBeInTheDocument()
   })
 
-  test('reads local plugin detail when trying an installed marketplace plugin in chat', async () => {
+  test('does not merge a local plugin into a cloud item by display name', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -847,13 +939,16 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
 
     await waitFor(() =>
-      expectCodexAppServerRequest('plugin/read', {
-        marketplacePath: '/Users/test/.codex/plugins/marketplaces/openai',
-        pluginName: 'documents',
-      })
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/marketplace/101/install',
+        expect.objectContaining({ method: 'POST' })
+      )
     )
-    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toContain(
-      'plugin://documents@local-openai'
+    expect(invoke).not.toHaveBeenCalledWith(
+      'local_executor_request',
+      expect.objectContaining({
+        params: expect.objectContaining({ method: 'plugin/read' }),
+      })
     )
   })
 
@@ -866,9 +961,9 @@ describe('PluginsWorkspace', () => {
 
     expect(screen.getByTestId('plugin-detail-back-button')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '安装' })).toBeInTheDocument()
-    expect(screen.getByText('Create and edit document artifacts')).toBeInTheDocument()
+    expect(screen.getByText('Create and edit documents')).toBeInTheDocument()
     expect(screen.getByText('Draft a document outline from this chat')).toBeInTheDocument()
-    expect(screen.getByText('包含内容 1')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /包含能力/ })).toBeInTheDocument()
     expect(screen.getByText('Documents App')).toBeInTheDocument()
     expect(screen.getByText('documents-app')).toBeInTheDocument()
   })
@@ -911,26 +1006,22 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('plugin-detail-uninstall-101'))
 
-    expectCodexAppServerRequest('plugin/uninstall', { pluginId: '101' })
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({ method: 'DELETE' })
+    )
     expect(screen.queryByTestId('plugin-detail-actions-101')).not.toBeInTheDocument()
   })
 
-  test('opens the local marketplace configuration dialog', async () => {
+  test('does not expose arbitrary marketplace controls to ordinary users', async () => {
     render(<PluginsWorkspace />)
 
-    await userEvent.click(await screen.findByTestId('plugins-add-marketplace-button'))
-    expect(screen.getByTestId('plugins-add-marketplace-menu')).toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-add-openai-marketplace-button')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugins-add-custom-marketplace-button'))
-
-    expect(screen.getByTestId('plugins-marketplace-config-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-marketplace-path-input')).toHaveAttribute(
-      'placeholder',
-      'https://github.com/org/repo'
-    )
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-add-marketplace-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-manage-marketplaces-button')).not.toBeInTheDocument()
   })
 
-  test('normalizes a local marketplace manifest path to its source directory', async () => {
+  test('ignores locally configured marketplaces in the ordinary market view', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -944,23 +1035,14 @@ describe('PluginsWorkspace', () => {
         },
       ],
     })
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+    render(<PluginsWorkspace />)
 
-    await userEvent.click(await screen.findByTestId('plugins-add-marketplace-button'))
-    await userEvent.click(screen.getByTestId('plugins-add-custom-marketplace-button'))
-    fireEvent.change(screen.getByTestId('plugins-marketplace-path-input'), {
-      target: { value: '/Users/test/market/.agents/plugins/marketplace.json' },
-    })
-    await userEvent.click(screen.getByTestId('plugins-marketplace-save-button'))
-
-    await waitFor(() =>
-      expectCodexAppServerRequest('marketplace/add', {
-        source: '/Users/test/market',
-      })
-    )
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-tab-existing-market')).not.toBeInTheDocument()
+    expectCodexAppServerRequest('plugin/list', { cwds: null })
   })
 
-  test('loads the OpenAI official marketplace by default', async () => {
+  test('keeps Codex upstream marketplaces out of the ordinary market switcher', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -977,15 +1059,18 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace />)
 
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
+      'Wegent 云端市场'
+    )
     expect(
-      await screen.findByTestId('plugins-marketplace-tab-openai-curated-remote')
-    ).toHaveTextContent('OpenAI 官方市场')
+      screen.queryByTestId('plugins-marketplace-tab-openai-curated-remote')
+    ).not.toBeInTheDocument()
     expectCodexAppServerRequest('plugin/list', {
       cwds: null,
     })
   })
 
-  test('renders configured marketplaces as tabs and switches local marketplaces', async () => {
+  test('does not render configured local marketplaces as market tabs', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1005,26 +1090,18 @@ describe('PluginsWorkspace', () => {
       ],
     })
 
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+    render(<PluginsWorkspace />)
 
-    expect(await screen.findByTestId('plugins-marketplace-tab-local-openai')).toHaveTextContent(
-      'OpenAI 官方市场'
-    )
-    expect(screen.getByTestId('plugins-marketplace-tab-local-team')).toHaveTextContent('Team 市场')
-    expect(screen.queryByTestId('plugins-marketplace-source-openai')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('plugins-marketplace-tab-local-team'))
-
-    await waitFor(() =>
-      expect(screen.getByTestId('plugins-marketplace-tab-local-team')).toHaveClass('bg-surface')
-    )
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-tab-local-openai')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-tab-local-team')).not.toBeInTheDocument()
   })
 
   test('shows add-marketplace state when no marketplace is configured', async () => {
     render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
 
-    expect(await screen.findByText('添加一个插件市场')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(await screen.findByText('云端插件市场暂不可用')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-cloud-marketplace-unavailable')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-search-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-marketplace-selector')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-marketplace-source-switcher')).not.toBeInTheDocument()
@@ -1032,11 +1109,8 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-publish-empty-button')).not.toBeInTheDocument()
 
     expect(
-      screen.queryByTestId('plugins-add-openai-marketplace-empty-button')
+      screen.queryByTestId('plugins-add-custom-marketplace-empty-button')
     ).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugins-add-custom-marketplace-empty-button'))
-
-    expect(screen.getByTestId('plugins-marketplace-config-dialog')).toBeInTheDocument()
   })
 
   test('shows a loading skeleton instead of the empty marketplace state while local plugins load', async () => {
@@ -1235,7 +1309,7 @@ describe('PluginsWorkspace', () => {
     })
   })
 
-  test('deletes the selected local marketplace', async () => {
+  test('does not expose deletion for local marketplaces', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1250,19 +1324,14 @@ describe('PluginsWorkspace', () => {
       ],
     })
 
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+    render(<PluginsWorkspace />)
 
-    await userEvent.click(await screen.findByTestId('plugins-manage-marketplaces-button'))
-    await userEvent.click(screen.getByTestId('plugins-marketplace-delete-local-openai'))
-    expect(screen.getByText('删除市场？')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('plugins-marketplace-confirm-delete-button'))
-
-    expectCodexAppServerRequest('marketplace/remove', { marketplaceName: 'local-openai' })
-    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-manage-marketplaces-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-delete-local-openai')).not.toBeInTheDocument()
   })
 
-  test('manages local marketplaces with sort edit and delete actions', async () => {
+  test('does not expose sorting or editing for local marketplaces', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1282,23 +1351,14 @@ describe('PluginsWorkspace', () => {
       ],
     })
 
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+    render(<PluginsWorkspace />)
 
-    await userEvent.click(await screen.findByTestId('plugins-manage-marketplaces-button'))
-    expect(screen.getByTestId('plugins-marketplace-manager-dialog')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('plugins-marketplace-move-down-local-openai'))
-    expectCodexAppServerRequest('plugin/list', {})
-
-    await userEvent.click(screen.getByTestId('plugins-marketplace-edit-local-openai'))
-    expect(screen.getByTestId('plugins-marketplace-config-dialog')).toBeInTheDocument()
-    expect(screen.getByText('编辑市场')).toBeInTheDocument()
-    expect(screen.getByText('更新 GitHub 仓库或本地市场路径。')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: '取消' }))
-    await userEvent.click(screen.getByTestId('plugins-manage-marketplaces-button'))
-    await userEvent.click(screen.getByTestId('plugins-marketplace-delete-local-openai'))
-    expect(screen.getByText('删除市场？')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-manager-dialog')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('plugins-marketplace-move-down-local-openai')
+    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-edit-local-openai')).not.toBeInTheDocument()
   })
 
   test('opens the create menu and creates a custom MCP', async () => {

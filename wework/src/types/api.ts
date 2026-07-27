@@ -1820,6 +1820,13 @@ export interface InstalledPlugin {
   metadata: Record<string, unknown>
   spec: {
     source: InstalledPluginSource
+    origin?: 'created' | 'market'
+    pluginId?: number | null
+    releaseId?: number | null
+    desiredVersion?: string | null
+    updatePolicy?: 'manual'
+    sourceProvider?: 'wegent' | 'codex' | 'user'
+    sourceLabel?: string
     displayName: string
     description: string
     version?: string | null
@@ -1835,6 +1842,17 @@ export interface InstalledPlugin {
   }
   status: {
     state: string
+    devices?: Array<{
+      deviceId: string
+      desiredReleaseId: number
+      actualReleaseId?: number | null
+      state: 'pending' | 'downloading' | 'installing' | 'installed' | 'failed' | 'uninstalling'
+      errorCode?: string | null
+      errorMessage?: string | null
+      attemptCount: number
+      lastSyncAt?: string | null
+      updatedAt: string
+    }>
   }
 }
 
@@ -1860,6 +1878,23 @@ export interface PluginMarketplaceItem {
   components: InstalledPluginComponents
   manifest: Record<string, unknown>
   ownerUserId: number
+  latestReleaseId?: number | null
+  listingType?: 'plugin' | 'skill'
+  origin?: 'market'
+  sourceProvider?: 'wegent' | 'codex' | 'user'
+  sourceLabel?: string
+  updateAvailable?: boolean
+  currentDeviceInstallation?: {
+    deviceId: string
+    desiredReleaseId: number
+    actualReleaseId?: number | null
+    state: 'pending' | 'downloading' | 'installing' | 'installed' | 'failed' | 'uninstalling'
+    errorCode?: string | null
+    errorMessage?: string | null
+    attemptCount: number
+    lastSyncAt?: string | null
+    updatedAt: string
+  } | null
 }
 
 export interface PluginMarketplaceListResponse {
@@ -1874,11 +1909,48 @@ export interface PluginMarketplaceInstallResponse {
   plugin: InstalledPlugin
 }
 
+export interface PluginMarketplaceCapabilities {
+  canPublish: boolean
+}
+
 export interface InstalledPluginUpdateRequest {
   enabled?: boolean
   componentStates?: Record<string, boolean>
   displayName?: string
   description?: string
+  releaseId?: number
+}
+
+export interface PluginSubmissionInitRequest {
+  slug: string
+  displayName: string
+  version: string
+  filename: string
+  sha256: string
+  sizeBytes: number
+  listingType?: 'plugin' | 'skill'
+}
+
+export interface PluginSubmissionInitResponse {
+  submissionId: number
+  pluginId: number
+  releaseId: number
+  uploadUrl: string
+  expiresAt: string
+}
+
+export interface PluginSubmissionItem {
+  id: number
+  pluginId: number
+  releaseId: number
+  status: 'uploading' | 'scanning' | 'pending' | 'approved' | 'rejected' | 'cancelled'
+  reviewNote: string
+  submittedAt: string
+  reviewedAt?: string | null
+}
+
+export interface PluginSubmissionCompleteResponse {
+  submission: PluginSubmissionItem
 }
 
 export type ChatBlockType =

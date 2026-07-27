@@ -190,58 +190,6 @@ const workbenchValue: WorkbenchContextValue = {
   revertTurnFileChanges: vi.fn(),
 }
 
-function createSkillZipFile(name: string, rootSkillMd = false): File {
-  const encoder = new TextEncoder()
-  const fileName = rootSkillMd ? 'SKILL.md' : `${name}/SKILL.md`
-  const fileNameBytes = encoder.encode(fileName)
-  const contentBytes = encoder.encode(
-    [
-      '---',
-      `name: ${name}`,
-      'description: Uploaded helper',
-      'version: 1.0.0',
-      'author: Alice',
-      'tags: [personal, upload]',
-      '---',
-      '',
-      'Use this skill carefully.',
-    ].join('\n')
-  )
-  const localHeader = new Uint8Array(30 + fileNameBytes.length)
-  const localView = new DataView(localHeader.buffer)
-  localView.setUint32(0, 0x04034b50, true)
-  localView.setUint16(4, 20, true)
-  localView.setUint16(8, 0, true)
-  localView.setUint32(18, contentBytes.length, true)
-  localView.setUint32(22, contentBytes.length, true)
-  localView.setUint16(26, fileNameBytes.length, true)
-  localHeader.set(fileNameBytes, 30)
-
-  const centralHeader = new Uint8Array(46 + fileNameBytes.length)
-  const centralView = new DataView(centralHeader.buffer)
-  centralView.setUint32(0, 0x02014b50, true)
-  centralView.setUint16(4, 20, true)
-  centralView.setUint16(6, 20, true)
-  centralView.setUint16(10, 0, true)
-  centralView.setUint32(20, contentBytes.length, true)
-  centralView.setUint32(24, contentBytes.length, true)
-  centralView.setUint16(28, fileNameBytes.length, true)
-  centralHeader.set(fileNameBytes, 46)
-
-  const centralDirectoryOffset = localHeader.length + contentBytes.length
-  const endHeader = new Uint8Array(22)
-  const endView = new DataView(endHeader.buffer)
-  endView.setUint32(0, 0x06054b50, true)
-  endView.setUint16(8, 1, true)
-  endView.setUint16(10, 1, true)
-  endView.setUint32(12, centralHeader.length, true)
-  endView.setUint32(16, centralDirectoryOffset, true)
-
-  return new File([localHeader, contentBytes, centralHeader, endHeader], `${name}.zip`, {
-    type: 'application/zip',
-  })
-}
-
 function installedCodexSitesPlugin(): InstalledPlugin {
   return {
     apiVersion: 'agent.wecode.io/v1',
@@ -633,6 +581,8 @@ function mockSystemSkillsFetch() {
         payload = providersResponse
       } else if (url.includes('/mcp-providers')) {
         payload = providersResponse
+      } else if (url.includes('/plugins/installed')) {
+        payload = { items: [] }
       } else {
         payload = skillsResponse
       }
@@ -982,7 +932,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
-    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-cloud-marketplace-unavailable')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-search-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-installed-strip')).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
@@ -1044,7 +994,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-cloud-marketplace-unavailable')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-create-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-marketplace-selector')).not.toBeInTheDocument()
   })
@@ -1102,9 +1052,11 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
-    expect(
-      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/plugins/installed'))
-    ).toBe(false)
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/plugins/installed'))
+      ).toBe(true)
+    )
   })
 
   test('keeps installed plugin switch knobs anchored inside the track', async () => {
@@ -1271,7 +1223,7 @@ describe('App plugins route', () => {
     )
   })
 
-  test('opens the management create menu and uploads a personal skill', async () => {
+  test('opens the single-Skill plugin creator from management', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
     render(<App />)
@@ -1281,30 +1233,12 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('plugins-create-mcp-option')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-create-skill-option'))
 
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    const upload = screen.getByTestId('skill-upload-file-input')
-    const file = createSkillZipFile('zip-helper', true)
-    await userEvent.upload(upload, file)
-
-    expect(await screen.findByDisplayValue('zip-helper')).toBeInTheDocument()
-    expect(screen.getByText('Uploaded helper')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('skill-upload-confirm-button'))
-
-    await userEvent.click(await screen.findByRole('tab', { name: '技能 3' }))
-    expect(await screen.findByText('zip-helper')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/v1/kinds/skills/upload',
-      expect.objectContaining({
-        method: 'POST',
-        body: expect.any(FormData),
-      })
+    expect(await screen.findByTestId('plugin-create-workspace')).toBeInTheDocument()
+    expect(screen.getByText('你想创建一个什么技能？')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-create-prompt-input')).toHaveAttribute(
+      'placeholder',
+      '描述技能要完成的工作'
     )
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/system-skills/install/personal',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ skillId: 78 }),
-      })
-    )
+    expect(fetch).not.toHaveBeenCalledWith('/api/v1/kinds/skills/upload', expect.anything())
   })
 })

@@ -16,11 +16,45 @@ use zip::ZipArchive;
 
 use super::{CapabilitySyncError, PluginSyncSpec, DEFAULT_PLUGIN_MARKETPLACE, MANIFEST_VERSION};
 
+const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
+const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
+const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
+const UNIX_MODE_SYMLINK: u32 = 0o120_000;
+
 pub(super) fn extract_plugin_zip(
     package: &[u8],
     install_path: &Path,
 ) -> Result<(), CapabilitySyncError> {
     let mut archive = ZipArchive::new(Cursor::new(package))?;
+    if archive.len() > MAX_PACKAGE_ENTRY_COUNT {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Plugin package contains too many files",
+        ));
+    }
+
+    let mut normalized_paths = BTreeMap::<String, ()>::new();
+    let mut expanded_size = 0_u64;
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        validate_plugin_zip_entry(&file)?;
+        if file.is_dir() {
+            continue;
+        }
+        expanded_size = expanded_size.saturating_add(file.size());
+        if expanded_size > MAX_EXPANDED_PACKAGE_SIZE_BYTES {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Expanded plugin package is too large",
+            ));
+        }
+        let normalized = normalize_zip_entry_path(file.name())?;
+        if normalized_paths.insert(normalized, ()).is_some() {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Duplicate path in plugin ZIP: {}",
+                file.name()
+            )));
+        }
+    }
+
     let mut entries = Vec::new();
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
@@ -28,17 +62,22 @@ pub(super) fn extract_plugin_zip(
             continue;
         }
         let Some(path) = file.enclosed_name().map(Path::to_path_buf) else {
-            continue;
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Unsafe path in plugin ZIP: {}",
+                file.name()
+            )));
         };
         if is_macos_metadata_path(&path) {
             continue;
         }
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        file.read_to_end(&mut bytes).map_err(map_zip_read_error)?;
         entries.push((path, bytes));
     }
     let manifest_prefix = plugin_manifest_prefix(&entries).ok_or_else(|| {
-        CapabilitySyncError::invalid_payload("Plugin package is missing .claude-plugin/plugin.json")
+        CapabilitySyncError::invalid_payload(
+            "Plugin package is missing .codex-plugin/plugin.json or .claude-plugin/plugin.json",
+        )
     })?;
 
     let temp_path = sibling_temp_path(install_path);
@@ -60,9 +99,9 @@ pub(super) fn extract_plugin_zip(
             fs::write(&target, bytes)?;
             ensure_plugin_hook_executable(relative, &target)?;
         }
-        if !temp_path.join(".claude-plugin/plugin.json").is_file() {
+        if !has_plugin_manifest(&temp_path) {
             return Err(CapabilitySyncError::invalid_payload(
-                "Plugin package is missing .claude-plugin/plugin.json",
+                "Plugin package is missing .codex-plugin/plugin.json or .claude-plugin/plugin.json",
             ));
         }
         Ok(())
@@ -78,6 +117,48 @@ pub(super) fn extract_plugin_zip(
     }
     fs::rename(&temp_path, install_path)?;
     Ok(())
+}
+
+fn validate_plugin_zip_entry(file: &zip::read::ZipFile<'_>) -> Result<(), CapabilitySyncError> {
+    if let Some(mode) = file.unix_mode() {
+        if mode & UNIX_FILE_TYPE_MASK == UNIX_MODE_SYMLINK {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Symbolic links are not allowed: {}",
+                file.name()
+            )));
+        }
+    }
+    normalize_zip_entry_path(file.name())?;
+    Ok(())
+}
+
+fn normalize_zip_entry_path(name: &str) -> Result<String, CapabilitySyncError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Plugin package contains an empty path",
+        ));
+    }
+    if trimmed.starts_with('/') || trimmed.contains('\\') {
+        return Err(CapabilitySyncError::invalid_payload(format!(
+            "Unsafe path in plugin ZIP: {name}"
+        )));
+    }
+    for component in Path::new(trimmed).components() {
+        if matches!(component, Component::ParentDir) {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Unsafe path in plugin ZIP: {name}"
+            )));
+        }
+    }
+    Ok(trimmed.trim_end_matches('/').to_owned())
+}
+
+fn map_zip_read_error(error: io::Error) -> CapabilitySyncError {
+    if error.to_string().to_ascii_lowercase().contains("encrypted") {
+        return CapabilitySyncError::invalid_payload("Encrypted files are not allowed");
+    }
+    CapabilitySyncError::Io(error)
 }
 
 pub(super) fn ensure_plugin_hook_permissions(
@@ -137,16 +218,25 @@ fn is_plugin_hook_path(path: &Path) -> bool {
 }
 
 fn plugin_manifest_prefix(entries: &[(PathBuf, Vec<u8>)]) -> Option<PathBuf> {
-    entries
-        .iter()
-        .filter(|(path, _)| path.ends_with(Path::new(".claude-plugin/plugin.json")))
-        .map(|(path, _)| {
-            path.parent()
-                .and_then(Path::parent)
-                .map(Path::to_path_buf)
-                .unwrap_or_default()
+    [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]
+        .into_iter()
+        .find_map(|manifest_path| {
+            entries
+                .iter()
+                .filter(|(path, _)| path.ends_with(Path::new(manifest_path)))
+                .map(|(path, _)| {
+                    path.parent()
+                        .and_then(Path::parent)
+                        .map(Path::to_path_buf)
+                        .unwrap_or_default()
+                })
+                .min_by_key(|path| path.components().count())
         })
-        .min_by_key(|path| path.components().count())
+}
+
+pub(super) fn has_plugin_manifest(plugin_path: &Path) -> bool {
+    plugin_path.join(".codex-plugin/plugin.json").is_file()
+        || plugin_path.join(".claude-plugin/plugin.json").is_file()
 }
 
 fn is_macos_metadata_path(path: &Path) -> bool {
@@ -498,7 +588,7 @@ fn symlink_dir(target: &Path, link: &Path) -> io::Result<()> {
     std::os::windows::fs::symlink_dir(target, link)
 }
 
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
+pub(super) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -531,7 +621,7 @@ pub(super) fn remove_existing_path(path: &Path) -> Result<(), CapabilitySyncErro
     }
 }
 
-fn sibling_temp_path(path: &Path) -> PathBuf {
+pub(super) fn sibling_temp_path(path: &Path) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()

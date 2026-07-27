@@ -12,18 +12,32 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
+from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.models.user import User
+from app.schemas.device import DeviceCapabilitySyncResponse
 from app.schemas.installed_plugin import (
     InstalledPlugin,
     InstalledPluginListResponse,
     InstalledPluginUpdateRequest,
+    PluginMarketplaceCapabilities,
     PluginMarketplaceInstallResponse,
+    PluginMarketplaceItem,
     PluginMarketplaceListResponse,
-    PluginMarketplacePublishResponse,
+    PluginReleaseListResponse,
+    PluginSubmissionCompleteResponse,
+    PluginSubmissionInitRequest,
+    PluginSubmissionInitResponse,
+    PluginSubmissionItem,
 )
 from app.services.claude_plugin_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.installed_plugin_service import installed_plugin_service
+from app.services.plugin_device_installation_service import (
+    plugin_device_installation_service,
+)
+from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_package_storage import PluginPackageStorageError
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
@@ -32,13 +46,27 @@ PLUGIN_UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
 
 @router.get("/installed", response_model=InstalledPluginListResponse)
 def list_installed_plugins(
+    device_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPluginListResponse:
     """List Claude Code plugins installed by the current user."""
-    return installed_plugin_service.list_installed_plugins(
-        db=db,
-        user_id=current_user.id,
+    return plugin_marketplace_service.enrich_installed_list(
+        db,
+        installed_plugin_service.list_installed_plugins(
+            db=db,
+            user_id=current_user.id,
+        ),
+        device_id=device_id,
+    )
+
+
+@router.get("/capabilities", response_model=PluginMarketplaceCapabilities)
+def get_plugin_marketplace_capabilities(
+    current_user: User = Depends(security.get_current_user),
+) -> PluginMarketplaceCapabilities:
+    return PluginMarketplaceCapabilities(
+        canPublish=_can_publish(current_user),
     )
 
 
@@ -54,6 +82,11 @@ async def upload_plugin(
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
     """Upload and install a Claude Code plugin ZIP package."""
+    if current_user.role != "admin" or not settings.PLUGIN_LEGACY_UPLOAD_ENABLED:
+        raise HTTPException(
+            status_code=410,
+            detail="Direct cloud upload is retired; create locally or publish a submission",
+        )
     logger.info(
         "Plugin upload requested: user_id=%s filename=%s enabled=%s",
         current_user.id,
@@ -76,43 +109,48 @@ async def upload_plugin(
 def list_marketplace_plugins(
     q: str | None = None,
     source: str | None = None,
+    listing_type: str | None = None,
+    device_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceListResponse:
     """List Codex-compatible plugins published to the Wegent marketplace."""
-    return installed_plugin_service.list_marketplace_plugins(
-        db=db,
+    return plugin_marketplace_service.list_plugins(
+        db,
         user_id=current_user.id,
         query=q,
         source=source,
+        listing_type=listing_type,
+        device_id=device_id,
     )
 
 
-@router.post(
-    "/marketplace/publish",
-    response_model=PluginMarketplacePublishResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def publish_marketplace_plugin(
-    file: UploadFile = File(...),
-    visibility: str = Form("workspace"),
-    featured: bool = Form(False),
+@router.get("/marketplace/{plugin_id}", response_model=PluginMarketplaceItem)
+def get_marketplace_plugin(
+    plugin_id: int,
+    device_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-) -> PluginMarketplacePublishResponse:
-    """Publish a Codex-compatible plugin ZIP package to the Wegent marketplace."""
-    if visibility not in {"personal", "workspace", "public"}:
-        raise HTTPException(status_code=400, detail="Invalid plugin visibility")
-    content = await _read_plugin_upload(file)
-    item = installed_plugin_service.publish_marketplace_plugin(
-        db=db,
+) -> PluginMarketplaceItem:
+    return plugin_marketplace_service.get_plugin(
+        db,
+        plugin_id=plugin_id,
         user_id=current_user.id,
-        package_bytes=content,
-        filename=file.filename or "plugin.zip",
-        visibility=visibility,
-        featured=featured,
+        device_id=device_id,
     )
-    return PluginMarketplacePublishResponse(item=item)
+
+
+@router.get(
+    "/marketplace/{plugin_id}/releases", response_model=PluginReleaseListResponse
+)
+def list_marketplace_plugin_releases(
+    plugin_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginReleaseListResponse:
+    return plugin_marketplace_service.list_releases(
+        db, plugin_id=plugin_id, user_id=current_user.id
+    )
 
 
 @router.post(
@@ -121,17 +159,39 @@ async def publish_marketplace_plugin(
 )
 async def install_marketplace_plugin(
     marketplace_id: int,
+    release_id: int | None = None,
+    device_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
     """Install a marketplace plugin for the current user."""
-    plugin = installed_plugin_service.install_marketplace_plugin(
-        db=db,
+    plugin = plugin_marketplace_service.install(
+        db,
         user_id=current_user.id,
-        marketplace_id=marketplace_id,
+        plugin_id=marketplace_id,
+        release_id=release_id,
     )
-    await _sync_global_capabilities(db, current_user.id)
-    return PluginMarketplaceInstallResponse(plugin=plugin)
+    installed_id = int(plugin.metadata["labels"]["id"])
+    if plugin.spec.releaseId is not None:
+        await plugin_device_installation_service.ensure_pending_for_all_devices(
+            db,
+            user_id=current_user.id,
+            installed_kind_id=installed_id,
+            desired_release_id=plugin.spec.releaseId,
+        )
+    await _sync_global_capabilities(
+        db,
+        current_user.id,
+        required_device_id=device_id,
+        required_installed_kind_id=installed_id,
+        expect_installed=True,
+    )
+    enriched = plugin_marketplace_service.enrich_installed_list(
+        db,
+        InstalledPluginListResponse(items=[plugin]),
+        device_id=device_id,
+    )
+    return PluginMarketplaceInstallResponse(plugin=enriched.items[0])
 
 
 async def _read_plugin_upload(file: UploadFile) -> bytes:
@@ -155,11 +215,24 @@ def download_installed_plugin(
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> StreamingResponse:
     """Download a user's installed plugin package for local executor sync."""
-    package_bytes, filename = installed_plugin_service.package_data_for_download(
-        db=db,
-        user_id=current_user.id,
-        installed_id=installed_id,
-    )
+    try:
+        package_bytes, filename = (
+            plugin_marketplace_service.release_package_for_install(
+                db, user_id=current_user.id, installed_id=installed_id
+            )
+        )
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        package_bytes, filename = installed_plugin_service.package_data_for_download(
+            db=db,
+            user_id=current_user.id,
+            installed_id=installed_id,
+        )
+    except PluginPackageStorageError as exc:
+        raise HTTPException(
+            status_code=503, detail="Plugin package storage unavailable"
+        ) from exc
     encoded_filename = quote(filename, safe="")
     return StreamingResponse(
         io.BytesIO(package_bytes),
@@ -174,47 +247,195 @@ def download_installed_plugin(
 async def update_installed_plugin(
     installed_id: int,
     request: InstalledPluginUpdateRequest,
+    device_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
     """Update an installed plugin's enabled state or display metadata."""
-    installed = installed_plugin_service.update_installed_plugin(
-        db=db,
-        user_id=current_user.id,
-        installed_id=installed_id,
-        request=request,
+    if request.releaseId is not None:
+        installed = plugin_marketplace_service.update_release(
+            db,
+            user_id=current_user.id,
+            installed_id=installed_id,
+            release_id=request.releaseId,
+        )
+    else:
+        installed = installed_plugin_service.update_installed_plugin(
+            db=db,
+            user_id=current_user.id,
+            installed_id=installed_id,
+            request=request,
+        )
+    if installed.spec.releaseId is not None:
+        await plugin_device_installation_service.ensure_pending_for_all_devices(
+            db,
+            user_id=current_user.id,
+            installed_kind_id=installed_id,
+            desired_release_id=installed.spec.releaseId,
+        )
+    await _sync_global_capabilities(
+        db,
+        current_user.id,
+        required_device_id=device_id,
+        required_installed_kind_id=installed_id,
+        expect_installed=installed.spec.enabled,
     )
-    await _sync_global_capabilities(db, current_user.id)
-    return installed
+    return plugin_marketplace_service.enrich_installed_list(
+        db,
+        InstalledPluginListResponse(items=[installed]),
+        device_id=device_id,
+    ).items[0]
 
 
 @router.delete("/installed/{installed_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def uninstall_installed_plugin(
     installed_id: int,
+    device_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
     """Uninstall a user-scoped Claude Code plugin."""
+    plugin_device_installation_service.mark_uninstalling(
+        db, user_id=current_user.id, installed_kind_id=installed_id
+    )
     installed_plugin_service.uninstall_installed_plugin(
         db=db,
         user_id=current_user.id,
         installed_id=installed_id,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    result = await _sync_global_capabilities(
+        db,
+        current_user.id,
+        required_device_id=device_id,
+        required_installed_kind_id=installed_id,
+        expect_installed=False,
+    )
+    plugin_device_installation_service.record_uninstall_response(
+        db,
+        user_id=current_user.id,
+        installed_kind_id=installed_id,
+        response=result,
+    )
 
 
-async def _sync_global_capabilities(db: Session, user_id: int) -> None:
+async def _sync_global_capabilities(
+    db: Session,
+    user_id: int,
+    *,
+    required_device_id: str | None = None,
+    required_installed_kind_id: int | None = None,
+    expect_installed: bool = True,
+) -> DeviceCapabilitySyncResponse:
+    result = await device_capability_sync_service.sync_user_global_capabilities(
+        db,
+        user_id=user_id,
+    )
+    logger.info(
+        "Global capability sync after plugin change completed: user_id=%s synced=%s failed=%s skipped=%s",
+        user_id,
+        result.synced,
+        result.failed,
+        result.skipped,
+    )
+    plugin_device_installation_service.record_sync_response(
+        db, user_id=user_id, response=result
+    )
+    required_result = next(
+        (item for item in result.results if item.device_id == required_device_id),
+        None,
+    )
+    required_device_failed = bool(
+        required_device_id and (not required_result or not required_result.success)
+    )
+    required_materialization_failed = False
+    if required_device_id and required_installed_kind_id is not None:
+        device_row = (
+            db.query(PluginDeviceInstallation)
+            .filter(
+                PluginDeviceInstallation.installed_kind_id
+                == required_installed_kind_id,
+                PluginDeviceInstallation.device_id == required_device_id,
+            )
+            .first()
+        )
+        materialized = bool(device_row and device_row.state == "installed")
+        required_materialization_failed = materialized != expect_installed
+    if required_device_failed or required_materialization_failed:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "PLUGIN_DEVICE_SYNC_FAILED",
+                "message": "Plugin saved but one or more devices failed to synchronize",
+                "results": [item.model_dump() for item in result.results],
+            },
+        )
+    return result
+
+
+def _can_publish(current_user: User) -> bool:
+    return bool(
+        current_user.role == "admin"
+        or settings.PLUGIN_PUBLISH_ENABLED
+        or current_user.id in settings.PLUGIN_PUBLISH_USER_IDS
+    )
+
+
+def _ensure_publish_allowed(current_user: User) -> None:
+    if not _can_publish(current_user):
+        raise HTTPException(status_code=403, detail="Plugin publishing is not enabled")
+
+
+@router.post(
+    "/submissions/init",
+    response_model=PluginSubmissionInitResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def init_plugin_submission(
+    request: PluginSubmissionInitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginSubmissionInitResponse:
+    _ensure_publish_allowed(current_user)
     try:
-        result = await device_capability_sync_service.sync_user_global_capabilities(
-            db,
-            user_id=user_id,
+        return plugin_marketplace_service.init_submission(
+            db, user_id=current_user.id, request=request
         )
-        logger.info(
-            "Global capability sync after plugin change completed: user_id=%s synced=%s failed=%s skipped=%s",
-            user_id,
-            result.synced,
-            result.failed,
-            result.skipped,
+    except PluginPackageStorageError as exc:
+        raise HTTPException(
+            status_code=503, detail="Plugin package storage unavailable"
+        ) from exc
+
+
+@router.post(
+    "/submissions/{submission_id}/complete",
+    response_model=PluginSubmissionCompleteResponse,
+)
+def complete_plugin_submission(
+    submission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginSubmissionCompleteResponse:
+    _ensure_publish_allowed(current_user)
+    try:
+        item = plugin_marketplace_service.complete_submission(
+            db, user_id=current_user.id, submission_id=submission_id
         )
-    except Exception:
-        logger.exception("Failed to sync global capabilities after plugin change")
+    except PluginPackageStorageError as exc:
+        raise HTTPException(
+            status_code=503, detail="Plugin package storage unavailable"
+        ) from exc
+    return PluginSubmissionCompleteResponse(submission=item)
+
+
+@router.get("/submissions/{submission_id}", response_model=PluginSubmissionItem)
+def get_plugin_submission(
+    submission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginSubmissionItem:
+    return plugin_marketplace_service.get_submission(
+        db,
+        user_id=current_user.id,
+        submission_id=submission_id,
+        is_admin=current_user.role == "admin",
+    )

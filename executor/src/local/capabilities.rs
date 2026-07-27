@@ -60,6 +60,20 @@ pub trait CapabilityPackageProvider {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>>;
 }
 
+pub trait CapabilityPluginRuntime: Send + Sync {
+    fn install_plugin<'a>(
+        &'a self,
+        spec: &'a PluginSyncSpec,
+        marketplace_path: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>>;
+
+    fn uninstall_plugin<'a>(
+        &'a self,
+        name: &'a str,
+        marketplace: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>>;
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoopPackageProvider;
 
@@ -142,11 +156,11 @@ fn normalize_content_hash(value: &str) -> String {
 }
 
 #[derive(Debug, Clone)]
-struct PluginSyncSpec {
-    name: String,
+pub struct PluginSyncSpec {
+    pub name: String,
     key: String,
     installed_plugin_id: Option<i64>,
-    marketplace: String,
+    pub marketplace: String,
     version: String,
     checksum: Option<String>,
     download_path: Option<String>,
@@ -389,17 +403,51 @@ impl GlobalCapabilityStore {
         write_json(&self.plugins_dir.join("known_marketplaces.json"), &known)?;
 
         let marketplace_json_path = marketplace_dir.join(".claude-plugin/marketplace.json");
-        write_json(
-            &marketplace_json_path,
-            &json!({
-                "plugins": [{
-                    "description": "",
-                    "name": spec.name,
-                    "source": format!("./plugins/{}", plugin_codex_link_name(spec)),
-                    "version": spec.version,
-                }]
+        let mut marketplace = read_json_or_default(&marketplace_json_path, || json!({}))?;
+        let root = ensure_root_object(&mut marketplace);
+        let plugins = root
+            .entry("plugins")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        let plugins = plugins.as_array_mut().ok_or_else(|| {
+            CapabilitySyncError::invalid_payload("Marketplace plugins must be an array")
+        })?;
+        plugins.retain(|plugin| {
+            plugin.get("name").and_then(Value::as_str) != Some(spec.name.as_str())
+        });
+        plugins.push(json!({
+            "description": "",
+            "name": spec.name,
+            "source": format!("./plugins/{}", plugin_codex_link_name(spec)),
+            "version": spec.version,
+        }));
+        write_json(&marketplace_json_path, &marketplace)
+    }
+
+    fn record_app_server_plugin(
+        &self,
+        spec: &PluginSyncSpec,
+        store_path: &Path,
+        manifest: &mut Value,
+    ) {
+        ensure_object_field(manifest, "plugins").insert(
+            spec.key.clone(),
+            json!({
+                "managed": true,
+                "name": spec.name,
+                "key": spec.key,
+                "installed_plugin_id": spec.installed_plugin_id,
+                "marketplace": spec.marketplace,
+                "version": spec.version,
+                "checksum": spec.checksum,
+                "store_path": store_path.display().to_string(),
+                "install_authority": "codex_app_server",
+                "updated_at": now_rfc3339_like(),
             }),
-        )
+        );
+    }
+
+    fn plugin_marketplace_path(&self, marketplace: &str) -> PathBuf {
+        self.plugins_dir.join("marketplaces").join(marketplace)
     }
 
     fn skill_store_path(&self, spec: &SkillSyncSpec) -> PathBuf {
@@ -431,6 +479,7 @@ where
     auth_token: String,
     store: GlobalCapabilityStore,
     package_provider: P,
+    plugin_runtime: Option<std::sync::Arc<dyn CapabilityPluginRuntime>>,
     sync_lock: AsyncMutex<()>,
 }
 
@@ -457,8 +506,17 @@ where
             auth_token: auth_token.into(),
             store,
             package_provider,
+            plugin_runtime: None,
             sync_lock: AsyncMutex::new(()),
         }
+    }
+
+    pub fn with_plugin_runtime<R>(mut self, runtime: R) -> Self
+    where
+        R: CapabilityPluginRuntime + 'static,
+    {
+        self.plugin_runtime = Some(std::sync::Arc::new(runtime));
+        self
     }
 
     pub fn auth_token(&self) -> &str {
@@ -491,7 +549,8 @@ where
                 .map(|spec| spec.key.clone())
                 .collect::<BTreeSet<_>>();
             self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
-            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)?;
+            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest)
+                .await?;
         }
 
         let mut skill_results = Vec::with_capacity(skill_specs.len());
@@ -634,7 +693,7 @@ where
                     .and_then(|plugin| value_string(plugin.get("checksum")))
             });
         let should_download = spec.download_path.is_some()
-            && (!store_path.join(".claude-plugin/plugin.json").is_file()
+            && (!has_plugin_manifest(&store_path)
                 || spec
                     .checksum
                     .as_ref()
@@ -653,16 +712,69 @@ where
                     });
                 }
             }
-            extract_plugin_zip(&package, &store_path)?;
-        } else if !store_path.join(".claude-plugin/plugin.json").is_file() {
+            let backup_path = if store_path.exists() {
+                Some(sibling_temp_path(&store_path).with_extension("rollback"))
+            } else {
+                None
+            };
+            if let Some(backup) = backup_path.as_ref() {
+                if let Err(error) = copy_dir_recursive(&store_path, backup) {
+                    if !store_path.is_dir() {
+                        let _ = error;
+                    }
+                }
+            }
+            let extract_result = extract_plugin_zip(&package, &store_path);
+            if let Err(error) = extract_result {
+                if let Some(backup) = backup_path.as_ref() {
+                    let _ = remove_existing_path(&store_path);
+                    let _ = copy_dir_recursive(backup, &store_path);
+                    let _ = remove_existing_path(backup);
+                }
+                return Err(error);
+            }
+            if let Some(runtime) = &self.plugin_runtime {
+                self.store.install_marketplace_metadata(spec, &store_path)?;
+                let marketplace_path = self.store.plugin_marketplace_path(&spec.marketplace);
+                if let Err(error) = runtime.install_plugin(spec, &marketplace_path).await {
+                    if let Some(backup) = backup_path.as_ref() {
+                        let _ = remove_existing_path(&store_path);
+                        let _ = copy_dir_recursive(backup, &store_path);
+                    } else {
+                        let _ = remove_existing_path(&store_path);
+                    }
+                    if let Some(backup) = backup_path.as_ref() {
+                        let _ = remove_existing_path(backup);
+                    }
+                    return Err(error);
+                }
+                self.store
+                    .record_app_server_plugin(spec, &store_path, manifest);
+            } else {
+                self.store
+                    .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
+            }
+            if let Some(backup) = backup_path.as_ref() {
+                let _ = remove_existing_path(backup);
+            }
+            return Ok(());
+        } else if !has_plugin_manifest(&store_path) {
             return Err(CapabilitySyncError::invalid_payload(format!(
                 "Plugin package {} is not available",
                 spec.key
             )));
         }
 
-        self.store
-            .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
+        if let Some(runtime) = &self.plugin_runtime {
+            self.store.install_marketplace_metadata(spec, &store_path)?;
+            let marketplace_path = self.store.plugin_marketplace_path(&spec.marketplace);
+            runtime.install_plugin(spec, &marketplace_path).await?;
+            self.store
+                .record_app_server_plugin(spec, &store_path, manifest);
+        } else {
+            self.store
+                .install_plugin_runtime_metadata(spec, &store_path, manifest)?;
+        }
         Ok(())
     }
 
@@ -689,7 +801,7 @@ where
         Ok(())
     }
 
-    fn remove_stale_managed_plugins(
+    async fn remove_stale_managed_plugins(
         &self,
         desired: &BTreeSet<String>,
         manifest: &mut Value,
@@ -709,6 +821,18 @@ where
         let mut installed = read_installed_plugins(&self.store.plugins_dir)?;
         let plugins = ensure_object_field(&mut installed, "plugins");
         for (key, plugin) in stale {
+            if let Some(runtime) = &self.plugin_runtime {
+                let name = value_string(plugin.get("name"))
+                    .or_else(|| key.split_once('@').map(|(name, _)| name.to_owned()))
+                    .unwrap_or_else(|| key.clone());
+                let marketplace = value_string(plugin.get("marketplace"))
+                    .or_else(|| {
+                        key.split_once('@')
+                            .map(|(_, marketplace)| marketplace.to_owned())
+                    })
+                    .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned());
+                runtime.uninstall_plugin(&name, &marketplace).await?;
+            }
             plugins.remove(&key);
             remove_runtime_link_from_value(plugin.get("runtime"), "claude_link")?;
             remove_runtime_link_from_value(plugin.get("runtime"), "codex_link")?;

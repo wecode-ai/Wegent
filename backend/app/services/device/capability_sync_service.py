@@ -14,9 +14,11 @@ from sqlalchemy.orm import Session
 
 from app.core.socketio import get_sio
 from app.models.kind import Kind
+from app.models.plugin_marketplace import PluginRelease
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.services.device_service import device_service
+from app.services.plugin_package_storage import plugin_package_storage
 
 logger = logging.getLogger(__name__)
 
@@ -511,7 +513,7 @@ class DeviceCapabilitySyncService:
                 continue
             if installed.id in seen_ids:
                 continue
-            payloads.append(self._plugin_payload(installed))
+            payloads.append(self._plugin_payload(db, installed))
             seen_ids.add(installed.id)
         return payloads
 
@@ -635,7 +637,7 @@ class DeviceCapabilitySyncService:
             ),
         }
 
-    def _plugin_payload(self, installed: Kind) -> dict[str, Any]:
+    def _plugin_payload(self, db: Session, installed: Kind) -> dict[str, Any]:
         spec = installed.json.get("spec", {})
         source = spec.get("source") or {}
         marketplace = spec.get("marketplace") or source.get("marketplace")
@@ -657,7 +659,27 @@ class DeviceCapabilitySyncService:
             payload["components"] = components
         if package_ref:
             payload["checksum"] = package_ref.get("checksum")
-            payload["download_path"] = f"/api/plugins/installed/{installed.id}/download"
+            release_id = spec.get("releaseId")
+            release = (
+                db.get(PluginRelease, release_id)
+                if isinstance(release_id, int)
+                else None
+            )
+            if (
+                release
+                and release.status == "ready"
+                and release.scan_status == "passed"
+            ):
+                download_url, expires_at = plugin_package_storage.presign_download(
+                    release.storage_key
+                )
+                payload["download_path"] = download_url
+                payload["download_url_expires_at"] = expires_at.isoformat()
+                payload["release_id"] = release.id
+            else:
+                payload["download_path"] = (
+                    f"/api/plugins/installed/{installed.id}/download"
+                )
         return payload
 
     def _plugin_payload_name(
