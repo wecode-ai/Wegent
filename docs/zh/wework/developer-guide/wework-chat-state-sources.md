@@ -163,6 +163,7 @@ Composer 的 `@` 菜单支持显式引用其他 Wework 会话。空查询展示�
 Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React state 中。`WorkbenchMessage.content`、thinking/text/plan block 的 `content`、tool block 的 `toolOutput` 都必须通过统一的预览窗口进入 `messages`：
 
 - 实时 stream 事件进入 `reduceWorkbenchMessages` 后，超过阈值的正文只保留尾部预览，并写入 `contentTruncated`、`contentOriginalChars` 或 `toolOutputTruncated`、`toolOutputOriginalChars`。
+- 流式 offset 或历史元数据仅表示原始长度线索，不能单独触发截断提示。只有原始长度确实超过对应预览阈值时，reducer 才能设置截断状态；短内容的 offset 缺口必须保留当前可见文本并清除无效的截断元数据。
 - `runtime.tasks.transcript` 默认返回历史消息时也必须应用同样的截断语义，避免刷新或切换任务后重新把完整大字符串加载回 WebView。
 - 用户点击“加载完整输出”时，前端通过同一个 runtime transcript 方法请求 `includeFullContent: true`。executor 返回完整 transcript 和 `fullContent: true`，当前 pane 用完整 messages 替换预览 messages，并清空分页/gap 状态；后续展开其他控件直接复用该完整态，不再逐个走长路径。
 - `MessageList` 和 `ToolBlocksDisplay` 只能渲染当前预览内容和截断提示；仅用 CSS 折叠隐藏完整内容不算释放内存。
