@@ -20,6 +20,27 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    if request.runtime_project_key.is_none() {
+        request.runtime_project_key = string_field(payload, "runtimeProjectKey")
+            .or_else(|| string_field(payload, "runtime_project_key"));
+    }
+    if request.runtime_project_name.is_none() {
+        request.runtime_project_name = string_field(payload, "runtimeProjectName")
+            .or_else(|| string_field(payload, "runtime_project_name"));
+    }
+    if request.runtime_workspace_roots.is_empty() {
+        request.runtime_workspace_roots = payload
+            .get("runtimeWorkspaceRoots")
+            .or_else(|| payload.get("runtime_workspace_roots"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|root| !root.is_empty())
+            .map(str::to_owned)
+            .collect();
+    }
     if prompt_is_blank(&request.prompt) {
         if let Some(content) = string_field(payload, "message")
             .or_else(|| string_field(payload, "content"))

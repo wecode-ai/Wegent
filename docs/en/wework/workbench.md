@@ -4,7 +4,9 @@ sidebar_position: 5
 
 # Coding workbench
 
-The right workspace displays project files, previews, and change reviews. Local file links in an AI response open the file and can jump to a referenced line.
+The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
+
+Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
 Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.
 
@@ -16,11 +18,13 @@ When a conversation is taller than the current viewport, turn markers appear alo
 
 ## Switch conversations and restore position
 
-The desktop workbench renders only the active conversation. Runtime state and recent messages live in a shared cache while switching, so background tasks continue receiving live events and show their latest state immediately when reopened without retaining hidden conversation pages.
+When switching conversations, the desktop workbench saves runtime state, recent messages, right-workspace tabs, and panel state, so returning restores the workspace as it was left. Ordinary conversations do not retain a hidden full-page DOM, which bounds WebView memory growth from long conversations.
+
+Conversation panes with a running Terminal or Wework built-in browser remain mounted. Terminal processes, tabs, and output buffers stay live, while built-in browser pages, addresses, and tab state are preserved. After those resources close, the pane can be released while its restorable panel state remains. Hidden conversations do not handle shortcuts or browser-open events intended for the active conversation.
 
 A conversation opens at its latest message the first time. Conversations that were at the bottom remain at the bottom, while conversations viewed in the middle restore their distance from the bottom. Long conversations mount only messages near the viewport and reuse measured message heights to limit WebView memory growth while scrolling.
 
-Message, scroll-position, and virtual-measurement caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
+Message, scroll-position, and measured-height caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
 
 ## Use selected response text
 

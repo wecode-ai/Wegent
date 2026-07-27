@@ -848,6 +848,7 @@ describe('ChatInput', () => {
       'py-[14px]',
       'scrollbar-none',
       'text-chat',
+      'text-text-primary',
       'leading-5'
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
@@ -1329,16 +1330,8 @@ describe('ChatInput', () => {
     }
     const cloudModel: UnifiedModel = {
       ...model,
-      name: 'cloud:user:cloud-gpt-5.5',
+      name: 'cloud-gpt-5.5',
       displayName: '云端:gpt-5.5',
-      config: {
-        ...model.config,
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'cloud-gpt-5.5',
-          modelType: 'user',
-        },
-      },
     }
     const setSelectedModel = vi.fn()
     render(
@@ -1413,8 +1406,8 @@ describe('ChatInput', () => {
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
-    expect(modelOption.querySelectorAll('span')).toHaveLength(1)
-    expect(screen.getByTestId('model-option-cloud:user:cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
+    expect(modelOption.querySelectorAll('span')).toHaveLength(2)
+    expect(screen.getByTestId('model-option-cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
     expect(
       screen
         .getByTestId('model-control-menu-model')
@@ -2529,6 +2522,14 @@ describe('ChatInput', () => {
     expect(menu.getByText('设置 WeWork 将持续努力实现的目标')).toBeInTheDocument()
     expect(menu.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
     expect(menu.queryByText('插件')).not.toBeInTheDocument()
+    expect(screen.getByTestId('attach-files-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
+    expect(screen.getByTestId('set-plan-mode-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
 
     await userEvent.click(screen.getByTestId('set-plan-mode-button'))
 

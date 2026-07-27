@@ -23,6 +23,54 @@ use wegent_executor::{
 };
 
 #[tokio::test]
+async fn codex_app_server_includes_pasted_zip_in_model_input() {
+    let _lock = env_lock().await;
+    let workspace = unique_dir("codex-zip-attachment");
+    let archive = workspace.join("feedback.zip");
+    fs::write(&archive, b"PK\x03\x04test").unwrap();
+    let log_path = workspace.join("codex-rpc.jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let mut request = ExecutionRequest {
+        task_id: "29".to_owned(),
+        subtask_id: "44".to_owned(),
+        prompt: Value::String(String::new()),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "attachments".to_owned(),
+        json!([{
+            "id": 15,
+            "original_filename": "feedback.zip",
+            "mime_type": "application/zip",
+            "file_size": 8,
+            "subtask_id": 43,
+            "local_path": archive
+        }]),
+    );
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    let messages = read_json_lines(&log_path);
+    let input_text = messages[3]["params"]["input"][0]["text"].as_str().unwrap();
+    assert!(input_text.contains("feedback.zip"));
+    assert!(input_text.contains("application/zip"));
+    assert!(input_text.contains(&archive.display().to_string()));
+}
+
+#[tokio::test]
 async fn codex_app_server_replaces_downloaded_image_blocks_with_local_images() {
     let _lock = env_lock().await;
     let workspace = unique_dir("codex-attachment-local");

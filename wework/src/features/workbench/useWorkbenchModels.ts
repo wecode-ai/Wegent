@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  type ModelCompatibilityFamily,
-  areModelCompatibilityFamiliesCompatible,
-  areModelsProtocolCompatible,
   getDefaultModelOptions,
-  getModelCompatibilityFamily,
   inferModelFamily,
   isSupportedModelFamily,
   normalizeModelOptions,
@@ -26,11 +22,10 @@ interface WorkbenchModelApi {
 interface UseWorkbenchModelsOptions {
   api: WorkbenchModelApi
   locked: boolean
+  filterModel?: (model: UnifiedModel) => boolean
   scopeKey?: string
   persistSelection?: boolean
   selectionConfig?: ModelSelectionConfig | null
-  compatibilityConfig?: ModelSelectionConfig | null
-  compatibilityFamily?: ModelCompatibilityFamily | null
   defaultSelectionConfig?: (models: UnifiedModel[]) => ModelSelectionConfig | null
   selectionReady?: boolean
   onSelectionChange?: (selection: ModelSelectionConfig) => void
@@ -97,78 +92,13 @@ function getSelectionKey(
   ].join('::')
 }
 
-function isSameModel(left: UnifiedModel, right: UnifiedModel): boolean {
-  return left.name === right.name && left.type === right.type
-}
-
-function getCompatibilityDisabledReason(
-  currentModel: UnifiedModel,
-  nextModel: UnifiedModel
-): ModelCompatibilityDisabledReason | null {
-  if (isSameModel(currentModel, nextModel)) return null
-
-  const currentFamily = getModelCompatibilityFamily(currentModel)
-  if (!currentFamily) return 'missing_current_runtime_family'
-
-  const nextFamily = getModelCompatibilityFamily(nextModel)
-  if (!nextFamily) return 'missing_target_runtime_family'
-
-  return areModelsProtocolCompatible(currentModel, nextModel) ? null : 'runtime_family_mismatch'
-}
-
-function getCompatibilityDisabledReasonForFamily(
-  currentFamily: ModelCompatibilityFamily,
-  nextModel: UnifiedModel
-): ModelCompatibilityDisabledReason | null {
-  const nextFamily = getModelCompatibilityFamily(nextModel)
-  if (!nextFamily) return 'missing_target_runtime_family'
-
-  return areModelCompatibilityFamiliesCompatible(currentFamily, nextFamily)
-    ? null
-    : 'runtime_family_mismatch'
-}
-
-function annotateModelsByCompatibility(
-  models: UnifiedModel[],
-  compatibilityConfig?: ModelSelectionConfig | null,
-  compatibilityFamily?: ModelCompatibilityFamily | null
-): UnifiedModel[] {
-  if (compatibilityFamily) {
-    return models.map(model => {
-      const compatibilityDisabledReason = getCompatibilityDisabledReasonForFamily(
-        compatibilityFamily,
-        model
-      )
-      if (!compatibilityDisabledReason) return model
-      return {
-        ...model,
-        compatibilityDisabled: true,
-        compatibilityDisabledReason,
-      }
-    })
-  }
-
-  const currentModel = findConfiguredModel(models, compatibilityConfig)
-  if (!currentModel) return models
-  return models.map(model => {
-    const compatibilityDisabledReason = getCompatibilityDisabledReason(currentModel, model)
-    if (!compatibilityDisabledReason) return model
-    return {
-      ...model,
-      compatibilityDisabled: true,
-      compatibilityDisabledReason,
-    }
-  })
-}
-
 export function useWorkbenchModels({
   api,
   locked,
+  filterModel,
   scopeKey = DEFAULT_MODEL_SCOPE_KEY,
   persistSelection = true,
   selectionConfig,
-  compatibilityConfig,
-  compatibilityFamily,
   defaultSelectionConfig,
   selectionReady = true,
   onSelectionChange,
@@ -176,8 +106,8 @@ export function useWorkbenchModels({
 }: UseWorkbenchModelsOptions) {
   const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
   const models = useMemo(
-    () => annotateModelsByCompatibility(availableModels, compatibilityConfig, compatibilityFamily),
-    [availableModels, compatibilityConfig, compatibilityFamily]
+    () => (filterModel ? availableModels.filter(filterModel) : availableModels),
+    [availableModels, filterModel]
   )
   const [selectedModelByScope, setSelectedModelByScope] = useState<
     Record<string, UnifiedModel | null>
@@ -195,7 +125,7 @@ export function useWorkbenchModels({
     Record<string, string | null>
   >({})
   const effectiveSelectionConfig = useMemo(() => {
-    if (selectionConfig?.modelName) {
+    if (selectionConfig?.modelName && findConfiguredModel(models, selectionConfig)) {
       return selectionConfig
     }
     return defaultSelectionConfig?.(models) ?? selectionConfig ?? null

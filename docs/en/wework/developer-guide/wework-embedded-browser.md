@@ -30,6 +30,12 @@ Browser instances are bound by pane/task label:
 
 This binding keeps the browser the user sees and the browser the agent controls as the same object.
 
+## Main-interface overlays and address synchronization
+
+The embedded browser is a separate native WebView, so the main React WebView cannot cover it with `z-index`. When a dialog, menu, listbox, or system-level overlay intersects the browser bounds, the browser panel must make the native WebView invisible and restore it after the overlay is removed or no longer intersects. Add `data-embedded-browser-occlusion` when a custom overlay cannot be identified through a semantic role or shared layer class; do not duplicate native visibility calls across feature components.
+
+Page-state polling owns the browser's actual URL, while the address field owns the user's editing draft. While the address field is focused, polling may update page URL state, title, and favicon, but it must not overwrite the draft. Restore the actual URL after focus leaves the field. New navigation and page-state synchronization paths must preserve this boundary.
+
 ## WebView Compatibility
 
 - Browser WebViews use a fixed isolated data-store identifier and app data directory. They must not share Wework's main-interface sign-in storage, and the browser settings clear action only targets this store.

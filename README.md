@@ -310,6 +310,13 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/sdadunderscoresdad">
+                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
+                    <br />
+                    <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/kerwin612">
                     <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
                     <br />
@@ -345,13 +352,6 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/sdadunderscoresdad">
-                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
-                    <br />
-                    <sub><b>+7</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/fingki">
                     <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
                     <br />
@@ -382,10 +382,10 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/code-wangdi">
-                    <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
+                <a href="https://github.com/LiDaiyan">
+                    <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
                     <br />
-                    <sub><b>Code-wangdi</b></sub>
+                    <sub><b>Li Daiyan</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -396,10 +396,10 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/LiDaiyan">
-                    <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+                <a href="https://github.com/code-wangdi">
+                    <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
                     <br />
-                    <sub><b>Li Daiyan</b></sub>
+                    <sub><b>Code-wangdi</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -495,6 +495,13 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>
                     <br />
                     <sub><b>Wxcfox</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/earthAlone2026">
+                    <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
+                    <br />
+                    <sub><b>xiaoqiang</b></sub>
                 </a>
             </td>
 		</tr>

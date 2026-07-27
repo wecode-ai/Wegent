@@ -136,7 +136,7 @@ describe('runtimeModelSelection', () => {
 
   test('passes complete cloud model identity as hidden execution options', () => {
     const cloudModel: UnifiedModel = {
-      name: 'cloud:user:shared-model',
+      name: 'shared-model',
       type: 'user',
       modelId: 'gpt-5.6-luna',
       namespace: 'default',
@@ -144,13 +144,6 @@ describe('runtimeModelSelection', () => {
       provider: 'cloud',
       config: {
         context_window: 128000,
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'shared-model',
-          modelType: 'user',
-          modelNamespace: 'default',
-          resourceUserId: 42,
-        },
       },
     }
 
@@ -162,7 +155,85 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelContextWindow: '128000',
-        weworkCloudModelCatalogModelId: 'gpt-5.6-luna',
+      },
+    })
+  })
+
+  test('does not pass catalog model id as hidden execution option', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-model',
+      type: 'user',
+      modelId: 'gpt-5.6-luna',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        context_window: 128000,
+      },
+    }
+
+    expect(
+      selectedModelExecutionFields(cloudModel, {
+        catalogModelId: 'wework-gpt-5.6-sol',
+      })
+    ).toEqual({
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        catalogModelId: 'wework-gpt-5.6-sol',
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelContextWindow: '128000',
+      },
+    })
+  })
+
+  test('passes upstream api format for OpenAI Chat Completions cloud model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-model',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+  })
+
+  test('passes upstream api format for Anthropic Messages cloud model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-model',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'claude',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'anthropic-messages',
       },
     })
   })

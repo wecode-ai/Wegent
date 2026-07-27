@@ -1,4 +1,5 @@
 import { createDeviceApi } from '@/api/devices'
+import { createDeliveryApi } from '@/api/deliveries'
 import {
   createExecutorClientFromApis,
   type ExecutorClient,
@@ -69,6 +70,7 @@ export interface WorkbenchServices {
       typeof createDeviceApi
     >['createDockerRemoteDeviceCommand']
   }
+  deliveryApi?: ReturnType<typeof createDeliveryApi>
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   attachmentApi?: {

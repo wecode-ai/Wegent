@@ -8,8 +8,10 @@ import {
   displayAppName,
   displaySkillName,
   displaySkillSource,
+  matchesMentionQuery,
   skillReference,
   type ComposerAppMentionCandidate,
+  type ComposerCloudMentionCandidate,
   type ComposerSkillMentionCandidate,
 } from './composerMentionCandidates'
 import { localSkillTestId } from './composerMentions'
@@ -18,7 +20,8 @@ export function useComposerMentionCandidates(
   apps: LocalDeviceApp[],
   skills: LocalDeviceSkill[],
   selectedModel: UnifiedModel | null | undefined,
-  query: string
+  query: string,
+  cloudCandidates: ComposerCloudMentionCandidate[] = []
 ) {
   const { t } = useTranslation('common')
   const appCandidates = useMemo<ComposerAppMentionCandidate[]>(
@@ -60,21 +63,13 @@ export function useComposerMentionCandidates(
     [selectedModel, skills, t]
   )
   const mentionCandidates = useMemo(
-    () => [...skillCandidates, ...appCandidates],
-    [appCandidates, skillCandidates]
+    () => [...cloudCandidates, ...skillCandidates, ...appCandidates],
+    [appCandidates, cloudCandidates, skillCandidates]
   )
-  const filteredMentionCandidates = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    if (!normalizedQuery) return mentionCandidates
-    return mentionCandidates.filter(candidate => {
-      const description = candidate.description || ''
-      return (
-        candidate.title.toLowerCase().includes(normalizedQuery) ||
-        description.toLowerCase().includes(normalizedQuery) ||
-        candidate.searchAliases.some(alias => alias.toLowerCase().includes(normalizedQuery))
-      )
-    })
-  }, [mentionCandidates, query])
+  const filteredMentionCandidates = useMemo(
+    () => mentionCandidates.filter(candidate => matchesMentionQuery(candidate, query)),
+    [mentionCandidates, query]
+  )
 
   return { appCandidates, skillCandidates, mentionCandidates, filteredMentionCandidates }
 }

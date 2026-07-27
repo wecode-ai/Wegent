@@ -33,6 +33,8 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { readDroppedFiles } from '@/tauri/droppedFiles'
+import type { CloudProject } from '@/api/deliveries'
+import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 
 interface CompactChatComposerProps {
   value: string
@@ -50,6 +52,10 @@ interface CompactChatComposerProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  onSelectCloudProject?: (project: CloudProject) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -87,6 +93,10 @@ export function CompactChatComposer({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
+  cloudProjectCandidates,
+  cloudSpaceEnabled,
+  onSelectCloudProject,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -275,7 +285,11 @@ export function CompactChatComposer({
             onOpenSkillFile={onOpenSkillFile}
             workspaceTarget={workspaceTarget}
             workspaceFileApi={workspaceFileApi}
-            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-secondary outline-none placeholder:text-text-muted"
+            cloudMentionCandidates={cloudMentionCandidates}
+            cloudProjectCandidates={cloudProjectCandidates}
+            cloudSpaceEnabled={cloudSpaceEnabled}
+            onSelectCloudProject={onSelectCloudProject}
+            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-primary outline-none placeholder:text-text-muted"
             skillMenuClassName={[
               'left-[-1rem]',
               isStreaming && canSend ? 'right-[-5.75rem]' : 'right-[-3.5rem]',
@@ -460,7 +474,11 @@ export function CompactChatComposer({
               onOpenSkillFile={onOpenSkillFile}
               workspaceTarget={workspaceTarget}
               workspaceFileApi={workspaceFileApi}
-              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-chat text-text-secondary outline-none"
+              cloudMentionCandidates={cloudMentionCandidates}
+              cloudProjectCandidates={cloudProjectCandidates}
+              cloudSpaceEnabled={cloudSpaceEnabled}
+              onSelectCloudProject={onSelectCloudProject}
+              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-chat text-text-primary outline-none"
               skillMenuClassName="left-4 right-4 bottom-[calc(100%+0.5rem)]"
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}

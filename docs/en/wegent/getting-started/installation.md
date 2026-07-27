@@ -132,6 +132,8 @@ WEGENT_IMAGE_TAG=latest
 EXECUTOR_WORKSPACE=/path/to/workspace
 ```
 
+After the Sites platform is configured, the backend proxies `/api/sites` requests, injects the current authenticated username into upstream requests, and uses `SITES_API_TOKEN` to access the Sites platform. If `SITES_API_BASE_URL` is not configured, the Sites page shows the unavailable state. Inject real tokens through `.env` files or deployment secrets; do not add them to example files or commits.
+
 When `RUNTIME_WEWORK_CODE_URL` is empty, Wegent Web opens coding entry points at `/chat?agent=code` and filters to coding agents. When it is configured, the sidebar shows **WeWork** instead of **Code** and opens that runtime URL. This setting is delivered only through `/runtime-config`; there is no `NEXT_PUBLIC_*` fallback.
 
 ### Step 3: Start Services

@@ -32,3 +32,17 @@ export async function openNativeProjectDirectoryPicker(
   const directory = selected.find(item => item.isDirectory)
   return directory?.path.trim() || null
 }
+
+export async function openNativeProjectDirectoryPickers(
+  initialDirectory?: string
+): Promise<string[]> {
+  const selected = await openNativeWorkspacePathPicker(initialDirectory, {
+    directoriesOnly: true,
+    multiple: true,
+    defaultToHome: true,
+  })
+  return selected
+    .filter(item => item.isDirectory)
+    .map(item => item.path.trim())
+    .filter(Boolean)
+}

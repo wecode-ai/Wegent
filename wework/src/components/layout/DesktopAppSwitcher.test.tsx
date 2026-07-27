@@ -50,7 +50,20 @@ describe('DesktopAppSwitcher', () => {
     expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-haspopup', 'menu')
   })
 
-  test('shows Agent as unavailable while disconnected and hides Kanban', () => {
+  test('hides Kanban while experimental features are disabled', () => {
+    render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
+
+    fireEvent.click(screen.getByTestId('chrome-tab-wework'))
+    expect(screen.queryByTestId('app-switcher-option-todo')).not.toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('desktop-app-switcher-menu'))
+        .getAllByRole('menuitemradio')
+        .map(option => option.textContent)
+    ).toEqual(['任务使用 AI 解决具体问题', '智能体构建并交付可嵌入业务的云端智能体'])
+  })
+
+  test('keeps Kanban visible but unavailable while disconnected', () => {
+    experimentalFeatures.enabled = true
     const onNavigate = vi.fn()
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} />)
 
@@ -59,7 +72,15 @@ describe('DesktopAppSwitcher', () => {
     expect(screen.getByTestId('app-switcher-option-wework')).toHaveTextContent(
       '任务使用 AI 解决具体问题'
     )
-    expect(screen.queryByTestId('app-switcher-option-todo')).not.toBeInTheDocument()
+    const todoOption = screen.getByTestId('app-switcher-option-todo')
+    expect(todoOption).toBeDisabled()
+    const todoUnavailableStatus = screen.getByTestId('app-switcher-unavailable-todo')
+    expect(todoUnavailableStatus).toHaveAccessibleName('连接云端后可用')
+    fireEvent.mouseEnter(todoUnavailableStatus)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('连接云端后可用')
+    fireEvent.mouseLeave(todoUnavailableStatus)
+    fireEvent.click(todoOption)
+    expect(onNavigate).not.toHaveBeenCalled()
     const wegentOption = screen.getByTestId('app-switcher-option-wegent')
     expect(wegentOption).not.toHaveClass('opacity-60')
     expect(within(wegentOption).getByText('智能体')).toBeInTheDocument()
@@ -132,6 +153,7 @@ describe('DesktopAppSwitcher', () => {
   })
 
   test('labels the TODO board as Kanban', () => {
+    experimentalFeatures.enabled = true
     render(<DesktopAppSwitcher activeApp="todo" onNavigate={vi.fn()} />)
 
     expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('看板')

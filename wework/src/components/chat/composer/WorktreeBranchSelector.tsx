@@ -273,7 +273,8 @@ export function WorktreeBranchSelector({
         data-testid="project-worktree-branch-button"
         onClick={() => setOpen(current => !current)}
         className={cn(
-          'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+          'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+          isMobile && 'font-medium',
           open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
         )}
         aria-expanded={open}

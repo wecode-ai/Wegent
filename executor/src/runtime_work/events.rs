@@ -18,8 +18,9 @@ use super::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
     notification_mapping::{
-        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        log_dropped_notification, log_stream_text_mapping, log_text_mapping,
+        log_text_mapping_metadata, map_text_chunk, map_tool_output_delta, notification_item_id,
+        TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -808,15 +809,34 @@ impl CodexNotificationEventMapper {
                 );
                 true
             }
-            Ok(Some(TextChunkMapping::FinalCompleted)) => {
-                log_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "ignore_completed_final_snapshot",
-                    resolved_phase,
-                    params,
-                    "",
-                );
+            Ok(Some(TextChunkMapping::FinalCompleted { text })) => {
+                if self.final_text_offset == 0 {
+                    log_text_mapping_metadata(
+                        emit_context.local_task_id,
+                        method,
+                        "emit_completed_final_without_delta",
+                        resolved_phase,
+                        params,
+                        text.len(),
+                    );
+                    emit_response_event(
+                        emit_context.event_tx,
+                        emit_context.device_id,
+                        "response.output_text.delta",
+                        emit_context.local_task_id,
+                        emit_context.request,
+                        json!({"delta": text, "offset": 0}),
+                    );
+                } else {
+                    log_text_mapping(
+                        emit_context.local_task_id,
+                        method,
+                        "ignore_completed_final_snapshot",
+                        resolved_phase,
+                        params,
+                        "",
+                    );
+                }
                 self.final_text_offset = 0;
                 true
             }
@@ -2703,15 +2723,29 @@ mod tests {
     }
 
     #[test]
-    fn ignores_legacy_final_agent_message_snapshots_for_live_delta_stream() {
+    fn ignores_legacy_final_agent_message_snapshots_after_live_delta_stream() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
+        let mut mapper = CodexNotificationEventMapper::default();
 
-        map_codex_notification(
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": "Done."
+                }
+            }),
+        );
+        mapper.map(
             &Some(event_tx),
             "device-1",
             "local-1",
@@ -2726,6 +2760,12 @@ mod tests {
             }),
         );
 
+        let event = event_rx
+            .try_recv()
+            .expect("live final delta should be emitted");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(event["payload"]["data"]["delta"], "Done.");
+        assert_eq!(event["payload"]["data"]["offset"], 0);
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -3218,6 +3258,46 @@ mod tests {
     }
 
     #[test]
+    fn emits_completed_final_agent_message_when_no_delta_was_received() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Completed without a streaming delta."
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("final text event should be emitted");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(
+            event["payload"]["data"]["delta"],
+            "Completed without a streaming delta."
+        );
+        assert_eq!(event["payload"]["data"]["offset"], 0);
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn maps_codex_commentary_then_tool_then_unphased_final_without_duplication() {
         let (event_tx, mut event_rx) = broadcast::channel(8);
         let request = ExecutionRequest {
@@ -3504,6 +3584,123 @@ mod tests {
         assert_eq!(event["event"], "response.block.updated");
         assert_eq!(event["payload"]["data"]["block_id"], "image-view-1");
         assert_eq!(event["payload"]["data"]["updates"]["status"], "done");
+    }
+
+    #[test]
+    fn completes_the_original_tool_across_interleaved_text_and_tool_events() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "command-item-1",
+                        "callId": "call-1",
+                        "type": "commandExecution",
+                        "command": "pwd",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "message-1",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": ""
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "message-1",
+                    "delta": "Checking another command."
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "command-item-2",
+                        "callId": "call-2",
+                        "type": "commandExecution",
+                        "command": "git status",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "command-item-1",
+                        "callId": "call-1",
+                        "type": "commandExecution",
+                        "command": "pwd",
+                        "status": "completed",
+                        "aggregatedOutput": "/workspace\n",
+                        "exitCode": 0
+                    }
+                }
+            }),
+        );
+
+        let first_tool = event_rx.try_recv().expect("first tool start");
+        let process_text = event_rx.try_recv().expect("interleaved text");
+        let second_tool = event_rx.try_recv().expect("second tool start");
+        let first_tool_done = event_rx.try_recv().expect("first tool completion");
+
+        assert_eq!(first_tool["event"], "response.block.created");
+        assert_eq!(first_tool["payload"]["data"]["block"]["id"], "call-1");
+        assert_eq!(process_text["event"], "response.block.created");
+        assert_eq!(process_text["payload"]["data"]["block"]["type"], "text");
+        assert_eq!(second_tool["event"], "response.block.created");
+        assert_eq!(second_tool["payload"]["data"]["block"]["id"], "call-2");
+        assert_eq!(first_tool_done["event"], "response.block.updated");
+        assert_eq!(first_tool_done["payload"]["data"]["block_id"], "call-1");
+        assert_eq!(
+            first_tool_done["payload"]["data"]["updates"]["status"],
+            "done"
+        );
+        assert!(event_rx.try_recv().is_err());
     }
 
     #[test]

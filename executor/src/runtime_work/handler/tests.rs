@@ -4,6 +4,42 @@
 
 use super::*;
 
+#[tokio::test]
+async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
+    for (case, persisted_running, active_in_memory) in
+        [("persisted", true, false), ("active", false, true)]
+    {
+        let index_path = temp_runtime_work_index_path(&format!("fork-running-{case}"));
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        link.running = persisted_running;
+        handler.upsert_local_task(link);
+        if active_in_memory {
+            handler.mark_active_local_task("task-1");
+        }
+
+        let response = handler
+            .fork_task_at_turn(json!({
+                "taskId": "task-1",
+                "lastTurnId": "missing-turn",
+            }))
+            .await
+            .expect("running task fork should continue to turn resolution");
+
+        assert_eq!(response["accepted"], false, "{case}");
+        assert_eq!(response["code"], "bad_request", "{case}");
+        assert_eq!(response["error"], "fork turn was not found", "{case}");
+
+        let _ = fs::remove_file(index_path);
+    }
+}
+
 #[test]
 fn finishing_an_active_goal_keeps_the_task_idle() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
@@ -25,6 +61,76 @@ fn finishing_an_active_goal_keeps_the_task_idle() {
     assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn turn_result_persists_observed_goal_status_before_settling_task() {
+    let index_path = temp_runtime_work_index_path("finish-observed-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.goal_status = Some("active".to_owned());
+    handler.upsert_local_task(link);
+    handler.mark_active_local_task("task-1");
+
+    handler.handle_turn_result(
+        "task-1",
+        &ExecutionRequest::default(),
+        Ok(crate::agents::CodexAppServerTurn {
+            thread_id: "thread-1".to_owned(),
+            outcome: ExecutionOutcome::Completed {
+                content: "done".to_owned(),
+            },
+            goal_status: Some("complete".to_owned()),
+            goal_status_observed: true,
+        }),
+    );
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.status, "done");
+    assert!(!task.running);
+    assert_eq!(task.goal_status.as_deref(), Some("complete"));
+    assert!(!handler.is_active_local_task("task-1"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn failed_codex_turn_persists_assistant_error_in_runtime_handle() {
+    let index_path = temp_runtime_work_index_path("persist-failed-assistant");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    handler.upsert_local_task(link);
+    let request = ExecutionRequest {
+        subtask_id: "turn-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+
+    handler.persist_failed_assistant_message("task-1", &request, "Codex failure");
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    let messages = cached_messages(&task);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], "assistant");
+    assert_eq!(messages[0]["status"], "failed");
+    assert_eq!(messages[0]["error"], "Codex failure");
+    assert_eq!(messages[0]["errorType"], "response.failed");
+    assert_eq!(messages[0]["subtaskId"], "turn-1");
 
     let _ = fs::remove_file(index_path);
 }
@@ -133,6 +239,97 @@ fn imported_runtime_task_ids_are_unique() {
     assert_ne!(first, second);
     assert!(first.starts_with("runtime-fork-"));
     assert!(second.starts_with("runtime-fork-"));
+}
+
+#[test]
+fn runtime_turn_ids_are_persisted_by_subtask() {
+    let index_path = temp_runtime_work_index_path("runtime-turn-id");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+
+    handler.record_runtime_turn_id("task-1", "subtask-1", "turn-1");
+
+    let link = handler
+        .local_task_link("task-1")
+        .expect("task should exist");
+    assert_eq!(
+        tasks::runtime_turn_id_from_link(&link, "subtask-1").as_deref(),
+        Some("turn-1")
+    );
+    assert_eq!(
+        tasks::resolve_codex_turn_id(&link, "subtask-1").as_deref(),
+        Some("turn-1")
+    );
+    assert_eq!(
+        tasks::resolve_codex_turn_id(&link, "turn-1").as_deref(),
+        Some("turn-1")
+    );
+    assert_eq!(
+        tasks::resolve_codex_turn_id(&link, "019f933f-bf0d-72e3-b366-a6539ab00bcf").as_deref(),
+        Some("019f933f-bf0d-72e3-b366-a6539ab00bcf")
+    );
+    assert_eq!(tasks::resolve_codex_turn_id(&link, "missing-turn"), None);
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn completed_responses_include_the_persisted_runtime_turn_id() {
+    for (case, outcome) in [
+        (
+            "completed",
+            ExecutionOutcome::Completed {
+                content: "Done".to_owned(),
+            },
+        ),
+        (
+            "waiting",
+            ExecutionOutcome::WaitingForUserInput {
+                stop_reason: "Need input".to_owned(),
+            },
+        ),
+    ] {
+        let (event_tx, mut event_rx) = broadcast::channel(1);
+        let index_path = temp_runtime_work_index_path(&format!("completed-turn-id-{case}"));
+        let mut handler =
+            RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = format!("task-{case}");
+        let request = ExecutionRequest {
+            task_id: local_task_id.clone(),
+            subtask_id: format!("subtask-{case}"),
+            ..ExecutionRequest::default()
+        };
+        handler.upsert_local_task(RuntimeTaskLink::new_pending(
+            local_task_id.clone(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        ));
+        handler.record_runtime_turn_id(&local_task_id, &request.subtask_id, "turn-1");
+
+        handler.handle_turn_result(
+            &local_task_id,
+            &request,
+            Ok(crate::agents::CodexAppServerTurn {
+                thread_id: format!("thread-{case}"),
+                outcome,
+                goal_status: None,
+                goal_status_observed: false,
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("completed response should be emitted");
+        assert_eq!(event["event"], "response.completed", "{case}");
+        assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
+
+        let _ = fs::remove_file(index_path);
+    }
 }
 
 #[tokio::test]
@@ -263,6 +460,68 @@ fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
     append_missing_cached_user_messages(&mut provider_messages, cached_messages);
 
     assert_eq!(provider_messages.len(), 2);
+}
+
+#[test]
+fn transcript_matches_cached_user_message_to_attachment_wrapped_provider_message() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "role": "user",
+        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+    })];
+    let cached_messages = vec![json!({
+        "id": "cached-user",
+        "role": "user",
+        "content": "Fix the sidebar",
+        "clientMessageId": "runtime-local-pane-1",
+        "attachments": [{"filename": "image.png", "local_path": "/tmp/image.png"}]
+    })];
+
+    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(provider_messages.len(), 1);
+    assert_eq!(
+        provider_messages[0]["clientMessageId"],
+        "runtime-local-pane-1"
+    );
+    assert_eq!(
+        provider_messages[0]["attachments"][0]["filename"],
+        "image.png"
+    );
+}
+
+#[test]
+fn transcript_navigation_uses_client_message_id_for_live_message_matching() {
+    let navigation = transcript_turn_navigation(&[json!({
+        "id": "provider-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
+    })]);
+
+    assert_eq!(navigation.len(), 1);
+    assert_eq!(navigation[0]["id"], "runtime-local-pane-1");
+    assert_eq!(navigation[0]["promptPreview"], "Fix the sidebar");
+}
+
+#[test]
+fn transcript_appends_cached_failed_assistant_missing_from_provider() {
+    let mut provider_messages =
+        vec![json!({"id": "user-1", "role": "user", "content": "retry this"})];
+    let cached_messages = vec![json!({
+        "id": "failed-assistant-1",
+        "role": "assistant",
+        "content": "",
+        "status": "failed",
+        "error": "Codex failure"
+    })];
+
+    append_missing_cached_failed_assistant_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(provider_messages.len(), 2);
+    assert_eq!(provider_messages[1]["id"], "failed-assistant-1");
+    assert_eq!(provider_messages[1]["status"], "failed");
+    assert_eq!(provider_messages[1]["error"], "Codex failure");
 }
 
 #[tokio::test]
@@ -491,7 +750,7 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                     "collaborationMode": "plan"
                 },
                 "modelSelection": {
-                    "modelName": "cloud:user:local-model:mimo",
+                    "modelName": "shared-model",
                     "modelType": "user",
                     "options": {
                         "collaborationMode": "plan",
@@ -506,7 +765,7 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
     assert_eq!(
         response["runtimeHandle"]["modelSelection"],
         json!({
-            "modelName": "cloud:user:local-model:mimo",
+            "modelName": "shared-model",
             "modelType": "user",
             "options": {
                 "collaborationMode": "plan",
@@ -521,7 +780,7 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
     assert_eq!(
         link.runtime_handle["modelSelection"],
         json!({
-            "modelName": "cloud:user:local-model:mimo",
+            "modelName": "shared-model",
             "modelType": "user",
             "options": {
                 "collaborationMode": "plan",
@@ -567,22 +826,24 @@ fn task_list_running_state_comes_from_executor_memory() {
         "status": {"type": "active"},
         "turns": [{"status": "inProgress"}]
     });
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "task-1".to_owned(),
+        thread_id: Some("thread-1".to_owned()),
+        workspace_path: "/tmp/project".to_owned(),
+        goal_status: Some("active".to_owned()),
+        ..RuntimeTaskLink::default()
+    });
 
     let idle_link = handler
         .link_from_thread(&thread)
         .expect("active Codex thread should produce a task link");
 
     assert!(!idle_link.running);
+    assert_eq!(idle_link.goal_status.as_deref(), Some("active"));
     assert_eq!(idle_link.status, "active");
     assert_eq!(idle_link.thread_status, "idle");
     assert_eq!(idle_link.turn_status.as_deref(), Some("completed"));
 
-    handler.upsert_local_task(RuntimeTaskLink {
-        local_task_id: "task-1".to_owned(),
-        thread_id: Some("thread-1".to_owned()),
-        workspace_path: "/tmp/project".to_owned(),
-        ..RuntimeTaskLink::default()
-    });
     handler.mark_active_local_task("task-1");
 
     let running_link = handler

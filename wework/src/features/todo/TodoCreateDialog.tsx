@@ -104,9 +104,7 @@ export function TodoCreateDialog({
       )
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : t('todo.create_failed', 'TODO 创建失败')
+        submitError instanceof Error ? submitError.message : t('todo.create_failed', '任务创建失败')
       )
       setSubmitting(false)
     }
@@ -134,7 +132,7 @@ export function TodoCreateDialog({
               id="todo-create-dialog-title"
               className="shrink-0 text-lg font-semibold text-[#24282D] dark:text-text-primary"
             >
-              {t('todo.create_action', '新建 TODO')}
+              {t('todo.create_action', '新建任务')}
             </h2>
             <label className="relative flex h-[30px] min-w-0 max-w-[230px] items-center gap-2 rounded-md border border-[#E0E3E6] bg-[#F7F8F9] pl-2.5 pr-7 dark:border-border dark:bg-muted">
               <span
@@ -406,7 +404,7 @@ export function TodoCreateDialog({
               className="flex h-[34px] items-center gap-1.5 rounded-md border border-[#A9DAD3] bg-white px-3 text-xs font-bold text-[#0F766E] hover:bg-[#F1FAF8] disabled:opacity-50 dark:bg-background"
             >
               <Plus className="h-3.5 w-3.5" />
-              {t('todo.create_only', '创建 TODO')}
+              {t('todo.create_only', '创建任务')}
             </button>
             <button
               type="button"

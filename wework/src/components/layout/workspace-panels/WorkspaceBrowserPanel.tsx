@@ -47,6 +47,10 @@ import {
 import { openExternalUrl } from '@/lib/external-links'
 import { revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
+import {
+  embeddedBrowserOverlayMutationAffectsVisibility,
+  hasEmbeddedBrowserOverlayConflict,
+} from '@/lib/embedded-browser-overlay'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext } from '@/types/workspace-files'
@@ -567,6 +571,7 @@ export function WorkspaceBrowserPanel({
   const nativeBrowserOpenRef = useRef(false)
   const currentUrlRef = useRef<string | null>(null)
   const activePageUrlRef = useRef<string | null>(null)
+  const addressEditingRef = useRef(false)
   const annotationModeRef = useRef(false)
   const annotationCleanupPromiseRef = useRef<Promise<void> | null>(null)
   const annotationInjectionOwnerRef = useRef<number | null>(null)
@@ -584,6 +589,7 @@ export function WorkspaceBrowserPanel({
   const postOpenSyncTimerRefs = useRef<number[]>([])
   const annotationEmptyPollLogCountRef = useRef(0)
   const [occludingOverlayIds, setOccludingOverlayIds] = useState<Set<string>>(() => new Set())
+  const [documentOverlayOccluded, setDocumentOverlayOccluded] = useState(false)
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
   const [pageUrl, setPageUrl] = useState<string | null>(null)
@@ -598,7 +604,8 @@ export function WorkspaceBrowserPanel({
   const internalDesktopPage = Boolean(
     activePageUrl && cloudDesktopExtension.isInternalPageUrl(activePageUrl)
   )
-  const embeddedBrowserOccluded = occludingOverlayIds.size > 0
+  const embeddedBrowserOccluded =
+    occludingOverlayIds.size > 0 || (active && Boolean(currentUrl) && documentOverlayOccluded)
 
   const applyDownloadEvent = useCallback((download: EmbeddedBrowserDownloadEvent) => {
     setDownloads(current => {
@@ -661,7 +668,7 @@ export function WorkspaceBrowserPanel({
       activePageUrlRef.current = url
       setPageUrl(url)
       if (url) {
-        setAddress(url)
+        if (!addressEditingRef.current) setAddress(url)
         onTitleChange?.(getFallbackBrowserTitle(url))
         onFaviconChange?.(getFallbackFaviconUrl(url))
         return
@@ -1279,6 +1286,59 @@ export function WorkspaceBrowserPanel({
   }, [label])
 
   useEffect(() => {
+    if (!active || !embeddedBrowserAvailable || !currentUrl) return
+
+    let animationFrame: number | null = null
+    const updateOverlayOcclusion = () => {
+      animationFrame = null
+      const host = browserHostRef.current
+      setDocumentOverlayOccluded(Boolean(host && hasEmbeddedBrowserOverlayConflict(host)))
+    }
+    const scheduleOverlayOcclusionUpdate = () => {
+      if (animationFrame !== null) return
+      animationFrame = window.requestAnimationFrame(updateOverlayOcclusion)
+    }
+
+    const observer = new MutationObserver(mutations => {
+      if (embeddedBrowserOverlayMutationAffectsVisibility(mutations)) {
+        scheduleOverlayOcclusionUpdate()
+      }
+    })
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: [
+        'aria-hidden',
+        'aria-modal',
+        'class',
+        'data-embedded-browser-occlusion',
+        'hidden',
+        'role',
+        'style',
+      ],
+      childList: true,
+      subtree: true,
+    })
+    window.addEventListener('resize', scheduleOverlayOcclusionUpdate)
+    window.addEventListener('scroll', scheduleOverlayOcclusionUpdate, true)
+    document.addEventListener('pointerover', scheduleOverlayOcclusionUpdate, true)
+    document.addEventListener('pointerout', scheduleOverlayOcclusionUpdate, true)
+    document.addEventListener('focusin', scheduleOverlayOcclusionUpdate, true)
+    document.addEventListener('focusout', scheduleOverlayOcclusionUpdate, true)
+    scheduleOverlayOcclusionUpdate()
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', scheduleOverlayOcclusionUpdate)
+      window.removeEventListener('scroll', scheduleOverlayOcclusionUpdate, true)
+      document.removeEventListener('pointerover', scheduleOverlayOcclusionUpdate, true)
+      document.removeEventListener('pointerout', scheduleOverlayOcclusionUpdate, true)
+      document.removeEventListener('focusin', scheduleOverlayOcclusionUpdate, true)
+      document.removeEventListener('focusout', scheduleOverlayOcclusionUpdate, true)
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
+    }
+  }, [active, currentUrl, embeddedBrowserAvailable])
+
+  useEffect(() => {
     void syncEmbeddedBrowserBounds(active).catch(error => {
       console.error('Failed to sync embedded browser occlusion visibility:', error)
     })
@@ -1472,6 +1532,14 @@ export function WorkspaceBrowserPanel({
               data-testid="workspace-browser-url-input"
               value={address}
               onChange={event => setAddress(event.target.value)}
+              onFocus={() => {
+                addressEditingRef.current = true
+              }}
+              onBlur={() => {
+                addressEditingRef.current = false
+                const currentPageUrl = activePageUrlRef.current
+                if (currentPageUrl) setAddress(currentPageUrl)
+              }}
               placeholder={t('workbench.browser_url_placeholder')}
               className="h-8 w-full rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"
             />

@@ -117,6 +117,7 @@ export function SearchableSelect({
           <div
             ref={menuRef}
             data-testid={`${testId}-menu`}
+            data-embedded-browser-occlusion
             className="fixed z-[11000] rounded-xl border border-[#d8d8d8] bg-white p-2 shadow-[0_16px_44px_rgba(0,0,0,0.18)]"
             style={{
               left: menuRect.left,

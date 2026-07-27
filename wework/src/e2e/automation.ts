@@ -12,11 +12,11 @@ import {
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
@@ -178,6 +178,9 @@ function createBridge(): WeworkAutomationBridge {
 function seedDesktopE2ECloudConnection() {
   const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
+  const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
+  const localModelsCatalogReady =
+    import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const token =
     import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() || 'wework-desktop-e2e-cloud-token'
 
@@ -202,7 +205,7 @@ function seedDesktopE2ECloudConnection() {
             displayName: 'Desktop E2E Responses',
             modelId: 'desktop-e2e-responses-model',
             apiFormat: 'openai-responses' as const,
-            toolProfile: 'custom' as const,
+            toolProfile: 'function' as const,
             requestPath: '/v1/responses',
           },
           {
@@ -226,9 +229,9 @@ function seedDesktopE2ECloudConnection() {
   for (const model of localModels) {
     saveLocalModelConfig({
       ...model,
-      baseUrl: backendUrl,
+      baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
-      catalogReady: false,
+      catalogReady: localModelsCatalogReady,
       enabled: true,
     })
   }
@@ -270,13 +273,17 @@ function desktopControlElementMetrics(selector: string): string {
     elements.map(element => {
       const rect = element.getBoundingClientRect()
       return {
+        bottom: rect.bottom,
         clientHeight: element.clientHeight,
         clientWidth: element.clientWidth,
         height: rect.height,
+        left: rect.left,
+        right: rect.right,
         scrollHeight: element.scrollHeight,
         scrollLeft: element.scrollLeft,
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
+        top: rect.top,
         width: rect.width,
       }
     })
@@ -302,11 +309,52 @@ function desktopControlSnapshot(selector = 'body'): string {
 }
 
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
+  const restoreMainWindow = async () => {
+    const mainWindow = getCurrentWindow()
+    await mainWindow.show()
+    await mainWindow.unminimize()
+    await mainWindow.setFocus()
+    await new Promise<void>(resolve => window.setTimeout(resolve, 50))
+  }
+  const captureMainWebview = async () => {
+    try {
+      return await invoke<string>('capture_main_webview')
+    } finally {
+      await restoreMainWindow()
+    }
+  }
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
-  const snapshot = await invoke<string>('capture_main_webview')
-  if (element === document.body) return snapshot
-  return cropDesktopControlScreenshot(snapshot, element.getBoundingClientRect())
+  if (element === document.body) {
+    return captureMainWebview()
+  }
+  const rect = element.getBoundingClientRect()
+  if (selector !== '[data-testid="model-selector-menu"]') {
+    const snapshot = await captureMainWebview()
+    return cropDesktopControlScreenshot(snapshot, rect)
+  }
+  // NSView snapshots can omit WebKit's separately composited fixed-position popovers.
+  // Mirror the target into the document layer so element evidence captures what is visible.
+  const captureClone = element.cloneNode(true) as HTMLElement
+  Object.assign(captureClone.style, {
+    animation: 'none',
+    height: `${rect.height}px`,
+    left: `${rect.left + window.scrollX}px`,
+    maxHeight: 'none',
+    position: 'absolute',
+    top: `${rect.top + window.scrollY}px`,
+    transform: 'none',
+    width: `${rect.width}px`,
+    zIndex: '2147483647',
+  })
+  document.body.appendChild(captureClone)
+  try {
+    await new Promise<void>(resolve => window.setTimeout(resolve, 50))
+    const snapshot = await captureMainWebview()
+    return cropDesktopControlScreenshot(snapshot, rect)
+  } finally {
+    captureClone.remove()
+  }
 }
 
 async function cropDesktopControlScreenshot(snapshot: string, rect: DOMRect): Promise<string> {
@@ -555,6 +603,26 @@ function dropDesktopControlFile(command: DesktopControlCommand): string {
   return filename
 }
 
+function pasteDesktopControlFile(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const filename = command.filename?.trim()
+  if (!filename) throw new Error('pasteFile requires a filename')
+  const binary = window.atob(command.value ?? '')
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
+  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const transfer = new DataTransfer()
+  transfer.items.add(file)
+  const event = new ClipboardEvent('paste', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  })
+  Object.defineProperty(event, 'clipboardData', { value: transfer })
+  element.dispatchEvent(event)
+  return filename
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -584,10 +652,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return dragDesktopControlElement(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
+    case 'pasteFile':
+      return pasteDesktopControlFile(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector)
+    case 'getElementCount':
+      return String(findDesktopControlElements(command.selector).length)
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
     case 'getStyle': {
@@ -739,6 +811,15 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
 
 async function runDesktopControlClient(url: string): Promise<void> {
   const clientId = crypto.randomUUID()
+  const pollForCommand = () =>
+    fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
+      headers: desktopControlHeaders(),
+    })
+  await getCurrentWindow().show()
+  await getCurrentWindow().unminimize()
+  await getCurrentWindow().setFocus()
+  let commandRequest = pollForCommand()
+  await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
@@ -750,17 +831,17 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
   while (true) {
     try {
-      const response = await fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
-        headers: desktopControlHeaders(),
-      })
+      const response = await commandRequest
       if (response.status === 204) {
         await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+        commandRequest = pollForCommand()
         continue
       }
       if (!response.ok) {
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      commandRequest = pollForCommand()
       try {
         const value = await executeDesktopControlCommand(command)
         await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
@@ -778,6 +859,7 @@ async function runDesktopControlClient(url: string): Promise<void> {
     } catch (error) {
       console.error('[Wework] Desktop E2E control client failed:', error)
       await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+      commandRequest = pollForCommand()
     }
   }
 }

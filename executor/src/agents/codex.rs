@@ -60,6 +60,7 @@ const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_B
 const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
+const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
@@ -77,6 +78,7 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
+
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -183,6 +185,8 @@ struct ActiveCodexTurn {
 pub struct CodexAppServerTurn {
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub goal_status: Option<String>,
+    pub goal_status_observed: bool,
 }
 
 #[path = "codex/interaction.rs"]
@@ -460,19 +464,10 @@ impl CodexAppServerClient {
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
-        let result: Result<(), String> = async {
-            let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
-            let message = json!({
-                "method": "thread/unsubscribe",
-                "id": request_id,
-                "params": {"threadId": thread_id},
-            });
-            let write_result = handle.write_message(message).await;
-            handle.remove_pending(request_id).await;
-            drop(response_rx);
-            write_result
-        }
-        .await;
+        let result = self
+            .request("thread/unsubscribe", json!({"threadId": thread_id}))
+            .await
+            .map(|_| ());
         if let Err(error) = result {
             log_executor_event(
                 "codex shared thread unsubscribe failed",
@@ -666,7 +661,7 @@ async fn start_persistent_codex_app_server(
             rpc.notify("initialized", json!({})),
         )
         .await?;
-        Ok((rpc.stdin, rpc.stdout, rpc.next_id))
+        Ok(rpc.into_parts())
     }
     .await;
 
@@ -710,7 +705,14 @@ fn persistent_codex_app_server_launch_config(
     launch_config.config_overrides.extend([
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
+        // MCP tools are deferred behind tool_search by the bundled Codex. The
+        // search tool must be enabled at persistent app-server startup; enabling
+        // it per thread is too late because feature registration is process-wide.
+        "features.tool_search=true".to_owned(),
     ]);
+    launch_config
+        .config_overrides
+        .extend(codex_streaming_patch_config_overrides());
     launch_config
 }
 
@@ -976,17 +978,13 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;
                 let goal_response = client.request("thread/goal/set", goal_params).await?;
-                if goal_response_goal_is_active(&goal_response) {
-                    state.set_goal_status("active");
-                }
+                sync_goal_status_from_response(&mut state, &goal_response);
             } else if resuming_thread {
                 if let Ok(goal_response) = client
                     .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
                     .await
                 {
-                    if goal_response_goal_is_active(&goal_response) {
-                        state.set_goal_status("active");
-                    }
+                    sync_goal_status_from_response(&mut state, &goal_response);
                 }
             }
 
@@ -1069,7 +1067,13 @@ async fn run_codex_app_server_turn_on_shared_client(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex shared turn request finished", &turn_fields);
-        Ok(CodexAppServerTurn { thread_id, outcome })
+        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        Ok(CodexAppServerTurn {
+            thread_id,
+            outcome,
+            goal_status,
+            goal_status_observed,
+        })
     }
     .await;
 
@@ -1234,12 +1238,13 @@ pub async fn run_codex_app_server_turn_with_cancel(
         if !request.ephemeral {
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                with_rpc_timeout(
+                let goal_response = with_rpc_timeout(
                     "thread/goal/set",
                     timeout_seconds,
                     rpc.request("thread/goal/set", goal_params, &mut state),
                 )
                 .await?;
+                sync_goal_status_from_response(&mut state, &goal_response);
             }
             if let Some(name) = initial_thread_name
                 .as_deref()
@@ -1305,7 +1310,13 @@ pub async fn run_codex_app_server_turn_with_cancel(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex turn request finished", &turn_fields);
-        Ok(CodexAppServerTurn { thread_id, outcome })
+        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        Ok(CodexAppServerTurn {
+            thread_id,
+            outcome,
+            goal_status,
+            goal_status_observed,
+        })
     }
     .await;
 
@@ -1672,12 +1683,15 @@ fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> O
         .or_else(|| string_value(params, "turn_id"))
 }
 
-fn goal_response_goal_is_active(response: &Value) -> bool {
-    response
+fn sync_goal_status_from_response(state: &mut CodexRunState, response: &Value) {
+    match response
         .get("goal")
         .and_then(|goal| goal.get("status"))
         .and_then(Value::as_str)
-        .is_some_and(|status| status.eq_ignore_ascii_case("active"))
+    {
+        Some(status) => state.set_goal_status(status),
+        None => state.clear_goal_status(),
+    }
 }
 
 fn string_value(value: &Value, key: &str) -> Option<String> {
@@ -1840,219 +1854,16 @@ fn codex_turn_startup_timeout_seconds() -> u64 {
         .unwrap_or(DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS)
 }
 
-struct JsonRpcConnection {
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
-}
+#[path = "codex/json_rpc.rs"]
+mod json_rpc;
 
-impl JsonRpcConnection {
-    fn new(stdin: ChildStdin, stdout: ChildStdout) -> Self {
-        Self::new_with_next_id(stdin, stdout, 1)
-    }
-
-    fn new_with_next_id(stdin: ChildStdin, stdout: ChildStdout, next_id: u64) -> Self {
-        Self {
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id,
-        }
-    }
-
-    async fn request(
-        &mut self,
-        method: &str,
-        request_params: Value,
-        state: &mut CodexRunState,
-    ) -> Result<Value, String> {
-        let request_id = self.send_request(method, request_params).await?;
-        loop {
-            let message = self.read_message().await?;
-            if response_id(&message) == Some(request_id) {
-                return response_result(message);
-            }
-            if let Some(outcome) = state.handle_message(&message) {
-                return Err(format!(
-                    "codex app-server completed before {method} response: {outcome:?}"
-                ));
-            }
-        }
-    }
-
-    async fn request_ignoring_notifications(
-        &mut self,
-        method: &str,
-        params: Value,
-    ) -> Result<Value, String> {
-        let request_id = self.send_request(method, params).await?;
-        loop {
-            let message = self.read_message().await?;
-            if response_id(&message) == Some(request_id) {
-                return response_result(message);
-            }
-            if message.get("method").and_then(Value::as_str) == Some("error") {
-                return Err(codex_error_message(message_params(&message)));
-            }
-        }
-    }
-
-    async fn send_request(&mut self, method: &str, params: Value) -> Result<u64, String> {
-        let request_id = self.next_id;
-        self.next_id += 1;
-        self.write_message(json!({
-            "method": method,
-            "id": request_id,
-            "params": params,
-        }))
-        .await?;
-        Ok(request_id)
-    }
-
-    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
-        self.write_message(json!({
-            "method": method,
-            "params": params,
-        }))
-        .await
-    }
-
-    async fn read_turn(
-        &mut self,
-        turn_request_id: u64,
-        state: &mut CodexRunState,
-        notifications: Option<CodexNotificationSender>,
-        mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-    ) -> Result<ExecutionOutcome, String> {
-        let mut saw_turn_response = false;
-        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
-        let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let mut waiting_for_initial_progress = true;
-        loop {
-            let message = if waiting_for_initial_progress {
-                match timeout_at(startup_deadline, self.read_message()).await {
-                    Ok(result) => result?,
-                    Err(_) => {
-                        return Err(format!(
-                            "codex app-server turn made no model or tool progress for {startup_timeout_seconds}s"
-                        ));
-                    }
-                }
-            } else {
-                self.read_message().await?
-            };
-            log_codex_raw_turn_message(&message);
-            if response_id(&message) == Some(turn_request_id) {
-                response_result(message)?;
-                saw_turn_response = true;
-                continue;
-            }
-            if waiting_for_initial_progress
-                && codex_notification_has_initial_progress(&message, state)
-            {
-                waiting_for_initial_progress = false;
-            }
-            if let Some(sender) = &notifications {
-                let _ = sender.send(message.clone());
-            }
-            if message
-                .get("method")
-                .and_then(Value::as_str)
-                .is_some_and(|method| method == "item/tool/requestUserInput")
-            {
-                self.answer_request_user_input(&message, &mut request_user_input_answers)
-                    .await?;
-                continue;
-            }
-            if message
-                .get("method")
-                .and_then(Value::as_str)
-                .is_some_and(|method| method == "mcpServer/elicitation/request")
-            {
-                self.answer_mcp_server_elicitation(&message, &mut request_user_input_answers)
-                    .await?;
-                continue;
-            }
-            if let Some(outcome) = state.handle_message(&message) {
-                return Ok(outcome);
-            }
-            if !saw_turn_response {
-                continue;
-            }
-        }
-    }
-
-    async fn answer_request_user_input(
-        &mut self,
-        message: &Value,
-        request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
-    ) -> Result<(), String> {
-        let request_id = json_rpc_request_id(message)
-            .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
-        let Some(receiver) = request_user_input_answers else {
-            return Err("request_user_input requires a runtime response channel".to_owned());
-        };
-        let response = receiver
-            .recv()
-            .await
-            .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
-        self.write_message(json!({
-            "id": request_id,
-            "result": request_user_input_result(response),
-        }))
-        .await
-    }
-
-    async fn answer_mcp_server_elicitation(
-        &mut self,
-        message: &Value,
-        request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
-    ) -> Result<(), String> {
-        let request_id = json_rpc_request_id(message)
-            .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
-        let result =
-            receive_mcp_server_elicitation_response(message, request_user_input_answers.as_mut())
-                .await?;
-        self.write_message(json!({
-            "id": request_id,
-            "result": result,
-        }))
-        .await
-    }
-
-    async fn write_message(&mut self, message: Value) -> Result<(), String> {
-        let mut line = serde_json::to_vec(&message)
-            .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
-        line.push(b'\n');
-        self.stdin
-            .write_all(&line)
-            .await
-            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
-    }
-
-    async fn read_message(&mut self) -> Result<Value, String> {
-        let mut line = String::new();
-        let bytes_read = self
-            .stdout
-            .read_line(&mut line)
-            .await
-            .map_err(|error| format!("failed to read codex JSON-RPC message: {error}"))?;
-        if bytes_read == 0 {
-            return Err("codex app-server exited before completing the turn".to_owned());
-        }
-        let message: Value = serde_json::from_str(&line)
-            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))?;
-        Ok(message)
-    }
-}
+use json_rpc::JsonRpcConnection;
 
 #[path = "codex/run_state.rs"]
 mod run_state;
 
 use run_state::{log_codex_raw_turn_message, stream_thread_id, CodexRunState};
+
 fn initialize_params() -> Value {
     json!({
         "clientInfo": {
@@ -2130,7 +1941,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     if use_user_config {
         let inference_provider = inference_model_provider(&request.model_config);
         if let Some(upstream) = configured_codex_provider(&inference_provider) {
-            configure_codex_router(&mut launch_config, upstream);
+            configure_codex_router(&mut launch_config, upstream, model.clone());
         } else {
             launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
@@ -2146,6 +1957,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         configure_codex_router(
             &mut launch_config,
             explicit_codex_upstream(&request.model_config, &base_url, &api_key),
+            model.clone(),
         );
     } else {
         launch_config.model_provider = Some(inference_model_provider(&request.model_config));
@@ -2166,8 +1978,10 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
 
 fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
-    upstream: LocalModelProxyUpstream,
+    mut upstream: LocalModelProxyUpstream,
+    routing_model_id: Option<String>,
 ) {
+    upstream.routing_model_id = routing_model_id;
     let local_token = local_model_proxy::register(upstream);
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
@@ -2200,10 +2014,14 @@ fn explicit_codex_upstream(
         api_format: non_empty_config(model_config, "upstream_api_format")
             .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
             .unwrap_or_else(|| "openai-responses".to_owned()),
+        convert_custom_tools: non_empty_config(model_config, "tool_profile")
+            .or_else(|| non_empty_config(model_config, "toolProfile"))
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
         api_key: api_key.to_owned(),
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
         model_id: non_empty_config(model_config, "model_id"),
+        routing_model_id: None,
     }
 }
 
@@ -2217,6 +2035,7 @@ fn shell_path_config_override() -> String {
 fn codex_streaming_patch_config_overrides() -> Vec<String> {
     vec![
         CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned(),
+        CODEX_APPLY_PATCH_FREEFORM_OVERRIDE.to_owned(),
         CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
     ]
 }
@@ -2236,23 +2055,20 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
 }
 
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
-    if !bool_value(
+    let compat_proxy = bool_value(
         request
             .model_config
             .get("codex_responses_compat_proxy")
             .or_else(|| request.model_config.get("codexResponsesCompatProxy")),
     )
-    .unwrap_or(false)
-    {
-        return model_id(request);
+    .unwrap_or(false);
+    let catalog_model_id = non_empty_config(&request.model_config, "codex_catalog_model_id")
+        .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
+    if compat_proxy {
+        catalog_model_id.clone().or_else(|| model_id(request))
+    } else {
+        model_id(request)
     }
-    if let Some(catalog_model_id) =
-        non_empty_config(&request.model_config, "codex_catalog_model_id")
-            .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"))
-    {
-        return Some(catalog_model_id);
-    }
-    model_id(request)
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -2318,16 +2134,38 @@ fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> 
                 .collect()
         })
         .unwrap_or_default();
+    let api_format = provider_config
+        .get("upstream_api_format")
+        .or_else(|| provider_config.get("upstreamApiFormat"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai-responses")
+        .to_owned();
+    let convert_custom_tools = api_format != "openai-responses"
+        || provider_config
+            .get("tool_profile")
+            .or_else(|| provider_config.get("toolProfile"))
+            .and_then(|value| value.as_str())
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+    let request_path = match api_format.as_str() {
+        "openai-chat-completions" => "/chat/completions",
+        "anthropic-messages" => "/messages",
+        _ => "/responses",
+    };
+    let base_url = base_url.trim_end_matches('/').to_owned();
 
     Some(LocalModelProxyUpstream {
         registration_id: provider.to_owned(),
-        base_url: base_url.trim_end_matches('/').to_owned(),
-        request_url: None,
-        api_format: "openai-responses".to_owned(),
+        request_url: Some(format!("{base_url}{request_path}")),
+        base_url,
+        api_format,
+        convert_custom_tools,
         api_key,
         default_headers,
         proxy_url: None,
         model_id: None,
+        routing_model_id: None,
     })
 }
 
@@ -2977,6 +2815,12 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
+    let binary_attachment_context =
+        AttachmentPromptProcessor::build_binary_attachment_context(&success);
+    if !binary_attachment_context.is_empty() {
+        request.prompt =
+            append_text_attachment_context(&request.prompt, &binary_attachment_context);
+    }
     let text_attachment_context =
         AttachmentPromptProcessor::build_text_attachment_context(&success);
     if !text_attachment_context.is_empty() {
@@ -3415,6 +3259,21 @@ fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>)
     );
 }
 
+fn insert_runtime_workspace_roots(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    let roots = request
+        .runtime_workspace_roots
+        .iter()
+        .map(|root| root.trim())
+        .filter(|root| !root.is_empty())
+        .collect::<Vec<_>>();
+    if !roots.is_empty() {
+        params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
+    }
+}
+
 fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
     let active_profile = response
         .get("activePermissionProfile")
@@ -3453,6 +3312,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3483,6 +3343,7 @@ fn thread_fork_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3546,6 +3407,7 @@ fn thread_resume_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -3605,6 +3467,7 @@ fn turn_start_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }

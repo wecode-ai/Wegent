@@ -1,31 +1,20 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import type { RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 
 type ConfirmClose = () => boolean
 
 export const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT = 'wework-close-to-tray-hint-requested'
 
-function workspaceHasRunningTask(workspace: RuntimeDeviceWorkspace): boolean {
-  return workspace.tasks.some(task => task.running === true)
-}
-
-export function hasRunningRuntimeTasks(
-  runtimeWork: RuntimeWorkListResponse | null | undefined
-): boolean {
-  if (!runtimeWork) return false
-
-  return (
-    runtimeWork.projects.some(project => project.deviceWorkspaces.some(workspaceHasRunningTask)) ||
-    runtimeWork.chats.some(workspaceHasRunningTask)
-  )
+export function hasRunningRuntimeTasks(lifecycle: RuntimeTaskLifecycleStoreSnapshot): boolean {
+  return lifecycle.runningTaskKeys.size > 0
 }
 
 export function shouldPreventRuntimeTaskClose(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  lifecycle: RuntimeTaskLifecycleStoreSnapshot,
   confirmClose: ConfirmClose
 ): boolean {
-  if (!hasRunningRuntimeTasks(runtimeWork)) return false
+  if (!hasRunningRuntimeTasks(lifecycle)) return false
 
   return !confirmClose()
 }

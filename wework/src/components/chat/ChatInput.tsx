@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
@@ -21,6 +21,8 @@ import type {
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import type { CloudProject } from '@/api/deliveries'
+import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
@@ -45,6 +47,7 @@ export interface ProjectChatControls {
   contextUsage?: RuntimeContextUsage
   isOptionsLocked: boolean
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   setSelectedModelOption: (optionId: string, value: string) => void
@@ -122,8 +125,13 @@ export interface ChatInputProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
   onPause?: () => void
+  toolbarLeadingContext?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
@@ -226,8 +234,13 @@ export function ChatInput({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
+  cloudProjectCandidates,
+  cloudSpaceEnabled,
+  onSelectCloudProject,
   isStreaming = false,
   onPause,
+  toolbarLeadingContext,
   onCompactContext,
   goal,
   goalContinuing = false,
@@ -330,6 +343,10 @@ export function ChatInput({
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,
+    cloudMentionCandidates,
+    cloudProjectCandidates,
+    cloudSpaceEnabled,
+    onSelectCloudProject,
   }
   const errorBanner = error ? (
     <div
@@ -387,6 +404,7 @@ export function ChatInput({
           activeModel={controls.activeModel}
           selectedModelOptions={controls.selectedModelOptions}
           modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
+          onModelSelectorOpenChange={controls.onModelSelectorOpenChange}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           attachments={controls.attachments}
           codeComments={codeComments}
@@ -436,6 +454,7 @@ export function ChatInput({
           onListLocalApps={controls.listLocalApps}
           isStreaming={isStreaming}
           onPause={onPause}
+          toolbarLeadingContext={toolbarLeadingContext}
         />
         {queueResumeDialog}
       </div>

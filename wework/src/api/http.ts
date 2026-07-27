@@ -76,7 +76,8 @@ export interface HttpClient {
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   post<T>(endpoint: string, data?: unknown): Promise<T>
   put<T>(endpoint: string, data?: unknown): Promise<T>
-  delete<T>(endpoint: string): Promise<T>
+  patch<T>(endpoint: string, data?: unknown): Promise<T>
+  delete<T>(endpoint: string, data?: unknown): Promise<T>
 }
 
 function defaultGetToken(): string | null {
@@ -91,7 +92,7 @@ async function parseError(response: Response): Promise<ApiError> {
 
   try {
     const json = JSON.parse(errorText)
-    detail = json.detail
+    detail = json.errors ? { detail: json.detail, errors: json.errors } : json.detail
     if (typeof json.detail === 'string') {
       message = json.detail
     } else if (json.detail && typeof json.detail === 'object') {
@@ -204,6 +205,16 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         body:
           data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
       }),
-    delete: endpoint => request(endpoint, { method: 'DELETE' }),
+    patch: (endpoint, data) =>
+      request(endpoint, {
+        method: 'PATCH',
+        body:
+          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
+      }),
+    delete: (endpoint, data) =>
+      request(endpoint, {
+        method: 'DELETE',
+        body: data === undefined ? undefined : JSON.stringify(data),
+      }),
   }
 }

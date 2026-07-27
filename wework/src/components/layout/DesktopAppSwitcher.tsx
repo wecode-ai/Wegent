@@ -122,37 +122,39 @@ export function DesktopAppSwitcher({
   const [rollingLabel, setRollingLabel] = useState<RollingLabel | null>(null)
   const [menuBlurred, setMenuBlurred] = useState(false)
 
-  const options = useMemo<AppOption[]>(
-    () => [
+  const options = useMemo<AppOption[]>(() => {
+    const appOptions: AppOption[] = [
       {
         key: 'wework',
         label: t('workbench.app_wework_label', '任务'),
         description: t('workbench.app_wework_description', '使用 AI 解决具体问题'),
       },
-      ...(experimentalFeaturesEnabled || activeApp === 'todo'
-        ? [
-            {
-              key: 'todo' as const,
-              label: t('workbench.app_weloop_label', '看板'),
-              description: t(
-                'workbench.app_weloop_description',
-                '用 AI 管理项目的规划、执行与反馈'
-              ),
-            },
-          ]
-        : []),
-      {
-        key: 'wegent',
-        label: t('workbench.app_wegent_label', '智能体'),
-        description: t('workbench.app_wegent_description', '构建并交付可嵌入业务的云端智能体'),
+    ]
+
+    if (experimentalFeaturesEnabled || activeApp === 'todo') {
+      appOptions.push({
+        key: 'todo',
+        label: t('workbench.app_weloop_label', '看板'),
+        description: t('workbench.app_weloop_description', '用 AI 管理项目的规划、执行与反馈'),
         availabilityLabel: cloudConnection?.isConnected
           ? undefined
-          : t('workbench.app_wegent_requires_cloud', '连接云端后可用'),
-        disabled: !cloudConnection?.isConnected && activeApp !== 'wegent',
-      },
-    ],
-    [activeApp, cloudConnection?.isConnected, experimentalFeaturesEnabled, t]
-  )
+          : t('workbench.app_weloop_requires_cloud', '连接云端后可用'),
+        disabled: !cloudConnection?.isConnected,
+      })
+    }
+
+    appOptions.push({
+      key: 'wegent',
+      label: t('workbench.app_wegent_label', '智能体'),
+      description: t('workbench.app_wegent_description', '构建并交付可嵌入业务的云端智能体'),
+      availabilityLabel: cloudConnection?.isConnected
+        ? undefined
+        : t('workbench.app_wegent_requires_cloud', '连接云端后可用'),
+      disabled: !cloudConnection?.isConnected && activeApp !== 'wegent',
+    })
+
+    return appOptions
+  }, [activeApp, cloudConnection?.isConnected, experimentalFeaturesEnabled, t])
   const displayedAppKey = rollingLabel ? displayedKey : activeApp
   const selected =
     options.find(option => option.key === displayedAppKey) ??

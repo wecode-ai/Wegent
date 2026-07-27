@@ -18,6 +18,10 @@ import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import {
+  getRuntimeTaskLifecycleKey,
+  useRuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   CreateGitWorkspaceProjectRequest,
@@ -118,6 +122,7 @@ export function MobileDrawer({
 }: MobileDrawerProps) {
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
+  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? new Set<string>()
   const {
     scrollRef,
@@ -373,7 +378,9 @@ export function MobileDrawer({
                           ].join(' ')}
                         >
                           <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                          {task.running ? (
+                          {lifecycleSnapshot.runningTaskKeys.has(
+                            getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+                          ) ? (
                             renderRuntimeTaskRunningStatus(
                               `mobile-chat-runtime-task-running-${task.taskId}`
                             )
@@ -541,7 +548,11 @@ export function MobileDrawer({
                                     ].join(' ')}
                                   >
                                     <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                                    {task.running ? (
+                                    {lifecycleSnapshot.runningTaskKeys.has(
+                                      getRuntimeTaskLifecycleKey(
+                                        getRuntimeTaskAddress(workspace, task)
+                                      )
+                                    ) ? (
                                       renderRuntimeTaskRunningStatus(
                                         `mobile-runtime-task-running-${task.taskId}`
                                       )
