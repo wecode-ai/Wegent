@@ -88,28 +88,11 @@ describe('DesktopAppSwitcher', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     fireEvent.focus(unavailableStatus)
     expect(screen.getByRole('tooltip')).toHaveTextContent('连接云端后可用')
-    expect(wegentOption).toBeEnabled()
+    expect(wegentOption).toBeDisabled()
 
     fireEvent.click(todoOption)
     act(() => vi.advanceTimersByTime(260))
     expect(onNavigate).toHaveBeenCalledWith('todo')
-  })
-
-  test('allows opening Agent to manage its disconnected state', () => {
-    vi.useFakeTimers()
-    const onNavigate = vi.fn()
-    render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} />)
-
-    fireEvent.click(screen.getByTestId('chrome-tab-wework'))
-    const wegentOption = screen.getByTestId('app-switcher-option-wegent')
-    expect(wegentOption).toBeEnabled()
-    expect(screen.getByTestId('app-switcher-unavailable-wegent')).toHaveAccessibleName(
-      '连接云端后可用'
-    )
-
-    fireEvent.click(wegentOption)
-    act(() => vi.advanceTimersByTime(260))
-    expect(onNavigate).toHaveBeenCalledWith('wegent')
   })
 
   test('shows Kanban when experimental features are enabled', () => {

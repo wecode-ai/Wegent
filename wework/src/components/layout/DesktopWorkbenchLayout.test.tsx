@@ -1332,6 +1332,17 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
+  test('opens the local-capable board route while cloud is disconnected', () => {
+    window.history.pushState({}, '', '/todo')
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('desktop-workbench-content').closest('[aria-hidden="true"]')
+    ).toHaveStyle({ display: 'none' })
+  })
+
   test('submits implementation plan confirmation as a user message response', async () => {
     const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
 

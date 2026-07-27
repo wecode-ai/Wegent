@@ -146,6 +146,7 @@ export function DesktopAppSwitcher({
       availabilityLabel: cloudConnection?.isConnected
         ? undefined
         : t('workbench.app_wegent_requires_cloud', '连接云端后可用'),
+      disabled: !cloudConnection?.isConnected && activeApp !== 'wegent',
     })
 
     return appOptions
