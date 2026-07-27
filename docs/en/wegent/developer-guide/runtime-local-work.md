@@ -88,6 +88,8 @@ The list, read, and thread-management paths share one persistent Codex app-serve
 
 Paging or turn navigation can leave the frontend holding non-contiguous transcript ranges. Wework shows a missing-range marker between adjacent message indexes and automatically requests that range once when the marker first enters the viewport. If the runtime still cannot fill the same range, the frontend must stop automatic retries and keep only explicit user-triggered retry. Loading a missing range only updates that marker's state; it must not take ownership of turn-navigation scrolling, disable browser scroll anchoring, or switch message virtualization modes, because an unfillable range would otherwise create a request and layout-jitter loop.
 
+Turn navigation identifies user messages by stable client message ID. Retry or recovery can temporarily leave transcript navigation metadata with multiple entries for the same client message; the frontend must merge those duplicates and prefer the entry whose index matches the currently loaded message, preventing duplicate markers, overlapping previews, and incorrect jumps.
+
 Use this manual benchmark to recheck a local rollout:
 
 ```bash

@@ -903,6 +903,63 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
+  test('deduplicates retry navigation entries that point to the same user message', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'original-user',
+            role: 'user',
+            content: '原始需求',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'retry-user',
+            role: 'user',
+            content: '继续',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:01.000Z',
+            runtimeMessageIndex: 8,
+          },
+        ]}
+        turnNavigation={[
+          {
+            id: 'original-user',
+            turnIndex: 0,
+            messageIndex: 0,
+            cursor: 'offset:0',
+            promptPreview: '原始需求',
+            responsePreview: '',
+          },
+          ...[2, 4, 6, 8].map((messageIndex, index) => ({
+            id: 'retry-user',
+            turnIndex: index + 1,
+            messageIndex,
+            cursor: `offset:${messageIndex}`,
+            promptPreview: '继续',
+            responsePreview: '',
+          })),
+        ]}
+      />
+    )
+
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(2)
+    expect(markers[1]).toHaveAccessibleName('跳转到第 2 条发言')
+
+    fireEvent.focus(markers[1])
+
+    const visiblePreviews = screen
+      .getAllByTestId('message-turn-navigation-preview')
+      .filter(preview => preview.classList.contains('opacity-100'))
+    expect(visiblePreviews).toHaveLength(1)
+    expect(visiblePreviews[0]).toHaveTextContent('继续')
+  })
+
   test('keeps message navigation available while its portal target is unavailable', () => {
     render(
       <ScrollableMessageArea
