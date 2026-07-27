@@ -34,6 +34,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 regex = "1.11"
 futures-util = "0.3"
 flate2 = "1.0"
+getrandom = "0.3"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 libc = "0.2"
 notify = { version = "6.1", optional = true }
