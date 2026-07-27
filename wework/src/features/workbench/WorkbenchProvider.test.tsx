@@ -6199,6 +6199,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(await screen.findByTestId('assistant-error-retry'))
 
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
+    )
     expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
       expect.objectContaining({
         address: expect.objectContaining({ taskId: 'runtime-restored' }),
