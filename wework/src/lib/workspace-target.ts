@@ -32,6 +32,11 @@ interface ResolveProjectRuntimeWorkspaceTargetOptions {
   selectedDeviceWorkspaceId?: number | null
 }
 
+interface ResolveProjectRuntimeWorkspaceTargetsOptions {
+  currentProject: ProjectWithTasks | null
+  runtimeWork: RuntimeWorkListResponse | null
+}
+
 export interface RuntimeWorkspaceContext {
   project: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget
@@ -137,6 +142,20 @@ export function resolveProjectRuntimeWorkspaceTarget({
       ? { workspaceSource: workspace.workspaceSource }
       : {}),
   }
+}
+
+export function resolveProjectRuntimeWorkspaceTargets({
+  currentProject,
+  runtimeWork,
+}: ResolveProjectRuntimeWorkspaceTargetsOptions): WorkspaceTarget[] {
+  return projectDeviceWorkspaces(runtimeWork, currentProject?.id).map(workspace => ({
+    deviceId: workspaceTargetDeviceId(workspace),
+    path: workspace.workspacePath,
+    source: 'project',
+    ...(workspace.workspaceSource !== undefined
+      ? { workspaceSource: workspace.workspaceSource }
+      : {}),
+  }))
 }
 
 function workspaceTargetFromRuntimeTask(

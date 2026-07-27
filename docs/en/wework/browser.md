@@ -8,7 +8,7 @@ The built-in browser opens in the right workspace so you can inspect websites, v
 
 Open the new-tab menu, choose **Browser**, and enter an `http` or `https` address. The current page remains loaded when you switch to file or review tabs.
 
-Background page-state synchronization does not overwrite the address while you are editing it. Leaving the address field without submitting restores the browser's current URL.
+Background page-state synchronization does not overwrite the address while you are editing it. If a page is already open, leaving the address field without submitting restores the current page URL. If no page is open yet, the unsubmitted address is preserved and restored after switching conversations.
 
 If a Wework dialog, menu, or overlay intersects the right browser area, the browser temporarily hides so the native page cannot cover the main interface. It returns automatically when the overlay closes or moves away.
 

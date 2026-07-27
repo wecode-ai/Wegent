@@ -44,6 +44,24 @@ sidebar_position: 18
 7. `chat:done`、`chat:error`、取消事件通过 reducer 结算 assistant 消息，并触发 work list 刷新。
 8. 如果 runtime work 与消息状态不一致，不做兜底结算；必须修正缺失的 stream event、transcript 数据或 reducer action。
 
+发送启动期间可能先收到 `source: pending_local_task`、空消息且
+`running: false` 的本地 transcript，此时真实 runtime task 尚未出现在任务列表中。
+当 turn 仍处于 `submitting` 或 `awaiting_assistant` 且没有已结算 assistant 时，这个
+transcript 不能结算 executor 或 turn；后续任务列表的 `running: true` 才是已启动
+executor 的权威快照。流式 assistant 已明确存在时返回的 `running: false` 仍然是终态，
+必须正常结算，不能把所有 false 快照一概忽略。
+
+Codex provider 可能只发送带完整正文的 `item/completed`，而不发送
+`item/agentMessage/delta`。executor 必须在当前最终回复尚未接收任何 delta 时把该完整
+正文转换为一次 `response.output_text.delta`；已接收 delta 时则忽略完成快照，避免
+重复正文。临时聊天是 ephemeral thread，不能依赖 `thread/read(includeTurns)` 补回
+丢失的实时文本。
+
+首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
+写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
+空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
+stream 结算先于 Goal 持久化完成，active Goal 也能继续约束任务生命周期。
+
 ## 本地多目录项目与任务归属
 
 本地 Codex 项目可以包含一个有序的根目录列表。第一项是主根，用于 composer
