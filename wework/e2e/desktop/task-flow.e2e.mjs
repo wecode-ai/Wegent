@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { access, appendFile, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { loadDesktopScenario } from './scenario-loader.mjs'
 import { stopProcess, stopProcessGroup } from './process-lifecycle.mjs'
@@ -203,6 +203,12 @@ const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
 const PASTED_ZIP_FILENAME = 'pasted-feedback.zip'
 const PASTED_ZIP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_ZIP_COMPLETE'
 const PASTED_ZIP_BASE64 = Buffer.from('PK\x03\x04WEWORK_E2E_ZIP').toString('base64')
+const PASTED_PATH_FOLDER_NAME = 'pasted-context-folder'
+const PASTED_PATH_FILE_NAME = 'pasted-context.md'
+const PASTED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_PATHS_COMPLETE'
+const DROPPED_PATH_FOLDER_NAME = 'dropped-context-folder'
+const DROPPED_PATH_FILE_NAME = 'dropped-context.md'
+const DROPPED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_DROPPED_PATHS_COMPLETE'
 const TOOL_BLOCK_ORDER_TASK_ID = 'wework-e2e-tool-block-order'
 const TOOL_BLOCK_ORDER_TASK_TITLE = 'Tool block chronological order'
 const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
@@ -235,6 +241,9 @@ const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
 const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
 const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
 const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
+const PASTED_WORKSPACE_PATHS_ONLY = process.argv.includes('--pasted-workspace-paths-only')
+const DROPPED_WORKSPACE_PATHS_ONLY = process.argv.includes('--dropped-workspace-paths-only')
+const SYSTEM_DRAG_PANEL_ONLY = process.argv.includes('--system-drag-panel-only')
 const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
@@ -1812,11 +1821,7 @@ async function verifyProviderSwitchRetry(control, composerSelector) {
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await selectE2EModel(
-    control,
-    PROVIDER_SWITCH_LUNA_OPTION_ID,
-    PROVIDER_SWITCH_LUNA_LABEL
-  )
+  await selectE2EModel(control, PROVIDER_SWITCH_LUNA_OPTION_ID, PROVIDER_SWITCH_LUNA_LABEL)
   await sendPrompt(control, composerSelector, PROVIDER_SWITCH_PROMPT)
   await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
     visible: true,
@@ -2444,6 +2449,144 @@ async function verifyPastedZipAttachment({ composerSelector, control }) {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'pasted-zip-attachment.png')
+}
+
+async function verifySystemDragPanelLayout(control) {
+  await control.command('navigate', 'body', { value: '/system-drag' })
+  await control.command('waitFor', '[data-testid="system-drag-panel"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+    visible: true,
+  })
+  const [metrics] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="system-drag-panel"]')
+  )
+  assert.deepEqual(
+    { height: metrics.height, width: metrics.width },
+    { height: 60, width: 440 },
+    'The system drag panel did not use the compact desktop dimensions'
+  )
+  const snapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="system-drag-panel"]')
+  )
+  assert.match(
+    snapshot.text,
+    /Create new chat|创建新对话/,
+    'The system drag panel did not expose the new-chat destination'
+  )
+  assert.match(
+    snapshot.text,
+    /Temporary stash|临时暂存/,
+    'The system drag panel did not expose the stash destination'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'system-drag-panel.png',
+    '[data-testid="system-drag-panel"]'
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="new-chat-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
+async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {
+  control.setScenario('pasted_workspace_paths')
+  const folderPath = join(workspacePath, PASTED_PATH_FOLDER_NAME)
+  const filePath = join(workspacePath, PASTED_PATH_FILE_NAME)
+  await mkdir(folderPath, { recursive: true })
+  await writeFile(join(folderPath, 'nested.txt'), 'nested path context\n')
+  await writeFile(filePath, '# Pasted path context\n')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('pastePaths', composerSelector, {
+    value: JSON.stringify([
+      {
+        uri: pathToFileURL(folderPath).href,
+        name: PASTED_PATH_FOLDER_NAME,
+        isDirectory: true,
+      },
+      {
+        uri: pathToFileURL(filePath).href,
+        name: PASTED_PATH_FILE_NAME,
+        mimeType: 'text/markdown',
+      },
+    ]),
+  })
+  await control.command(
+    'waitFor',
+    `[data-testid="composer-path-chip-${PASTED_PATH_FOLDER_NAME}"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('waitFor', '[data-testid="composer-path-chip-pasted-context-md"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    snapshot.testIds.includes('attachment-badge'),
+    false,
+    'Pasted local paths were copied into attachment uploads'
+  )
+  await captureVerificationScreenshot(control, 'pasted-workspace-paths.png')
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('pasted_workspace_paths', 1)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PASTED_PATH_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+}
+
+async function verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath }) {
+  control.setScenario('dropped_workspace_paths')
+  const folderPath = join(workspacePath, DROPPED_PATH_FOLDER_NAME)
+  const filePath = join(workspacePath, DROPPED_PATH_FILE_NAME)
+  await mkdir(folderPath, { recursive: true })
+  await writeFile(join(folderPath, 'nested.txt'), 'nested dropped path context\n')
+  await writeFile(filePath, '# Dropped path context\n')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('dropPaths', composerSelector, {
+    value: JSON.stringify([
+      {
+        uri: pathToFileURL(folderPath).href,
+        name: DROPPED_PATH_FOLDER_NAME,
+        isDirectory: true,
+      },
+      {
+        uri: pathToFileURL(filePath).href,
+        name: DROPPED_PATH_FILE_NAME,
+        mimeType: 'text/markdown',
+      },
+    ]),
+  })
+  await control.command(
+    'waitFor',
+    `[data-testid="composer-path-chip-${DROPPED_PATH_FOLDER_NAME}"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('waitFor', '[data-testid="composer-path-chip-dropped-context-md"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    snapshot.testIds.includes('attachment-badge'),
+    false,
+    'Dropped local paths were copied into attachment uploads'
+  )
+  await captureVerificationScreenshot(control, 'dropped-workspace-paths.png')
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('dropped_workspace_paths', 1)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: DROPPED_PATH_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
 }
 
 async function verifySideChatAttachmentIsolation({ control, taskRowTestId }) {
@@ -3766,6 +3909,8 @@ class DesktopE2EServer {
         'fresh_chat',
         'attachment_only',
         'pasted_zip_attachment',
+        'pasted_workspace_paths',
+        'dropped_workspace_paths',
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
@@ -4697,6 +4842,60 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PASTED_ZIP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'pasted_workspace_paths') {
+      this.recordScenarioRequest('pasted_workspace_paths', modelRequest)
+      const requestText = JSON.stringify(body)
+      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME)
+      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME)
+      assert.ok(
+        requestText.includes(folderPath),
+        'The pasted folder reference was not forwarded to the real Codex request'
+      )
+      assert.ok(
+        requestText.includes(filePath),
+        'The pasted file reference was not forwarded to the real Codex request'
+      )
+      assert.equal(
+        requestText.includes('nested path context') ||
+          requestText.includes('# Pasted path context'),
+        false,
+        'The pasted paths copied file contents into the model request'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PASTED_PATH_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'dropped_workspace_paths') {
+      this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
+      const requestText = JSON.stringify(body)
+      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME)
+      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME)
+      assert.ok(
+        requestText.includes(folderPath),
+        'The dropped folder reference was not forwarded to the real Codex request'
+      )
+      assert.ok(
+        requestText.includes(filePath),
+        'The dropped file reference was not forwarded to the real Codex request'
+      )
+      assert.equal(
+        requestText.includes('nested dropped path context') ||
+          requestText.includes('# Dropped path context'),
+        false,
+        'The dropped paths copied file contents into the model request'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(DROPPED_PATH_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -6587,6 +6786,13 @@ async function main() {
     )
     await control.command('focusMainWindow', 'body')
 
+    if (SYSTEM_DRAG_PANEL_ONLY) {
+      phase = 'system-drag-panel-layout'
+      await verifySystemDragPanelLayout(control)
+      console.log(`Wework desktop system-drag-panel E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (CLOUD_ONLY) {
       phase = 'local-connected-model-protocol-matrix'
       await verifyConnectedModelsOnLocalExecution({
@@ -6753,6 +6959,38 @@ async function main() {
       return
     }
 
+    if (PASTED_WORKSPACE_PATHS_ONLY) {
+      phase = 'pasted-workspace-paths'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyPastedWorkspacePaths({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        workspacePath,
+      })
+      console.log(`Wework desktop pasted-workspace-paths E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DROPPED_WORKSPACE_PATHS_ONLY) {
+      phase = 'dropped-workspace-paths'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyDroppedWorkspacePaths({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        workspacePath,
+      })
+      console.log(`Wework desktop dropped-workspace-paths E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (SHORT_CONVERSATION_ONLY) {
       phase = 'short-conversation-layout'
       control.setScenario('fresh_chat')
@@ -6786,6 +7024,9 @@ async function main() {
         return
       }
     }
+
+    phase = 'system-drag-panel-layout'
+    await verifySystemDragPanelLayout(control)
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
@@ -7930,6 +8171,12 @@ async function main() {
 
     phase = 'pasted-zip-attachment'
     await verifyPastedZipAttachment({ composerSelector, control })
+
+    phase = 'pasted-workspace-paths'
+    await verifyPastedWorkspacePaths({ composerSelector, control, workspacePath })
+
+    phase = 'dropped-workspace-paths'
+    await verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath })
 
     phase = 'tool-block-chronological-order'
     await verifyToolBlockChronologicalOrder({

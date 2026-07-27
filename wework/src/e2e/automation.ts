@@ -631,6 +631,49 @@ function pasteDesktopControlFile(command: DesktopControlCommand): string {
   return filename
 }
 
+function dispatchDesktopControlPaths(
+  command: DesktopControlCommand,
+  eventType: 'drop' | 'paste'
+): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const descriptors = JSON.parse(command.value ?? '[]') as Array<{
+    uri: string
+    name: string
+    mimeType?: string
+    isDirectory?: boolean
+  }>
+  if (descriptors.length === 0) {
+    throw new Error(
+      `${eventType === 'drop' ? 'dropPaths' : 'pastePaths'} requires at least one path`
+    )
+  }
+
+  const transfer = new DataTransfer()
+  for (const descriptor of descriptors) {
+    const file = new File(descriptor.isDirectory ? [] : ['path-reference'], descriptor.name, {
+      type: descriptor.mimeType ?? '',
+    })
+    transfer.items.add(file)
+    const item = transfer.items[transfer.items.length - 1]
+    if (item && descriptor.isDirectory) {
+      Object.defineProperty(item, 'webkitGetAsEntry', {
+        value: () => ({ isDirectory: true }),
+      })
+    }
+  }
+  transfer.setData('text/uri-list', descriptors.map(descriptor => descriptor.uri).join('\r\n'))
+  const event =
+    eventType === 'drop'
+      ? new DragEvent('drop', { bubbles: true, cancelable: true, composed: true })
+      : new ClipboardEvent('paste', { bubbles: true, cancelable: true, composed: true })
+  Object.defineProperty(event, eventType === 'drop' ? 'dataTransfer' : 'clipboardData', {
+    value: transfer,
+  })
+  element.dispatchEvent(event)
+  return descriptors.map(descriptor => descriptor.name).join(',')
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -660,8 +703,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return dragDesktopControlElement(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
+    case 'dropPaths':
+      return dispatchDesktopControlPaths(command, 'drop')
     case 'pasteFile':
       return pasteDesktopControlFile(command)
+    case 'pastePaths':
+      return dispatchDesktopControlPaths(command, 'paste')
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
