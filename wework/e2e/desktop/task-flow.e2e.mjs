@@ -29,6 +29,7 @@ const REQUEST_USER_INPUT_PROMPT =
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
+const QUEUED_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_QUEUED_FOLLOW_UP'
 const UNSENT_BLANK_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_BLANK_TASK_DRAFT'
 const UNSENT_FIRST_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_FIRST_TASK_DRAFT'
 const UNSENT_SECOND_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_SECOND_TASK_DRAFT'
@@ -230,6 +231,7 @@ const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
 const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
+const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -429,6 +431,56 @@ async function sendPromptWithButton(
   })
   await control.command('press', selector, { key: 'Enter', timeoutMs })
   await waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs)
+}
+
+async function verifyQueuedFollowUpNavigation({ composerSelector, control, projectRowSelector }) {
+  await control.command('fill', composerSelector, { value: QUEUED_FOLLOW_UP })
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: QUEUED_FOLLOW_UP,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'queue-navigation-01-source-queued.png')
+
+  const runningTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+    'The streaming task row was not available before switching conversations'
+  )
+  const runningTaskRowTestId = runningTaskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  assert.ok(runningTaskRowTestId, 'The streaming task row identity was not found')
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The queued follow-up leaked into the other conversation'
+  )
+  await captureVerificationScreenshot(control, 'queue-navigation-02-other-conversation.png')
+
+  await ensureTaskRowVisible(control, runningTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: QUEUED_FOLLOW_UP,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'queue-navigation-03-source-restored.png')
+
+  await control.command('click', '[data-testid^="queue-cancel-button-"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The queued follow-up could not be cleared after restoration'
+  )
 }
 
 async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
@@ -6923,7 +6975,11 @@ async function main() {
       )
       await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
       await control.command('press', 'body', { key: 'Escape' })
-      await control.command('fill', composerSelector, { value: '' })
+      await verifyQueuedFollowUpNavigation({
+        composerSelector,
+        control,
+        projectRowSelector,
+      })
     }
 
     phase = 'initial-task-completion'
@@ -7085,6 +7141,16 @@ async function main() {
       control.toolOutput,
       'Codex did not report its real tool execution to the model service'
     )
+
+    if (QUEUE_NAVIGATION_ONLY) {
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
 
     phase = 'conversation-model-restore'
     const taskSnapshot = await waitForSnapshot(
