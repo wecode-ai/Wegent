@@ -383,7 +383,7 @@ export function CloudProjectManageView({
               data-testid="cloud-project-tag-create-confirm"
               disabled={!newTag.trim() || tagBusy}
               onClick={() => void createTag()}
-              className="h-9 rounded-lg bg-black px-3.5 text-sm font-medium text-white transition hover:bg-black/90 disabled:opacity-50"
+              className="h-9 rounded-lg bg-black px-3.5 text-sm font-medium text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:bg-black disabled:text-white"
             >
               新建标签
             </button>
@@ -533,7 +533,7 @@ export function CloudProjectManageView({
                     (!project.provider_config.credential_configured && !providerToken.trim())
                   }
                   onClick={() => void saveProviderConfig()}
-                  className="h-9 rounded-lg bg-black px-3.5 text-sm font-medium text-white transition hover:bg-black/90 disabled:opacity-50"
+                  className="h-9 rounded-lg bg-black px-3.5 text-sm font-medium text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:bg-black disabled:text-white"
                 >
                   {providerBusy ? '保存中…' : '保存任务来源'}
                 </button>

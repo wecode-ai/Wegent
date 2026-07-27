@@ -633,11 +633,18 @@ describe('CloudTodoWorkspace', () => {
     ).toBeTruthy()
     expect(screen.getByTestId('cloud-project-provider-manage-save')).toHaveClass(
       'bg-black',
-      'text-white'
+      'text-white',
+      'disabled:bg-black',
+      'disabled:text-white'
     )
     expect(screen.getByTestId('cloud-project-tag-create-confirm')).toHaveClass(
       'bg-black',
-      'text-white'
+      'text-white',
+      'disabled:bg-black',
+      'disabled:text-white'
+    )
+    expect(screen.getByTestId('cloud-project-tag-create-confirm')).not.toHaveClass(
+      'disabled:opacity-50'
     )
     await userEvent.type(screen.getByTestId('cloud-project-provider-manage-token'), 'gitlab-secret')
     await userEvent.click(screen.getByTestId('cloud-project-provider-manage-save'))
