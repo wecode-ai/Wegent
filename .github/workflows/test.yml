@@ -11,6 +11,12 @@ on:
   pull_request:
     branches:
       - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
@@ -41,9 +47,15 @@ jobs:
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          FORCE_ALL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:all') }}
         run: |
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
-            .github/scripts/classify-ci-changes.sh
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            # The ci:all label forces every module test regardless of changed paths.
+            .github/scripts/classify-ci-changes.sh --all
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+              .github/scripts/classify-ci-changes.sh
+          fi
 
   test-backend:
     name: Test Backend

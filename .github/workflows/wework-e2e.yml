@@ -21,14 +21,6 @@ on:
       - reopened
       - ready_for_review
       - labeled
-    paths:
-      - ".github/workflows/wework-e2e.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "executor/**"
-      - "packages/chat-core/**"
-      - "wework/**"
   workflow_dispatch:
   schedule:
     - cron: "0 4 * * *"
@@ -41,9 +33,36 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect Wework E2E Changes
+    runs-on: ubuntu-latest
+    outputs:
+      wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+        run: |
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            .github/scripts/classify-ci-changes.sh --all
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+              .github/scripts/classify-ci-changes.sh
+          fi
+
   wework-e2e:
     name: Wework E2E
-    if: github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.pull_request.draft == false)
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -108,7 +127,8 @@ jobs:
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    if: github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.pull_request.draft == false)
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -204,7 +224,8 @@ jobs:
 
   wework-desktop-memory-e2e:
     name: Wework Desktop Memory E2E
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:memory'))
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')))
     runs-on: macos-14
     timeout-minutes: 30
 
