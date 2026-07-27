@@ -85,7 +85,7 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
 
 
 @router.get("/startup")
-def startup_check():
+async def startup_check():
     return {"status": "started"}
 
 
@@ -122,7 +122,7 @@ async def initiate_shutdown():
 
 
 @router.get("/shutdown/status")
-def shutdown_status(response: Response):
+async def shutdown_status(response: Response):
     """
     Get current shutdown status.
 
