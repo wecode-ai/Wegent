@@ -86,6 +86,13 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
   }
 }
 
+const REMOTE_WORKSPACE_TARGET = {
+  deviceId: 'remote-device',
+  path: '/workspace/project',
+  source: 'project',
+  workspaceSource: 'remote',
+} as const
+
 function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): ProjectWorkControls {
   const devices =
     overrides.devices?.map(device => ({
@@ -1184,7 +1191,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('confirm-compact-context-button')).not.toBeInTheDocument()
   })
 
-  test('uploads pasted images from the desktop message textbox', () => {
+  test('uploads pasted images from the desktop message textbox', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
 
@@ -1205,10 +1212,10 @@ describe('ChatInput', () => {
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([image])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
   })
 
-  test('uploads pasted documents from the desktop message textbox', () => {
+  test('uploads pasted documents for a remote desktop workspace', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const documentFile = new File(['document'], 'requirements.pdf', {
       type: 'application/pdf',
@@ -1222,6 +1229,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({ handleFileSelect })}
+        workspaceTarget={REMOTE_WORKSPACE_TARGET}
       />
     )
 
@@ -1231,7 +1239,7 @@ describe('ChatInput', () => {
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([documentFile]))
   })
 
   test('turns long pasted text from the desktop message textbox into a text attachment', async () => {
@@ -1266,10 +1274,10 @@ describe('ChatInput', () => {
     expect(await files[0].text()).toBe(longText)
   })
 
-  test('uploads dropped files from the desktop composer', () => {
+  test('uploads dropped images from the desktop composer', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
-    const documentFile = new File(['document'], 'drop-requirements.pdf', {
-      type: 'application/pdf',
+    const imageFile = new File(['image'], 'drop-preview.png', {
+      type: 'image/png',
     })
 
     render(
@@ -1286,11 +1294,11 @@ describe('ChatInput', () => {
     fireEvent.drop(screen.getByTestId('chat-message-input'), {
       dataTransfer: {
         types: ['Files'],
-        files: [documentFile],
+        files: [imageFile],
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([imageFile]))
   })
 
   test('highlights the desktop composer while files are dragged over it', () => {
@@ -1338,10 +1346,10 @@ describe('ChatInput', () => {
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([image])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
   })
 
-  test('uploads pasted documents from the fullscreen compact textbox', async () => {
+  test('uploads pasted documents from a remote fullscreen compact textbox', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const documentFile = new File(['document'], 'fullscreen-requirements.pdf', {
       type: 'application/pdf',
@@ -1354,6 +1362,7 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         projectChat={projectChatControls({ handleFileSelect })}
+        workspaceTarget={REMOTE_WORKSPACE_TARGET}
       />
     )
 
@@ -1364,7 +1373,7 @@ describe('ChatInput', () => {
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([documentFile]))
   })
 
   test('turns long pasted text from the fullscreen compact textbox into a text attachment', async () => {

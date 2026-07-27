@@ -9,7 +9,7 @@ import {
   openNativeWorkspacePathPicker,
   type NativeWorkspacePath,
 } from '@/lib/native-workspace-path-picker'
-import { readNativeClipboardWorkspacePaths } from '@/lib/native-clipboard-paths'
+import { resolveDataTransferWorkspacePaths } from '@/lib/workspace-path-transfer'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import {
   ComposerProseMirrorEditor,
@@ -36,6 +36,7 @@ import {
   replaceComposerMentionTrigger,
   resolveComposerWorkspacePath,
 } from './composerMentions'
+import { workspacePathReferenceText } from './composerPathTransfer'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
@@ -50,24 +51,6 @@ export type { ComposerSubmitOptions } from './composerTextareaTypes'
 interface ActiveComposerMenu {
   kind: ComposerTextTrigger['kind']
   trigger: ComposerTextTrigger
-}
-
-function pastedPathName(path: string): string {
-  return path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? path
-}
-
-function isPastedImage(file: File): boolean {
-  return file.type.toLowerCase().startsWith('image/')
-}
-
-function pastedDirectoryNames(clipboardData: DataTransfer): Set<string> {
-  const names = new Set<string>()
-  for (const item of Array.from(clipboardData.items ?? [])) {
-    if (item.kind !== 'file' || item.webkitGetAsEntry?.()?.isDirectory !== true) continue
-    const file = item.getAsFile()
-    if (file) names.add(file.name)
-  }
-  return names
 }
 
 export function ComposerTextarea({
@@ -588,9 +571,7 @@ export function ComposerTextarea({
       const editor = editorRef.current
       if (!editor) return
 
-      const references = entries
-        .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
-        .join(' ')
+      const references = workspacePathReferenceText(entries)
       const current = editor.getSnapshot()
       const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
       const nextValue =
@@ -1050,40 +1031,14 @@ export function ComposerTextarea({
       const files = Array.from(clipboardData.files)
       if (files.length > 0) {
         event.preventDefault()
-        if (
-          workspaceTarget?.workspaceSource === 'remote' ||
-          clipboardData.items == null ||
-          files.every(isPastedImage)
-        ) {
-          onPasteFiles?.(files)
-          return true
-        }
-
-        const directoryNames = pastedDirectoryNames(clipboardData)
-        void readNativeClipboardWorkspacePaths(clipboardData)
-          .then(entries => {
-            const pastedNames = new Set(files.map(file => file.name))
-            const imageNames = new Set(files.filter(isPastedImage).map(file => file.name))
-            const referenceEntries = entries.filter(
-              entry =>
-                pastedNames.has(pastedPathName(entry.path)) &&
-                (entry.isDirectory || !imageNames.has(pastedPathName(entry.path)))
-            )
-            const referencedNames = new Set(
-              referenceEntries.map(entry => pastedPathName(entry.path))
-            )
-            insertPathReferences(referenceEntries)
-
-            const attachmentFiles = files.filter(
-              file => isPastedImage(file) || !referencedNames.has(file.name)
-            )
-            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-          })
-          .catch(error => {
-            console.warn('[Wework composer] native clipboard path inspection failed', error)
-            const attachmentFiles = files.filter(file => !directoryNames.has(file.name))
-            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-          })
+        void resolveDataTransferWorkspacePaths(
+          clipboardData,
+          'clipboard',
+          workspaceTarget?.workspaceSource
+        ).then(({ attachmentFiles, referenceEntries }) => {
+          insertPathReferences(referenceEntries)
+          if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+        })
         return true
       }
       if (!onPasteFiles) return false
@@ -1098,15 +1053,21 @@ export function ComposerTextarea({
 
   const handleDrop = useCallback(
     (event: DragEvent) => {
-      if (!onPasteFiles) return false
-      const files = Array.from(event.dataTransfer?.files ?? [])
-      if (files.length === 0) return false
+      const dataTransfer = event.dataTransfer
+      if (!dataTransfer || !Array.from(dataTransfer.types).includes('Files')) return false
       event.preventDefault()
       event.stopPropagation()
-      onPasteFiles(files)
+      void resolveDataTransferWorkspacePaths(
+        dataTransfer,
+        'drop',
+        workspaceTarget?.workspaceSource
+      ).then(({ attachmentFiles, referenceEntries }) => {
+        insertPathReferences(referenceEntries)
+        if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+      })
       return true
     },
-    [onPasteFiles]
+    [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
   )
 
   return (

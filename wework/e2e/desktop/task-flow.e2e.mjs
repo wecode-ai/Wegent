@@ -206,6 +206,9 @@ const PASTED_ZIP_BASE64 = Buffer.from('PK\x03\x04WEWORK_E2E_ZIP').toString('base
 const PASTED_PATH_FOLDER_NAME = 'pasted-context-folder'
 const PASTED_PATH_FILE_NAME = 'pasted-context.md'
 const PASTED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_PATHS_COMPLETE'
+const DROPPED_PATH_FOLDER_NAME = 'dropped-context-folder'
+const DROPPED_PATH_FILE_NAME = 'dropped-context.md'
+const DROPPED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_DROPPED_PATHS_COMPLETE'
 const TOOL_BLOCK_ORDER_TASK_ID = 'wework-e2e-tool-block-order'
 const TOOL_BLOCK_ORDER_TASK_TITLE = 'Tool block chronological order'
 const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
@@ -239,6 +242,7 @@ const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
 const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
 const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
 const PASTED_WORKSPACE_PATHS_ONLY = process.argv.includes('--pasted-workspace-paths-only')
+const DROPPED_WORKSPACE_PATHS_ONLY = process.argv.includes('--dropped-workspace-paths-only')
 const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
@@ -2500,6 +2504,56 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   })
 }
 
+async function verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath }) {
+  control.setScenario('dropped_workspace_paths')
+  const folderPath = join(workspacePath, DROPPED_PATH_FOLDER_NAME)
+  const filePath = join(workspacePath, DROPPED_PATH_FILE_NAME)
+  await mkdir(folderPath, { recursive: true })
+  await writeFile(join(folderPath, 'nested.txt'), 'nested dropped path context\n')
+  await writeFile(filePath, '# Dropped path context\n')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('dropPaths', composerSelector, {
+    value: JSON.stringify([
+      {
+        uri: pathToFileURL(folderPath).href,
+        name: DROPPED_PATH_FOLDER_NAME,
+        isDirectory: true,
+      },
+      {
+        uri: pathToFileURL(filePath).href,
+        name: DROPPED_PATH_FILE_NAME,
+        mimeType: 'text/markdown',
+      },
+    ]),
+  })
+  await control.command(
+    'waitFor',
+    `[data-testid="composer-path-chip-${DROPPED_PATH_FOLDER_NAME}"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('waitFor', '[data-testid="composer-path-chip-dropped-context-md"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    snapshot.testIds.includes('attachment-badge'),
+    false,
+    'Dropped local paths were copied into attachment uploads'
+  )
+  await captureVerificationScreenshot(control, 'dropped-workspace-paths.png')
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('dropped_workspace_paths', 1)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: DROPPED_PATH_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+}
+
 async function verifySideChatAttachmentIsolation({ control, taskRowTestId }) {
   const sideChatSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-chat-panel"]`
   const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
@@ -3821,6 +3875,7 @@ class DesktopE2EServer {
         'attachment_only',
         'pasted_zip_attachment',
         'pasted_workspace_paths',
+        'dropped_workspace_paths',
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
@@ -4779,6 +4834,33 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PASTED_PATH_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'dropped_workspace_paths') {
+      this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
+      const requestText = JSON.stringify(body)
+      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME)
+      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME)
+      assert.ok(
+        requestText.includes(folderPath),
+        'The dropped folder reference was not forwarded to the real Codex request'
+      )
+      assert.ok(
+        requestText.includes(filePath),
+        'The dropped file reference was not forwarded to the real Codex request'
+      )
+      assert.equal(
+        requestText.includes('nested dropped path context') ||
+          requestText.includes('# Dropped path context'),
+        false,
+        'The dropped paths copied file contents into the model request'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(DROPPED_PATH_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -6851,6 +6933,22 @@ async function main() {
       return
     }
 
+    if (DROPPED_WORKSPACE_PATHS_ONLY) {
+      phase = 'dropped-workspace-paths'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyDroppedWorkspacePaths({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        workspacePath,
+      })
+      console.log(`Wework desktop dropped-workspace-paths E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (SHORT_CONVERSATION_ONLY) {
       phase = 'short-conversation-layout'
       control.setScenario('fresh_chat')
@@ -8031,6 +8129,9 @@ async function main() {
 
     phase = 'pasted-workspace-paths'
     await verifyPastedWorkspacePaths({ composerSelector, control, workspacePath })
+
+    phase = 'dropped-workspace-paths'
+    await verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath })
 
     phase = 'tool-block-chronological-order'
     await verifyToolBlockChronologicalOrder({

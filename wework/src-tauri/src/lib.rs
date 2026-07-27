@@ -26,7 +26,7 @@ struct PickedWorkspacePath {
     is_directory: bool,
 }
 
-fn inspect_workspace_paths(paths: Vec<String>) -> Vec<PickedWorkspacePath> {
+fn inspect_workspace_path_candidates(paths: Vec<String>) -> Vec<PickedWorkspacePath> {
     let mut selected = Vec::new();
     let mut seen = HashSet::new();
 
@@ -53,12 +53,12 @@ fn inspect_workspace_paths(paths: Vec<String>) -> Vec<PickedWorkspacePath> {
 }
 
 #[cfg(all(desktop, target_os = "macos"))]
-fn clipboard_workspace_paths_on_macos() -> Result<Vec<PickedWorkspacePath>, String> {
+fn workspace_paths_from_macos_pasteboard(
+    pasteboard: &objc2_app_kit::NSPasteboard,
+) -> Result<Vec<PickedWorkspacePath>, String> {
     use objc2::{runtime::AnyClass, ClassType};
-    use objc2_app_kit::NSPasteboard;
     use objc2_foundation::{NSArray, NSURL};
 
-    let pasteboard = NSPasteboard::generalPasteboard();
     let classes = NSArray::<AnyClass>::arrayWithObject(NSURL::class());
     let Some(values) = (unsafe { pasteboard.readObjectsForClasses_options(&classes, None) }) else {
         return Ok(Vec::new());
@@ -73,7 +73,21 @@ fn clipboard_workspace_paths_on_macos() -> Result<Vec<PickedWorkspacePath>, Stri
         }
     }
 
-    Ok(inspect_workspace_paths(raw_paths))
+    Ok(inspect_workspace_path_candidates(raw_paths))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn clipboard_workspace_paths_on_macos() -> Result<Vec<PickedWorkspacePath>, String> {
+    let pasteboard = objc2_app_kit::NSPasteboard::generalPasteboard();
+    workspace_paths_from_macos_pasteboard(&pasteboard)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn dropped_workspace_paths_on_macos() -> Result<Vec<PickedWorkspacePath>, String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardNameDrag};
+
+    let pasteboard = NSPasteboard::pasteboardWithName(unsafe { NSPasteboardNameDrag });
+    workspace_paths_from_macos_pasteboard(&pasteboard)
 }
 
 #[tauri::command]
@@ -102,14 +116,55 @@ async fn read_clipboard_workspace_paths(
             .map(|entry| entry.path)
             .collect::<Vec<_>>();
         paths.extend(fallback_paths);
-        Ok(inspect_workspace_paths(paths))
+        Ok(inspect_workspace_path_candidates(paths))
     }
 
     #[cfg(not(all(desktop, target_os = "macos")))]
     {
         let _ = app;
-        Ok(inspect_workspace_paths(fallback_paths))
+        Ok(inspect_workspace_path_candidates(fallback_paths))
     }
+}
+
+#[tauri::command]
+async fn read_dropped_workspace_paths(
+    app: tauri::AppHandle,
+    fallback_paths: Option<Vec<String>>,
+) -> Result<Vec<PickedWorkspacePath>, String> {
+    let fallback_paths = fallback_paths.unwrap_or_default();
+
+    #[cfg(all(desktop, target_os = "macos"))]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = sender.send(dropped_workspace_paths_on_macos());
+        })
+        .map_err(|error| format!("Failed to inspect the macOS drag pasteboard: {error}"))?;
+        let native_paths = tauri::async_runtime::spawn_blocking(move || {
+            receiver.recv().map_err(|_| {
+                "The macOS drag pasteboard inspection stopped unexpectedly".to_string()
+            })?
+        })
+        .await
+        .map_err(|error| format!("Failed to join drag pasteboard inspection: {error}"))??;
+        let mut paths = native_paths
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+        paths.extend(fallback_paths);
+        Ok(inspect_workspace_path_candidates(paths))
+    }
+
+    #[cfg(not(all(desktop, target_os = "macos")))]
+    {
+        let _ = app;
+        Ok(inspect_workspace_path_candidates(fallback_paths))
+    }
+}
+
+#[tauri::command]
+fn inspect_workspace_paths(paths: Vec<String>) -> Vec<PickedWorkspacePath> {
+    inspect_workspace_path_candidates(paths)
 }
 
 #[cfg(all(desktop, target_os = "macos"))]
@@ -3741,8 +3796,9 @@ mod tests {
     #[cfg(desktop)]
     use super::should_probe_frontend_after_focus;
     use super::{
-        can_replace_wework_cli_path, executor_home_attachment_root, inspect_workspace_paths,
-        install_wework_cli_impl, local_workspace_opener_app_name, normalized_browser_link_target,
+        can_replace_wework_cli_path, executor_home_attachment_root,
+        inspect_workspace_path_candidates, install_wework_cli_impl,
+        local_workspace_opener_app_name, normalized_browser_link_target,
         parse_local_workspace_open_request, tray_template_pixel, tray_usage_icon,
         wework_cli_launcher_content,
     };
@@ -3779,7 +3835,7 @@ mod tests {
         std::fs::create_dir_all(&folder).expect("clipboard folder should be created");
         std::fs::write(&file, "# Context\n").expect("clipboard file should be created");
 
-        let selected = inspect_workspace_paths(vec![
+        let selected = inspect_workspace_path_candidates(vec![
             folder.to_string_lossy().into_owned(),
             file.to_string_lossy().into_owned(),
             file.to_string_lossy().into_owned(),
@@ -4320,6 +4376,8 @@ pub fn run() {
             workbench_background::remove_workbench_background,
             pick_workspace_paths,
             read_clipboard_workspace_paths,
+            read_dropped_workspace_paths,
+            inspect_workspace_paths,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,
