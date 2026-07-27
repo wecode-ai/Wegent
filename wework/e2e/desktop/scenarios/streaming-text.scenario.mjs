@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -146,15 +144,6 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-async function capture(control, resultDir, name) {
-  const dataUrl = await control.command('capture', ACTIVE_WORKBENCH_SELECTOR, {
-    timeoutMs: 30_000,
-  })
-  const prefix = 'data:image/png;base64,'
-  assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
-  await writeFile(join(resultDir, name), Buffer.from(dataUrl.slice(prefix.length), 'base64'))
-}
-
 function requestContainsPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(PROMPT)
 }
@@ -252,7 +241,13 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText, timeoutMs
   throw new Error(`The streaming task row did not appear for ${expectedText}`)
 }
 
-export function createDesktopScenario({ resultDir, standalone, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  standalone,
+  uiTimeoutMs,
+  workspacePath,
+}) {
+  const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
   let releaseAppend
   let releaseResponse
@@ -341,7 +336,7 @@ export function createDesktopScenario({ resultDir, standalone, uiTimeoutMs, work
         INITIAL_PROMPT,
         uiTimeoutMs
       )
-      await capture(control, resultDir, 'streaming-text-00-ready-to-send.png')
+      await capture(control, 'streaming-text-00-ready-to-send.png')
       await control.command('pasteFile', COMPOSER_SELECTOR, {
         filename: ATTACHMENT_FILENAME,
         mimeType: 'image/png',
@@ -416,7 +411,7 @@ export function createDesktopScenario({ resultDir, standalone, uiTimeoutMs, work
         distanceFromBottom(pinnedAfterSwitch) <= 8,
         `The bottom-pinned streaming conversation reopened ${distanceFromBottom(pinnedAfterSwitch)}px from the bottom`
       )
-      await capture(control, resultDir, 'streaming-text-01-bottom-restored-after-task-switch.png')
+      await capture(control, 'streaming-text-01-bottom-restored-after-task-switch.png')
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
         2,
@@ -439,7 +434,7 @@ export function createDesktopScenario({ resultDir, standalone, uiTimeoutMs, work
         !streamingTurnPreview.includes('application_context'),
         'The streaming turn preview exposed injected application context'
       )
-      await capture(control, resultDir, 'streaming-text-02-thinking-below-partial-response.png')
+      await capture(control, 'streaming-text-02-thinking-below-partial-response.png')
 
       assert.equal(
         await control.command('getText', VIEWPORT_ANCHOR_SELECTOR),
@@ -488,7 +483,7 @@ export function createDesktopScenario({ resultDir, standalone, uiTimeoutMs, work
           anchorBeforeAppend.bottom <= scrollerBeforeAppend.bottom,
         `The viewport anchor was not visible after the user scroll (top=${anchorBeforeAppend.top}px, bottom=${anchorBeforeAppend.bottom}px)`
       )
-      await capture(control, resultDir, 'streaming-text-03-user-scrolled-up.png')
+      await capture(control, 'streaming-text-03-user-scrolled-up.png')
 
       releaseAppend()
       await control.command(
@@ -514,7 +509,7 @@ export function createDesktopScenario({ resultDir, standalone, uiTimeoutMs, work
         Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
         `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
       )
-      await capture(control, resultDir, 'streaming-text-04-anchor-stable-after-append.png')
+      await capture(control, 'streaming-text-04-anchor-stable-after-append.png')
 
       releaseResponse()
       await control.command(
@@ -537,7 +532,7 @@ export function createDesktopScenario({ resultDir, standalone, uiTimeoutMs, work
         !completedSnapshot.testIds.includes('pause-response-button'),
         'The pause button remained after completion'
       )
-      await capture(control, resultDir, 'streaming-text-05-response-completed.png')
+      await capture(control, 'streaming-text-05-response-completed.png')
       active = false
     },
 
