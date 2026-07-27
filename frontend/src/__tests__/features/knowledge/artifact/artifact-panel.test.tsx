@@ -143,7 +143,7 @@ describe('ArtifactPanel AI Workshop', () => {
     )
   })
 
-  it('allows read-only knowledge base users to generate artifacts', () => {
+  it('limits read-only knowledge base users to viewing artifacts', () => {
     ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
       items: [],
       canManage: false,
@@ -162,8 +162,10 @@ describe('ArtifactPanel AI Workshop', () => {
       <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
     )
 
-    expect(screen.getByTestId('artifact-type-briefing')).toBeEnabled()
-    expect(screen.getByTestId('artifact-type-mind-map')).toBeEnabled()
+    expect(screen.getByTestId('artifact-type-briefing')).toBeDisabled()
+    expect(screen.getByTestId('artifact-type-mind-map')).toBeDisabled()
+    expect(screen.getByText('artifact.readOnlyHint')).toBeInTheDocument()
+    expect(createMock).not.toHaveBeenCalled()
   })
 
   it('closes the viewer and forwards a node question to the workspace', () => {
@@ -217,7 +219,7 @@ describe('ArtifactPanel AI Workshop', () => {
   it('explains why generation is unavailable while documents are processing', () => {
     ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
       items: [],
-      canManage: false,
+      canManage: true,
       availableDocumentCount: 0,
       processingDocumentCount: 1,
       isLoading: false,

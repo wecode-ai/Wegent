@@ -186,7 +186,7 @@ export function ArtifactViewer({
             </div>
           )}
         </div>
-        {(canManage || artifact.can_retry || artifact.can_delete) && (
+        {canManage && (
           <DialogFooter className="justify-between sm:justify-between">
             <div className="flex items-center gap-2">
               {artifact.can_delete && (

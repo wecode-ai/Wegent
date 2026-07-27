@@ -59,7 +59,7 @@ const failedArtifact: KnowledgeArtifact = {
   completed_at: '2026-07-26T12:01:00+08:00',
 }
 
-it('allows read-only users to retry without exposing management actions', () => {
+it('hides all shared artifact mutations from read-only users', () => {
   const onRetry = jest.fn().mockResolvedValue(undefined)
 
   render(
@@ -73,9 +73,8 @@ it('allows read-only users to retry without exposing management actions', () => 
     />
   )
 
-  fireEvent.click(screen.getByTestId('artifact-retry-button'))
-
-  expect(onRetry).toHaveBeenCalledTimes(1)
+  expect(screen.queryByTestId('artifact-retry-button')).not.toBeInTheDocument()
+  expect(onRetry).not.toHaveBeenCalled()
   expect(screen.queryByTestId('artifact-rename-button')).not.toBeInTheDocument()
   expect(screen.queryByTestId('artifact-delete-button')).not.toBeInTheDocument()
   expect(screen.queryByTestId('artifact-save-to-knowledge-button')).not.toBeInTheDocument()

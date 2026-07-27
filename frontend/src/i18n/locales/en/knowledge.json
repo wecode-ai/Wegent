@@ -893,6 +893,7 @@
     "runningCount": "{{count}} in progress",
     "noDocumentsHint": "This knowledge base has no documents. Add sources in Document Management first.",
     "documentsProcessingHint": "Documents are being processed. Generation will be available when they are ready.",
+    "readOnlyHint": "Only editors can start generation tasks.",
     "create": "Start task",
     "createFirst": "Start first task",
     "createTitle": "Start AI task",

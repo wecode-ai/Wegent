@@ -85,7 +85,7 @@ class ArtifactService:
         request: KnowledgeArtifactCreate,
     ) -> KnowledgeArtifact:
         """Persist a queued Artifact and launch its background Task."""
-        self._require_read_access(knowledge_base_id)
+        self._require_manage_access(knowledge_base_id)
         document_ids = self._resolve_document_ids(
             knowledge_base_id,
             request.document_ids,
@@ -126,7 +126,7 @@ class ArtifactService:
             self.user.id,
         )
         for artifact in reconciled:
-            self._set_delete_capability(artifact, can_manage=can_manage)
+            self._set_user_capabilities(artifact, can_manage=can_manage)
         available_document_count, processing_document_count = (
             self._document_source_counts(knowledge_base_id)
         )
@@ -146,7 +146,7 @@ class ArtifactService:
         self._require_read_access(knowledge_base_id)
         artifact = await self._get_artifact(knowledge_base_id, artifact_id)
         reconciled = await self._reconcile(artifact)
-        self._set_delete_capability(reconciled)
+        self._set_user_capabilities(reconciled)
         return reconciled
 
     async def rename(
@@ -165,7 +165,7 @@ class ArtifactService:
         if artifact is None:
             raise ArtifactNotFoundError("Artifact not found")
         reconciled = await self._reconcile(artifact)
-        self._set_delete_capability(reconciled, can_manage=True)
+        self._set_user_capabilities(reconciled, can_manage=True)
         return reconciled
 
     async def retry(
@@ -174,7 +174,7 @@ class ArtifactService:
         artifact_id: str,
     ) -> KnowledgeArtifact:
         """Retry a failed or stalled Artifact without changing its stable ID."""
-        self._require_read_access(knowledge_base_id)
+        self._require_manage_access(knowledge_base_id)
         artifact = await self._get_artifact(knowledge_base_id, artifact_id)
         artifact = await self._reconcile(artifact)
         if not artifact.can_retry:
@@ -200,16 +200,9 @@ class ArtifactService:
 
     async def delete(self, knowledge_base_id: int, artifact_id: str) -> None:
         """Delete the Artifact record without deleting its Task."""
-        self._require_read_access(knowledge_base_id)
+        self._require_manage_access(knowledge_base_id)
         artifact = await self._get_artifact(knowledge_base_id, artifact_id)
         artifact = await self._reconcile(artifact)
-        can_manage = KnowledgeService.can_manage_knowledge_base_documents(
-            self.db,
-            knowledge_base_id,
-            self.user.id,
-        )
-        if artifact.user_id != self.user.id and not can_manage:
-            raise ArtifactPermissionError("Artifact deletion is not allowed")
         if (
             artifact.status in _ACTIVE_STATUSES
             and artifact.execution_health != KnowledgeArtifactExecutionHealth.STALLED
@@ -634,7 +627,7 @@ class ArtifactService:
         ):
             raise ArtifactPermissionError("Artifact management is not allowed")
 
-    def _set_delete_capability(
+    def _set_user_capabilities(
         self,
         artifact: KnowledgeArtifact,
         *,
@@ -650,9 +643,8 @@ class ArtifactService:
             artifact.status in _ACTIVE_STATUSES
             and artifact.execution_health != KnowledgeArtifactExecutionHealth.STALLED
         )
-        artifact.can_delete = (
-            artifact.user_id == self.user.id or can_manage
-        ) and not is_active
+        artifact.can_retry = can_manage and artifact.can_retry
+        artifact.can_delete = can_manage and not is_active
 
     @staticmethod
     def _default_title(request: KnowledgeArtifactCreate) -> str:

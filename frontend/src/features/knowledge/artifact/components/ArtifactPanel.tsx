@@ -104,7 +104,7 @@ export function ArtifactPanel({
             type="button"
             className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             onClick={() => openCreate('briefing')}
-            disabled={effectiveAvailableDocumentCount === 0}
+            disabled={!canManage || effectiveAvailableDocumentCount === 0}
             data-testid="artifact-type-briefing"
           >
             <div className="flex w-full items-center justify-between">
@@ -123,7 +123,7 @@ export function ArtifactPanel({
             type="button"
             className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             onClick={() => openCreate('mind_map')}
-            disabled={effectiveAvailableDocumentCount === 0}
+            disabled={!canManage || effectiveAvailableDocumentCount === 0}
             data-testid="artifact-type-mind-map"
           >
             <div className="flex w-full items-center justify-between">
@@ -139,15 +139,23 @@ export function ArtifactPanel({
             </div>
           </button>
         </div>
-        {!isLoading && effectiveAvailableDocumentCount === 0 && (
-          <p className="mt-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-text-secondary">
-            {t(
-              processingDocumentCount > 0
-                ? 'artifact.documentsProcessingHint'
-                : 'artifact.noDocumentsHint'
-            )}
-          </p>
-        )}
+        {!isLoading &&
+          !error &&
+          (!canManage ? (
+            <p className="mt-3 rounded-lg bg-surface px-3 py-2 text-xs text-text-secondary">
+              {t('artifact.readOnlyHint')}
+            </p>
+          ) : (
+            effectiveAvailableDocumentCount === 0 && (
+              <p className="mt-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-text-secondary">
+                {t(
+                  processingDocumentCount > 0
+                    ? 'artifact.documentsProcessingHint'
+                    : 'artifact.noDocumentsHint'
+                )}
+              </p>
+            )
+          ))}
       </div>
 
       <div className="mb-3 flex items-center justify-between">

@@ -893,6 +893,7 @@
     "runningCount": "{{count}} 个进行中",
     "noDocumentsHint": "知识库暂无文档，请先前往“文档管理”添加来源。",
     "documentsProcessingHint": "文档正在处理中，完成后即可生成。",
+    "readOnlyHint": "仅编辑者可发起生成任务",
     "create": "开始任务",
     "createFirst": "开始第一个任务",
     "createTitle": "开始 AI 任务",

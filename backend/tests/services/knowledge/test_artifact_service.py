@@ -20,6 +20,7 @@ from app.schemas.knowledge_artifact import (
 )
 from app.services.knowledge.artifact_service import (
     ArtifactNotFoundError,
+    ArtifactPermissionError,
     ArtifactService,
     ArtifactValidationError,
 )
@@ -92,7 +93,7 @@ async def test_create_persists_before_and_after_launch():
     )
 
     with (
-        patch.object(service, "_require_read_access"),
+        patch.object(service, "_require_manage_access"),
         patch.object(service, "_resolve_document_ids", return_value=[101, 102]),
     ):
         artifact = await service.create(12, request)
@@ -122,7 +123,7 @@ async def test_create_marks_artifact_failed_when_task_launch_fails():
     )
 
     with (
-        patch.object(service, "_require_read_access"),
+        patch.object(service, "_require_manage_access"),
         patch.object(service, "_resolve_document_ids", return_value=[101]),
         pytest.raises(RuntimeError, match="智能体不可用"),
     ):
@@ -145,7 +146,7 @@ async def test_create_does_not_persist_when_preflight_fails():
     )
 
     with (
-        patch.object(service, "_require_read_access"),
+        patch.object(service, "_require_manage_access"),
         patch.object(service, "_resolve_document_ids", return_value=[101]),
         pytest.raises(
             ArtifactTaskConfigurationError,
@@ -160,13 +161,8 @@ async def test_create_does_not_persist_when_preflight_fails():
 
 
 @pytest.mark.asyncio
-async def test_create_allows_user_with_read_access_without_management_permission():
+async def test_create_rejects_user_without_contributor_permission():
     service, repository, launcher = build_service()
-    launcher.preflight.return_value = MagicMock()
-    launcher.launch.return_value = ArtifactTaskLaunchResult(
-        task_id=31,
-        assistant_subtask_id=41,
-    )
     request = KnowledgeArtifactCreate(
         artifact_type=KnowledgeArtifactType.BRIEFING,
     )
@@ -179,14 +175,13 @@ async def test_create_allows_user_with_read_access_without_management_permission
         patch(
             "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
             return_value=False,
-        ) as can_manage,
-        patch.object(service, "_resolve_document_ids", return_value=[101]),
+        ),
+        pytest.raises(ArtifactPermissionError),
     ):
-        artifact = await service.create(12, request)
+        await service.create(12, request)
 
-    assert artifact.status == KnowledgeArtifactStatus.RUNNING
-    repository.create.assert_called_once()
-    can_manage.assert_not_called()
+    repository.create.assert_not_called()
+    launcher.preflight.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -209,6 +204,48 @@ async def test_create_rejects_user_without_read_access():
 
 
 @pytest.mark.asyncio
+async def test_retry_rejects_user_without_contributor_permission():
+    service, repository, launcher = build_service()
+
+    with (
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.get_knowledge_base",
+            return_value=(SimpleNamespace(id=12), True),
+        ),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=False,
+        ),
+        pytest.raises(ArtifactPermissionError),
+    ):
+        await service.retry(12, "artifact-1")
+
+    repository.get.assert_not_called()
+    launcher.preflight.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_user_without_contributor_permission():
+    service, repository, _ = build_service()
+
+    with (
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.get_knowledge_base",
+            return_value=(SimpleNamespace(id=12), True),
+        ),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=False,
+        ),
+        pytest.raises(ArtifactPermissionError),
+    ):
+        await service.delete(12, "artifact-1")
+
+    repository.get.assert_not_called()
+    repository.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_list_includes_available_document_count():
     service, repository, _ = build_service()
     repository.list_by_knowledge_base.return_value = []
@@ -228,6 +265,29 @@ async def test_list_includes_available_document_count():
     assert response.can_manage is True
     assert response.available_document_count == 4
     assert response.processing_document_count == 2
+
+
+@pytest.mark.asyncio
+async def test_list_masks_write_capabilities_for_read_only_user():
+    service, repository, _ = build_service()
+    artifact = build_artifact(status=KnowledgeArtifactStatus.FAILED)
+    artifact.can_retry = True
+    repository.list_by_knowledge_base.return_value = [artifact]
+
+    with (
+        patch.object(service, "_require_read_access"),
+        patch.object(service, "_reconcile_many", AsyncMock(return_value=[artifact])),
+        patch.object(service, "_document_source_counts", return_value=(4, 0)),
+        patch(
+            "app.services.knowledge.artifact_service.KnowledgeService.can_manage_knowledge_base_documents",
+            return_value=False,
+        ),
+    ):
+        response = await service.list(12)
+
+    assert response.can_manage is False
+    assert response.items[0].can_retry is False
+    assert response.items[0].can_delete is False
 
 
 def test_parse_mind_map_accepts_structured_json():
@@ -449,10 +509,10 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
         assistant_subtask_id=42,
     )
 
-    with patch.object(service, "_require_read_access") as require_read:
+    with patch.object(service, "_require_manage_access") as require_manage:
         retried = await service.retry(12, "artifact-1")
 
-    require_read.assert_called_once_with(12)
+    require_manage.assert_called_once_with(12)
     assert retried.artifact_id == "artifact-1"
     assert retried.status == KnowledgeArtifactStatus.RUNNING
     assert retried.task_id == 32
@@ -501,7 +561,7 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
         assistant_subtask_id=42,
     )
 
-    with patch.object(service, "_require_read_access"):
+    with patch.object(service, "_require_manage_access"):
         retried = await service.retry(12, "artifact-1")
 
     assert retried.status == KnowledgeArtifactStatus.RUNNING
@@ -524,7 +584,7 @@ async def test_retry_does_not_claim_when_preflight_fails():
     )
 
     with (
-        patch.object(service, "_require_read_access"),
+        patch.object(service, "_require_manage_access"),
         pytest.raises(
             ArtifactTaskConfigurationError,
             match="has no model configured",
