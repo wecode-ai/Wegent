@@ -1825,7 +1825,7 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   )
 }
 
-async function verifyProviderBoundaryRestriction(control, composerSelector) {
+async function verifyProviderSwitchWarning(control, composerSelector) {
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1858,26 +1858,21 @@ async function verifyProviderBoundaryRestriction(control, composerSelector) {
     timeoutMs: UI_TIMEOUT_MS,
   })
   const disabledModelText = await control.command('getText', officialModelSelector)
-  assert.match(
+  assert.equal(
     disabledModelText,
-    /官方 Codex|Official Codex/,
-    'The official Codex option did not explain the provider boundary restriction'
+    PROVIDER_SWITCH_SOL_LABEL,
+    'The target model option displayed unexpected inline helper text'
   )
-  await assert.rejects(
-    control.command('click', officialModelSelector),
-    /disabled/,
-    'The official Codex option remained selectable in a third-party conversation'
-  )
+  await control.command('click', officialModelSelector)
+  await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
   assert.equal(
     control.scenarioRequests.get('provider_switch_retry')?.length,
     1,
-    'Selecting the disabled official Codex option unexpectedly sent another request'
+    'Opening the provider-switch confirmation unexpectedly sent another request'
   )
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.ok(
-    snapshot.testIds.includes('model-selector-menu'),
-    'The model selector closed after clicking a disabled cross-provider option'
-  )
+  await control.command('click', '[data-testid="model-switch-warning-cancel-button"]')
   await control.command('press', 'body', { key: 'Escape' })
 }
 
@@ -7788,14 +7783,12 @@ async function main() {
           text: targetModel.label,
           timeoutMs: UI_TIMEOUT_MS,
         })
-        const appliedModelLabel = await control.command(
-          'getText',
+        await waitForSnapshot(
+          control,
+          snapshot => !/下一轮|Next/.test(snapshot.text),
+          `${switchCase.id} left the applied model marked as next-turn only`,
+          UI_TIMEOUT_MS,
           '[data-testid="model-selector-button"]'
-        )
-        assert.doesNotMatch(
-          appliedModelLabel,
-          /下一轮|Next/,
-          `${switchCase.id} left the applied model marked as next-turn only`
         )
         modelSwitchVerification.push({
           direction: switchCase.id,
@@ -7813,7 +7806,7 @@ async function main() {
         }
       }
       phase = 'provider-switch-retry'
-      await verifyProviderBoundaryRestriction(control, composerSelector)
+      await verifyProviderSwitchWarning(control, composerSelector)
       await writeFile(
         join(resultDir, 'model-switch-protocol-verification.json'),
         `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
