@@ -323,6 +323,8 @@ Regular draft PRs do not run browser or Linux desktop E2E. The macOS memory gate
 runs by default only on `main`, scheduled runs, and manual runs. Add the
 `ci:memory` label when a PR must validate the memory boundary. Applying that
 label starts only the memory gate and does not repeat browser or Linux desktop
-E2E. The workflow also runs a complete regression every day at 04:00 UTC.
+E2E. Applying `ci:all` runs browser, Linux desktop, and macOS memory E2E even
+when the PR's changed paths would not normally select Wework E2E. The workflow
+also runs a complete regression every day at 04:00 UTC.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.
