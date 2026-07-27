@@ -157,6 +157,24 @@ function services(): WorkbenchServices {
 describe('CloudTodoWorkspace', () => {
   afterEach(() => vi.restoreAllMocks())
 
+  it('keeps projects visible when one project issue provider fails', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => {
+      throw new Error('not_found: task not found')
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    expect((await screen.findAllByText('Wegent V4')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('创建第一个项目空间')).not.toBeInTheDocument()
+  })
+
   it('shows only one hierarchy level at a time on the board', async () => {
     const workbenchServices = services()
     const child = {

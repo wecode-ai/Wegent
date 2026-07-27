@@ -24,8 +24,17 @@ SnowflakeId = Annotated[str, BeforeValidator(str)]
 TaskProvider = Literal["local", "github", "gitlab"]
 
 
-def _validate_provider_config(
-    task_provider: TaskProvider, provider_config: dict[str, object]
+def _normalize_repository(task_provider: str, repository: str) -> str:
+    normalized = repository.strip().strip("/")
+    if task_provider == "gitlab":
+        normalized = normalized.split("/-/", 1)[0]
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    return normalized
+
+
+def normalize_provider_config(
+    task_provider: str, provider_config: dict[str, object]
 ) -> dict[str, object]:
     config = dict(provider_config)
     if task_provider == "local":
@@ -33,7 +42,10 @@ def _validate_provider_config(
     repository = config.get("repository")
     if not isinstance(repository, str) or not repository.strip():
         raise ValueError("provider_config.repository is required")
-    config["repository"] = repository.strip()
+    normalized_repository = _normalize_repository(task_provider, repository)
+    if not normalized_repository:
+        raise ValueError("provider_config.repository is required")
+    config["repository"] = normalized_repository
     if "credential" in config:
         raise ValueError("encrypted provider credentials cannot be supplied")
     token = config.get("token")
@@ -60,7 +72,7 @@ class CloudProjectCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider(self) -> "CloudProjectCreate":
-        self.provider_config = _validate_provider_config(
+        self.provider_config = normalize_provider_config(
             self.task_provider, self.provider_config
         )
         return self

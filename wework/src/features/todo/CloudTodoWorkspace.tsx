@@ -708,7 +708,7 @@ export function CloudTodoWorkspace({
             location,
             error,
           })
-          throw error
+          return { details: [], projects: [] }
         }
         const projects = response.items.map(project => ({ ...project, location }))
         console.warn('[Wework project bootstrap] project source list received', {
@@ -724,30 +724,42 @@ export function CloudTodoWorkspace({
               projectStore: project.project_store,
               taskProvider: project.task_provider,
             })
-            let loopItems
-            let members
-            try {
-              ;[loopItems, members] = await Promise.all([
-                api.listLoopItems(project.id),
-                api.listCloudProjectMembers(project.id),
-              ])
-            } catch (error) {
+            const [loopItemsResult, membersResult] = await Promise.allSettled([
+              api.listLoopItems(project.id),
+              api.listCloudProjectMembers(project.id),
+            ])
+            if (loopItemsResult.status === 'rejected') {
               console.error('[Wework project bootstrap] project details loading failed', {
                 location,
                 projectId: project.id,
                 projectStore: project.project_store,
                 taskProvider: project.task_provider,
-                error,
+                stage: 'issues',
+                error: loopItemsResult.reason,
               })
-              throw error
             }
+            if (membersResult.status === 'rejected') {
+              console.error('[Wework project bootstrap] project details loading failed', {
+                location,
+                projectId: project.id,
+                projectStore: project.project_store,
+                taskProvider: project.task_provider,
+                stage: 'members',
+                error: membersResult.reason,
+              })
+            }
+            const issueCount =
+              loopItemsResult.status === 'fulfilled' ? loopItemsResult.value.items.length : 0
+            const members = membersResult.status === 'fulfilled' ? membersResult.value : []
             console.warn('[Wework project bootstrap] project details loaded', {
               location,
               projectId: project.id,
-              issueCount: loopItems.items.length,
+              issueCount,
               memberCount: members.length,
+              issuesAvailable: loopItemsResult.status === 'fulfilled',
+              membersAvailable: membersResult.status === 'fulfilled',
             })
-            return [project.id, loopItems.items.length, members] as const
+            return [project.id, issueCount, members] as const
           })
         )
         return { details, projects }
@@ -774,17 +786,29 @@ export function CloudTodoWorkspace({
     if (!selectedProjectId || !selectedProjectApi) return
     let active = true
     const refreshItems = () => {
-      void selectedProjectApi.listLoopItems(selectedProjectId).then(response => {
-        if (!active) return
-        setItems(response.items)
-        // Only sync the open drawer when it belongs to this project; a drawer
-        // opened from another view (e.g. my work) must not be closed here.
-        setSelectedItem(current =>
-          current && current.cloud_project_id === selectedProjectId
-            ? (response.items.find(item => item.id === current.id) ?? null)
-            : current
-        )
-      })
+      void selectedProjectApi
+        .listLoopItems(selectedProjectId)
+        .then(response => {
+          if (!active) return
+          setBoardError(null)
+          setItems(response.items)
+          // Only sync the open drawer when it belongs to this project; a drawer
+          // opened from another view (e.g. my work) must not be closed here.
+          setSelectedItem(current =>
+            current && current.cloud_project_id === selectedProjectId
+              ? (response.items.find(item => item.id === current.id) ?? null)
+              : current
+          )
+        })
+        .catch(error => {
+          console.error('[Wework project board] issue refresh failed', {
+            projectId: selectedProjectId,
+            error,
+          })
+          if (!active) return
+          setItems([])
+          setBoardError(error instanceof Error ? error.message : '任务加载失败')
+        })
     }
     refreshItems()
     const interval = window.setInterval(() => {

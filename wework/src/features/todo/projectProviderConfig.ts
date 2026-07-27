@@ -35,7 +35,10 @@ export function repositoryProviderConfig(
     pathname = parsed.pathname
   }
 
-  const repository = pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/, '')
+  const repositoryPath = pathname.replace(/^\/+|\/+$/g, '')
+  const repositoryWithoutPage =
+    provider === 'gitlab' ? (repositoryPath.split('/-/')[0] ?? repositoryPath) : repositoryPath
+  const repository = repositoryWithoutPage.replace(/\.git$/, '')
   const segments = repository.split('/').filter(Boolean)
   if (segments.length < 2 || (provider === 'github' && segments.length !== 2)) {
     throw new Error(

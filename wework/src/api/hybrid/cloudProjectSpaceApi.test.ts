@@ -236,4 +236,20 @@ describe('cloud project-space API', () => {
     expect(storeApi.getCloudProjectProviderCredential).not.toHaveBeenCalled()
     expect(externalIssueApi.configureProject).not.toHaveBeenCalled()
   })
+
+  test('keeps cloud projects visible when one provider credential cannot be restored', async () => {
+    const storeApi = {
+      listCloudProjects: vi.fn(async () => ({ items: [project] })),
+      getCloudProjectProviderCredential: vi.fn(async () => {
+        throw new Error('Provider credential is not configured')
+      }),
+    } as unknown as DeliveryApi
+    const externalIssueApi = {
+      configureProject: vi.fn(),
+    } as unknown as ExternalIssueApi
+    const api = createCloudProjectSpaceApi(storeApi, externalIssueApi)
+
+    await expect(api.listCloudProjects()).resolves.toEqual({ items: [project] })
+    expect(externalIssueApi.configureProject).not.toHaveBeenCalled()
+  })
 })

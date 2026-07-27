@@ -308,7 +308,11 @@ export function createLocalDeliveryApi(
   const api = {
     async listCloudProjects() {
       const records = await request<LocalLoopItemRecord[]>('projects.list')
-      return { items: records.map(localProject) }
+      return {
+        items: records
+          .filter(record => record.metadata.project_store !== 'backend')
+          .map(localProject),
+      }
     },
     async createCloudProject(data: {
       project_key?: string

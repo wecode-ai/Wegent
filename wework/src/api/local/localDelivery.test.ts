@@ -164,6 +164,28 @@ describe('local delivery API', () => {
     })
   })
 
+  test('does not expose cached backend projects as local project spaces', async () => {
+    const backendProjectRecord = {
+      ...projectRecord,
+      id: 'cloud-1',
+      name: 'Cloud GitLab board',
+      metadata: {
+        project_store: 'backend',
+        task_provider: 'gitlab',
+        provider_config: { repository: 'group/project' },
+      },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'projects.list') return [projectRecord, backendProjectRecord]
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listCloudProjects()).resolves.toMatchObject({
+      items: [{ id: 'project-1', name: 'Local board' }],
+    })
+  })
+
   test('remembers task ownership for updates and persists board order', async () => {
     const updatedRecord = { ...taskRecord, title: 'Updated', version: 2 }
     const request = vi.fn(async (method: string) => {

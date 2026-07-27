@@ -593,6 +593,23 @@ fn provider_key(provider: TaskProviderKind) -> &'static str {
     }
 }
 
+fn normalize_repository(
+    repository: &str,
+    provider: TaskProviderKind,
+) -> Result<String, TaskRuntimeError> {
+    let normalized = repository.trim().trim_matches('/');
+    let normalized = if provider == TaskProviderKind::Gitlab {
+        normalized.split("/-/").next().unwrap_or_default()
+    } else {
+        normalized
+    };
+    let normalized = normalized.trim_end_matches(".git");
+    if normalized.is_empty() {
+        return Err(invalid("provider_config.repository is required"));
+    }
+    Ok(normalized.to_owned())
+}
+
 struct ProviderConfig {
     repository: String,
     api_base: String,
@@ -615,8 +632,8 @@ impl ProviderConfig {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| invalid("provider_config.repository is required"))?
-            .to_owned();
+            .ok_or_else(|| invalid("provider_config.repository is required"))?;
+        let repository = normalize_repository(repository, provider)?;
         let (default_domain, default_api_base) = match provider {
             TaskProviderKind::Github => ("github.com", "https://api.github.com"),
             TaskProviderKind::Gitlab => ("gitlab.com", "https://gitlab.com/api/v4"),
@@ -1004,7 +1021,19 @@ fn provider_error(error: impl std::fmt::Display) -> TaskRuntimeError {
 
 #[cfg(test)]
 mod tests {
-    use super::{labels_for_write, parent_number, priority_from_labels, status_from_labels};
+    use super::{
+        labels_for_write, normalize_repository, parent_number, priority_from_labels,
+        status_from_labels,
+    };
+    use crate::task_runtime::TaskProviderKind;
+
+    #[test]
+    fn removes_gitlab_web_page_suffix_from_repository() {
+        assert_eq!(
+            normalize_repository("hongyu91/tab-prompt/-/issues", TaskProviderKind::Gitlab).unwrap(),
+            "hongyu91/tab-prompt"
+        );
+    }
 
     #[test]
     fn reads_controlled_parent_marker() {

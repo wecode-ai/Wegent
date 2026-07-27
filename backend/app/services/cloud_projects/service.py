@@ -29,6 +29,7 @@ from app.schemas.cloud_project import (
     CloudProjectMemberUpdate,
     CloudProjectUpdate,
     LocalBindingCreate,
+    normalize_provider_config,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 
@@ -200,12 +201,15 @@ class CloudProjectService:
                     current_config if isinstance(current_config, dict) else {}
                 )
                 try:
+                    provider_config = normalize_provider_config(
+                        str(provider), values.provider_config
+                    )
                     metadata["provider_config"] = (
                         {}
                         if provider == "local"
                         else store_provider_config(
                             str(provider),
-                            values.provider_config,
+                            provider_config,
                             current_config,
                         )
                     )

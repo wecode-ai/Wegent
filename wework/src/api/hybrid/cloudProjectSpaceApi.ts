@@ -77,7 +77,7 @@ export function createCloudProjectSpaceApi(
                 taskProvider: project.task_provider,
                 error,
               })
-              throw error
+              return
             }
             console.warn('[Wework project restore] configuring provider in local executor', {
               projectId: project.id,
@@ -96,7 +96,7 @@ export function createCloudProjectSpaceApi(
                   error,
                 }
               )
-              throw error
+              return
             }
             console.warn('[Wework project restore] local executor provider configured', {
               projectId: project.id,

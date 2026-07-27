@@ -223,6 +223,28 @@ def test_cloud_project_can_add_missing_provider_token(
     assert credential.json() == {"token": "gitlab-secret"}
 
 
+def test_cloud_project_normalizes_gitlab_web_page_repository(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "name": "GitLab web URL",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "hongyu91/tab-prompt/-/issues",
+                "domain": "git.intra.weibo.com",
+                "api_base": "https://git.intra.weibo.com/api/v4",
+                "token": "gitlab-secret",
+            },
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["provider_config"]["repository"] == "hongyu91/tab-prompt"
+
+
 def test_external_cloud_project_rejects_internal_loop_item_routes(
     test_client: TestClient, test_token: str
 ) -> None:
