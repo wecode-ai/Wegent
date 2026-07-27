@@ -49,7 +49,7 @@ describe('CodexHomeInitializer', () => {
     expect(screen.queryByText(migrationStatus.weworkCodexHome)).not.toBeInTheDocument()
   })
 
-  test('creates Wework Codex config with online connectors disabled', async () => {
+  test('creates Wework Codex config with apps enabled by default', async () => {
     render(<CodexHomeInitializer />)
 
     await screen.findByTestId('codex-home-initializer-dialog')
@@ -61,10 +61,24 @@ describe('CodexHomeInitializer', () => {
     await waitFor(() =>
       expect(localCodexPluginApiMock.initializeCodexHome).toHaveBeenCalledWith({
         migrateNativeHome: false,
-        remoteAppsEnabled: false,
+        remoteAppsEnabled: true,
       })
     )
     expect(window.localStorage.getItem('wework.plugins.codexMigrationDismissed')).toBe('1')
+  })
+
+  test('migrates native Codex config with apps enabled by default', async () => {
+    render(<CodexHomeInitializer />)
+
+    await screen.findByTestId('codex-home-initializer-dialog')
+    await userEvent.click(screen.getByTestId('codex-home-initializer-migrate-button'))
+
+    await waitFor(() =>
+      expect(localCodexPluginApiMock.initializeCodexHome).toHaveBeenCalledWith({
+        migrateNativeHome: true,
+        remoteAppsEnabled: true,
+      })
+    )
   })
 
   test('keeps prompting after dismissal when the Wework Codex config is still missing', async () => {
