@@ -1,0 +1,788 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Phase 2a: authoritative-state persistence across terminal paths.
+
+Task 1 is a feasibility gate: prove that a real ``create_react_agent`` with a
+compacting ``pre_model_hook`` and a forced ``GraphRecursionError`` yields the
+post-compaction authoritative state via ``aget_state`` under
+``durability="exit"`` while keeping a single checkpoint.
+"""
+
+from __future__ import annotations
+
+from uuid import uuid4
+
+import pytest
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphRecursionError
+from langgraph.prebuilt import create_react_agent
+
+SUMMARY_FLAG = "summary_compacted"
+
+
+@tool
+def _probe(query: str) -> str:
+    """Probe tool that echoes its query."""
+    return f"result::{query}"
+
+
+class _LoopingModel(BaseChatModel):
+    """Emits a fresh tool call on every call, so the ReAct loop never ends."""
+
+    call_count: int = 0
+
+    @property
+    def _llm_type(self) -> str:
+        return "looping"
+
+    def bind_tools(self, tools, **kwargs):  # create_react_agent calls this
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.call_count += 1
+        n = self.call_count
+        return ChatResult(
+            generations=[
+                ChatGeneration(
+                    message=AIMessage(
+                        content=f"turn {n}",
+                        tool_calls=[
+                            {
+                                "name": "_probe",
+                                "args": {"query": f"q{n}"},
+                                "id": f"t{n}",
+                            }
+                        ],
+                    )
+                )
+            ]
+        )
+
+
+class _CompactOnSecond:
+    """pre_model_hook that compacts on its 2nd invocation, like the guard."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, state):
+        self.calls += 1
+        msgs = state["messages"]
+        if self.calls == 2:
+            summary = HumanMessage(
+                content="[COMPACT SUMMARY] x",
+                additional_kwargs={SUMMARY_FLAG: True},
+                id="s-1",
+            )
+            removals = [RemoveMessage(id=m.id) for m in msgs if m.id]
+            return {"messages": [*removals, summary]}
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_exit_durability_yields_post_compaction_state_after_recursion():
+    saver = InMemorySaver()
+    agent = create_react_agent(
+        model=_LoopingModel(),
+        tools=[_probe],
+        checkpointer=saver,
+        pre_model_hook=_CompactOnSecond(),
+    )
+    config = {"configurable": {"thread_id": str(uuid4())}, "recursion_limit": 8}
+
+    with pytest.raises(GraphRecursionError):
+        async for _ in agent.astream_events(
+            {"messages": [HumanMessage(content="q0", id="u1")]},
+            config,
+            version="v2",
+            durability="exit",
+        ):
+            pass
+
+    snap = await agent.aget_state(config)
+    msgs = snap.values["messages"]
+
+    # Summary checkpoint survives the error.
+    assert any(m.additional_kwargs.get(SUMMARY_FLAG) for m in msgs)
+    # Post-compaction completed tool pair (t2) survives.
+    assert any(getattr(m, "tool_call_id", None) == "t2" for m in msgs)
+    # Pre-compaction content was actually REPLACED, not merely appended to:
+    # the input user and the pre-compaction tool pair are gone. This proves we
+    # read the post-replacement authoritative state, not just "summary present".
+    assert all(m.id != "u1" for m in msgs)
+    assert not any(getattr(m, "tool_call_id", None) == "t1" for m in msgs)
+    # exit durability => a single committed checkpoint, not one per super-step.
+    assert len(list(saver.list(config))) == 1
+
+
+def test_build_agent_attaches_request_local_checkpointer():
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    agent = builder._build_agent()
+
+    assert builder._checkpointer is not None  # always present now
+    assert agent.checkpointer is builder._checkpointer
+
+
+@pytest.mark.asyncio
+async def test_stream_tokens_injects_unique_thread_and_exit_durability(monkeypatch):
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    captured: list[dict] = []
+
+    class _EmptySnap:
+        values: dict = {"messages": []}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            captured.append({"config": config, "durability": durability})
+            for _ in []:  # empty async generator
+                yield
+
+        async def aget_state(self, _config):
+            return _EmptySnap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+
+    for _ in range(2):
+        async for _token in builder.stream_tokens(
+            messages=[{"role": "user", "content": "hi"}]
+        ):
+            pass
+
+    assert len(captured) == 2
+    assert all(c["durability"] == "exit" for c in captured)
+    t0 = captured[0]["config"]["configurable"]["thread_id"]
+    t1 = captured[1]["config"]["configurable"]["thread_id"]
+    assert t0 and t1 and t0 != t1  # present and unique per turn
+
+
+def test_finalize_turn_history_sets_all_three_fields_atomically():
+    from langchain_core.messages import ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+    from chat_shell.agents.turn_context import TurnExecutionContext
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    # Authoritative post-compaction state: input "u1" already removed; the
+    # retained clone / summary / suffix carry fresh ids (not in original_input_ids).
+    state = [
+        HumanMessage(
+            content="retained",
+            additional_kwargs={"checkpoint_retained": True},
+            id="r1",
+        ),
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t2", "name": "_probe", "args": {}}],
+            id="a2",
+        ),
+        ToolMessage(content="ok", tool_call_id="t2", name="_probe", id="tm2"),
+        AIMessage(content="final answer", id="a3"),
+    ]
+    ctx = TurnExecutionContext(
+        original_input_ids=frozenset({"u1"}), current_thread_id="root"
+    )
+
+    builder._finalize_turn_history(state, ctx, "normal_completion")
+
+    chain = builder._last_messages_chain
+    assert [c["role"] for c in chain] == [
+        "user",
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert chain[0]["additional_kwargs"]["checkpoint_retained"] is True
+    assert chain[1]["additional_kwargs"]["summary_compacted"] is True
+    assert chain[3]["tool_call_id"] == "t2"
+    assert builder._last_termination_reason == "normal_completion"
+    assert len(builder._last_live_state_messages) == len(state)
+
+
+@pytest.mark.asyncio
+async def test_normal_completion_persists_from_aget_state(monkeypatch):
+    from langchain_core.messages import ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    # Authoritative post-compaction state the checkpointer would return: input
+    # user already replaced by summary; post-compaction tool pair + final answer.
+    authoritative = [
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t2", "name": "_probe", "args": {}}],
+            id="a2",
+        ),
+        ToolMessage(content="ok", tool_call_id="t2", name="_probe", id="tm2"),
+        AIMessage(content="done", id="a3"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            for _ in []:  # complete immediately, no events
+                yield
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    chain = builder._last_messages_chain
+    # Persisted from the authoritative state: summary marker + post-compaction
+    # tool pair + final assistant, not just the last message.
+    assert any(c.get("additional_kwargs", {}).get("summary_compacted") for c in chain)
+    assert any(c["role"] == "tool" for c in chain)
+    assert chain[-1]["role"] == "assistant"
+    assert builder._last_termination_reason == "normal_completion"
+
+
+@pytest.mark.asyncio
+async def test_tool_limit_recovery_persists_full_chain_without_instruction(monkeypatch):
+    from langchain_core.messages import ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    authoritative = [
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t2", "name": "_probe", "args": {}}],
+            id="a2",
+        ),
+        ToolMessage(content="ok", tool_call_id="t2", name="_probe", id="tm2"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            raise GraphRecursionError("limit")
+            yield  # pragma: no cover - marks this an async generator
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    recovery_seen: list = []
+
+    class _Chunk:
+        def __init__(self, content):
+            self.content = content
+
+    class _RecoveryLLM:
+        async def astream(self, messages):
+            recovery_seen.extend(messages)
+            yield _Chunk("final ")
+            yield _Chunk("answer")
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    monkeypatch.setattr(builder, "llm", _RecoveryLLM())
+
+    tokens: list[str] = []
+    async for token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        tokens.append(token)
+
+    assert "".join(tokens) == "final answer"  # recovery streamed to the client
+    chain = builder._last_messages_chain
+    assert any(c.get("additional_kwargs", {}).get("summary_compacted") for c in chain)
+    assert any(c["role"] == "tool" for c in chain)  # post-compaction pair kept
+    assert chain[-1]["role"] == "assistant"
+    assert chain[-1]["content"] == "final answer"  # recovery reply last
+    # The tool-limit instruction never persists...
+    assert all("Tool call limit reached" not in str(c.get("content")) for c in chain)
+    # ...but the recovery LLM did see it (control message).
+    assert any(
+        "Tool call limit" in str(getattr(m, "content", "")) for m in recovery_seen
+    )
+    assert builder._last_termination_reason == "graph_recursion_limit_recovery"
+
+
+@pytest.mark.asyncio
+async def test_truncation_retry_uses_attempt_control_plane(monkeypatch):
+    """The retry seed carries only authoritative state; the truncation
+    instruction rides the attempt control plane (``_attempt_guidance``), so it
+    never enters the persisted ``messages`` channel."""
+    from chat_shell.agents.graph_builder import (
+        LangGraphAgentBuilder,
+        ToolCallTruncatedError,
+    )
+
+    # Authoritative state at the truncation point: a real user + partial reply.
+    authoritative = [
+        HumanMessage(content="analyze data", id="u-real"),
+        AIMessage(content="partial", id="a-partial"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    calls = {"n": 0}
+    captured: dict = {}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                captured["root_thread"] = config["configurable"]["thread_id"]
+                # Root turn must carry no attempt guidance.
+                captured["root_guidance"] = list(builder._attempt_guidance)
+                raise ToolCallTruncatedError(reason="length", has_tool_calls=True)
+            # Second call = the retry: capture its seed, thread, and the
+            # attempt-scoped guidance that the pre-model hook would inject.
+            captured["retry_input"] = _input["messages"]
+            captured["retry_thread"] = config["configurable"]["thread_id"]
+            captured["retry_guidance"] = list(builder._attempt_guidance)
+            for _ in []:
+                yield
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    monkeypatch.setattr(builder, "max_truncation_retries", 2)
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    retry_msgs = captured["retry_input"]
+    # The retry ran on a DIFFERENT thread than the root turn.
+    assert captured["retry_thread"] != captured["root_thread"]
+    # The sanitized authoritative state was seeded into the retry.
+    assert any(getattr(m, "content", "") == "analyze data" for m in retry_msgs)
+    # The instruction is NOT in the persisted seed (messages channel).
+    assert all(
+        "[SYSTEM ERROR]" not in str(getattr(m, "content", "")) for m in retry_msgs
+    )
+    # The root turn had no attempt guidance; the retry carries exactly one.
+    assert captured["root_guidance"] == []
+    assert len(captured["retry_guidance"]) == 1
+    assert "[SYSTEM ERROR]" in captured["retry_guidance"][0].content
+
+
+def test_attempt_guidance_hook_appends_to_model_input_only():
+    """``_attempt_guidance_hook`` appends guidance to the model-visible list via
+    ``llm_input_messages`` and never touches the ``messages`` channel; it is a
+    no-op when no guidance is active."""
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+
+    # No guidance -> no-op (keeps whatever prior producer set).
+    assert builder._attempt_guidance_hook({"messages": [HumanMessage("hi")]}) == {}
+
+    # With guidance, it builds on a prior producer's llm_input_messages.
+    builder._attempt_guidance = [HumanMessage(content="[SYSTEM ERROR] retry")]
+    prior = [HumanMessage(content="compacted+guidance")]
+    update = builder._attempt_guidance_hook(
+        {"messages": [HumanMessage("raw")], "llm_input_messages": prior}
+    )
+    assert "messages" not in update  # never writes the persisted channel
+    out = update["llm_input_messages"]
+    assert [m.content for m in out] == ["compacted+guidance", "[SYSTEM ERROR] retry"]
+
+    # Falls back to messages when no prior llm_input_messages exists.
+    update = builder._attempt_guidance_hook({"messages": [HumanMessage("raw")]})
+    assert [m.content for m in update["llm_input_messages"]] == [
+        "raw",
+        "[SYSTEM ERROR] retry",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_truncation_exhausted_persists_checkpoint(monkeypatch):
+    from chat_shell.agents.graph_builder import (
+        LangGraphAgentBuilder,
+        ToolCallTruncatedError,
+    )
+
+    authoritative = [
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(content="partial", id="a1"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            raise ToolCallTruncatedError(reason="length", has_tool_calls=True)
+            yield  # pragma: no cover
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    monkeypatch.setattr(builder, "max_truncation_retries", 1)
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    chain = builder._last_messages_chain
+    assert any(c.get("additional_kwargs", {}).get("summary_compacted") for c in chain)
+    assert builder._last_termination_reason == "tool_call_truncation_retry_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_stream_tokens_deletes_turn_thread_on_exit(monkeypatch):
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    deleted: list[str] = []
+
+    class _MockSaver:
+        def list(self, _config):
+            return iter([object()])  # one committed checkpoint (exit durability)
+
+        async def adelete_thread(self, thread_id):
+            deleted.append(thread_id)
+
+    class _EmptySnap:
+        values: dict = {"messages": []}
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            for _ in []:
+                yield
+
+        async def aget_state(self, _config):
+            return _EmptySnap()
+
+    builder = LangGraphAgentBuilder(llm=_LoopingModel())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    builder._checkpointer = _MockSaver()
+
+    async for _token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "hi"}]
+    ):
+        pass
+
+    assert len(deleted) == 1  # exactly the turn's own thread torn down
+
+
+@pytest.mark.asyncio
+async def test_nonstreaming_recovery_uses_current_state_and_deletes_thread(monkeypatch):
+    from langchain_core.messages import ToolMessage
+
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    authoritative = [
+        HumanMessage(
+            content="[COMPACT SUMMARY] s",
+            additional_kwargs={"compacted": True, "summary_compacted": True},
+            id="s1",
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t2", "name": "_probe", "args": {}}],
+            id="a2",
+        ),
+        ToolMessage(content="ok", tool_call_id="t2", name="_probe", id="tm2"),
+    ]
+
+    class _Snap:
+        values = {"messages": authoritative}
+
+    recovery_seen: list = []
+    deleted: list[str] = []
+
+    class _Resp:
+        content = "final answer"
+
+    class _RecoveryLLM:
+        async def ainvoke(self, messages):
+            recovery_seen.extend(messages)
+            return _Resp()
+
+    class _MockSaver:
+        async def adelete_thread(self, thread_id):
+            deleted.append(thread_id)
+
+    class _FakeAgent:
+        checkpointer = object()
+
+        async def astream_events(
+            self, _input, config=None, version=None, durability=None
+        ):
+            raise GraphRecursionError("limit")
+            yield  # pragma: no cover
+
+        async def aget_state(self, _config):
+            return _Snap()
+
+    builder = LangGraphAgentBuilder(llm=_RecoveryLLM())
+    monkeypatch.setattr(builder, "_build_agent", lambda: _FakeAgent())
+    builder._checkpointer = _MockSaver()
+
+    final_state, _events = await builder._collect_final_state_from_events(
+        messages=[{"role": "user", "content": "hi"}]
+    )
+
+    msgs = final_state["messages"]
+    # final_state built from the current authoritative state + recovery reply
+    assert any(
+        getattr(m, "additional_kwargs", {}).get("summary_compacted") for m in msgs
+    )
+    assert msgs[-1].content == "final answer"
+    # recovery LLM saw the current state (with the checkpoint), not just lc_messages
+    assert any(
+        getattr(m, "additional_kwargs", {}).get("summary_compacted")
+        for m in recovery_seen
+    )
+    assert len(deleted) == 1  # non-streaming thread torn down
+
+
+@pytest.mark.asyncio
+async def test_truncation_retry_then_compaction_end_to_end(monkeypatch):
+    """Full combination path through a REAL agent:
+
+    root turn truncates -> fresh retry thread -> retry thread compacts ->
+    retry LLM succeeds. The truncation guidance must reach the retry LLM *after*
+    compaction while never entering the summary source, the checkpoint, or the
+    persisted ``messages_chain``, and both threads must be freed.
+    """
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    model_inputs: list[list] = []  # what each model call actually received
+    guard_inputs: list[list] = []  # what the compactor (guard) saw as messages
+
+    class _TruncateThenSucceedModel(BaseChatModel):
+        call_count: int = 0
+
+        @property
+        def _llm_type(self) -> str:
+            return "truncate-then-succeed"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            self.call_count += 1
+            model_inputs.append(list(messages))
+            if self.call_count == 1:
+                # Root turn: a tool call cut off by the token limit.
+                msg = AIMessage(
+                    content="partial",
+                    tool_calls=[{"name": "_probe", "args": {"query": "q"}, "id": "t1"}],
+                    response_metadata={"finish_reason": "length"},
+                )
+            else:
+                # Retry turn (after compaction): a clean final answer, no tools.
+                msg = AIMessage(content="final ok")
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    class _CompactOnRetry:
+        """Guard-like hook: no-op on the root call, drops ALL history for a bare
+        summary on the retry call. Dropping everything also proves the guidance
+        survives maximal over-budget trimming (it is appended afterwards)."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, state):
+            self.calls += 1
+            msgs = state["messages"]
+            guard_inputs.append(list(msgs))
+            if self.calls == 2:
+                summary = HumanMessage(
+                    content="[COMPACT SUMMARY] earlier work",
+                    additional_kwargs={SUMMARY_FLAG: True, "compacted": True},
+                    id="s-1",
+                )
+                removals = [RemoveMessage(id=m.id) for m in msgs if m.id]
+                return {"messages": [*removals, summary]}
+            return {}
+
+    builder = LangGraphAgentBuilder(llm=_TruncateThenSucceedModel())
+    builder.pre_model_hook = _CompactOnRetry()
+    monkeypatch.setattr(builder, "max_truncation_retries", 2)
+
+    # Build once so the request-local checkpointer exists; spy on thread deletes.
+    builder._build_agent()
+    saver = builder._checkpointer
+    deleted: list[str] = []
+    orig_delete = saver.adelete_thread
+
+    async def _spy_delete(thread_id):
+        deleted.append(thread_id)
+        return await orig_delete(thread_id)
+
+    saver.adelete_thread = _spy_delete
+
+    tokens: list[str] = []
+    async for token in builder.stream_tokens(
+        messages=[{"role": "user", "content": "analyze data"}]
+    ):
+        tokens.append(token)
+
+    # The retry produced the successful final answer.
+    assert "".join(tokens) == "final ok"
+
+    # Two model calls happened: root (truncated) and retry (post-compaction).
+    assert len(model_inputs) == 2
+    retry_input_text = " ".join(str(getattr(m, "content", "")) for m in model_inputs[1])
+    # 1. The retry LLM saw the truncation guidance AFTER compaction...
+    assert "[SYSTEM ERROR]" in retry_input_text
+    # ...alongside the compaction summary (proves it survived maximal trimming).
+    assert "[COMPACT SUMMARY]" in retry_input_text
+
+    # 2. The summary source (what the guard/compactor saw) never had guidance.
+    assert guard_inputs, "compactor should have been invoked"
+    assert all(
+        "[SYSTEM ERROR]" not in str(getattr(m, "content", ""))
+        for seen in guard_inputs
+        for m in seen
+    )
+
+    chain = builder._last_messages_chain
+    # 5. Summary marker + post-compaction suffix are intact in the chain.
+    assert any(c.get("additional_kwargs", {}).get(SUMMARY_FLAG) for c in chain)
+    assert chain[-1]["role"] == "assistant"
+    assert chain[-1]["content"] == "final ok"
+    # 3 & 4. Guidance is absent from the persisted chain (checkpoint-derived).
+    assert all("[SYSTEM ERROR]" not in str(c.get("content", "")) for c in chain)
+
+    # 6. Both the parent turn and the retry thread were torn down.
+    assert len(set(deleted)) == 2
+
+
+@pytest.mark.asyncio
+async def test_nonstreaming_returns_post_compaction_state_and_frees_thread():
+    """The non-streaming path (``_collect_final_state_from_events``) does not build
+    a ``messages_chain``, but it must still return the *post-compaction*
+    LangGraph final state and free its own thread. This pins the contract that
+    the docs describe (non-streaming returns final state, no finalizer)."""
+    from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+    class _FinishModel(BaseChatModel):
+        @property
+        def _llm_type(self) -> str:
+            return "finish"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            return ChatResult(
+                generations=[ChatGeneration(message=AIMessage(content="final ok"))]
+            )
+
+    class _CompactOnFirst:
+        """Compacts before the only model call: drop all history for a summary."""
+
+        def __init__(self) -> None:
+            self.done = False
+
+        def __call__(self, state):
+            if self.done:
+                return {}
+            self.done = True
+            msgs = state["messages"]
+            summary = HumanMessage(
+                content="[COMPACT SUMMARY] earlier",
+                additional_kwargs={SUMMARY_FLAG: True, "compacted": True},
+                id="s-1",
+            )
+            removals = [RemoveMessage(id=m.id) for m in msgs if m.id]
+            return {"messages": [*removals, summary]}
+
+    builder = LangGraphAgentBuilder(llm=_FinishModel())
+    builder.pre_model_hook = _CompactOnFirst()
+
+    # Build once so we can spy on the request-local checkpointer teardown.
+    builder._build_agent()
+    saver = builder._checkpointer
+    deleted: list[str] = []
+    orig_delete = saver.adelete_thread
+
+    async def _spy_delete(thread_id):
+        deleted.append(thread_id)
+        return await orig_delete(thread_id)
+
+    saver.adelete_thread = _spy_delete
+
+    final_state, _events = await builder._collect_final_state_from_events(
+        messages=[{"role": "user", "content": "analyze data"}],
+        config=None,
+        cancel_event=None,
+        collect_all_events=False,
+    )
+
+    msgs = final_state["messages"]
+    # The returned state is the post-compaction authoritative state...
+    assert any(m.additional_kwargs.get(SUMMARY_FLAG) for m in msgs)
+    assert msgs[-1].content == "final ok"
+    # ...with the pre-compaction user input actually replaced, not appended.
+    assert all(getattr(m, "content", "") != "analyze data" for m in msgs)
+    # The non-streaming path builds no messages_chain (no finalizer runs).
+    assert not builder._last_messages_chain
+    # Its own thread was torn down.
+    assert len(deleted) == 1

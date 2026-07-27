@@ -36,6 +36,17 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 
 When a task runs on a cloud or remote device, the model selector hides custom models configured only on the current desktop. Local custom models can only use the local executor; built-in Codex models and cloud Model CRDs can use either local or cloud execution.
 
+### Namespace Tool Compatibility
+
+Codex can group child tools under a `type: "namespace"` tool when it sends an OpenAI Responses request. OpenAI Chat Completions and Anthropic Messages have no equivalent namespace field, so the executor Codex compatibility proxy applies a reversible mapping at the protocol boundary:
+
+1. During request conversion, child tools are expanded into ordinary Chat or Anthropic function tools. A unique child keeps its original name; collisions receive a stable alias containing the namespace.
+2. Aliases use only characters accepted by Chat function names and are limited to 64 bytes. Longer names are truncated with a stable hash.
+3. Historical tool calls and an explicit `tool_choice` use the same mapping so tool identity remains stable across turns.
+4. When the upstream returns a flat tool call, the proxy restores the original `name` and `namespace` before emitting Responses events back to Codex.
+
+The mapping is request-scoped protocol context. It is not persisted in model configuration and does not guess a namespace from the returned tool name. Tools with the same child name in different namespaces therefore continue to route to the correct executor.
+
 ## Security Benefits
 
 - The Wework desktop client and local executor never receive the real provider `api_key`.

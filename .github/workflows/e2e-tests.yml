@@ -2,9 +2,28 @@ name: E2E Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    paths:
+      - ".github/workflows/e2e-tests.yml"
+      - ".github/scripts/archive-executor-e2e-runtime.sh"
+      - ".github/scripts/archive-frontend-e2e-build.sh"
+      - ".github/scripts/restore-executor-e2e-runtime.sh"
+      - ".github/scripts/restore-frontend-e2e-build.sh"
+      - ".github/scripts/start-frontend-e2e-server.sh"
+      - "backend/**"
+      - "chat_shell/**"
+      - "docker/**"
+      - "executor/**"
+      - "executor_manager/**"
+      - "frontend/**"
+      - "package.json"
+      - "packages/chat-core/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "shared/**"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   schedule:
     # Run daily at 2 AM UTC
     - cron: "0 2 * * *"
@@ -12,12 +31,40 @@ on:
 
 # Cancel in-progress runs for the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Platform E2E Changes
+    runs-on: ubuntu-latest
+    outputs:
+      platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+        run: |
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            .github/scripts/classify-ci-changes.sh --all
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+              .github/scripts/classify-ci-changes.sh
+          fi
+
   build-frontend-e2e:
     name: Build Frontend E2E Artifact
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -84,6 +131,8 @@ jobs:
 
   build-executor-e2e-runtime:
     name: Build Executor E2E Runtime Artifact
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -894,8 +943,8 @@ jobs:
   # Merge test reports from all E2E jobs
   merge-reports:
     name: Merge Test Reports
-    needs: [e2e-tests, executor-e2e-tests]
-    if: always()
+    needs: [changes, e2e-tests, executor-e2e-tests]
+    if: always() && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

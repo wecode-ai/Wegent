@@ -1940,7 +1940,10 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     let project_id = project_id(request);
     if use_user_config {
         let inference_provider = inference_model_provider(&request.model_config);
-        if let Some(upstream) = configured_codex_provider(&inference_provider) {
+        if let Some(upstream) = configured_codex_provider(
+            &inference_provider,
+            runtime_proxy_url(&request.model_config),
+        ) {
             configure_codex_router(&mut launch_config, upstream, model.clone());
         } else {
             launch_config.model_provider = Some(inference_provider.clone());
@@ -2099,7 +2102,10 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
-fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> {
+fn configured_codex_provider(
+    provider: &str,
+    proxy_url: Option<&str>,
+) -> Option<LocalModelProxyUpstream> {
     use toml_edit::DocumentMut;
 
     let document = fs::read_to_string(wework_codex_home().join("config.toml"))
@@ -2163,7 +2169,7 @@ fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> 
         convert_custom_tools,
         api_key,
         default_headers,
-        proxy_url: None,
+        proxy_url: proxy_url.map(str::to_owned),
         model_id: None,
         routing_model_id: None,
     })
