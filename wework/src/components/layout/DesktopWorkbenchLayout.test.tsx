@@ -3445,8 +3445,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
   })
 
-  test('falls back to the remote-style folder dialog when existing folder targets a remote device', async () => {
-    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+  test('keeps local project creation on the local device when a remote device is preferred', async () => {
+    automationMocks.useNativeDirectoryPicker = false
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
     const onListDeviceDirectories = vi.fn().mockResolvedValue(['repo'])
 
     render(
@@ -3456,10 +3457,21 @@ describe('DesktopWorkbenchLayout', () => {
         onListDeviceDirectories={onListDeviceDirectories}
         state={{
           ...baseProps.state,
+          standaloneDeviceId: 'remote-device',
           devices: [
             {
               id: 1,
-              device_id: 'device-1',
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online',
+              is_default: false,
+              bind_shell: 'claudecode',
+              device_type: 'local',
+              executor_version: '1.8.5',
+            },
+            {
+              id: 2,
+              device_id: 'remote-device',
               name: '10.201.3.200',
               status: 'online',
               is_default: true,
@@ -3475,10 +3487,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-create-local-option'))
 
-    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
+    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('local-device'))
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('device-1')
+    expect(screen.getByRole('heading', { name: '使用现有文件夹' })).toBeInTheDocument()
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
   })
 
