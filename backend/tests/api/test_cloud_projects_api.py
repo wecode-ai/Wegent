@@ -234,8 +234,8 @@ def test_cloud_project_normalizes_gitlab_web_page_repository(
             "task_provider": "gitlab",
             "provider_config": {
                 "repository": "hongyu91/tab-prompt/-/issues",
-                "domain": "git.intra.weibo.com",
-                "api_base": "https://git.intra.weibo.com/api/v4",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
                 "token": "gitlab-secret",
             },
         },
