@@ -307,7 +307,7 @@
     "cloud_connection_login": "授权并连接",
     "cloud_connection_logging_in": "等待授权",
     "cloud_connection_authorize": "连接",
-    "cloud_connection_waiting_authorization": "等待云端授权",
+    "cloud_connection_waiting_authorization": "请在弹出窗口中完成 Wework 授权",
     "cloud_connection_login_failed": "连接失败",
     "remote_host": "远程主机",
     "no_local_project_device": "暂无可用本地设备",

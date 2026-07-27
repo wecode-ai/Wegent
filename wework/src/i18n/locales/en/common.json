@@ -307,7 +307,7 @@
     "cloud_connection_login": "Authorize and connect",
     "cloud_connection_logging_in": "Waiting for authorization",
     "cloud_connection_authorize": "Connect",
-    "cloud_connection_waiting_authorization": "Waiting for cloud authorization",
+    "cloud_connection_waiting_authorization": "Complete Wework authorization in the popup window",
     "cloud_connection_login_failed": "Connection failed",
     "remote_host": "Remote host",
     "no_local_project_device": "No available local device",
