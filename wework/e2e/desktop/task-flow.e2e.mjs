@@ -186,6 +186,15 @@ const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 const PROVIDER_SWITCH_SOL_OPTION_ID = 'gpt-5.6-sol'
 const PROVIDER_SWITCH_SOL_LABEL = 'GPT 5.6 Sol'
+// Official Codex option used to verify the provider boundary restriction. The
+// local E2E Codex catalog is classified as third-party (custom provider), so
+// the official option is served from the cloud model catalog with a model id
+// that does not collide with the local Codex catalog (otherwise the catalog
+// merge drops it as a duplicate runtime Codex model).
+const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'codex-gpt-5.5'
+const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
+const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
+const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with Sol.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
@@ -1851,10 +1860,10 @@ async function verifyProviderBoundaryRestriction(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-selector-menu"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}`)
-  const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}"]`
+  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
+  const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
-    text: PROVIDER_SWITCH_SOL_LABEL,
+    text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: UI_TIMEOUT_MS,
   })
   const disabledModelText = await control.command('getText', officialModelSelector)
@@ -4123,6 +4132,22 @@ class DesktopE2EServer {
                 apiFormat: 'responses',
                 weworkModelKind: 'codex-official',
                 ui: { family: 'codex-official', modelLabel: DEFAULT_MODEL_LABEL },
+              },
+              runtime: { family: 'openai.openai-responses' },
+              isActive: true,
+            },
+            {
+              name: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+              type: 'runtime',
+              displayName: PROVIDER_SWITCH_OFFICIAL_LABEL,
+              provider: 'openai',
+              modelId: PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
+              namespace: 'default',
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                weworkModelKind: 'codex-official',
+                ui: { family: 'codex-official', modelLabel: PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL },
               },
               runtime: { family: 'openai.openai-responses' },
               isActive: true,
