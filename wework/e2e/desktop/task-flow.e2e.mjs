@@ -1794,6 +1794,16 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('click', `[data-testid="model-option-${modelId}"]`)
+  const selectionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (selectionSnapshot.testIds.includes('model-switch-warning-dialog')) {
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="model-switch-warning-confirm-button"]',
+      {
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+  }
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     text: modelLabel,
     timeoutMs: UI_TIMEOUT_MS,
@@ -1812,11 +1822,7 @@ async function verifyProviderSwitchRetry(control, composerSelector) {
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await selectE2EModel(
-    control,
-    PROVIDER_SWITCH_LUNA_OPTION_ID,
-    PROVIDER_SWITCH_LUNA_LABEL
-  )
+  await selectE2EModel(control, PROVIDER_SWITCH_LUNA_OPTION_ID, PROVIDER_SWITCH_LUNA_LABEL)
   await sendPrompt(control, composerSelector, PROVIDER_SWITCH_PROMPT)
   await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
     visible: true,
@@ -6361,6 +6367,59 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
       text: RETRY_COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     }
+  )
+  let successfulRetrySnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.equal(
+    successfulRetrySnapshot.testIds.includes('assistant-error-card'),
+    false,
+    'The failed attempt card remained after retry succeeded'
+  )
+  assert.equal(
+    successfulRetrySnapshot.testIds.filter(testId => testId === 'message-assistant').length,
+    1,
+    'Retry success left an empty assistant turn in the live conversation'
+  )
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="${retryTaskRowTestId}"]`)
+  await waitForWorkbenchTask(
+    control,
+    retryTaskId,
+    'The successful retry task did not become active again'
+  )
+  await control.command(
+    'clickIfPresent',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: RETRY_COMPLETION_TEXT,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  successfulRetrySnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    successfulRetrySnapshot.testIds.includes('assistant-error-card'),
+    false,
+    'A cached failure card returned after reopening the successfully retried conversation'
+  )
+  assert.equal(
+    successfulRetrySnapshot.testIds.filter(testId => testId === 'message-assistant').length,
+    1,
+    'Reopening a successful retry restored an empty failed assistant turn'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'retry-02-success-restored-without-failed-turn.png',
+    ACTIVE_WORKBENCH_SELECTOR
   )
   assert.equal(
     control.scenarioRequests.get('retry')?.length,

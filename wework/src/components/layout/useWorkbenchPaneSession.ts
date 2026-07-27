@@ -1206,6 +1206,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           currentMessages,
           retryUserMessageOverride ?? undefined
         )
+        if (sent) {
+          setMessages(messages =>
+            messages.filter(currentMessage => currentMessage.id !== message.id)
+          )
+        }
         return sent
       } catch (error) {
         console.error('[Wework] Runtime failed message retry failed', {
