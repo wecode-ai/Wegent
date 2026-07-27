@@ -61,6 +61,12 @@ The parent-child relationship defines the stdio lifecycle directly: a write fail
 
 Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend Socket.IO channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over stdio and Backend over Socket.IO. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
+### Executor Startup Environment and Codex Home Initialization
+
+Before creating its asynchronous runtime or starting Agent child processes, a Unix executor runs the current user's interactive login shell to read the complete environment. It prefers the login shell from the system user database and falls back through `$SHELL`, `zsh`, `bash`, and `sh`. Environment capture has a fixed timeout. On failure, the executor keeps its parent environment and still appends standard developer locations such as Homebrew and `/usr/local`. The executor then passes the resulting environment consistently to Codex, Claude Code, plugins, skills, hooks, PTYs, and device commands, so Wework local sidecars, standalone local devices, and Linux cloud or remote devices share the same PATH resolution behavior.
+
+Wework uses an isolated Codex Home for local runtime configuration. During first-run initialization, users can copy configuration, plugins, skills, and plugin marketplace data from the native Codex Home. After initialization, Wework writes `apps = true` under `[features]` by default so migrated plugin Apps are immediately available. If a user explicitly disables Apps later in Settings, ordinary subsequent startups preserve that choice.
+
 ### Runtime Task and Goal State
 
 The runtime task `running` field represents only whether a model turn is currently executing. After a turn completes, fails, or is cancelled, the executor must settle that field to `false`. Wework uses it to decide whether to render the stop control and running indicator, and whether a new message can be sent directly.
