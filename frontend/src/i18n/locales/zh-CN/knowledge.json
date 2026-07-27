@@ -928,11 +928,11 @@
     "allDocuments": "将使用知识库中全部已索引文档",
     "wholeKnowledgeBase": "整个知识库 · {{count}} 篇文档",
     "wholeKnowledgeBaseShort": "整个知识库",
-    "source": "当前来源",
+    "source": "知识来源",
     "sourceCount": "{{count}} 篇来源",
     "adjustSources": "调整",
     "sourceBrowser": {
-      "documents": "全部可访问文档",
+      "documents": "知识库文档",
       "selectHint": "勾选后仅使用指定文档"
     },
     "action": {
@@ -940,7 +940,7 @@
       "mind_map": "生成思维导图"
     },
     "sourceDialog": {
-      "title": "调整来源",
+      "title": "选择知识来源",
       "description": "默认使用整个知识库，也可以只使用指定文档。",
       "all": "整个知识库",
       "allHint": "使用当前 {{count}} 篇可用文档",

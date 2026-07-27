@@ -21,6 +21,8 @@ interface ArtifactPanelProps {
   selectedDocumentIds: number[]
   onAdjustSources: (onApplied?: () => void) => void
   onAvailableDocumentCountChange?: (count: number | null) => void
+  onProcessingDocumentCountChange?: (count: number) => void
+  onCanManageChange?: (canManage: boolean) => void
   onAskNode?: (request: ArtifactPromptRequest) => void
 }
 
@@ -29,6 +31,8 @@ export function ArtifactPanel({
   selectedDocumentIds,
   onAdjustSources,
   onAvailableDocumentCountChange,
+  onProcessingDocumentCountChange,
+  onCanManageChange,
   onAskNode,
 }: ArtifactPanelProps) {
   const { t } = useTranslation('knowledge')
@@ -59,6 +63,19 @@ export function ArtifactPanel({
   useEffect(() => {
     onAvailableDocumentCountChange?.(availableDocumentCount)
   }, [availableDocumentCount, onAvailableDocumentCountChange])
+
+  useEffect(() => {
+    if (isLoading || error) return
+    onProcessingDocumentCountChange?.(processingDocumentCount)
+    onCanManageChange?.(canManage)
+  }, [
+    canManage,
+    error,
+    isLoading,
+    onCanManageChange,
+    onProcessingDocumentCountChange,
+    processingDocumentCount,
+  ])
 
   const showError = (nextError: unknown) => {
     toast({

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ArtifactSourceSelector } from '@/features/knowledge/artifact/components/ArtifactSourceSelector'
 import { useDocuments } from '@/features/knowledge/document/hooks/useDocuments'
 import type { KnowledgeDocument } from '@/types/knowledge'
@@ -59,19 +59,16 @@ describe('ArtifactSourceSelector', () => {
   })
 
   it('browses documents and selects only available sources from the inline view', () => {
-    const onModeChange = jest.fn()
-    const onSelectedDocumentIdsChange = jest.fn()
+    const onScopeChange = jest.fn()
     const onOpenDocument = jest.fn()
 
     render(
       <ArtifactSourceSelector
         knowledgeBaseId={12}
-        mode="all"
-        selectedDocumentIds={new Set()}
+        scope={{ mode: 'all' }}
         availableDocumentCount={1}
         compact
-        onModeChange={onModeChange}
-        onSelectedDocumentIdsChange={onSelectedDocumentIdsChange}
+        onScopeChange={onScopeChange}
         onOpenDocument={onOpenDocument}
       />
     )
@@ -84,23 +81,24 @@ describe('ArtifactSourceSelector', () => {
     expect(onOpenDocument).toHaveBeenCalledWith(expect.objectContaining({ id: 11 }))
 
     fireEvent.click(screen.getByTestId('artifact-source-document-11'))
-    expect(onModeChange).toHaveBeenCalledWith('selected')
-    expect(onSelectedDocumentIdsChange).toHaveBeenCalledWith(new Set([11]))
+    expect(onScopeChange).toHaveBeenCalledWith({
+      mode: 'selected',
+      documentIds: new Set([11]),
+    })
     expect(screen.getByTestId('artifact-source-document-12')).toBeDisabled()
   })
 
   it('refreshes document status when the available source count changes', () => {
     const props = {
       knowledgeBaseId: 12,
-      mode: 'all' as const,
-      selectedDocumentIds: new Set<number>(),
+      scope: { mode: 'all' as const },
       availableDocumentCount: 1,
       compact: true,
-      onModeChange: jest.fn(),
-      onSelectedDocumentIdsChange: jest.fn(),
+      onScopeChange: jest.fn(),
     }
     const { rerender } = render(<ArtifactSourceSelector {...props} />)
 
+    fireEvent.click(screen.getByTestId('artifact-source-selected'))
     expect(refreshMock).not.toHaveBeenCalled()
     rerender(<ArtifactSourceSelector {...props} availableDocumentCount={2} />)
 
@@ -110,12 +108,10 @@ describe('ArtifactSourceSelector', () => {
   it('resets the compact browser when the knowledge base changes', () => {
     const props = {
       knowledgeBaseId: 12,
-      mode: 'all' as const,
-      selectedDocumentIds: new Set<number>(),
+      scope: { mode: 'all' as const },
       availableDocumentCount: 1,
       compact: true,
-      onModeChange: jest.fn(),
-      onSelectedDocumentIdsChange: jest.fn(),
+      onScopeChange: jest.fn(),
     }
     const { rerender } = render(<ArtifactSourceSelector {...props} />)
 
@@ -128,5 +124,96 @@ describe('ArtifactSourceSelector', () => {
     expect(screen.queryByTestId('artifact-source-search')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('artifact-source-selected'))
     expect(screen.getByTestId('artifact-source-search')).toHaveValue('')
+  })
+
+  it('expands by default for read-only users without overriding manual changes', async () => {
+    const props = {
+      knowledgeBaseId: 12,
+      scope: { mode: 'all' as const },
+      availableDocumentCount: 1,
+      compact: true,
+      onScopeChange: jest.fn(),
+    }
+    const { rerender } = render(<ArtifactSourceSelector {...props} />)
+
+    expect(screen.queryByTestId('artifact-source-search')).not.toBeInTheDocument()
+    rerender(<ArtifactSourceSelector {...props} defaultDocumentsExpanded />)
+    await waitFor(() => expect(screen.getByTestId('artifact-source-search')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTestId('artifact-source-selected'))
+    expect(screen.queryByTestId('artifact-source-search')).not.toBeInTheDocument()
+    rerender(<ArtifactSourceSelector {...props} defaultDocumentsExpanded={false} />)
+    expect(screen.queryByTestId('artifact-source-search')).not.toBeInTheDocument()
+  })
+
+  it('requests documents only after the browser expands', () => {
+    const props = {
+      knowledgeBaseId: 12,
+      scope: { mode: 'all' as const },
+      availableDocumentCount: 1,
+      compact: true,
+      onScopeChange: jest.fn(),
+    }
+
+    render(<ArtifactSourceSelector {...props} />)
+    expect(useDocuments).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        autoLoad: false,
+        serverPaginationOnly: true,
+        initialPageSize: 20,
+      })
+    )
+
+    fireEvent.click(screen.getByTestId('artifact-source-selected'))
+    expect(useDocuments).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        autoLoad: true,
+        serverPaginationOnly: true,
+      })
+    )
+  })
+
+  it('returns to the whole knowledge base when the final selection is cleared', () => {
+    const onScopeChange = jest.fn()
+
+    render(
+      <ArtifactSourceSelector
+        knowledgeBaseId={12}
+        scope={{ mode: 'selected', documentIds: new Set([11]) }}
+        availableDocumentCount={1}
+        compact
+        defaultDocumentsExpanded
+        onScopeChange={onScopeChange}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('artifact-source-document-11'))
+    expect(onScopeChange).toHaveBeenCalledWith({ mode: 'all' })
+  })
+
+  it('refreshes an expanded browser on focus and while documents are processing', () => {
+    jest.useFakeTimers()
+    const { unmount } = render(
+      <ArtifactSourceSelector
+        knowledgeBaseId={12}
+        scope={{ mode: 'all' }}
+        availableDocumentCount={1}
+        processingDocumentCount={1}
+        compact
+        defaultDocumentsExpanded
+        onScopeChange={jest.fn()}
+      />
+    )
+
+    refreshMock.mockClear()
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(refreshMock).toHaveBeenCalledTimes(1)
+
+    refreshMock.mockClear()
+    act(() => jest.advanceTimersByTime(5000))
+    expect(refreshMock).toHaveBeenCalledTimes(1)
+
+    unmount()
+    jest.useRealTimers()
   })
 })

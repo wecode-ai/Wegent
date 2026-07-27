@@ -14,7 +14,7 @@ import { ArtifactPanel } from '@/features/knowledge/artifact/components/Artifact
 import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
 import {
   ArtifactSourceSelector,
-  type ArtifactSourceMode,
+  type ArtifactSourceScope,
 } from '@/features/knowledge/artifact/components/ArtifactSourceSelector'
 import { DocumentDetailDialog } from './DocumentDetailDialog'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
@@ -102,12 +102,15 @@ export function DocumentPanel({
   const { t: tCommon } = useTranslation('common')
 
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
-  const [sourceMode, setSourceMode] = useState<ArtifactSourceMode>(
-    selectedDocumentIds.length > 0 ? 'selected' : 'all'
-  )
   const [viewingDocument, setViewingDocument] = useState<KnowledgeDocument | null>(null)
+  const [canManageArtifacts, setCanManageArtifacts] = useState<boolean | null>(null)
   const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
+  const [processingDocumentCount, setProcessingDocumentCount] = useState(0)
   const sourceApplyContinuationRef = useRef<(() => void) | null>(null)
+  const sourceScope: ArtifactSourceScope =
+    selectedDocumentIds.length > 0
+      ? { mode: 'selected', documentIds: new Set(selectedDocumentIds) }
+      : { mode: 'all' }
 
   // Initialize state with localStorage values
   const [panelWidth, setPanelWidth] = useState(() =>
@@ -177,25 +180,8 @@ export function DocumentPanel({
     }
   }, [])
 
-  useEffect(() => {
-    setSourceMode(selectedDocumentIds.length > 0 ? 'selected' : 'all')
-  }, [selectedDocumentIds])
-
-  const handleInlineSourceModeChange = (mode: ArtifactSourceMode) => {
-    if (mode === 'all') {
-      setSourceMode('all')
-      onDocumentSelectionChange?.([])
-      return
-    }
-    if (selectedDocumentIds.length > 0) {
-      setSourceMode('selected')
-    }
-  }
-
-  const handleInlineDocumentSelectionChange = (documentIds: Set<number>) => {
-    const nextDocumentIds = Array.from(documentIds)
-    setSourceMode(nextDocumentIds.length > 0 ? 'selected' : 'all')
-    onDocumentSelectionChange?.(nextDocumentIds)
+  const handleInlineSourceScopeChange = (scope: ArtifactSourceScope) => {
+    onDocumentSelectionChange?.(scope.mode === 'all' ? [] : Array.from(scope.documentIds))
   }
 
   // Handle mouse down on resizer
@@ -331,12 +317,12 @@ export function DocumentPanel({
           <h3 className="mb-2 text-sm font-semibold">{t('artifact.source')}</h3>
           <ArtifactSourceSelector
             knowledgeBaseId={knowledgeBase.id}
-            mode={sourceMode}
-            selectedDocumentIds={new Set(selectedDocumentIds)}
+            scope={sourceScope}
             availableDocumentCount={availableDocumentCount ?? knowledgeBase.document_count}
+            processingDocumentCount={processingDocumentCount}
             compact
-            onModeChange={handleInlineSourceModeChange}
-            onSelectedDocumentIdsChange={handleInlineDocumentSelectionChange}
+            defaultDocumentsExpanded={canManageArtifacts === null ? undefined : !canManageArtifacts}
+            onScopeChange={handleInlineSourceScopeChange}
             onOpenDocument={setViewingDocument}
           />
         </div>
@@ -347,6 +333,8 @@ export function DocumentPanel({
             selectedDocumentIds={selectedDocumentIds}
             onAdjustSources={openSourceDialog}
             onAvailableDocumentCountChange={setAvailableDocumentCount}
+            onProcessingDocumentCountChange={setProcessingDocumentCount}
+            onCanManageChange={setCanManageArtifacts}
             onAskNode={onAskArtifactNode}
           />
         </div>

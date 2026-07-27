@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { DocumentPanel } from '@/features/knowledge/document/components/DocumentPanel'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 const mockDocumentDetailDialog = jest.fn((_props: unknown) => null)
+const mockArtifactSourceSelector = jest.fn((_props: unknown) => null)
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -16,7 +17,12 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/features/knowledge/artifact/components/ArtifactPanel', () => ({
-  ArtifactPanel: () => null,
+  ArtifactPanel: ({ onCanManageChange }: { onCanManageChange?: (canManage: boolean) => void }) => (
+    <>
+      <button data-testid="mock-read-only-permission" onClick={() => onCanManageChange?.(false)} />
+      <button data-testid="mock-editor-permission" onClick={() => onCanManageChange?.(true)} />
+    </>
+  ),
 }))
 
 jest.mock('@/features/knowledge/artifact/components/ArtifactSourceDialog', () => ({
@@ -24,7 +30,7 @@ jest.mock('@/features/knowledge/artifact/components/ArtifactSourceDialog', () =>
 }))
 
 jest.mock('@/features/knowledge/artifact/components/ArtifactSourceSelector', () => ({
-  ArtifactSourceSelector: () => null,
+  ArtifactSourceSelector: (props: unknown) => mockArtifactSourceSelector(props),
 }))
 
 jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () => ({
@@ -61,6 +67,24 @@ describe('DocumentPanel', () => {
         knowledgeBaseName: 'organization-kb',
         knowledgeBaseNamespace: 'organization-name',
       })
+    )
+  })
+
+  it('expands sources by default only for read-only users', () => {
+    render(<DocumentPanel knowledgeBase={knowledgeBase} />)
+
+    expect(mockArtifactSourceSelector).toHaveBeenLastCalledWith(
+      expect.objectContaining({ defaultDocumentsExpanded: undefined })
+    )
+
+    fireEvent.click(screen.getByTestId('mock-read-only-permission'))
+    expect(mockArtifactSourceSelector).toHaveBeenLastCalledWith(
+      expect.objectContaining({ defaultDocumentsExpanded: true })
+    )
+
+    fireEvent.click(screen.getByTestId('mock-editor-permission'))
+    expect(mockArtifactSourceSelector).toHaveBeenLastCalledWith(
+      expect.objectContaining({ defaultDocumentsExpanded: false })
     )
   })
 })

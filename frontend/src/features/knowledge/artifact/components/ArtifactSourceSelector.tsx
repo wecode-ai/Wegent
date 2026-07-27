@@ -15,17 +15,17 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useDocuments } from '@/features/knowledge/document/hooks/useDocuments'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
-export type ArtifactSourceMode = 'all' | 'selected'
+export type ArtifactSourceScope = { mode: 'all' } | { mode: 'selected'; documentIds: Set<number> }
 
 interface ArtifactSourceSelectorProps {
   knowledgeBaseId: number
-  mode: ArtifactSourceMode
-  selectedDocumentIds: Set<number>
+  scope: ArtifactSourceScope
   availableDocumentCount: number | null
+  processingDocumentCount?: number
   active?: boolean
   compact?: boolean
-  onModeChange: (mode: ArtifactSourceMode) => void
-  onSelectedDocumentIdsChange: (documentIds: Set<number>) => void
+  defaultDocumentsExpanded?: boolean
+  onScopeChange: (scope: ArtifactSourceScope) => void
   onOpenDocument?: (document: KnowledgeDocument) => void
 }
 
@@ -41,48 +41,49 @@ const getSourceStatusKey = (document: KnowledgeDocument) => {
 
 export function ArtifactSourceSelector({
   knowledgeBaseId,
-  mode,
-  selectedDocumentIds,
+  scope,
   availableDocumentCount,
+  processingDocumentCount = 0,
   active = true,
   compact = false,
-  onModeChange,
-  onSelectedDocumentIdsChange,
+  defaultDocumentsExpanded,
+  onScopeChange,
   onOpenDocument,
 }: ArtifactSourceSelectorProps) {
   const { t } = useTranslation('knowledge')
   const [searchQuery, setSearchQuery] = useState('')
   const [documentsExpanded, setDocumentsExpanded] = useState(false)
+  const expansionInitializedRef = useRef(false)
   const previousKnowledgeBaseIdRef = useRef(knowledgeBaseId)
   const previousAvailableDocumentCountRef = useRef(availableDocumentCount)
-  const {
-    documents,
-    loading,
-    error,
-    page,
-    pageSize,
-    totalCount,
-    totalPages,
-    goToPage,
-    changePageSize,
-    refresh,
-  } = useDocuments({
-    knowledgeBaseId,
-    autoLoad: active,
-    paginationEnabled: true,
-    loadAll: false,
-    keyword: searchQuery,
-    sortBy: 'name',
-    sortOrder: 'asc',
-  })
+  const selectedDocumentIds = scope.mode === 'selected' ? scope.documentIds : new Set<number>()
+  const { documents, loading, error, page, pageSize, totalCount, totalPages, goToPage, refresh } =
+    useDocuments({
+      knowledgeBaseId,
+      autoLoad: active && documentsExpanded,
+      paginationEnabled: true,
+      serverPaginationOnly: true,
+      initialPageSize: 20,
+      loadAll: false,
+      keyword: searchQuery,
+      sortBy: 'name',
+      sortOrder: 'asc',
+    })
 
   useEffect(() => {
     setSearchQuery('')
+    expansionInitializedRef.current = false
     setDocumentsExpanded(false)
   }, [knowledgeBaseId])
 
   useEffect(() => {
-    if (!active) {
+    if (defaultDocumentsExpanded === undefined || expansionInitializedRef.current) return
+    expansionInitializedRef.current = true
+    setDocumentsExpanded(defaultDocumentsExpanded)
+  }, [defaultDocumentsExpanded])
+
+  useEffect(() => {
+    if (!active || !documentsExpanded) {
       previousKnowledgeBaseIdRef.current = knowledgeBaseId
       previousAvailableDocumentCountRef.current = availableDocumentCount
       return
@@ -97,14 +98,31 @@ export function ArtifactSourceSelector({
     if (previousCount !== null && previousCount !== availableDocumentCount) {
       void refresh()
     }
-  }, [active, availableDocumentCount, knowledgeBaseId, refresh])
+  }, [active, availableDocumentCount, documentsExpanded, knowledgeBaseId, refresh])
+
+  useEffect(() => {
+    if (!active || !documentsExpanded) return
+    const handleFocus = () => void refresh()
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [active, documentsExpanded, refresh])
+
+  useEffect(() => {
+    if (!active || !documentsExpanded || processingDocumentCount <= 0) return
+    const timer = window.setInterval(() => void refresh(), 5000)
+    return () => window.clearInterval(timer)
+  }, [active, documentsExpanded, processingDocumentCount, refresh])
 
   const toggleDocument = (documentId: number, checked: boolean) => {
     const next = new Set(selectedDocumentIds)
     if (checked) next.add(documentId)
     else next.delete(documentId)
-    onModeChange('selected')
-    onSelectedDocumentIdsChange(next)
+    onScopeChange(next.size > 0 ? { mode: 'selected', documentIds: next } : { mode: 'all' })
+  }
+
+  const toggleDocumentsExpanded = () => {
+    expansionInitializedRef.current = true
+    setDocumentsExpanded(current => !current)
   }
 
   return (
@@ -113,8 +131,8 @@ export function ArtifactSourceSelector({
         type="button"
         className={`flex min-h-11 items-center gap-3 rounded-xl border text-left transition-colors ${
           compact ? 'px-3 py-2' : 'p-4'
-        } ${mode === 'all' ? 'border-primary bg-primary/5' : 'border-border hover:bg-hover'}`}
-        onClick={() => onModeChange('all')}
+        } ${scope.mode === 'all' ? 'border-primary bg-primary/5' : 'border-border hover:bg-hover'}`}
+        onClick={() => onScopeChange({ mode: 'all' })}
         data-testid="artifact-source-all"
       >
         <div className="rounded-lg bg-primary/10 p-2 text-primary">
@@ -123,7 +141,7 @@ export function ArtifactSourceSelector({
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-medium">{t('artifact.sourceDialog.all')}</span>
-            {mode === 'all' && <Check className="h-4 w-4 shrink-0 text-primary" />}
+            {scope.mode === 'all' && <Check className="h-4 w-4 shrink-0 text-primary" />}
           </div>
           <p className="truncate text-xs text-text-secondary">
             {t('artifact.sourceDialog.allHint', {
@@ -135,17 +153,15 @@ export function ArtifactSourceSelector({
 
       <div
         className={`flex min-h-0 flex-col rounded-xl border ${
-          mode === 'selected' ? 'border-primary' : 'border-border'
+          scope.mode === 'selected' ? 'border-primary' : 'border-border'
         }`}
       >
         <button
           type="button"
           className={`flex min-h-11 items-center gap-3 text-left ${compact ? 'px-3 py-2' : 'p-4'}`}
-          onClick={() =>
-            compact ? setDocumentsExpanded(current => !current) : onModeChange('selected')
-          }
+          onClick={toggleDocumentsExpanded}
           data-testid="artifact-source-selected"
-          aria-expanded={compact ? documentsExpanded : mode === 'selected'}
+          aria-expanded={documentsExpanded}
         >
           <div className="rounded-lg bg-primary/10 p-2 text-primary">
             <FileText className={compact ? 'h-4 w-4' : 'h-5 w-5'} />
@@ -155,18 +171,16 @@ export function ArtifactSourceSelector({
               <span className="text-sm font-medium">
                 {t(compact ? 'artifact.sourceBrowser.documents' : 'artifact.sourceDialog.selected')}
               </span>
-              {compact ? (
-                <ChevronDown
-                  className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
-                    documentsExpanded ? 'rotate-180' : ''
-                  }`}
-                />
+              {documentsExpanded ? (
+                <ChevronDown className="h-4 w-4 shrink-0 rotate-180 text-text-muted transition-transform" />
+              ) : compact ? (
+                <ChevronDown className="h-4 w-4 shrink-0 text-text-muted transition-transform" />
               ) : (
-                mode === 'selected' && <Check className="h-4 w-4 shrink-0 text-primary" />
+                scope.mode === 'selected' && <Check className="h-4 w-4 shrink-0 text-primary" />
               )}
             </div>
             <p className="truncate text-xs text-text-secondary">
-              {mode === 'all' && compact
+              {scope.mode === 'all' && compact
                 ? t('artifact.sourceBrowser.selectHint')
                 : t('artifact.sourceDialog.selectedHint', {
                     count: selectedDocumentIds.size,
@@ -175,7 +189,7 @@ export function ArtifactSourceSelector({
           </div>
         </button>
 
-        {((compact && documentsExpanded) || (!compact && mode === 'selected')) && (
+        {documentsExpanded && (
           <div className="flex min-h-0 flex-col border-t border-border p-2">
             {selectedDocumentIds.size > 0 && (
               <div className="mb-1 flex items-center justify-between gap-2 text-xs text-text-secondary">
@@ -188,7 +202,7 @@ export function ArtifactSourceSelector({
                   variant="ghost"
                   size="sm"
                   className="h-8 px-2 text-xs"
-                  onClick={() => onSelectedDocumentIdsChange(new Set())}
+                  onClick={() => onScopeChange({ mode: 'all' })}
                   data-testid="artifact-source-clear"
                 >
                   {t('artifact.sourceDialog.clear')}
@@ -266,7 +280,7 @@ export function ArtifactSourceSelector({
                 totalCount={totalCount}
                 pageSize={pageSize}
                 onGoToPage={goToPage}
-                onPageSizeChange={changePageSize}
+                showPageSizeSelector={false}
                 disabled={loading}
               />
             )}

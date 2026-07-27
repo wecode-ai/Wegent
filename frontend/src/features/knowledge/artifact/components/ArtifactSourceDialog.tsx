@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ArtifactSourceSelector, type ArtifactSourceMode } from './ArtifactSourceSelector'
+import { ArtifactSourceSelector, type ArtifactSourceScope } from './ArtifactSourceSelector'
 
 interface ArtifactSourceDialogProps {
   knowledgeBaseId: number
@@ -35,17 +35,19 @@ export function ArtifactSourceDialog({
   onApply,
 }: ArtifactSourceDialogProps) {
   const { t } = useTranslation('knowledge')
-  const [mode, setMode] = useState<ArtifactSourceMode>('all')
-  const [draftIds, setDraftIds] = useState<Set<number>>(new Set())
+  const [draftScope, setDraftScope] = useState<ArtifactSourceScope>({ mode: 'all' })
 
   useEffect(() => {
     if (!open) return
-    setMode(selectedDocumentIds.length > 0 ? 'selected' : 'all')
-    setDraftIds(new Set(selectedDocumentIds))
+    setDraftScope(
+      selectedDocumentIds.length > 0
+        ? { mode: 'selected', documentIds: new Set(selectedDocumentIds) }
+        : { mode: 'all' }
+    )
   }, [open, selectedDocumentIds])
 
   const handleApply = () => {
-    onApply(mode === 'all' ? [] : Array.from(draftIds))
+    onApply(draftScope.mode === 'all' ? [] : Array.from(draftScope.documentIds))
     onOpenChange(false)
   }
 
@@ -63,12 +65,10 @@ export function ArtifactSourceDialog({
         <div className="min-h-0 flex-1 overflow-auto">
           <ArtifactSourceSelector
             knowledgeBaseId={knowledgeBaseId}
-            mode={mode}
-            selectedDocumentIds={draftIds}
+            scope={draftScope}
             availableDocumentCount={availableDocumentCount}
             active={open}
-            onModeChange={setMode}
-            onSelectedDocumentIdsChange={setDraftIds}
+            onScopeChange={setDraftScope}
           />
         </div>
 
@@ -76,11 +76,7 @@ export function ArtifactSourceDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('artifact.cancel')}
           </Button>
-          <Button
-            onClick={handleApply}
-            disabled={mode === 'selected' && draftIds.size === 0}
-            data-testid="artifact-source-apply"
-          >
+          <Button onClick={handleApply} data-testid="artifact-source-apply">
             {t('artifact.sourceDialog.apply')}
           </Button>
         </DialogFooter>

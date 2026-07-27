@@ -123,6 +123,26 @@ describe('ArtifactPanel AI Workshop', () => {
     expect(toastMock).toHaveBeenCalledWith({ description: 'artifact.started' })
   })
 
+  it('reports generation permission and processing state to the source browser', async () => {
+    const onCanManageChange = jest.fn()
+    const onProcessingDocumentCountChange = jest.fn()
+
+    render(
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCanManageChange={onCanManageChange}
+        onProcessingDocumentCountChange={onProcessingDocumentCountChange}
+      />
+    )
+
+    await waitFor(() => {
+      expect(onCanManageChange).toHaveBeenCalledWith(true)
+      expect(onProcessingDocumentCountChange).toHaveBeenCalledWith(0)
+    })
+  })
+
   it('passes explicitly selected sources to a specialized capability', async () => {
     render(
       <ArtifactPanel

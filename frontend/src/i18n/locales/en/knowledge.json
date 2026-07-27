@@ -928,11 +928,11 @@
     "allDocuments": "All indexed documents will be used",
     "wholeKnowledgeBase": "Entire knowledge base · {{count}} documents",
     "wholeKnowledgeBaseShort": "Entire knowledge base",
-    "source": "Current sources",
+    "source": "Knowledge sources",
     "sourceCount": "{{count}} sources",
     "adjustSources": "Adjust",
     "sourceBrowser": {
-      "documents": "All accessible documents",
+      "documents": "Knowledge base documents",
       "selectHint": "Select documents to use only those sources"
     },
     "action": {
@@ -940,7 +940,7 @@
       "mind_map": "Generate mind map"
     },
     "sourceDialog": {
-      "title": "Adjust sources",
+      "title": "Choose knowledge sources",
       "description": "Use the entire knowledge base by default, or choose specific documents.",
       "all": "Entire knowledge base",
       "allHint": "Use the current {{count}} available documents",
