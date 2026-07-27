@@ -64,35 +64,60 @@ struct RegisteredUpstream {
     upstream: LocalModelProxyUpstream,
     history: std::sync::Arc<history::CodexToolHistory>,
     thread_ids: HashSet<String>,
+    last_routed_model: Option<String>,
     last_used: Instant,
     active_references: usize,
+}
+
+#[derive(Default)]
+struct LocalModelProxyRegistry {
+    routes: HashMap<String, RegisteredUpstream>,
+    tokens_by_scope: HashMap<String, String>,
 }
 
 const REGISTRY_IDLE_TTL: Duration = Duration::from_secs(60 * 60);
 
 pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> String {
-    let token = registration_token(route_scope);
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
     prune_registry(&mut registry);
+    let token = registry
+        .tokens_by_scope
+        .get(route_scope)
+        .cloned()
+        .unwrap_or_else(|| {
+            let token = generate_registration_token(&registry);
+            registry
+                .tokens_by_scope
+                .insert(route_scope.to_owned(), token.clone());
+            token
+        });
     let active_references = registry
+        .routes
         .get(&token)
         .map_or(1, |registered| registered.active_references + 1);
     let history = registry
+        .routes
         .get(&token)
         .map(|registered| registered.history.clone())
         .unwrap_or_default();
     let thread_ids = registry
+        .routes
         .get(&token)
         .map(|registered| registered.thread_ids.clone())
         .unwrap_or_default();
-    registry.insert(
+    let last_routed_model = registry
+        .routes
+        .get(&token)
+        .and_then(|registered| registered.last_routed_model.clone());
+    registry.routes.insert(
         token.clone(),
         RegisteredUpstream {
             upstream,
             history,
             thread_ids,
+            last_routed_model,
             last_used: Instant::now(),
             active_references,
         },
@@ -100,7 +125,7 @@ pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> 
     log_executor_event(
         "local model proxy registered",
         &[
-            ("active_registrations", registry.len().to_string()),
+            ("active_registrations", registry.routes.len().to_string()),
             ("active_references", active_references.to_string()),
             ("route_scope", route_scope.to_owned()),
         ],
@@ -113,6 +138,7 @@ pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
         .lock()
         .expect("local model proxy registry should not be poisoned");
     let registered = registry
+        .routes
         .get_mut(token)
         .ok_or_else(|| "local model proxy task route is not registered".to_owned())?;
     registered.thread_ids.insert(thread_id.to_owned());
@@ -131,7 +157,7 @@ pub(crate) fn unregister(token: &str) {
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
-    let (retained_idle, active_references) = match registry.get_mut(token) {
+    let (retained_idle, active_references) = match registry.routes.get_mut(token) {
         Some(registered) => {
             registered.active_references = registered.active_references.saturating_sub(1);
             registered.last_used = Instant::now();
@@ -147,43 +173,51 @@ pub(crate) fn unregister(token: &str) {
         &[
             ("retained_idle", retained_idle.to_string()),
             ("active_references", active_references.to_string()),
-            ("active_registrations", registry.len().to_string()),
+            ("active_registrations", registry.routes.len().to_string()),
         ],
     );
 }
 
-fn registration_token(route_scope: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(std::process::id().to_le_bytes());
-    hasher.update(route_scope.as_bytes());
-    let digest = hasher.finalize();
-    let suffix = digest[..12]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("task-{}-{suffix}", std::process::id())
+fn generate_registration_token(registry: &LocalModelProxyRegistry) -> String {
+    loop {
+        let mut bytes = [0_u8; 24];
+        getrandom::fill(&mut bytes).expect("secure local model proxy token generation should work");
+        let suffix = bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let token = format!("task-{suffix}");
+        if !registry.routes.contains_key(&token)
+            && !registry
+                .tokens_by_scope
+                .values()
+                .any(|value| value == &token)
+        {
+            return token;
+        }
+    }
 }
 
-fn prune_registry(registry: &mut HashMap<String, RegisteredUpstream>) {
-    let before = registry.len();
-    registry.retain(|_, entry| {
+fn prune_registry(registry: &mut LocalModelProxyRegistry) {
+    let before = registry.routes.len();
+    registry.routes.retain(|_, entry| {
         entry.active_references > 0 || entry.last_used.elapsed() < REGISTRY_IDLE_TTL
     });
-    let removed = before.saturating_sub(registry.len());
+    let removed = before.saturating_sub(registry.routes.len());
     if removed > 0 {
         log_executor_event(
             "local model proxy registrations expired",
             &[
                 ("removed", removed.to_string()),
-                ("active_registrations", registry.len().to_string()),
+                ("active_registrations", registry.routes.len().to_string()),
             ],
         );
     }
 }
 
-fn registry() -> &'static Mutex<HashMap<String, RegisteredUpstream>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<String, RegisteredUpstream>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+fn registry() -> &'static Mutex<LocalModelProxyRegistry> {
+    static REGISTRY: OnceLock<Mutex<LocalModelProxyRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(LocalModelProxyRegistry::default()))
 }
 
 #[cfg(test)]
@@ -209,18 +243,23 @@ async fn handle_for_token(
     body: Bytes,
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
-    let (upstream, history) = {
+    let (upstream, history, model_switched) = {
         let mut registry = registry()
             .lock()
             .expect("local model proxy registry should not be poisoned");
         prune_registry(&mut registry);
-        let registered = registry.get_mut(&token).ok_or_else(|| HttpError {
+        let registered = registry.routes.get_mut(&token).ok_or_else(|| HttpError {
             status: StatusCode::NOT_FOUND,
             detail: "unknown or expired local model proxy token".to_owned(),
         })?;
         authorize_task_thread(registered, &body)?;
+        let model_switched = begin_model_request(registered, &body);
         registered.last_used = Instant::now();
-        (registered.upstream.clone(), registered.history.clone())
+        (
+            registered.upstream.clone(),
+            registered.history.clone(),
+            model_switched,
+        )
     };
     log_stale_requested_model(&upstream, &body);
     let request_url = upstream
@@ -238,7 +277,7 @@ async fn handle_for_token(
         history.as_ref(),
     )
     .await?;
-    let request_body = prepare_model_switch_request(&upstream, request_body)?;
+    let request_body = prepare_model_switch_request(&upstream, request_body, model_switched)?;
     log_executor_event(
         "local model proxy request started",
         &[
@@ -534,11 +573,36 @@ fn log_stale_requested_model(upstream: &LocalModelProxyUpstream, body: &[u8]) {
     );
 }
 
+fn begin_model_request(registered: &mut RegisteredUpstream, body: &[u8]) -> bool {
+    let current_model = registered
+        .upstream
+        .routing_model_id
+        .as_deref()
+        .or(registered.upstream.model_id.as_deref())
+        .map(str::to_owned);
+    let Some(current_model) = current_model else {
+        return false;
+    };
+    match registered.last_routed_model.as_deref() {
+        None => {
+            registered.last_routed_model = Some(current_model);
+            false
+        }
+        Some(previous_model) if previous_model == current_model => false,
+        Some(_) if request_contains_model_switch_marker(body) => {
+            registered.last_routed_model = Some(current_model);
+            true
+        }
+        Some(_) => false,
+    }
+}
+
 fn prepare_model_switch_request(
     upstream: &LocalModelProxyUpstream,
     body: Vec<u8>,
+    model_switched: bool,
 ) -> Result<Vec<u8>, HttpError> {
-    if upstream.api_format != "openai-responses" {
+    if upstream.api_format != "openai-responses" || !model_switched {
         return Ok(body);
     }
     let mut request = serde_json::from_slice::<Value>(&body).map_err(|error| HttpError {
@@ -583,6 +647,12 @@ fn prepare_model_switch_request(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to encode model switch request: {error}"),
     })
+}
+
+fn request_contains_model_switch_marker(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .is_some_and(|request| contains_model_switch_marker(&request))
 }
 
 fn contains_model_switch_marker(request: &Value) -> bool {
@@ -1385,8 +1455,8 @@ mod tests {
         }))
         .expect("request body");
 
-        let prepared =
-            prepare_model_switch_request(&upstream, body).expect("model switch should prepare");
+        let prepared = prepare_model_switch_request(&upstream, body, true)
+            .expect("model switch should prepare");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared request");
 
         assert_eq!(prepared["input"].as_array().unwrap().len(), 2);
@@ -1419,8 +1489,48 @@ mod tests {
         }))
         .expect("request body");
 
-        let prepared =
-            prepare_model_switch_request(&upstream, body.clone()).expect("request should prepare");
+        let prepared = prepare_model_switch_request(&upstream, body.clone(), false)
+            .expect("request should prepare");
+
+        assert_eq!(prepared, body);
+    }
+
+    #[test]
+    fn preserves_new_encrypted_history_after_the_model_switch_is_recorded() {
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("gpt-5.6-sol".to_owned()),
+            routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+        };
+        let body = serde_json::to_vec(&json!({
+            "model": "wework-gpt-5.6-sol",
+            "previous_response_id": "resp_after_switch",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [],
+                    "encrypted_content": "encrypted-new-model-state"
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "<model_switch>Persistent historical marker.</model_switch>"
+                    }]
+                }
+            ]
+        }))
+        .expect("request body");
+
+        let prepared = prepare_model_switch_request(&upstream, body.clone(), false)
+            .expect("later request should preserve new model state");
 
         assert_eq!(prepared, body);
     }
@@ -1645,6 +1755,7 @@ mod tests {
         let original_history = registry()
             .lock()
             .expect("registry lock")
+            .routes
             .get(&token)
             .expect("task route")
             .history
@@ -1665,7 +1776,7 @@ mod tests {
         assert_eq!(repeated_token, token);
         {
             let entries = registry().lock().expect("registry lock");
-            let route = entries.get(&token).expect("updated task route");
+            let route = entries.routes.get(&token).expect("updated task route");
             assert_eq!(route.upstream.base_url, updated.base_url);
             assert_eq!(route.upstream.api_key, updated.api_key);
             assert_eq!(route.upstream.model_id, updated.model_id);
@@ -1676,17 +1787,21 @@ mod tests {
         assert!(registry()
             .lock()
             .expect("registry lock")
+            .routes
             .contains_key(&token));
 
         unregister(&token);
 
         {
             let mut entries = registry().lock().expect("registry lock");
-            let entry = entries.get_mut(&token).expect("idle registration retained");
+            let entry = entries
+                .routes
+                .get_mut(&token)
+                .expect("idle registration retained");
             assert_eq!(entry.active_references, 0);
             entry.last_used = Instant::now() - REGISTRY_IDLE_TTL - Duration::from_secs(1);
             prune_registry(&mut entries);
-            assert!(!entries.contains_key(&token));
+            assert!(!entries.routes.contains_key(&token));
         }
 
         let resumed_token = register("stable-task-route", updated);
@@ -1696,8 +1811,86 @@ mod tests {
 
     #[test]
     fn task_routes_use_distinct_stable_tokens() {
-        assert_eq!(registration_token("task-a"), registration_token("task-a"));
-        assert_ne!(registration_token("task-a"), registration_token("task-b"));
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("gpt-5.6-sol".to_owned()),
+            routing_model_id: Some("gpt-5.6-sol".to_owned()),
+        };
+        let task_a = register("stable-random-token-task-a", upstream.clone());
+        let repeated_task_a = register("stable-random-token-task-a", upstream.clone());
+        let task_b = register("stable-random-token-task-b", upstream);
+
+        assert_eq!(repeated_task_a, task_a);
+        assert_ne!(task_a, task_b);
+        assert!(!task_a.contains("stable-random-token-task-a"));
+
+        unregister(&task_a);
+        unregister(&repeated_task_a);
+        unregister(&task_b);
+    }
+
+    #[test]
+    fn model_switch_cleanup_is_consumed_once_per_routed_model_change() {
+        let marker_body = br#"{
+            "model":"stale-codex-model",
+            "input":[{
+                "type":"message",
+                "role":"developer",
+                "content":[{
+                    "type":"input_text",
+                    "text":"<model_switch>Use the selected model.</model_switch>"
+                }]
+            }]
+        }"#;
+        let token = register(
+            "model-switch-consumed-once",
+            LocalModelProxyUpstream {
+                base_url: "https://luna.example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "luna-secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("gpt-5.6-luna".to_owned()),
+                routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
+            },
+        );
+        {
+            let mut entries = registry().lock().expect("registry lock");
+            let route = entries.routes.get_mut(&token).expect("task route");
+            assert!(!begin_model_request(route, marker_body));
+        }
+        let repeated_token = register(
+            "model-switch-consumed-once",
+            LocalModelProxyUpstream {
+                base_url: "https://sol.example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "sol-secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("gpt-5.6-sol".to_owned()),
+                routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            },
+        );
+        assert_eq!(repeated_token, token);
+        {
+            let mut entries = registry().lock().expect("registry lock");
+            let route = entries.routes.get_mut(&token).expect("updated task route");
+            assert!(begin_model_request(route, marker_body));
+            assert!(!begin_model_request(route, marker_body));
+        }
+
+        unregister(&token);
+        unregister(&repeated_token);
     }
 
     #[test]
@@ -1758,7 +1951,7 @@ mod tests {
         );
         bind_thread(&token, "thread-root").expect("root thread should bind");
         let mut entries = registry().lock().expect("registry lock");
-        let route = entries.get_mut(&token).expect("task route");
+        let route = entries.routes.get_mut(&token).expect("task route");
 
         authorize_task_thread(route, br#"{"client_metadata":{"thread_id":"thread-root"}}"#)
             .expect("bound root should be accepted");
@@ -1798,7 +1991,7 @@ mod tests {
         );
         bind_thread(&token, "thread-root").expect("root thread should bind");
         let mut entries = registry().lock().expect("registry lock");
-        let route = entries.get_mut(&token).expect("task route");
+        let route = entries.routes.get_mut(&token).expect("task route");
 
         let error = authorize_task_thread(route, br#"{"model":"gpt-5.6-sol"}"#)
             .expect_err("bound task route requires thread metadata");

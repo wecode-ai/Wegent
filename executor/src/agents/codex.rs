@@ -1205,6 +1205,11 @@ pub async fn run_codex_app_server_turn_with_cancel(
             )
             .await?;
             validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_model_provider(
+                thread_operation,
+                &thread,
+                launch_config.model_provider.as_deref(),
+            )?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
