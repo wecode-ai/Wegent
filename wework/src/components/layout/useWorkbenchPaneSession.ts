@@ -31,6 +31,7 @@ import type { RequestUserInputPayload } from '@/components/chat/RequestUserInput
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import { updateRuntimeGoalContinuation, visibleRuntimeGoal } from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
+import { appendConversationMentionContext } from '@/lib/conversation-mentions'
 import {
   markRuntimeTerminalAdditionalContextDelivered,
   readRuntimeTerminalAdditionalContext,
@@ -1736,6 +1737,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           return
         }
 
+        let resolvedAdditionalContext: RuntimeAdditionalContext | undefined
+        try {
+          resolvedAdditionalContext = await appendConversationMentionContext(
+            effectiveSubmittedInput,
+            options.additionalContext,
+            loadRuntimeTranscriptForPane
+          )
+        } catch (cause) {
+          console.warn('[Wework composer] failed to load referenced conversation', cause)
+          setError(i18n.t('workbench.mention_conversation_load_failed'))
+          return
+        }
+
         // Do not keep an earlier action error visible once the user sends a new message.
         setError(null)
         setInput('')
@@ -1755,7 +1769,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             clientMessageId: optimisticMessage.id,
             codeCommentContexts,
             initialGoal: pendingInitialGoal,
-            additionalContext: options.additionalContext,
+            additionalContext: resolvedAdditionalContext,
             onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
@@ -1827,7 +1841,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             status: 'queued',
             createdAt: new Date().toISOString(),
             attachments: persistAttachmentReferences(currentAttachments),
-            additionalContext: options.additionalContext,
+            additionalContext: resolvedAdditionalContext,
             ...getRuntimeModelFields(),
           }
 
@@ -1861,7 +1875,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           status: 'queued',
           createdAt: new Date().toISOString(),
           attachments: persistAttachmentReferences(currentAttachments),
-          additionalContext: options.additionalContext,
+          additionalContext: resolvedAdditionalContext,
           ...getRuntimeModelFields(),
         }
 
@@ -1899,6 +1913,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         input,
         interruptAndSendQueuedMessage,
         lifecycleStore,
+        loadRuntimeTranscriptForPane,
         pendingGoalState,
         paneStatus.isBusy,
         projectChat,

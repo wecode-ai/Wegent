@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
 import type { LocalDeviceSkill } from '@/types/api'
 import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { ComposerTextarea } from './ComposerTextarea'
 
@@ -814,6 +817,68 @@ describe('ComposerTextarea', () => {
     fireEvent.click(todoRow)
     await waitFor(() =>
       expect(editor.value).toBe('[$任务:WEG-18](cloud://projects/11/todos/WEG-18) ')
+    )
+  })
+
+  test('inserts another conversation from the at-mention menu', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const reference =
+      '[$修复登录流程](wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22source-task%22%7D)'
+    const conversationCandidates: ComposerConversationMentionCandidate[] = [
+      {
+        kind: 'conversation',
+        key: 'conversation:local-device:source-task',
+        title: '修复登录流程',
+        description: 'Wegent',
+        metaLabel: '会话',
+        testId: 'local-device-source-task',
+        enabled: true,
+        reference,
+        searchAliases: ['修复登录流程', 'Wegent'],
+        conversation: {
+          key: 'conversation:local-device:source-task',
+          title: '修复登录流程',
+          address: { deviceId: 'local-device', taskId: 'source-task' },
+          reference,
+          testId: 'local-device-source-task',
+          projectName: 'Wegent',
+        },
+      },
+    ]
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          conversationMentionCandidates={conversationCandidates}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '@登录'
+      editor.focus()
+    })
+
+    const option = await screen.findByTestId(
+      'conversation-reference-option-local-device-source-task'
+    )
+    expect(option).toHaveTextContent('修复登录流程')
+    fireEvent.click(option)
+
+    await waitFor(() => expect(editor.value).toBe(`${reference} `))
+    expect(editor.querySelector('[data-testid^="conversation-chip-"]')).toHaveTextContent(
+      '修复登录流程'
     )
   })
 })

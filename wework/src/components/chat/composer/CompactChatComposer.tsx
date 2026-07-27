@@ -34,7 +34,10 @@ import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { readDroppedFiles } from '@/tauri/droppedFiles'
 import type { CloudProject } from '@/api/deliveries'
-import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
 
 interface CompactChatComposerProps {
   value: string
@@ -53,6 +56,7 @@ interface CompactChatComposerProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
@@ -94,6 +98,7 @@ export function CompactChatComposer({
   workspaceTarget,
   workspaceFileApi,
   cloudMentionCandidates,
+  conversationMentionCandidates,
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
@@ -286,6 +291,7 @@ export function CompactChatComposer({
             workspaceTarget={workspaceTarget}
             workspaceFileApi={workspaceFileApi}
             cloudMentionCandidates={cloudMentionCandidates}
+            conversationMentionCandidates={conversationMentionCandidates}
             cloudProjectCandidates={cloudProjectCandidates}
             cloudSpaceEnabled={cloudSpaceEnabled}
             onSelectCloudProject={onSelectCloudProject}
@@ -475,6 +481,7 @@ export function CompactChatComposer({
               workspaceTarget={workspaceTarget}
               workspaceFileApi={workspaceFileApi}
               cloudMentionCandidates={cloudMentionCandidates}
+              conversationMentionCandidates={conversationMentionCandidates}
               cloudProjectCandidates={cloudProjectCandidates}
               cloudSpaceEnabled={cloudSpaceEnabled}
               onSelectCloudProject={onSelectCloudProject}
