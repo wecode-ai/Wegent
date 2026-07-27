@@ -1028,25 +1028,6 @@ CREATE TABLE kb_stat_knowledge_coverage (
 CREATE INDEX idx_coverage_run ON kb_stat_knowledge_coverage (run_id);
 
 -- -----------------------------------------------------------------------------
--- Table: kb_stat_orphan_doc_alert  (11 cols, 1 idx)
--- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_orphan_doc_alert (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	run_id BIGINT NOT NULL, 
-	target_date DATE NOT NULL, 
-	document_id BIGINT, 
-	document_name VARCHAR(255), 
-	kb_id BIGINT, 
-	kb_name VARCHAR(255), 
-	index_status VARCHAR(64), 
-	file_size BIGINT, 
-	days_orphaned INTEGER, 
-	created_at DATETIME, 
-	PRIMARY KEY (id)
-)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_orphan_doc_run ON kb_stat_orphan_doc_alert (run_id);
-
--- -----------------------------------------------------------------------------
 -- Table: kb_stat_period_totals  (12 cols, 1 idx)
 -- -----------------------------------------------------------------------------
 CREATE TABLE kb_stat_period_totals (
@@ -1370,9 +1351,9 @@ CREATE INDEX idx_storage_usage_kb ON kb_stat_storage_usage (kb_id);
 CREATE INDEX idx_storage_usage_run ON kb_stat_storage_usage (run_id);
 
 -- -----------------------------------------------------------------------------
--- Table: kb_stat_thin_doc_alert  (9 cols, 2 idx)
+-- Table: kb_stat_kb_thin_doc_rate  (9 cols, 2 idx)
 -- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_thin_doc_alert (
+CREATE TABLE kb_stat_kb_thin_doc_rate (
 	id BIGINT NOT NULL AUTO_INCREMENT, 
 	run_id BIGINT NOT NULL, 
 	target_date DATE NOT NULL, 
@@ -1384,8 +1365,8 @@ CREATE TABLE kb_stat_thin_doc_alert (
 	created_at DATETIME NOT NULL, 
 	PRIMARY KEY (id)
 )CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_thin_doc_kb ON kb_stat_thin_doc_alert (kb_id);
-CREATE INDEX idx_thin_doc_run ON kb_stat_thin_doc_alert (run_id);
+CREATE INDEX idx_kb_thin_doc_rate_kb ON kb_stat_kb_thin_doc_rate (kb_id);
+CREATE INDEX idx_kb_thin_doc_rate_run ON kb_stat_kb_thin_doc_rate (run_id);
 
 -- -----------------------------------------------------------------------------
 -- Table: kb_stat_user_first_kb_usage  (9 cols, 1 idx)
@@ -1509,8 +1490,7 @@ CREATE INDEX idx_user_seg_run ON kb_stat_user_segmentation (run_id);
 CREATE INDEX `ix_health_score_rank` ON `kb_stat_kb_health_score` (`run_id`, `health_score`);
 CREATE INDEX `ix_doc_value_rank` ON `kb_stat_doc_value_ranking` (`run_id`, `value_score`);
 CREATE INDEX `ix_zero_chunk_alert` ON `kb_stat_kb_zero_chunk_rate` (`run_id`, `zero_chunk_rate`);
-CREATE INDEX `ix_orphan_doc_kb_days` ON `kb_stat_orphan_doc_alert` (`run_id`, `kb_id`, `days_orphaned`);
-CREATE INDEX `ix_thin_doc_alert` ON `kb_stat_thin_doc_alert` (`run_id`, `thin_doc_rate`);
+CREATE INDEX `ix_kb_thin_doc_rate` ON `kb_stat_kb_thin_doc_rate` (`run_id`, `thin_doc_rate`);
 CREATE INDEX `ix_daily_dashboard_date_run` ON `kb_stat_daily_dashboard` (`stat_date`, `run_id`);
 CREATE INDEX `ix_low_score_alert` ON `kb_stat_kb_low_score_rate` (`run_id`, `low_score_rate`);
 CREATE INDEX `ix_abandon_rate_rank` ON `kb_stat_kb_abandon_rate` (`run_id`, `abandon_rate`);

@@ -15,7 +15,12 @@ interface HealthRow {
   index_success_score?: number | null
   enable_score?: number | null
   summary_score?: number | null
+  stat_date?: string | null
   target_date?: string | null
+}
+
+function rowDate(row: HealthRow): string {
+  return row.stat_date ?? row.target_date ?? ''
 }
 
 const TOP_N = 20
@@ -34,9 +39,7 @@ export function HealthScoreTable({ response }: { response: MetricResponse }) {
 
   // Collapse to each KB's latest-day row (rows span multiple days).
   const byKb = new Map<number, HealthRow>()
-  const ordered = [...rows].sort((a, b) =>
-    String(b.target_date ?? '').localeCompare(String(a.target_date ?? ''))
-  )
+  const ordered = [...rows].sort((a, b) => rowDate(b).localeCompare(rowDate(a)))
   for (const r of ordered) {
     const id = Number(r.kb_id)
     if (!id || byKb.has(id)) continue

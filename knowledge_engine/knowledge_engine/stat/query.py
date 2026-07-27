@@ -139,7 +139,6 @@ _METRIC_TABLES: dict[str, str] = {
     # deep_analysis
     "kb_health_score": "kb_stat_kb_health_score",
     "doc_value_ranking": "kb_stat_doc_value_ranking",
-    "orphan_doc_alert": "kb_stat_orphan_doc_alert",
     "doc_lifecycle_trace": "kb_stat_doc_lifecycle_trace",
     "user_pattern_evolution": "kb_stat_user_pattern_evolution",
     "kb_growth_curve": "kb_stat_kb_growth_curve",
@@ -159,7 +158,7 @@ _METRIC_TABLES: dict[str, str] = {
     # quality metrics
     "retrieval_score_distribution": "kb_stat_retrieval_score_distribution",
     "kb_low_score_rate": "kb_stat_kb_low_score_rate",
-    "thin_doc_alert": "kb_stat_thin_doc_alert",
+    "kb_thin_doc_rate": "kb_stat_kb_thin_doc_rate",
     "doc_chunk_quality": "kb_stat_doc_chunk_quality",
     "content_freshness": "kb_stat_content_freshness",
     "kb_content_freshness": "kb_stat_kb_content_freshness",
@@ -511,15 +510,6 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "days_since_update", "type": "int", "label": "距更新天数"},
         {"key": "value_score", "type": "float", "label": "价值评分"},
     ],
-    "orphan_doc_alert": [
-        {"key": "document_id", "type": "int", "label": "文档ID"},
-        {"key": "document_name", "type": "string", "label": "文档名称"},
-        {"key": "kb_id", "type": "int", "label": "知识库ID"},
-        {"key": "kb_name", "type": "string", "label": "知识库名称"},
-        {"key": "index_status", "type": "string", "label": "索引状态"},
-        {"key": "file_size", "type": "int", "label": "文件大小"},
-        {"key": "days_orphaned", "type": "int", "label": "孤立天数"},
-    ],
     "doc_lifecycle_trace": [
         {"key": "document_id", "type": "int", "label": "文档ID"},
         {"key": "document_name", "type": "string", "label": "文档名称"},
@@ -629,7 +619,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "low_score_queries", "type": "int", "label": "低分查询数"},
         {"key": "low_score_rate", "type": "float", "label": "低分率 %"},
     ],
-    "thin_doc_alert": [
+    "kb_thin_doc_rate": [
         {"key": "kb_id", "type": "int", "label": "知识库ID"},
         {"key": "total_docs", "type": "int", "label": "总文档数"},
         {"key": "thin_docs", "type": "int", "label": "瘦文档数"},
@@ -754,7 +744,6 @@ _METRIC_DATE_COL: dict[str, Optional[str]] = {
     "doc_index_storage_view": None,
     "kb_health_score": "stat_date",
     "doc_value_ranking": None,
-    "orphan_doc_alert": None,
     "doc_lifecycle_trace": None,
     "user_pattern_evolution": None,
     "kb_growth_curve": "stat_date",
@@ -773,7 +762,7 @@ _METRIC_DATE_COL: dict[str, Optional[str]] = {
     # quality metrics
     "retrieval_score_distribution": "stat_date",
     "kb_low_score_rate": "stat_date",
-    "thin_doc_alert": "stat_date",
+    "kb_thin_doc_rate": "stat_date",
     "doc_chunk_quality": None,
     "content_freshness": None,
     "kb_content_freshness": None,
@@ -839,7 +828,6 @@ _METRIC_KB_COL: dict[str, Optional[str]] = {
     "doc_index_storage_view": None,
     "kb_health_score": "kb_id",
     "doc_value_ranking": "kb_id",
-    "orphan_doc_alert": "kb_id",
     "doc_lifecycle_trace": "kb_id",
     "user_pattern_evolution": None,
     "kb_growth_curve": "kb_id",
@@ -858,7 +846,7 @@ _METRIC_KB_COL: dict[str, Optional[str]] = {
     # quality metrics
     "retrieval_score_distribution": "kb_id",
     "kb_low_score_rate": "kb_id",
-    "thin_doc_alert": "kb_id",
+    "kb_thin_doc_rate": "kb_id",
     "doc_chunk_quality": None,
     "content_freshness": None,
     "kb_content_freshness": "kb_id",
@@ -936,7 +924,6 @@ _METRIC_QUERY_OPTIONS: dict[str, dict[str, Any]] = {
     # deep_analysis
     "kb_health_score": {"order_by": "stat_date", "limit": 600},
     "doc_value_ranking": {"order_by": "value_score DESC", "limit": 20},
-    "orphan_doc_alert": {"order_by": "days_orphaned DESC", "limit": 20},
     "doc_lifecycle_trace": {"order_by": "updated_at_doc DESC", "limit": 20},
     "user_pattern_evolution": {"order_by": "stat_month", "limit": 20},
     "kb_growth_curve": {"order_by": "stat_date", "limit": 20},
@@ -951,7 +938,7 @@ _METRIC_QUERY_OPTIONS: dict[str, dict[str, Any]] = {
     # quality metrics
     "retrieval_score_distribution": {"order_by": "stat_date", "limit": 60},
     "kb_low_score_rate": {"order_by": "stat_date", "limit": 60},
-    "thin_doc_alert": {"order_by": "stat_date", "limit": 60},
+    "kb_thin_doc_rate": {"order_by": "stat_date", "limit": 60},
     "doc_chunk_quality": {"order_by": "doc_count DESC", "limit": 20},
     "content_freshness": {"order_by": "doc_count DESC", "limit": 20},
     "kb_content_freshness": {"order_by": "fresh_rate ASC", "limit": 20},
@@ -1017,7 +1004,6 @@ _METRIC_DOMAIN: dict[str, str] = {
     "doc_index_storage_view": "sys_ops",
     "kb_health_score": "deep_analysis",
     "doc_value_ranking": "deep_analysis",
-    "orphan_doc_alert": "deep_analysis",
     "doc_lifecycle_trace": "deep_analysis",
     "user_pattern_evolution": "deep_analysis",
     "kb_growth_curve": "deep_analysis",
@@ -1036,7 +1022,7 @@ _METRIC_DOMAIN: dict[str, str] = {
     # quality metrics
     "retrieval_score_distribution": "retrieval",
     "kb_low_score_rate": "retrieval",
-    "thin_doc_alert": "content_quality",
+    "kb_thin_doc_rate": "content_quality",
     "doc_chunk_quality": "content_quality",
     "content_freshness": "content_quality",
     "kb_content_freshness": "content_quality",
@@ -1102,7 +1088,6 @@ _METRIC_CHART_HINT: dict[str, str] = {
     "doc_index_storage_view": "table",
     "kb_health_score": "radar",
     "doc_value_ranking": "table",
-    "orphan_doc_alert": "table",
     "doc_lifecycle_trace": "table",
     "user_pattern_evolution": "table",
     "kb_growth_curve": "line",
@@ -1121,7 +1106,7 @@ _METRIC_CHART_HINT: dict[str, str] = {
     # quality metrics
     "retrieval_score_distribution": "line",
     "kb_low_score_rate": "line",
-    "thin_doc_alert": "line",
+    "kb_thin_doc_rate": "line",
     "doc_chunk_quality": "pie",
     "content_freshness": "pie",
     "kb_content_freshness": "cards",
@@ -1186,7 +1171,6 @@ _METRIC_DESCRIPTION: dict[str, str] = {
     "doc_index_storage_view": "索引状态×存储交叉视图\n按文件类型和索引状态交叉统计文档数及存储量。\n计算方式: 按文件类型和索引状态二维分组聚合。",
     "kb_health_score": "KB健康评分\n加权评分: 活跃度×30% + 索引成功率×30% + 启用率×20% + 摘要率×20%。\n活跃度: 30天内有更新的文档占比; 索引成功率: 成功状态占比; 启用率: 启用文档占比; 摘要率: 有摘要文档占比。",
     "doc_value_ranking": "文档价值排行\n前200篇文档按价值评分排序。评分 = (RAG引用+Head引用) × max(独立用户数,1) × exp(-距今天数/90)。\n近期被多用户频繁引用的文档得分更高。",
-    "orphan_doc_alert": "孤儿文档告警\n在统计周期内从未被RAG或Head引用的文档，最多500条，按孤立天数降序排列。\n计算方式: 全量文档与引用记录取差集。",
     "doc_lifecycle_trace": "文档生命周期追踪\n前200篇最近更新的文档，含文件类型、索引状态、生成代数等信息。\n计算方式: 按更新时间降序排列取前200条。",
     "user_pattern_evolution": "用户行为模式演变\n按月统计每个用户的RAG/Head使用比例变化趋势。\n计算方式: 按用户和月份聚合RAG与Head调用次数，计算比例。",
     "kb_growth_curve": "KB增长曲线\n按日累计每个知识库的文档数和成员数，展示增长趋势。\n计算方式: 基于基期累计值逐日累加新增量。",
@@ -1205,7 +1189,7 @@ _METRIC_DESCRIPTION: dict[str, str] = {
     # quality metrics
     "retrieval_score_distribution": "检索相关性分数分布\n按知识库统计RAG检索返回分块的相关性分数分布(平均分/P50/P90)及低分率。\n低分 = 分块相关性分数低于知识库配置的score_threshold。\n计算方式: 解析subtask_contexts中rag_retrieval记录的extracted_text,提取每个分块的score。",
     "kb_low_score_rate": "知识库低相关检索率\n按知识库统计平均相关性分数低于阈值的查询占比。\n低分率 = 低分查询数 / 总查询数 × 100%。\n反映知识库内容与用户查询的匹配质量,低分率高说明检索结果大多不相关。",
-    "thin_doc_alert": "瘦文档告警\n按知识库统计瘦文档(分块数≤1)的占比。\n瘦文档率 = 瘦文档数 / 总文档数 × 100%。\n瘦文档通常表示空文件、内容过少或解析失败,占比高说明知识库存在内容债。",
+    "kb_thin_doc_rate": "瘦文档率\n按知识库统计瘦文档(分块数≤1)的占比。\n瘦文档率 = 瘦文档数 / 总文档数 × 100%。\n瘦文档通常表示空文件、内容过少或解析失败,占比高说明知识库存在内容债。",
     "doc_chunk_quality": "分块质量分布\n按文档的平均分块token数分桶统计。\n分桶: 过小(<100,分块太碎)、合理(100-500)、过大(>500,分块太粗)。\n过大分块说明分块器配置过粗,过小说明内容稀疏或配置过细。",
     "content_freshness": "内容新鲜度分布\n按文档距最后更新的天数分桶统计。\n分桶: ≤7天、8-30天、31-90天、91-180天、>180天。\n陈旧文档(>180天)占比高说明知识库内容长期未更新,存在信息过时风险。",
     "kb_content_freshness": "知识库内容新鲜度\n按知识库统计最近30天内有更新的文档占比。\n新鲜度 = 新鲜文档数 / 总文档数 × 100%。\n新鲜度低说明知识库内容陈旧,需要更新。",
@@ -1279,7 +1263,6 @@ _METRIC_LABELS: dict[str, str] = {
     # deep_analysis
     "kb_health_score": "知识库健康评分",
     "doc_value_ranking": "文档价值排行",
-    "orphan_doc_alert": "孤儿文档告警",
     "doc_lifecycle_trace": "文档生命周期追踪",
     "user_pattern_evolution": "用户行为模式演变",
     "kb_growth_curve": "知识库增长曲线",
@@ -1299,7 +1282,7 @@ _METRIC_LABELS: dict[str, str] = {
     # quality metrics
     "retrieval_score_distribution": "检索相关性分数分布",
     "kb_low_score_rate": "知识库低相关检索率",
-    "thin_doc_alert": "瘦文档告警",
+    "kb_thin_doc_rate": "瘦文档率",
     "doc_chunk_quality": "分块质量分布",
     "content_freshness": "内容新鲜度分布",
     "kb_content_freshness": "知识库内容新鲜度",
@@ -1521,84 +1504,6 @@ class KbStatQueryService:
         finally:
             session.close()
         return {"results": results}
-
-    def fetch_quality_alert_metrics(self, filter: MetricFilter) -> dict:
-        """Return complete, untruncated rows used by the admin alert panel.
-
-        Chart endpoints intentionally cap rows. Reusing those responses for
-        platform-wide alerting caused false "no anomalies" results, so alerts
-        use this dedicated path and explicitly report collector-side coverage.
-        """
-        names = (
-            "doc_index_failure_rate",
-            "kb_zero_chunk_rate",
-            "kb_health_score",
-            "thin_doc_alert",
-            "orphan_doc_alert",
-        )
-        results: dict[str, dict] = {}
-        session = self._get_session()
-        try:
-            run_cache: dict[
-                tuple[Optional[str], tuple[int, ...]],
-                tuple[Optional[int], Optional[datetime]],
-            ] = {}
-            for name in names:
-                spec = _METRIC_SPECS[name]
-                cache_key = (
-                    _collector_for_metric(name),
-                    tuple(sorted(filter.kb_ids or [])),
-                )
-                if cache_key not in run_cache:
-                    run_cache[cache_key] = self._resolve_run(
-                        session, filter, metric_name=name
-                    )
-                run_id, completed_at = run_cache[cache_key]
-                result = self._fetch_one(
-                    session,
-                    name,
-                    spec,
-                    filter,
-                    run_id,
-                    completed_at,
-                    ignore_limit=True,
-                )
-                if name != "orphan_doc_alert":
-                    result["rows"] = self._latest_alert_rows(result["rows"])
-                results[name] = result
-        finally:
-            session.close()
-        return {
-            "results": results,
-            # orphan_doc_alert intentionally stores only the oldest 500 rows.
-            # Never claim complete platform coverage until a per-KB summary
-            # collector replaces that capped detail table.
-            "coverage": {
-                "complete": False,
-                "incomplete_metrics": ["orphan_doc_alert"],
-            },
-        }
-
-    @staticmethod
-    def _latest_alert_rows(rows: list[dict]) -> list[dict]:
-        """Collapse time series to the latest row per alert dimension."""
-        latest: dict[tuple[Any, ...], dict] = {}
-        for row in rows:
-            key = (
-                row.get("kb_id", "platform"),
-                row.get("file_extension"),
-                row.get("mode"),
-            )
-            row_date = str(row.get("stat_date") or row.get("target_date") or "")
-            previous = latest.get(key)
-            previous_date = (
-                str(previous.get("stat_date") or previous.get("target_date") or "")
-                if previous
-                else ""
-            )
-            if previous is None or row_date >= previous_date:
-                latest[key] = row
-        return list(latest.values())
 
     def _resolve_run(
         self,
@@ -1892,7 +1797,7 @@ class KbStatQueryService:
 
             # Period totals — derived from aggregated daily data
             period_totals = None
-            if global_totals and daily_rows_raw:
+            if daily_rows_raw:
                 period_total_queries = sum(r.total_queries for r in daily_rows_raw)
                 period_new_kb = sum(r.new_kb_count for r in daily_rows_raw)
                 period_new_docs = sum(r.new_doc_count for r in daily_rows_raw)

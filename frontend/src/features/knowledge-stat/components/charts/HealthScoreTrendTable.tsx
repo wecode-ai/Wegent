@@ -15,7 +15,12 @@ interface HealthRow {
   index_success_score?: number | null
   enable_score?: number | null
   summary_score?: number | null
+  stat_date?: string | null
   target_date?: string | null
+}
+
+function rowDate(row: HealthRow): string {
+  return row.stat_date ?? row.target_date ?? ''
 }
 
 const TREND_DAYS = 20
@@ -34,8 +39,8 @@ export function HealthScoreTrendTable({ response }: { response: MetricResponse }
   const rows = (response.rows as unknown as HealthRow[]) ?? []
 
   const trend = [...rows]
-    .filter(r => r.target_date)
-    .sort((a, b) => String(b.target_date).localeCompare(String(a.target_date)))
+    .filter(r => rowDate(r))
+    .sort((a, b) => rowDate(b).localeCompare(rowDate(a)))
     .slice(0, TREND_DAYS)
 
   if (trend.length === 0) {
@@ -66,8 +71,8 @@ export function HealthScoreTrendTable({ response }: { response: MetricResponse }
             const score = Number(r.health_score)
             const low = typeof r.health_score === 'number' && score < 50
             return (
-              <tr key={`${r.target_date ?? i}`} className="border-t border-border">
-                <td className="px-2 py-1.5 text-text-secondary tabular-nums">{r.target_date}</td>
+              <tr key={`${rowDate(r) || i}`} className="border-t border-border">
+                <td className="px-2 py-1.5 text-text-secondary tabular-nums">{rowDate(r)}</td>
                 <td
                   className={`px-2 py-1.5 text-right font-medium tabular-nums ${low ? 'text-red-600' : 'text-text-primary'}`}
                 >

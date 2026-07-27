@@ -14,10 +14,10 @@ from sqlalchemy.sql import func
 from knowledge_engine.stat.models.base import StatBase
 
 
-class ThinDocAlert(StatBase):
+class KbThinDocRate(StatBase):
     """Per-KB daily share of thin documents (<=1 chunk)."""
 
-    __tablename__ = "kb_stat_thin_doc_alert"
+    __tablename__ = "kb_stat_kb_thin_doc_rate"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     run_id = Column(BigInteger, nullable=False)
@@ -30,8 +30,8 @@ class ThinDocAlert(StatBase):
     created_at = Column(DateTime, nullable=False, default=func.now())
 
     __table_args__ = (
-        Index("idx_thin_doc_run", "run_id"),
-        Index("idx_thin_doc_kb", "kb_id"),
+        Index("idx_kb_thin_doc_rate_run", "run_id"),
+        Index("idx_kb_thin_doc_rate_kb", "kb_id"),
         {
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",

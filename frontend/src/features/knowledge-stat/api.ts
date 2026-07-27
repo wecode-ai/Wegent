@@ -31,13 +31,6 @@ export interface MetricsBatchResponse {
   results: Record<string, MetricResponse>
 }
 
-export interface QualityAlertMetricsResponse extends MetricsBatchResponse {
-  coverage: {
-    complete: boolean
-    incomplete_metrics: string[]
-  }
-}
-
 export interface GlobalTotalsData {
   total_kb_count: number
   total_doc_count: number
@@ -218,12 +211,6 @@ export async function fetchMetricsBatch(
   filter: MetricFilter
 ): Promise<MetricsBatchResponse> {
   return apiClient.post(`/${getBaseUrl(scope)}/metrics/batch`, { ...filter, names })
-}
-
-export async function fetchQualityAlertMetrics(
-  filter: MetricFilter
-): Promise<QualityAlertMetricsResponse> {
-  return apiClient.post('/admin/knowledge-stats/quality-alert-metrics', filter)
 }
 
 export async function fetchMetricList(scope: StatScope): Promise<MetricListResponse> {

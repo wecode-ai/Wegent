@@ -10,6 +10,7 @@ import { Play, Loader2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { triggerRun } from '../../api'
+import { enumerateDateRange, inclusiveDateCount, localYesterday } from '../../date-utils'
 import { useMetricList } from '../../hooks/useMetricList'
 import { DOMAIN_LIST } from './constants'
 
@@ -37,11 +38,7 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
     const backend = metricList?.domains?.map(d => d.domain).filter(d => d && d !== 'dashboard')
     return backend && backend.length > 0 ? backend : DOMAIN_LIST
   }, [metricList])
-  const yesterday = useMemo(() => {
-    const value = new Date()
-    value.setDate(value.getDate() - 1)
-    return value.toISOString().split('T')[0]
-  }, [])
+  const yesterday = useMemo(localYesterday, [])
   const validationError = useMemo(() => {
     if (!startDate) return null
     const effectiveEnd = endDate || startDate
@@ -49,9 +46,7 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
     if (startDate > yesterday || effectiveEnd > yesterday) {
       return t('runs.trigger.future_date')
     }
-    const startMs = Date.parse(`${startDate}T00:00:00Z`)
-    const endMs = Date.parse(`${effectiveEnd}T00:00:00Z`)
-    const days = Math.floor((endMs - startMs) / 86_400_000) + 1
+    const days = inclusiveDateCount(startDate, effectiveEnd)
     if (days > 31) return t('runs.trigger.range_too_large')
     return null
   }, [startDate, endDate, yesterday, t])
@@ -71,13 +66,7 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
   const handleSubmit = useCallback(async () => {
     if (!startDate || validationError) return
 
-    const dates: string[] = []
-    const start = new Date(startDate)
-    const end = endDate ? new Date(endDate) : start
-
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      dates.push(d.toISOString().split('T')[0])
-    }
+    const dates = enumerateDateRange(startDate, endDate || startDate)
 
     const domains = selectedDomains.size > 0 ? Array.from(selectedDomains) : undefined
     setSubmitting(true)

@@ -15,7 +15,12 @@ from celery.exceptions import SoftTimeLimitExceeded
 from knowledge_runtime.tasks.celery_app import celery_app
 from sqlalchemy import text
 
-from knowledge_engine.stat import collect_all, mark_kb_stat_stale_runs, prune_old_runs
+from knowledge_engine.stat import (
+    collect_all,
+    mark_kb_stat_orphaned_runs,
+    mark_kb_stat_stale_runs,
+    prune_old_runs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +189,12 @@ def collect_all_metrics_task(
         ) from exc
 
     try:
+        # Owning the date lock proves any older running DB row for this date
+        # lost its worker. Reconcile it before creating a replacement run.
+        mark_kb_stat_orphaned_runs(
+            target_date=target,
+            stat_session_factory=get_stat_session_factory(),
+        )
         try:
             mark_kb_stat_stale_runs(
                 stale_minutes=settings.kb_stat_stale_minutes,

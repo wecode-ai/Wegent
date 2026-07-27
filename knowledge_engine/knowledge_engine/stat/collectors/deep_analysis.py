@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deep analysis domain collectors: health scores, rankings, alerts, patterns."""
+"""Deep analysis domain collectors: health scores, rankings, and patterns."""
 
 import json
 import logging
@@ -294,140 +294,7 @@ def doc_value_ranking(
 
 
 # ---------------------------------------------------------------------------
-# 3. orphan_doc_alert
-# ---------------------------------------------------------------------------
-
-
-@register_collector(
-    domain="deep_analysis",
-    name="orphan_doc_alert",
-    description="Orphan docs with zero references (limit 500)",
-    chart_hint="table",
-)
-def orphan_doc_alert(
-    run_id: int,
-    mfilter: MetricFilter,
-    *,
-    source_session: Session,
-    stat_session: Session,
-) -> int:
-    # Query 1: fetch subtask_contexts to find referenced doc IDs
-    ctx_rows = source_session.execute(
-        text(
-            """
-            SELECT sc.type_data
-            FROM subtask_contexts sc
-            WHERE sc.context_type = 'knowledge_base'
-              AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-              AND sc.created_at < :end_date
-        """
-        ),
-        {
-            "end_date": mfilter.effective_end_date,
-            "days": mfilter.lookback_days,
-        },
-    ).fetchall()
-
-    referenced_doc_ids: set[int] = set()
-    for r in ctx_rows:
-        try:
-            data = json.loads(r.type_data) if r.type_data else {}
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        # RAG result sources
-        rag_result = data.get("rag_result")
-        if rag_result and isinstance(rag_result, dict):
-            sources = rag_result.get("sources", [])
-            if isinstance(sources, list):
-                for src in sources:
-                    doc_id = src.get("document_id") or src.get("doc_id")
-                    if doc_id is not None:
-                        try:
-                            referenced_doc_ids.add(int(doc_id))
-                        except (ValueError, TypeError):
-                            pass
-
-        # KB head result document IDs
-        head_result = data.get("kb_head_result")
-        if head_result and isinstance(head_result, dict):
-            doc_ids = head_result.get("document_ids", [])
-            if isinstance(doc_ids, list):
-                for doc_id in doc_ids:
-                    try:
-                        referenced_doc_ids.add(int(doc_id))
-                    except (ValueError, TypeError):
-                        pass
-
-    # Query 2: fetch all active docs
-    doc_rows = source_session.execute(
-        text(
-            """
-            SELECT id, name, kind_id, index_status, file_size, created_at
-            FROM knowledge_documents
-            WHERE is_active = 1
-        """
-        ),
-    ).fetchall()
-
-    # Find orphan docs (not in referenced set), limit 500
-    kb_meta = fetch_kb_metadata(source_session)
-    end_dt = mfilter.period_end_date
-    orphans = []
-    for r in doc_rows:
-        if r.id not in referenced_doc_ids:
-            if isinstance(r.created_at, datetime):
-                days_orphaned = (end_dt - r.created_at.date()).days
-            elif r.created_at:
-                days_orphaned = (end_dt - r.created_at).days
-            else:
-                days_orphaned = 0
-            orphans.append(
-                {
-                    "doc_id": r.id,
-                    "doc_name": r.name,
-                    "kb_id": r.kind_id,
-                    "kb_name": kb_meta.get(r.kind_id, ("", ""))[1],
-                    "index_status": r.index_status,
-                    "file_size": r.file_size or 0,
-                    "days_orphaned": max(days_orphaned, 0),
-                }
-            )
-
-    # Sort by days_orphaned descending, limit 500
-    orphans.sort(key=lambda d: d["days_orphaned"], reverse=True)
-    orphans = orphans[:500]
-
-    written = 0
-    for d in orphans:
-        stat_session.execute(
-            text(
-                """
-                INSERT INTO kb_stat_orphan_doc_alert
-                    (run_id, target_date, document_id, document_name,
-                     kb_id, kb_name, index_status, file_size, days_orphaned)
-                VALUES (:run_id, :target_date, :doc_id, :doc_name,
-                        :kb_id, :kb_name, :index_status, :file_size, :days_orphaned)
-            """
-            ),
-            {
-                "run_id": run_id,
-                "target_date": mfilter.target_date,
-                "doc_id": d["doc_id"],
-                "doc_name": d["doc_name"],
-                "kb_id": d["kb_id"],
-                "kb_name": d["kb_name"],
-                "index_status": d["index_status"],
-                "file_size": d["file_size"],
-                "days_orphaned": d["days_orphaned"],
-            },
-        )
-        written += 1
-    return written
-
-
-# ---------------------------------------------------------------------------
-# 4. doc_lifecycle_trace
+# 3. doc_lifecycle_trace
 # ---------------------------------------------------------------------------
 
 

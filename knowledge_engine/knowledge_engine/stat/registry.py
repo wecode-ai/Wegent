@@ -93,7 +93,11 @@ def collectors_by_domain(domain: str) -> list[CollectorMeta]:
 def collectors_by_domains(domains: Sequence[str]) -> list[CollectorMeta]:
     _ensure_imports()
     domain_set = set(domains)
-    return [c for c in _REGISTRY if c.domain in domain_set and c.enabled]
+    collectors = [c for c in _REGISTRY if c.domain in domain_set and c.enabled]
+    missing = domain_set - {c.domain for c in collectors}
+    if missing:
+        raise ValueError(f"Unknown or disabled collector domains: {sorted(missing)}")
+    return collectors
 
 
 def collectors_by_names(names: Sequence[str]) -> list[CollectorMeta]:

@@ -17,7 +17,7 @@ from knowledge_engine.stat.models.metrics.content_quality import (
     DocChunkQuality,
     DuplicateDocSuspect,
     KbContentFreshness,
-    ThinDocAlert,
+    KbThinDocRate,
 )
 from knowledge_engine.stat.models.metrics.dashboard import (
     DailyDashboard,
@@ -31,14 +31,11 @@ from knowledge_engine.stat.models.metrics.deep_analysis import (
     KbGrowthCurve,
     KbHealthScore,
     KnowledgeCoverage,
-    OrphanDocAlert,
     RagHeadVerifyRate,
     UserPatternEvolution,
     UserSegmentation,
 )
-from knowledge_engine.stat.models.metrics.doc_management import (
-    KbAvgDocLength,
-)
+from knowledge_engine.stat.models.metrics.doc_management import KbAvgDocLength
 from knowledge_engine.stat.models.metrics.lifecycle import (
     KbActivity,
     KbConfigSanity,
@@ -146,7 +143,6 @@ __all__ = [
     # deep_analysis
     "KbHealthScore",
     "DocValueRanking",
-    "OrphanDocAlert",
     "DocLifecycleTrace",
     "UserPatternEvolution",
     "KbGrowthCurve",
@@ -159,7 +155,7 @@ __all__ = [
     "PromActiveConversions",
     "PromCallbackSuccessRate",
     # content_quality
-    "ThinDocAlert",
+    "KbThinDocRate",
     "DocChunkQuality",
     "ContentFreshness",
     "KbContentFreshness",

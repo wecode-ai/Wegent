@@ -11,23 +11,70 @@ import pytest
 from knowledge_engine.stat.extractors.query_event import _parse_event
 from knowledge_engine.stat.filters import MetricFilter
 from knowledge_engine.stat.query import KbStatQueryService
-from knowledge_engine.stat.registry import all_collectors, collectors_by_names
+from knowledge_engine.stat.registry import (
+    all_collectors,
+    collectors_by_domains,
+    collectors_by_names,
+)
+from knowledge_engine.stat.runner import collect_all, mark_kb_stat_orphaned_runs
 
 
 def test_registry_imports_every_collector() -> None:
     collectors = all_collectors()
     names = [collector.name for collector in collectors]
 
-    assert len(names) == 78
+    assert len(names) == 77
     assert len(names) == len(set(names))
     assert "chunks_count_distribution" in names
     assert "storage_usage" in names
     assert "user_participation_summary" in names
+    assert "kb_thin_doc_rate" in names
+    assert "thin_doc_alert" not in names
+    assert "orphan_doc_alert" not in names
 
 
 def test_exact_collector_selection_rejects_unknown_names() -> None:
     with pytest.raises(ValueError, match="Unknown or disabled collectors"):
         collectors_by_names(["collector_that_does_not_exist"])
+
+
+def test_domain_selection_rejects_unknown_domains() -> None:
+    with pytest.raises(ValueError, match="Unknown or disabled collector domains"):
+        collectors_by_domains(["domain_that_does_not_exist"])
+
+
+def test_collect_all_rejects_unknown_domain_before_creating_run() -> None:
+    stat_session_factory = MagicMock()
+
+    with pytest.raises(ValueError, match="Unknown or disabled collector domains"):
+        collect_all(
+            target_date=date(2026, 7, 20),
+            domains=["domain_that_does_not_exist"],
+            source_session_factory=MagicMock(),
+            stat_session_factory=stat_session_factory,
+        )
+
+    stat_session_factory.assert_not_called()
+
+
+def test_orphaned_run_reconciliation_is_scoped_to_target_date() -> None:
+    session = MagicMock()
+    session.execute.return_value.rowcount = 2
+    stat_session_factory = MagicMock()
+    stat_session_factory.return_value.__enter__.return_value = session
+    target = date(2026, 7, 20)
+
+    marked = mark_kb_stat_orphaned_runs(
+        target_date=target,
+        stat_session_factory=stat_session_factory,
+    )
+
+    assert marked == 2
+    assert session.execute.call_count == 2
+    for call in session.execute.call_args_list:
+        assert "target_date = :target_date" in str(call.args[0])
+        assert call.args[1]["target_date"] == target
+    session.commit.assert_called_once()
 
 
 def test_metric_filter_uses_one_inclusive_end_anchor() -> None:
@@ -133,21 +180,6 @@ def test_explicit_run_requires_successful_collector_and_matching_scope() -> None
     assert "c.collector_name = :collector_name" in sql
     assert "c.status = 'success'" in sql
     assert "r.status IN ('completed', 'partial')" in sql
-
-
-def test_quality_alert_rows_keep_only_latest_value_per_kb() -> None:
-    rows = [
-        {"kb_id": 7, "stat_date": "2026-07-19", "health_score": 90},
-        {"kb_id": 7, "stat_date": "2026-07-20", "health_score": 40},
-        {"kb_id": 8, "stat_date": "2026-07-20", "health_score": 80},
-    ]
-
-    latest = KbStatQueryService._latest_alert_rows(rows)
-
-    assert {(row["kb_id"], row["health_score"]) for row in latest} == {
-        (7, 40),
-        (8, 80),
-    }
 
 
 def test_query_event_is_parsed_once_for_fact_reuse() -> None:

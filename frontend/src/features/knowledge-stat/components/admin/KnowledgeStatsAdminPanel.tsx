@@ -10,10 +10,10 @@ import { CalendarDays, BarChart3, History } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useStatFilter } from '../../hooks/useStatFilter'
 import { DashboardSection } from './DashboardSection'
-import { QualityAlertPanel } from './QualityAlertPanel'
 import { StatsPage } from '../StatsPage'
 import { StatRunsPanel } from './StatRunsPanel'
 import type { MetricFilter } from '../../api'
+import { localYesterday } from '../../date-utils'
 
 type SubTab = 'statistics' | 'runs'
 
@@ -85,7 +85,7 @@ export function KnowledgeStatsAdminPanel() {
                 value={filter.endDate}
                 onChange={e => setEndDate(e.target.value)}
                 min={filter.startDate}
-                max={new Date(Date.now() - 86_400_000).toISOString().split('T')[0]}
+                max={localYesterday()}
                 className="rounded-md border border-border bg-base px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
                 data-testid="stats-filter-date-to"
               />
@@ -94,9 +94,6 @@ export function KnowledgeStatsAdminPanel() {
 
           {/* Dashboard first screen */}
           <DashboardSection scope="admin" filter={metricFilter} />
-
-          {/* Quality alert panel: surfaces KBs needing attention */}
-          <QualityAlertPanel filter={metricFilter} />
 
           <hr className="border-border" />
 

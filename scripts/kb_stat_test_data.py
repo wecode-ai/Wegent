@@ -729,8 +729,13 @@ def _trigger_collection(target: date, *, pipeline_mode: str = "legacy") -> int:
     )
     from knowledge_engine.stat.registry import all_collectors
 
+    collector_names = {collector.name for collector in all_collectors()}
+    if "kb_thin_doc_rate" not in collector_names:
+        raise RuntimeError("kb_thin_doc_rate collector is not registered")
+    if {"thin_doc_alert", "orphan_doc_alert"} & collector_names:
+        raise RuntimeError("removed quality-alert collectors are still registered")
     print(
-        f"  [collect] collectors={len(all_collectors())} "
+        f"  [collect] collectors={len(collector_names)} "
         f"pipeline_mode={pipeline_mode}"
     )
     run_id = collect_all(

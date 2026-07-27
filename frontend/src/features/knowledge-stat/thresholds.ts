@@ -3,10 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Shared alert/action thresholds for KB-stat metrics.
+ * Shared action thresholds for KB-stat metrics.
  *
- * Both QualityAlertPanel.tsx (admin alert panel) and action-hints.ts
- * (per-card hint bar) read from this single source so they never disagree.
+ * The per-card action-hint bar reads thresholds from this single source.
  * Rate fields are all 0-100 percentages (unified in migration 010).
  */
 
@@ -15,14 +14,12 @@ export interface MetricThreshold {
   metric: string
   /** Candidate row fields to read the value from (first hit wins). */
   fields: string[]
-  /** Trigger threshold (warn in action-hints, medium in alert panel). */
+  /** Trigger threshold for a warning action hint. */
   warn: number
-  /** Critical threshold (critical in action-hints, high in alert panel). */
+  /** Critical threshold for a critical action hint. */
   critical: number
   /** When true, lower values are worse (e.g. health_score, hit_rate). */
   lowerIsWorse: boolean
-  /** Special handling for count-based metrics (e.g. orphan_doc_alert). */
-  isCount?: boolean
 }
 
 export const ALERT_THRESHOLDS: MetricThreshold[] = [
@@ -48,21 +45,12 @@ export const ALERT_THRESHOLDS: MetricThreshold[] = [
     lowerIsWorse: true,
   },
   {
-    metric: 'thin_doc_alert',
+    metric: 'kb_thin_doc_rate',
     fields: ['thin_doc_rate'],
     warn: 50,
     critical: 70,
     lowerIsWorse: false,
   },
-  {
-    metric: 'orphan_doc_alert',
-    fields: ['_count_'], // special: client-side count per KB
-    warn: 100,
-    critical: 300,
-    lowerIsWorse: false,
-    isCount: true,
-  },
-  // Additional thresholds for action-hints only (not in alert panel):
   {
     metric: 'kb_retrieval_hit_rate',
     fields: ['hit_rate'],

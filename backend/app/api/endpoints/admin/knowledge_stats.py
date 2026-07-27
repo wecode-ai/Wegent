@@ -27,7 +27,6 @@ from shared.models.kb_stat import (
     MetricBatchResponse,
     MetricListResponse,
     MetricResponse,
-    QualityAlertMetricsResponse,
     RunListResponse,
     TriggerRunRequest,
     TriggerRunResponse,
@@ -81,21 +80,6 @@ async def admin_metric(
     except RemoteRuntimeError as e:
         if e.status_code == 404:
             raise HTTPException(404, f"unknown metric: {name}")
-        _handle_remote_error(e)
-
-
-@router.post(
-    "/knowledge-stats/quality-alert-metrics",
-    response_model=QualityAlertMetricsResponse,
-)
-async def admin_quality_alert_metrics(
-    payload: KbStatFilter,
-    current_user: User = Depends(get_admin_user),
-):
-    gateway = get_kb_stat_gateway()
-    try:
-        return await gateway.quality_alert_metrics(payload)
-    except RemoteRuntimeError as e:
         _handle_remote_error(e)
 
 

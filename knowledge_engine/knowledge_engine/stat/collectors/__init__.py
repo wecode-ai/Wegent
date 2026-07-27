@@ -17,7 +17,7 @@ from knowledge_engine.stat.collectors.content_quality import (
     doc_chunk_quality,
     duplicate_doc_suspect,
     kb_content_freshness,
-    thin_doc_alert,
+    kb_thin_doc_rate,
 )
 from knowledge_engine.stat.collectors.dashboard import (
     collect_global_totals,
@@ -29,7 +29,6 @@ from knowledge_engine.stat.collectors.deep_analysis import (
     kb_growth_curve,
     kb_health_score,
     knowledge_coverage,
-    orphan_doc_alert,
     rag_head_verify_rate,
     user_pattern_evolution,
     user_segmentation,
@@ -109,7 +108,6 @@ __all__ = [
     "collect_period_and_daily",
     "kb_health_score",
     "doc_value_ranking",
-    "orphan_doc_alert",
     "doc_lifecycle_trace",
     "user_pattern_evolution",
     "kb_growth_curve",
@@ -164,7 +162,7 @@ __all__ = [
     "prom_conversion_duration",
     "prom_active_conversions",
     "prom_callback_success_rate",
-    "thin_doc_alert",
+    "kb_thin_doc_rate",
     "doc_chunk_quality",
     "content_freshness",
     "kb_content_freshness",

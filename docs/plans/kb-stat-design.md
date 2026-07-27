@@ -7,13 +7,13 @@ title: 知识库统计功能设计文档
 
 ## 1. 功能概述
 
-知识库统计功能为平台管理员和知识库运营人员提供知识库使用的全方位数据洞察，包括检索效果、内容质量、用户行为、系统性能等 **79 个统计指标**（78 个采集器，因 `period_and_daily` 是合并采集器产出两个指标），覆盖 10 个领域。
+知识库统计功能为平台管理员和知识库运营人员提供知识库使用的全方位数据洞察，包括检索效果、内容质量、用户行为、系统性能等 **78 个统计指标**（77 个采集器，因 `period_and_daily` 是合并采集器产出两个指标），覆盖 10 个领域。
 
 ### 两个统计入口
 
 | 入口 | 路径 | 数据范围 | 指标数 |
 | --- | --- | --- | --- |
-| **管理统计页** | Admin → 知识库统计 Tab | 全平台所有 KB | 79 |
+| **管理统计页** | Admin → 知识库统计 Tab | 全平台所有 KB | 78 |
 | **KB 详情统计页** | 知识库详情 → statistics 子 Tab | 单个 KB 内部 | 41 |
 
 ### 技术架构
@@ -41,7 +41,7 @@ title: 知识库统计功能设计文档
 │  ┌──────────────┐     │  │knowledge_   │ │     ┌──────────┐ │
 │  │ 业务库(只读)  │◀────│  │engine stat  │─┼────▶│ 统计库   │ │
 │  │ kinds        │ 读取 │  │ collectors  │ │写入 │ kb_stat_*│ │
-│  │ documents    │     │  │ (79个)      │ │     │ (84张表) │ │
+│  │ documents    │     │  │ (78个)      │ │     │ (83张表) │ │
 │  │ subtask_ctx  │     │  └─────────────┘ │     └──────────┘ │
 │  │ members      │     └──────────────────┘                  │
 │  │ share_links  │                                           │
@@ -100,7 +100,7 @@ title: 知识库统计功能设计文档
 | retrieval | 检索使用（调用频率/模式/质量） | 20 | 🟣 技术 |
 | user_behavior | 用户行为（排行/偏好/参与度） | 10 | 🔵 业务 |
 | collaboration | 协作权限（成员/邀请/分享/审批） | 7 | 🟠 运营 |
-| deep_analysis | 深度分析（健康分/价值排行/孤儿文档） | 10 | 🟠 运营 |
+| deep_analysis | 深度分析（健康分/价值排行/生命周期） | 9 | 🟠 运营 |
 | sys_ops | 系统运维（存储/附件） | 3 | 🟣 技术 |
 | prometheus | 转换监控（成功率/耗时/回调） | 4 | 🟣 技术 |
 | content_quality | 内容质量（瘦文档/新鲜度/重复） | 5 | 🟠 运营 |
@@ -117,7 +117,7 @@ title: 知识库统计功能设计文档
 | 类型 | 数量 | 响应时间选择器 | 图表 |
 | --- | --- | --- | --- |
 | **时序指标** (date_col ≠ null) | 22 | ✅ 动态重绘趋势折线 | Line + MA7 |
-| **快照指标** (date_col = null) | 57 | ❌ 不影响（显示当前截面） | Table/Cards/Pie |
+| **快照指标** (date_col = null) | 56 | ❌ 不影响（显示当前截面） | Table/Cards/Pie |
 
 ### 2.4 核心指标（30 个精选，管理页展示）
 
@@ -136,14 +136,10 @@ title: 知识库统计功能设计文档
 - KB 统计（新增/活跃，柱状图）
 - 每日活跃用户（折线图）
 
-**行动榜单区**：
-- 配置异常 KB 告警列表
-- 质检告警面板（5 类自动检测）
-
 **Domain 指标区**：
 - 按 10 个 domain 分组，每组带类型图标
 - 每个卡片含行动指引（阈值超限自动提示）
-- 51 个降级指标收入"高级视图"折叠区
+- 50 个降级指标收入"高级视图"折叠区
 
 ### 2.5 KB 详情页核心指标（20 个精选）
 
@@ -160,7 +156,7 @@ title: 知识库统计功能设计文档
 
 | 任务 | Celery crontab (UTC) | 北京时间 | 说明 |
 | --- | --- | --- | --- |
-| `kb_stat.collect_all` | `crontab(hour=19, minute=7)` | **每天 03:07** | 采集所有 78 个采集器（产出 80 个指标）。beat 传 `lookback_days=1`（纯增量，只统计当天），手动触发时默认 `lookback_days=30`（回看 30 天窗口） |
+| `kb_stat.collect_all` | `crontab(hour=19, minute=7)` | **每天 03:07** | 采集所有 77 个采集器（产出 78 个指标）。beat 传 `lookback_days=1`（纯增量，只统计当天），手动触发时默认 `lookback_days=30`（回看 30 天窗口） |
 | `kb_stat.prune_old_runs` | `crontab(day_of_week=6, hour=20, minute=13)` | **每周一 04:13** | 清理 400 天前的旧数据。分块删除（每批 100 个 run_id），避免长事务锁表 |
 
 **时区说明**：Celery `timezone="UTC"`，所以 crontab 的 hour 是 UTC。北京时间 = UTC+8，反向换算：北京 03:07 → UTC 前一天 19:07，北京周一 04:13 → UTC 周日 20:13。
@@ -181,15 +177,16 @@ title: 知识库统计功能设计文档
 ```
 1. 获取 Redis 分布式锁 kb_stat:lock:{target_date}
    ↓ 锁竞争失败 → 抛 KbStatRunInProgressError → API 返回 409
-2. mark_kb_stat_stale_runs() — 清理上次崩溃留下的 running 状态
-3. _create_run() — 在 kb_stat_runs 表插入 running 记录
-4. 遍历 78 个 collector：
+2. mark_kb_stat_orphaned_runs() — 清理同日期已失去锁的 running 状态
+3. mark_kb_stat_stale_runs() — 清理其他超时 running 状态
+4. _create_run() — 在 kb_stat_runs 表插入 running 记录
+5. 遍历 77 个 collector：
    ├─ _create_collector_run() — 插入 kb_stat_collector_runs running 记录
    ├─ collector.fn() — 执行采集（读业务库 → 写统计库）
    ├─ 成功 → commit + 标记 success
    └─ 失败 → rollback + 标记 failed（不影响其他 collector）
-5. _finalize_run() — 汇总状态（completed/partial/failed）
-6. 释放 Redis 锁
+6. _finalize_run() — 汇总状态（completed/partial/failed）
+7. 释放 Redis 锁
 ```
 
 ### 3.3 采集架构
@@ -340,7 +337,7 @@ ORDER BY {order_by} LIMIT {limit}
 - 瘦文档率 >50% → "清理空文件或修复解析失败"
 - 配置异常 → "修正检索配置（threshold=0/top_k=1）"
 
-阈值定义集中在 `thresholds.ts`，action-hints 和 QualityAlertPanel 共享同一来源。
+指标卡行动提示的阈值统一定义在 `thresholds.ts`。
 
 ## 6. 环境变量配置
 
@@ -368,7 +365,6 @@ ORDER BY {order_by} LIMIT {limit}
 | GET | `/health` | 统计库连通性 + 开关状态 |
 | POST | `/dashboard` | Dashboard 聚合数据 |
 | POST | `/metrics/{name}` | 单指标查询 |
-| POST | `/quality-alert-metrics` | 管理页质量告警专用的无图表截断数据 |
 | POST | `/metrics/batch` | 批量指标查询（一次 HTTP 取 N 个指标） |
 | GET | `/metrics/list` | 指标元数据列表（含 date_col/chart_hint/description） |
 | GET | `/runs` | 采集运行历史（分页+状态过滤） |
@@ -516,8 +512,8 @@ set -a && . ../knowledge_runtime/.env && set +a
 
 | 表状态 | 数量 | 说明 |
 | --- | --- | --- |
-| 有数据 | 76 张表 | 覆盖全部核心检索/内容/用户/协作指标 |
-| 无数据（语义正确） | 5 张表 | kb_config_sanity（配置正常）/ orphan_doc_alert（文档都被引用）/ cross_org_access（同 namespace）/ retrieval_latency（已删除）/ doc_folder_depth（无文件夹） |
+| 有数据 | 75 张表 | 覆盖全部核心检索/内容/用户/协作指标 |
+| 无数据（语义正确） | 3 张表 | kb_config_sanity（配置正常）/ cross_org_access（同 namespace）/ doc_folder_depth（无文件夹） |
 
 覆盖的 JSON 路径：
 
@@ -550,9 +546,17 @@ mysql -u <user> -p <stat_db> < docs/plans/kb-stat-schema.sql
 mysql -u <user> -p <stat_db> \
   < docs/plans/sql/kb-stat-019-fact-pipeline-up.sql
 
+# 将瘦文档告警表无损重命名为普通质量指标表（不删除孤儿文档旧表）
+mysql -u <user> -p <stat_db> \
+  < docs/plans/sql/kb-stat-020-quality-metric-cleanup-up.sql
+
 # 回滚 019（先停止 shadow worker）
 mysql -u <user> -p <stat_db> \
   < docs/plans/sql/kb-stat-019-fact-pipeline-down.sql
+
+# 回滚 020 表名和索引名
+mysql -u <user> -p <stat_db> \
+  < docs/plans/sql/kb-stat-020-quality-metric-cleanup-down.sql
 ```
 
 这些命令只能指向独立统计库。`backend/alembic` 属于业务库迁移，禁止放入
@@ -578,7 +582,7 @@ KB-stat staging/fact 表。`KB_STAT_AUTO_MIGRATE` 在独立统计库迁移链路
 - 表、列和索引数量以 `StatBase.metadata` 与建库 SQL 校验结果为准，文档不
   再手写易漂移的总数
 - 引擎：MySQL 8.0+ / InnoDB / utf8mb4
-- 当前显式增量 SQL 版本：019
+- 当前显式增量 SQL 版本：020
 
 完整建表语句见同目录 `kb-stat-schema.sql`。
 

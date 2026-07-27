@@ -11,8 +11,14 @@ and query service for KB operational statistics.
 
 from knowledge_engine.stat.runner import (
     collect_all,
+    mark_kb_stat_orphaned_runs,
     mark_kb_stat_stale_runs,
     prune_old_runs,
 )
 
-__all__ = ["collect_all", "mark_kb_stat_stale_runs", "prune_old_runs"]
+__all__ = [
+    "collect_all",
+    "mark_kb_stat_orphaned_runs",
+    "mark_kb_stat_stale_runs",
+    "prune_old_runs",
+]

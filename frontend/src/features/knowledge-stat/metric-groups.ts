@@ -90,10 +90,9 @@ export const CORE_METRICS: ReadonlySet<string> = new Set<string>([
   // doc management / content quality
   'doc_value_ranking',
   'doc_upload_trend',
-  'thin_doc_alert',
+  'kb_thin_doc_rate',
   'kb_content_freshness',
   'duplicate_doc_suspect',
-  'orphan_doc_alert',
   // users / collaboration
   'kb_active_users',
   'kb_sharing',

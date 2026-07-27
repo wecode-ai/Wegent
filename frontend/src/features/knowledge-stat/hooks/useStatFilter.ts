@@ -5,6 +5,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
+import { formatLocalDate, inclusiveDateCount } from '../date-utils'
 
 export interface StatFilterState {
   startDate: string
@@ -20,8 +21,8 @@ function getDefaultFilter(): StatFilterState {
   start.setDate(start.getDate() - 6)
 
   return {
-    startDate: start.toISOString().split('T')[0],
-    endDate: end.toISOString().split('T')[0],
+    startDate: formatLocalDate(start),
+    endDate: formatLocalDate(end),
   }
 }
 
@@ -46,10 +47,7 @@ export function useStatFilter(initial?: Partial<StatFilterState>) {
   // Derived: the lookback window in days (inclusive). Used by MetricCard
   // to show a "based on N-day sliding window" badge on time-series charts.
   const lookbackDays = (() => {
-    const s = new Date(filter.startDate)
-    const e = new Date(filter.endDate)
-    const diff = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24))
-    return diff > 0 ? diff + 1 : 1
+    return Math.max(inclusiveDateCount(filter.startDate, filter.endDate), 1)
   })()
 
   return { filter, setFilter, setStartDate, setEndDate, setKbIds, lookbackDays }

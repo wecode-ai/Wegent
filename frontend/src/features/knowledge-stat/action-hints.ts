@@ -5,7 +5,7 @@
 // Action-hint engine for metric cards (v4 §2/appendix A). Each rule reads
 // the latest row of a metric, applies a threshold, and returns a hint the
 // MetricCard renders above the chart. Thresholds are defined in the shared
-// thresholds.ts so the hint bar and QualityAlertPanel never disagree.
+// thresholds.ts so every metric card applies the same rules.
 
 import type { MetricResponse } from './api'
 import { getThreshold, isWarn, isCritical } from './thresholds'
@@ -29,7 +29,7 @@ const HINT_TEXT_KEYS: Record<string, string> = {
   kb_retrieval_hit_rate: 'action_hints.kb_retrieval_hit_rate',
   answer_adoption_rate: 'action_hints.answer_adoption_rate',
   kb_health_score: 'action_hints.kb_health_score',
-  thin_doc_alert: 'action_hints.thin_doc_alert',
+  kb_thin_doc_rate: 'action_hints.kb_thin_doc_rate',
   doc_index_failure_rate: 'action_hints.doc_index_failure_rate',
   kb_abandon_rate: 'action_hints.kb_abandon_rate',
   kb_content_freshness: 'action_hints.kb_content_freshness',
@@ -67,7 +67,7 @@ export function getActionHint(
 ): ActionHint | null {
   if (!response?.rows?.length) return null
   const t = getThreshold(metricName)
-  if (!t || t.isCount) return null // count-based metrics handled by alert panel only
+  if (!t) return null
 
   const row = latestRow(response.rows)
   if (!row) return null

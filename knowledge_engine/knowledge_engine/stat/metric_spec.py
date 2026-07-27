@@ -987,26 +987,6 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         kb_col="kb_id",
         query_options=QueryOptions(order_by="value_score DESC", limit=20),
     ),
-    "orphan_doc_alert": MetricSpec(
-        name="orphan_doc_alert",
-        table="kb_stat_orphan_doc_alert",
-        schema=(
-            ColumnSpec(key="document_id", type="int", label="文档ID"),
-            ColumnSpec(key="document_name", type="string", label="文档名称"),
-            ColumnSpec(key="kb_id", type="int", label="知识库ID"),
-            ColumnSpec(key="kb_name", type="string", label="知识库名称"),
-            ColumnSpec(key="index_status", type="string", label="索引状态"),
-            ColumnSpec(key="file_size", type="int", label="文件大小"),
-            ColumnSpec(key="days_orphaned", type="int", label="孤立天数"),
-        ),
-        domain="deep_analysis",
-        label="孤儿文档告警",
-        description="孤儿文档告警\n在统计周期内从未被RAG或Head引用的文档，最多500条，按孤立天数降序排列。\n计算方式: 全量文档与引用记录取差集。",
-        chart_hint="table",
-        date_col=None,
-        kb_col="kb_id",
-        query_options=QueryOptions(order_by="days_orphaned DESC", limit=20),
-    ),
     "doc_lifecycle_trace": MetricSpec(
         name="doc_lifecycle_trace",
         table="kb_stat_doc_lifecycle_trace",
@@ -1232,7 +1212,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="target_date", limit=60),
+        query_options=QueryOptions(order_by="stat_date", limit=60),
     ),
     "kb_retrieval_mode_dist": MetricSpec(
         name="kb_retrieval_mode_dist",
@@ -1268,7 +1248,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="target_date", limit=60),
+        query_options=QueryOptions(order_by="stat_date", limit=60),
     ),
     "kb_low_score_rate": MetricSpec(
         name="kb_low_score_rate",
@@ -1285,11 +1265,11 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="target_date", limit=60),
+        query_options=QueryOptions(order_by="stat_date", limit=60),
     ),
-    "thin_doc_alert": MetricSpec(
-        name="thin_doc_alert",
-        table="kb_stat_thin_doc_alert",
+    "kb_thin_doc_rate": MetricSpec(
+        name="kb_thin_doc_rate",
+        table="kb_stat_kb_thin_doc_rate",
         schema=(
             ColumnSpec(key="kb_id", type="int", label="知识库ID"),
             ColumnSpec(key="total_docs", type="int", label="总文档数"),
@@ -1297,8 +1277,8 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
             ColumnSpec(key="thin_doc_rate", type="float", label="瘦文档率 %"),
         ),
         domain="content_quality",
-        label="瘦文档告警",
-        description="瘦文档告警\n按知识库统计瘦文档(分块数≤1)的占比。\n瘦文档率 = 瘦文档数 / 总文档数 × 100%。\n瘦文档通常表示空文件、内容过少或解析失败,占比高说明知识库存在内容债。",
+        label="瘦文档率",
+        description="瘦文档率\n按知识库统计瘦文档(分块数≤1)的占比。\n瘦文档率 = 瘦文档数 / 总文档数 × 100%。\n瘦文档通常表示空文件、内容过少或解析失败,占比高说明知识库存在内容债。",
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
@@ -1401,7 +1381,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="target_date", limit=60),
+        query_options=QueryOptions(order_by="stat_date", limit=60),
     ),
     "kb_retrieval_hit_rate": MetricSpec(
         name="kb_retrieval_hit_rate",
@@ -1418,7 +1398,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="target_date", limit=60),
+        query_options=QueryOptions(order_by="stat_date", limit=60),
     ),
     "query_dedup_rate": MetricSpec(
         name="query_dedup_rate",
@@ -1435,7 +1415,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="target_date", limit=60),
+        query_options=QueryOptions(order_by="stat_date", limit=60),
     ),
     "kb_slow_query_rate": MetricSpec(
         name="kb_slow_query_rate",

@@ -71,8 +71,18 @@ def collect_all(
         target_date=target_date, kb_ids=kb_ids, lookback_days=lookback_days
     )
 
-    stat_session = stat_session_factory()
+    # Validate the requested selection before creating a run. An unknown
+    # domain must not produce an empty run that is incorrectly marked complete.
+    if collector_names:
+        collectors = collectors_by_names(collector_names)
+    elif domains:
+        collectors = collectors_by_domains(domains)
+    else:
+        collectors = all_collectors()
+    if not collectors:
+        raise ValueError("No enabled collectors selected")
 
+    stat_session = stat_session_factory()
     # Create run record
     run_id = _create_run(
         stat_session,
@@ -83,14 +93,6 @@ def collect_all(
         stat_start=mfilter.effective_period_start,
         stat_end=mfilter.period_end_date,
     )
-
-    # Select collectors
-    if collector_names:
-        collectors = collectors_by_names(collector_names)
-    elif domains:
-        collectors = collectors_by_domains(domains)
-    else:
-        collectors = all_collectors()
 
     total_rows = 0
     collector_results: list[str] = []  # track success/failed per collector
@@ -314,6 +316,58 @@ def prune_old_runs(
 
 
 _STALE_RUN_ERROR_MESSAGE = "Run timed out (worker may have crashed)"
+_ORPHANED_RUN_ERROR_MESSAGE = "Run abandoned after its collection lock expired"
+
+
+def mark_kb_stat_orphaned_runs(
+    *,
+    target_date: date,
+    stat_session_factory: Callable[[], Session],
+) -> int:
+    """Fail running rows for a date after acquiring its previously free lock.
+
+    A running database row cannot still own the date lock at this point. It is
+    therefore an orphan from a crashed or hard-killed worker, regardless of the
+    broader stale-run timeout.
+    """
+    with stat_session_factory() as stat_session:
+        params = {"err": _ORPHANED_RUN_ERROR_MESSAGE, "target_date": target_date}
+        stat_session.execute(
+            text(
+                """
+                UPDATE kb_stat_collector_runs c
+                JOIN kb_stat_runs r ON r.id = c.run_id
+                SET c.status = 'failed', c.completed_at = NOW(),
+                    c.error_message = :err
+                WHERE c.status = 'running'
+                  AND r.status = 'running'
+                  AND r.target_date = :target_date
+                """
+            ),
+            params,
+        )
+        result = stat_session.execute(
+            text(
+                """
+                UPDATE kb_stat_runs
+                SET status = 'failed', completed_at = NOW(),
+                    error_message = :err
+                WHERE status = 'running'
+                  AND target_date = :target_date
+                """
+            ),
+            params,
+        )
+        stat_session.commit()
+        marked = result.rowcount
+
+    if marked:
+        logger.warning(
+            "[kb_stat] marked %d orphaned run(s) for %s as failed",
+            marked,
+            target_date,
+        )
+    return marked
 
 
 def mark_kb_stat_stale_runs(

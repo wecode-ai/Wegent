@@ -48,17 +48,17 @@ def _classify_chunk_quality(avg_token: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 1. thin_doc_alert — per-KB share of near-empty documents
+# 1. kb_thin_doc_rate — per-KB share of near-empty documents
 # ---------------------------------------------------------------------------
 
 
 @register_collector(
     domain="content_quality",
-    name="thin_doc_alert",
+    name="kb_thin_doc_rate",
     description="Per-KB share of thin documents (<=1 chunk), a content-debt signal",
     chart_hint="line",
 )
-def thin_doc_alert(
+def kb_thin_doc_rate(
     run_id: int,
     mfilter: MetricFilter,
     *,
@@ -104,7 +104,7 @@ def thin_doc_alert(
         stat_session.execute(
             text(
                 """
-                INSERT INTO kb_stat_thin_doc_alert
+                INSERT INTO kb_stat_kb_thin_doc_rate
                     (run_id, target_date, stat_date, kb_id, total_docs,
                      thin_docs, thin_doc_rate)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :total_docs,

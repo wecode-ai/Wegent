@@ -40,11 +40,6 @@ class RemoteKbStatGateway:
     async def metric_batch(self, payload: MetricBatchRequest) -> dict[str, Any]:
         return await self._client.post("/internal/kb-stat/metrics/batch", payload)
 
-    async def quality_alert_metrics(self, payload: KbStatFilter) -> dict[str, Any]:
-        return await self._client.post(
-            "/internal/kb-stat/quality-alert-metrics", payload
-        )
-
     async def list_metrics(self, scope: str = "admin") -> dict[str, Any]:
         return await self._client.get(f"/internal/kb-stat/metrics/list?scope={scope}")
 
