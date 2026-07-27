@@ -6761,6 +6761,8 @@ async function main() {
   const desktopScenario = await loadDesktopScenario(
     process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
     {
+      captureScreenshot: (control, name, selector) =>
+        captureVerificationScreenshot(control, name, selector),
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: UI_TIMEOUT_MS,
