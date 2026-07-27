@@ -5,14 +5,20 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Bot, Database, PanelRightClose, PanelRightOpen, Plus, Settings2 } from 'lucide-react'
+import { Bot, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArtifactPanel } from '@/features/knowledge/artifact/components/ArtifactPanel'
 import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
+import {
+  ArtifactSourceSelector,
+  type ArtifactSourceMode,
+} from '@/features/knowledge/artifact/components/ArtifactSourceSelector'
+import { DocumentDetailDialog } from './DocumentDetailDialog'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
+import type { KnowledgeDocument } from '@/types/knowledge'
 
 // Helper function to get initial width from localStorage
 const getInitialWidth = (
@@ -93,6 +99,10 @@ export function DocumentPanel({
   const { t: tCommon } = useTranslation('common')
 
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
+  const [sourceMode, setSourceMode] = useState<ArtifactSourceMode>(
+    selectedDocumentIds.length > 0 ? 'selected' : 'all'
+  )
+  const [viewingDocument, setViewingDocument] = useState<KnowledgeDocument | null>(null)
   const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
   const sourceApplyContinuationRef = useRef<(() => void) | null>(null)
 
@@ -163,6 +173,27 @@ export function DocumentPanel({
       continuation?.()
     }
   }, [])
+
+  useEffect(() => {
+    setSourceMode(selectedDocumentIds.length > 0 ? 'selected' : 'all')
+  }, [selectedDocumentIds])
+
+  const handleInlineSourceModeChange = (mode: ArtifactSourceMode) => {
+    if (mode === 'all') {
+      setSourceMode('all')
+      onDocumentSelectionChange?.([])
+      return
+    }
+    if (selectedDocumentIds.length > 0) {
+      setSourceMode('selected')
+    }
+  }
+
+  const handleInlineDocumentSelectionChange = (documentIds: Set<number>) => {
+    const nextDocumentIds = Array.from(documentIds)
+    setSourceMode(nextDocumentIds.length > 0 ? 'selected' : 'all')
+    onDocumentSelectionChange?.(nextDocumentIds)
+  }
 
   // Handle mouse down on resizer
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -293,30 +324,21 @@ export function DocumentPanel({
           </div>
         </div>
 
-        <button
-          type="button"
-          className="mx-4 mt-4 flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-3 text-left transition-colors hover:border-primary hover:bg-hover"
-          onClick={() => openSourceDialog()}
-          data-testid="artifact-source-summary"
-        >
-          <div className="rounded-lg bg-primary/10 p-2 text-primary">
-            <Database className="h-4 w-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs text-text-muted">{t('artifact.source')}</p>
-            <p className="truncate text-sm font-medium">
-              {selectedDocumentIds.length > 0
-                ? t('artifact.selectedDocuments', { count: selectedDocumentIds.length })
-                : t('artifact.wholeKnowledgeBase', {
-                    count: availableDocumentCount ?? knowledgeBase.document_count,
-                  })}
-            </p>
-            <p className="mt-0.5 text-xs text-text-muted">{t('artifact.sourceUsageHint')}</p>
-          </div>
-          <Settings2 className="h-4 w-4 text-text-muted" />
-        </button>
+        <div className="mx-4 mt-4 shrink-0" data-testid="artifact-source-summary">
+          <h3 className="mb-2 text-sm font-semibold">{t('artifact.source')}</h3>
+          <ArtifactSourceSelector
+            knowledgeBaseId={knowledgeBase.id}
+            mode={sourceMode}
+            selectedDocumentIds={new Set(selectedDocumentIds)}
+            availableDocumentCount={availableDocumentCount ?? knowledgeBase.document_count}
+            compact
+            onModeChange={handleInlineSourceModeChange}
+            onSelectedDocumentIdsChange={handleInlineDocumentSelectionChange}
+            onOpenDocument={setViewingDocument}
+          />
+        </div>
 
-        <div className="min-h-0 flex-1 overflow-hidden p-4">
+        <div className="min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-5">
           <ArtifactPanel
             knowledgeBaseId={knowledgeBase.id}
             selectedDocumentIds={selectedDocumentIds}
@@ -339,6 +361,17 @@ export function DocumentPanel({
           sourceApplyContinuationRef.current = null
           continuation?.()
         }}
+      />
+
+      <DocumentDetailDialog
+        open={!!viewingDocument}
+        onOpenChange={open => !open && setViewingDocument(null)}
+        document={viewingDocument}
+        knowledgeBaseId={knowledgeBase.id}
+        kbType={knowledgeBase.kb_type}
+        canEdit={false}
+        knowledgeBaseName={knowledgeBase.name}
+        knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
       />
 
       {/* Overlay while resizing */}

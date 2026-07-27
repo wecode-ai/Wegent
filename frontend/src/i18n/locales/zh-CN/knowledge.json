@@ -893,7 +893,6 @@
     "runningCount": "{{count}} 个进行中",
     "noDocumentsHint": "知识库暂无文档，请先前往“文档管理”添加来源。",
     "documentsProcessingHint": "文档正在处理中，完成后即可生成。",
-    "readOnlyHint": "仅编辑者可发起生成任务",
     "create": "开始任务",
     "createFirst": "开始第一个任务",
     "createTitle": "开始 AI 任务",
@@ -920,6 +919,7 @@
     "loadFailed": "任务加载失败",
     "empty": "暂无任务",
     "emptyHint": "点击上方能力卡片，开始处理知识库内容。",
+    "emptyReadOnlyHint": "编辑者生成的共享任务会显示在这里。",
     "titleLabel": "标题（可选）",
     "titlePlaceholder": "由系统自动生成默认标题",
     "instructionLabel": "补充要求（可选）",
@@ -932,6 +932,10 @@
     "sourceUsageHint": "用于对话与 AI 工坊",
     "sourceCount": "{{count}} 篇来源",
     "adjustSources": "调整",
+    "sourceBrowser": {
+      "documents": "全部可访问文档",
+      "selectHint": "勾选后仅使用指定文档"
+    },
     "action": {
       "briefing": "生成简报",
       "mind_map": "生成思维导图"

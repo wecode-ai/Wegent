@@ -893,7 +893,6 @@
     "runningCount": "{{count}} in progress",
     "noDocumentsHint": "This knowledge base has no documents. Add sources in Document Management first.",
     "documentsProcessingHint": "Documents are being processed. Generation will be available when they are ready.",
-    "readOnlyHint": "Only editors can start generation tasks.",
     "create": "Start task",
     "createFirst": "Start first task",
     "createTitle": "Start AI task",
@@ -920,6 +919,7 @@
     "loadFailed": "Failed to load tasks",
     "empty": "No tasks yet",
     "emptyHint": "Choose a capability above to start working with this knowledge base.",
+    "emptyReadOnlyHint": "Shared tasks created by editors will appear here.",
     "titleLabel": "Title (optional)",
     "titlePlaceholder": "A default title will be generated",
     "instructionLabel": "Additional instructions (optional)",
@@ -932,6 +932,10 @@
     "sourceUsageHint": "Used for chat and AI Workshop",
     "sourceCount": "{{count}} sources",
     "adjustSources": "Adjust",
+    "sourceBrowser": {
+      "documents": "All accessible documents",
+      "selectHint": "Select documents to use only those sources"
+    },
     "action": {
       "briefing": "Generate briefing",
       "mind_map": "Generate mind map"

@@ -162,9 +162,9 @@ describe('ArtifactPanel AI Workshop', () => {
       <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
     )
 
-    expect(screen.getByTestId('artifact-type-briefing')).toBeDisabled()
-    expect(screen.getByTestId('artifact-type-mind-map')).toBeDisabled()
-    expect(screen.getByText('artifact.readOnlyHint')).toBeInTheDocument()
+    expect(screen.queryByTestId('artifact-type-briefing')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('artifact-type-mind-map')).not.toBeInTheDocument()
+    expect(screen.getByText('artifact.emptyReadOnlyHint')).toBeInTheDocument()
     expect(createMock).not.toHaveBeenCalled()
   })
 
