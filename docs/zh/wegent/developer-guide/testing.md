@@ -236,9 +236,10 @@ Executor Manager、Knowledge Engine、Shared 和 CLI 测试；修改
 `packages/chat-core/` 时会同时运行 Frontend 与 Wework 检查。修改测试 workflow
 或分类脚本本身时会运行全部模块，确保 CI 编排变更经过完整验证。
 
-在 PR 上添加 `ci:all` 标签可以跳过路径分类，强制运行全部模块测试，适合
-路径分类可能遗漏影响面的改动。给 PR 打标签会重新触发 `test.yml`；没有
-`ci:all` 标签时仍按改动路径决定测试范围。
+在 PR 上添加 `ci:all` 标签可以跳过路径分类，强制运行全部模块测试、平台 E2E、
+Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径分类可能遗漏
+影响面的改动。三个测试 workflow 都会响应标签事件；没有 `ci:all` 标签时仍按
+改动路径决定测试范围。`ci:memory` 仍然只触发 Wework macOS 内存门禁。
 
 功能分支不在普通 `push` 事件中运行重复 CI；创建 PR 后由 `pull_request` 事件验证。
 同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和
