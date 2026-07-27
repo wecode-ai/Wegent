@@ -32,8 +32,10 @@ import {
 } from '@/components/layout/workbenchPaneIdentity'
 import {
   cacheRuntimeConversationMessages,
+  cacheRuntimeConversationQueuedMessages,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMessages,
+  getRuntimeConversationQueuedMessages,
 } from './runtimeConversationCache'
 import type {
   Attachment,
@@ -1883,6 +1885,89 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-running-task-ids')).toHaveTextContent('none')
     )
+  })
+
+  test('settles guidance applied while its runtime pane is in the background', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-a',
+      workspacePath: '/workspace/project-alpha',
+    }
+    let backgroundStreamHandlers: ChatStreamHandlers | null = null
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (handlers.scope?.taskId === address.taskId) {
+        backgroundStreamHandlers = handlers
+      }
+      return vi.fn()
+    })
+    const runtimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: address.deviceId,
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: address.workspacePath ?? '',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: address.taskId,
+                  workspacePath: address.workspacePath ?? '',
+                  title: 'Runtime A',
+                  runtime: 'codex',
+                  running: true,
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      totalTasks: 1,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(runtimeWork),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'client-guidance-1',
+        content: '继续检查后台任务',
+        status: 'sending',
+        deliveryMode: 'guidance',
+        notice: '正在引导当前对话',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+    ])
+
+    renderWorkbench(<RuntimeRunningTasksProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-running-task-ids')).toHaveTextContent(address.taskId)
+    )
+    await waitFor(() => expect(backgroundStreamHandlers?.onGuidanceApplied).toBeDefined())
+
+    act(() => {
+      backgroundStreamHandlers?.onGuidanceApplied?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        guidanceId: 'client-guidance-1',
+        message: '继续检查后台任务',
+        appliedAtMs: Date.now(),
+      })
+    })
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
   })
 
   test('starts a fresh blank chat with a requested loaded skill selected', async () => {

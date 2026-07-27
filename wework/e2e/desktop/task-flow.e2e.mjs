@@ -30,6 +30,7 @@ const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be us
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const QUEUED_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_QUEUED_FOLLOW_UP'
+const BACKGROUND_GUIDANCE = 'WEWORK_DESKTOP_E2E_BACKGROUND_GUIDANCE'
 const UNSENT_BLANK_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_BLANK_TASK_DRAFT'
 const UNSENT_FIRST_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_FIRST_TASK_DRAFT'
 const UNSENT_SECOND_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_SECOND_TASK_DRAFT'
@@ -250,6 +251,7 @@ const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
 const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
+const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -499,6 +501,76 @@ async function verifyQueuedFollowUpNavigation({ composerSelector, control, proje
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
     'The queued follow-up could not be cleared after restoration'
   )
+}
+
+async function verifyBackgroundGuidanceNavigation({
+  composerSelector,
+  control,
+  projectRowSelector,
+}) {
+  const runningTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+    'The streaming task row was not available before sending guidance'
+  )
+  const runningTaskRowTestId = runningTaskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  assert.ok(runningTaskRowTestId, 'The streaming task row identity was not found')
+
+  await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
+  await control.command('click', '[data-testid="send-mode-menu-button"]')
+  await control.command('click', '[data-testid="guide-current-turn-option"]')
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: BACKGROUND_GUIDANCE,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const guidanceStatus = await control.command(
+    'getText',
+    '[data-testid="conversation-queue-panel"]'
+  )
+  assert.match(guidanceStatus, /引导中|Guiding/, 'The guidance did not enter its sending state')
+  await captureVerificationScreenshot(control, 'guidance-background-01-sending.png')
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The active guidance leaked into the other conversation'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  await captureVerificationScreenshot(control, 'guidance-background-02-other-task.png')
+
+  control.releaseInitialToolExecution()
+  await withTimeout(
+    control.awaitScenarioRequestCount('initial', 2),
+    UI_TIMEOUT_MS,
+    'The guided background task did not continue after its tool completed'
+  )
+
+  await ensureTaskRowVisible(control, runningTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: BACKGROUND_GUIDANCE,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.text.includes('引导中') &&
+      !snapshot.text.includes('Guiding'),
+    'The applied background guidance remained stuck in its sending state'
+  )
+  await captureVerificationScreenshot(control, 'guidance-background-03-applied.png')
 }
 
 async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
@@ -7405,11 +7477,13 @@ async function main() {
       )
       await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
       await control.command('press', 'body', { key: 'Escape' })
-      await verifyQueuedFollowUpNavigation({
-        composerSelector,
-        control,
-        projectRowSelector,
-      })
+      if (!GUIDANCE_BACKGROUND_ONLY) {
+        await verifyQueuedFollowUpNavigation({
+          composerSelector,
+          control,
+          projectRowSelector,
+        })
+      }
       if (QUEUE_NAVIGATION_ONLY) {
         await writeFile(
           join(resultDir, 'model-requests.json'),
@@ -7417,6 +7491,20 @@ async function main() {
           'utf8'
         )
         console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
+        return
+      }
+      await verifyBackgroundGuidanceNavigation({
+        composerSelector,
+        control,
+        projectRowSelector,
+      })
+      if (GUIDANCE_BACKGROUND_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework background guidance desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
     }
