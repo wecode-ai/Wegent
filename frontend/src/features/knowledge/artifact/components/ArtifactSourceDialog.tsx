@@ -76,7 +76,7 @@ export function ArtifactSourceDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('artifact.cancel')}
           </Button>
-          <Button onClick={handleApply} data-testid="artifact-source-apply">
+          <Button variant="primary" onClick={handleApply} data-testid="artifact-source-apply">
             {t('artifact.sourceDialog.apply')}
           </Button>
         </DialogFooter>

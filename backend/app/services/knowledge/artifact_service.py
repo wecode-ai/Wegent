@@ -387,12 +387,17 @@ class ArtifactService:
         changed: bool,
     ) -> KnowledgeArtifact:
         status = self._subtask_status(subtask)
+        activity_at: datetime | None = None
         if status == SubtaskStatus.PENDING.value:
             changed = changed or artifact.status != KnowledgeArtifactStatus.QUEUED
             artifact.status = KnowledgeArtifactStatus.QUEUED
         elif status == SubtaskStatus.RUNNING.value:
             changed = changed or artifact.status != KnowledgeArtifactStatus.RUNNING
             artifact.status = KnowledgeArtifactStatus.RUNNING
+            activity_at = self._subtask_datetime_as_utc(subtask.updated_at)
+            if activity_at > artifact.updated_at:
+                artifact.updated_at = activity_at
+                changed = True
         elif status == SubtaskStatus.COMPLETED.value:
             self._apply_completed_result(artifact, subtask)
             changed = True
@@ -415,7 +420,9 @@ class ArtifactService:
             changed = True
 
         if changed:
-            artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            artifact.updated_at = activity_at or datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
             return self.repository.update_execution(artifact) or artifact
         return artifact
 
@@ -547,13 +554,14 @@ class ArtifactService:
             KnowledgeDocument.is_active.is_(True),
         )
         if requested_ids:
-            documents = query.filter(KnowledgeDocument.id.in_(requested_ids)).all()
+            ordered_ids = list(dict.fromkeys(requested_ids))
+            documents = query.filter(KnowledgeDocument.id.in_(ordered_ids)).all()
             found_ids = {document.id for document in documents}
-            if found_ids != set(requested_ids):
+            if found_ids != set(ordered_ids):
                 raise ArtifactValidationError(
                     "Documents must belong to this knowledge base and be indexed"
                 )
-            return requested_ids
+            return ordered_ids
 
         document_ids = [
             row[0]

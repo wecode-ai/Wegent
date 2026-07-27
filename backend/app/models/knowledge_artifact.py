@@ -4,7 +4,11 @@
 
 """Database model for knowledge-base generated artifacts."""
 
-from sqlalchemy import JSON, Column, DateTime, Index, Integer, String, Text
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import JSON, DateTime, Index, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -16,30 +20,45 @@ class KnowledgeArtifactRecord(Base):
 
     __tablename__ = "knowledge_artifacts"
 
-    artifact_id = Column(String(36), primary_key=True)
-    knowledge_base_id = Column(Integer, nullable=False)
-    artifact_type = Column(String(32), nullable=False)
-    title = Column(String(255), nullable=False)
-    status = Column(String(32), nullable=False)
-    task_id = Column(big_integer_id_type(), nullable=True)
-    assistant_subtask_id = Column(big_integer_id_type(), nullable=True)
-    content = Column(Text, nullable=True)
-    source_document_ids = Column(JSON, nullable=False, default=list)
-    generation_config = Column(JSON, nullable=False, default=dict)
-    error_code = Column(String(64), nullable=True)
-    error_message = Column(Text, nullable=True)
-    user_id = Column(Integer, nullable=False)
-    schema_version = Column(Integer, nullable=False, default=1)
-    version = Column(Integer, nullable=False, default=1)
-    attempt = Column(Integer, nullable=False, default=1)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-    updated_at = Column(
+    artifact_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    task_id: Mapped[int | None] = mapped_column(big_integer_id_type(), nullable=True)
+    assistant_subtask_id: Mapped[int | None] = mapped_column(
+        big_integer_id_type(),
+        nullable=True,
+    )
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_document_ids: Mapped[list[int]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    generation_config: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=func.now(),
         onupdate=func.now(),
     )
-    completed_at = Column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
         Index(

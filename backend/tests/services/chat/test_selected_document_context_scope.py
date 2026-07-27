@@ -13,6 +13,7 @@ from app.services.chat.preprocessing.contexts import (
     _resolve_usable_selected_document_ids,
     prepare_contexts_for_chat,
 )
+from app.services.rag.sources import ExternalRefValidationError
 from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolsResult
 
 
@@ -117,6 +118,21 @@ def test_selected_document_context_is_validated_before_creation():
         )
 
 
+def test_selected_document_context_requires_database_session():
+    context = SimpleNamespace(
+        type="selected_documents",
+        data={"knowledge_base_id": 12, "document_ids": [101]},
+    )
+
+    with pytest.raises(RuntimeError, match="Database session is required"):
+        _prepare_contexts_for_creation(
+            contexts=[context],
+            subtask_id=21,
+            user_id=7,
+            db=None,
+        )
+
+
 @pytest.mark.asyncio
 async def test_selected_documents_replace_whole_kb_scope_in_runtime_request():
     selected_context = SimpleNamespace(
@@ -168,3 +184,47 @@ async def test_selected_documents_replace_whole_kb_scope_in_runtime_request():
             document_ids=[101],
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_selected_documents_without_valid_scopes_raise_domain_error():
+    selected_context = SimpleNamespace(
+        context_type="selected_documents",
+        status="ready",
+        type_data={"knowledge_base_id": "invalid", "document_ids": [101]},
+    )
+
+    with (
+        patch(
+            "app.services.chat.preprocessing.contexts.context_service.get_by_subtask",
+            return_value=[selected_context],
+        ),
+        patch(
+            "app.services.chat.preprocessing.contexts._process_attachment_contexts_for_message",
+            new=AsyncMock(return_value="prompt"),
+        ),
+        patch(
+            "app.services.chat.preprocessing.contexts._prepare_kb_tools_from_contexts",
+            return_value=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="system",
+                kb_meta_prompt="",
+            ),
+        ),
+        patch(
+            "app.services.chat.preprocessing.selected_documents.process_selected_documents_contexts",
+            return_value=("prompt", "system", []),
+        ),
+        pytest.raises(
+            ExternalRefValidationError,
+            match="no valid documents",
+        ),
+    ):
+        await prepare_contexts_for_chat(
+            db=MagicMock(),
+            user_subtask_id=21,
+            user_id=7,
+            message="prompt",
+            base_system_prompt="system",
+            task_id=31,
+        )

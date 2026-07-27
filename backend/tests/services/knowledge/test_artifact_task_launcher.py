@@ -147,6 +147,29 @@ async def test_dispatch_drains_emitter_when_execution_finishes():
     emitter.collect.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_dispatch_logs_collector_failure(caplog):
+    request = SimpleNamespace(task_id=31, subtask_id=41)
+    emitter = MagicMock()
+    emitter.collect = AsyncMock(side_effect=RuntimeError("collector failed"))
+
+    with (
+        patch(
+            "app.services.knowledge.artifact_task_launcher.SSEResultEmitter",
+            return_value=emitter,
+        ),
+        patch(
+            "app.services.knowledge.artifact_task_launcher.execution_dispatcher.dispatch",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await ArtifactTaskLauncher._dispatch_and_drain(request)
+
+    assert "Artifact result collection failed" in caplog.text
+    assert "task_id=31" in caplog.text
+    assert "subtask_id=41" in caplog.text
+
+
 def test_mind_map_prompt_requires_structured_json():
     prompt = ArtifactTaskLauncher._build_prompt(
         KnowledgeArtifactType.MIND_MAP,

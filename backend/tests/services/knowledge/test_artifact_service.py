@@ -313,7 +313,7 @@ def test_parse_mind_map_accepts_structured_json():
 
 def test_parse_mind_map_accepts_explanatory_text_around_json():
     content = """
-    已根据所选文档生成思维导图：
+    已根据所选文档生成思维导图
 
     {"schema_version":1,"root_id":"root","nodes":[
       {"id":"root","parent_id":null,"title":"主题"},
@@ -330,6 +330,19 @@ def test_parse_mind_map_accepts_explanatory_text_around_json():
 
     assert '"root_id":"root"' in result
     assert '"parent_id":"root"' in result
+
+
+def test_resolve_document_ids_deduplicates_in_request_order():
+    service, _, _ = build_service()
+    query = service.db.query.return_value.filter.return_value
+    query.filter.return_value.all.return_value = [
+        SimpleNamespace(id=101),
+        SimpleNamespace(id=102),
+    ]
+
+    result = service._resolve_document_ids(12, [102, 101, 102])
+
+    assert result == [102, 101]
 
 
 @pytest.mark.parametrize(
@@ -434,7 +447,7 @@ def test_resolve_mind_map_node_rejects_legacy_mermaid():
 
 
 @pytest.mark.asyncio
-async def test_reconcile_derives_stalled_without_changing_running_execution():
+async def test_reconcile_uses_recent_subtask_activity_for_running_execution():
     service, repository, _ = build_service()
     artifact = build_artifact()
     artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
@@ -454,9 +467,10 @@ async def test_reconcile_derives_stalled_without_changing_running_execution():
     reconciled = await service._reconcile(artifact)
 
     assert reconciled.status == KnowledgeArtifactStatus.RUNNING
-    assert reconciled.execution_health == KnowledgeArtifactExecutionHealth.STALLED
-    assert reconciled.can_retry is True
-    repository.update_execution.assert_not_called()
+    assert reconciled.execution_health == KnowledgeArtifactExecutionHealth.HEALTHY
+    assert reconciled.can_retry is False
+    assert reconciled.updated_at == service._subtask_datetime_as_utc(recent_at)
+    repository.update_execution.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -538,7 +552,7 @@ async def test_retry_claims_stalled_active_attempt_and_relaunches():
     artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
         minutes=11
     )
-    recent_at = mysql_naive_now() - timedelta(minutes=3)
+    recent_at = mysql_naive_now() - timedelta(minutes=11)
     repository.get.return_value = artifact
     subtask = SimpleNamespace(
         id=41,

@@ -320,6 +320,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         let nextTotalCount: number
 
         if (paginationEnabledRef.current || loadAllRef.current) {
+          // Server-only pagination takes precedence; loadAll is ignored in this mode.
           if (serverPaginationOnlyRef.current) {
             const response = await fetchServerPage(
               currentKbId,

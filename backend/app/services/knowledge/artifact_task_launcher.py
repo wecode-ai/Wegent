@@ -246,7 +246,7 @@ class ArtifactTaskLauncher:
             execution_dispatcher.dispatch(request, emitter=emitter)
         )
         collect_task = asyncio.create_task(emitter.collect())
-        dispatch_result, _collect_result = await asyncio.gather(
+        dispatch_result, collect_result = await asyncio.gather(
             dispatch_task,
             collect_task,
             return_exceptions=True,
@@ -257,4 +257,11 @@ class ArtifactTaskLauncher:
                 request.task_id,
                 request.subtask_id,
                 dispatch_result,
+            )
+        if isinstance(collect_result, BaseException):
+            logger.error(
+                "Artifact result collection failed: task_id=%s, subtask_id=%s, error=%s",
+                request.task_id,
+                request.subtask_id,
+                collect_result,
             )

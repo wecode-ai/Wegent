@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.schemas.knowledge_artifact import (
@@ -247,7 +247,11 @@ class KnowledgeArtifactRepository:
         except SQLAlchemyError as exc:
             self._raise_storage_error("delete all", str(knowledge_base_id), exc)
 
-    def _query(self, knowledge_base_id: int, artifact_id: str):
+    def _query(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+    ) -> Query[KnowledgeArtifactRecord]:
         return self.db.query(KnowledgeArtifactRecord).filter(
             KnowledgeArtifactRecord.knowledge_base_id == knowledge_base_id,
             KnowledgeArtifactRecord.artifact_id == artifact_id,

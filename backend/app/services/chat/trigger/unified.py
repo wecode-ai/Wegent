@@ -821,21 +821,13 @@ async def build_execution_request(
             preload_selected_kb_skill = (
                 task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
             )
-            if preload_selected_kb_skill:
-                request = await _process_contexts(
-                    db,
-                    request,
-                    context_subtask_id,
-                    user.id,
-                )
-            else:
-                request = await _process_contexts(
-                    db,
-                    request,
-                    context_subtask_id,
-                    user.id,
-                    preload_selected_kb_skill=False,
-                )
+            request = await _process_contexts(
+                db,
+                request,
+                context_subtask_id,
+                user.id,
+                preload_selected_kb_skill=preload_selected_kb_skill,
+            )
             if (
                 preload_selected_kb_skill
                 and device_id

@@ -7,6 +7,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, ChevronRight, FileText, Network } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -54,6 +64,7 @@ export function ArtifactPanel({
   const [createType, setCreateType] = useState<KnowledgeArtifactType>('briefing')
   const [createSessionKey, setCreateSessionKey] = useState(0)
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null)
+  const [pendingDeleteArtifactId, setPendingDeleteArtifactId] = useState<string | null>(null)
   const selectedArtifact = useMemo(
     () => items.find(item => item.artifact_id === selectedArtifactId) ?? null,
     [items, selectedArtifactId]
@@ -98,12 +109,6 @@ export function ArtifactPanel({
   const handleDelete = async () => {
     if (selectedArtifact) {
       await deleteArtifact(selectedArtifact.artifact_id)
-    }
-  }
-
-  const confirmDelete = (artifactId: string) => {
-    if (window.confirm(t('artifact.deleteConfirm'))) {
-      void deleteArtifact(artifactId)
     }
   }
 
@@ -214,11 +219,36 @@ export function ArtifactPanel({
               key={artifact.artifact_id}
               artifact={artifact}
               onOpen={() => setSelectedArtifactId(artifact.artifact_id)}
-              onDelete={() => confirmDelete(artifact.artifact_id)}
+              onDelete={() => setPendingDeleteArtifactId(artifact.artifact_id)}
             />
           ))}
         </div>
       )}
+      <AlertDialog
+        open={pendingDeleteArtifactId !== null}
+        onOpenChange={open => !open && setPendingDeleteArtifactId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('artifact.delete')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('artifact.deleteConfirm')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('artifact.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="artifact-delete-confirm"
+              onClick={() => {
+                if (!pendingDeleteArtifactId) return
+                const artifactId = pendingDeleteArtifactId
+                setPendingDeleteArtifactId(null)
+                void deleteArtifact(artifactId)
+              }}
+            >
+              {t('artifact.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {canManage && (
         <ArtifactCreateDialog

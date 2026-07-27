@@ -1573,7 +1573,7 @@ const MessageBubble = memo(
                             Boolean(onSaveToKnowledge) &&
                             !msg.isIncomplete &&
                             (msg.status === 'completed' || msg.subtaskStatus === 'COMPLETED') &&
-                            blockSaveableMarkdown.length > 0
+                            blockSaveableMarkdown.trim().length > 0
                           }
                           onSaveToKnowledge={onSaveToKnowledge}
                           tools={[

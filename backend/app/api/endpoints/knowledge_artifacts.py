@@ -32,6 +32,7 @@ from app.services.knowledge.artifact_service import (
 from app.services.knowledge.artifact_task_launcher import (
     ArtifactTaskConfigurationError,
 )
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter()
 T = TypeVar("T")
@@ -64,6 +65,7 @@ async def _execute(operation: Callable[[], Awaitable[T]]) -> T:
     response_model=KnowledgeArtifact,
     status_code=status.HTTP_201_CREATED,
 )
+@trace_async("create_artifact", "knowledge.artifact.api")
 async def create_artifact(
     knowledge_base_id: int,
     request: KnowledgeArtifactCreate,
@@ -79,6 +81,7 @@ async def create_artifact(
     "/{knowledge_base_id}/artifacts",
     response_model=KnowledgeArtifactListResponse,
 )
+@trace_async("list_artifacts", "knowledge.artifact.api")
 async def list_artifacts(
     knowledge_base_id: int,
     db: Session = Depends(get_db),
@@ -93,6 +96,7 @@ async def list_artifacts(
     "/{knowledge_base_id}/artifacts/{artifact_id}",
     response_model=KnowledgeArtifact,
 )
+@trace_async("get_artifact", "knowledge.artifact.api")
 async def get_artifact(
     knowledge_base_id: int,
     artifact_id: str,
@@ -108,6 +112,7 @@ async def get_artifact(
     "/{knowledge_base_id}/artifacts/{artifact_id}",
     response_model=KnowledgeArtifact,
 )
+@trace_async("rename_artifact", "knowledge.artifact.api")
 async def rename_artifact(
     knowledge_base_id: int,
     artifact_id: str,
@@ -126,6 +131,7 @@ async def rename_artifact(
     "/{knowledge_base_id}/artifacts/{artifact_id}/retry",
     response_model=KnowledgeArtifact,
 )
+@trace_async("retry_artifact", "knowledge.artifact.api")
 async def retry_artifact(
     knowledge_base_id: int,
     artifact_id: str,
@@ -141,6 +147,7 @@ async def retry_artifact(
     "/{knowledge_base_id}/artifacts/{artifact_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
+@trace_async("delete_artifact", "knowledge.artifact.api")
 async def delete_artifact(
     knowledge_base_id: int,
     artifact_id: str,

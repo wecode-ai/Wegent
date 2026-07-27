@@ -59,13 +59,14 @@ describe('DocumentPanel', () => {
   })
 
   it('forwards organization routing context to document preview', () => {
-    render(<DocumentPanel knowledgeBase={knowledgeBase} isOrganization />)
+    render(<DocumentPanel knowledgeBase={knowledgeBase} isOrganization canManageKb />)
 
     expect(mockDocumentDetailDialog).toHaveBeenLastCalledWith(
       expect.objectContaining({
         isOrganization: true,
         knowledgeBaseName: 'organization-kb',
         knowledgeBaseNamespace: 'organization-name',
+        canEdit: true,
       })
     )
   })

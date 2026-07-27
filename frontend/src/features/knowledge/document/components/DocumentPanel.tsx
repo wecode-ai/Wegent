@@ -20,6 +20,8 @@ import { DocumentDetailDialog } from './DocumentDetailDialog'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
+const EMPTY_DOCUMENT_IDS: number[] = []
+
 // Helper function to get initial width from localStorage
 const getInitialWidth = (
   storageKey: string,
@@ -70,6 +72,8 @@ interface DocumentPanelProps {
   mobileVisible?: boolean
   /** Whether the knowledge base uses organization-level public routes. */
   isOrganization?: boolean
+  /** Whether the user can edit existing documents. */
+  canManageKb?: boolean
   onAskArtifactNode?: (request: ArtifactPromptRequest) => void
 }
 
@@ -91,11 +95,12 @@ const STORAGE_KEY_COLLAPSED = 'kb-document-panel-collapsed'
 export function DocumentPanel({
   knowledgeBase,
   onDocumentSelectionChange,
-  selectedDocumentIds = [],
+  selectedDocumentIds = EMPTY_DOCUMENT_IDS,
   onNewChat,
   onCollapsedChange,
   mobileVisible = false,
   isOrganization = false,
+  canManageKb = false,
   onAskArtifactNode,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
@@ -306,6 +311,7 @@ export function DocumentPanel({
               onClick={toggleCollapsed}
               className="hidden h-8 w-8 p-0 lg:inline-flex"
               title={t('artifact.hideWorkshop')}
+              aria-label={t('artifact.hideWorkshop')}
               data-testid="knowledge-panel-collapse-button"
             >
               <PanelRightClose className="h-4 w-4" />
@@ -365,7 +371,7 @@ export function DocumentPanel({
         document={viewingDocument}
         knowledgeBaseId={knowledgeBase.id}
         kbType={knowledgeBase.kb_type}
-        canEdit={false}
+        canEdit={canManageKb}
         knowledgeBaseName={knowledgeBase.name}
         knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
         isOrganization={isOrganization}

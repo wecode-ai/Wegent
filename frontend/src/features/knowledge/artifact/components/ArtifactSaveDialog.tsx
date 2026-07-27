@@ -5,8 +5,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { uploadAttachment } from '@/apis/attachments'
-import { createDocument } from '@/apis/knowledge'
+import { createTextKnowledgeDocument } from '@/apis/knowledge'
 import { WysiwygEditor } from '@/components/common/WysiwygEditor'
 import { Button } from '@/components/ui/button'
 import {
@@ -58,20 +57,10 @@ export function ArtifactSaveDialog({
 
     setIsSaving(true)
     try {
-      const filename = normalizedTitle.toLowerCase().endsWith('.md')
-        ? normalizedTitle
-        : `${normalizedTitle}.md`
-      const file = new File([normalizedContent], filename, {
-        type: 'text/markdown',
-      })
-      const attachment = await uploadAttachment(file)
-      await createDocument(knowledgeBaseId, {
-        attachment_id: attachment.id,
-        name: attachment.filename || filename,
-        file_extension: 'md',
-        file_size: file.size,
-        source_type: 'file',
-        folder_id: 0,
+      await createTextKnowledgeDocument({
+        knowledge_base_id: knowledgeBaseId,
+        name: normalizedTitle,
+        content: normalizedContent,
       })
       onSaved()
       onOpenChange(false)
@@ -115,6 +104,7 @@ export function ArtifactSaveDialog({
             {t('artifact.cancel')}
           </Button>
           <Button
+            variant="primary"
             onClick={() => void handleSave()}
             disabled={isSaving || !title.trim() || !content.trim()}
             data-testid="artifact-save-submit"

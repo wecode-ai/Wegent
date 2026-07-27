@@ -225,16 +225,18 @@ export function KnowledgeDetailPanel({
         <div className="grid grid-cols-2 border-b border-border p-2 lg:hidden">
           <Button
             variant={mobileWorkspaceTab === 'chat' ? 'secondary' : 'ghost'}
-            size="sm"
+            className="h-11"
             onClick={() => setMobileWorkspaceTab('chat')}
+            data-testid="knowledge-mobile-chat-tab"
           >
             <MessageSquare className="mr-1.5 h-4 w-4" />
             {t('artifact.mobile.chat')}
           </Button>
           <Button
             variant={mobileWorkspaceTab === 'workshop' ? 'secondary' : 'ghost'}
-            size="sm"
+            className="h-11"
             onClick={() => setMobileWorkspaceTab('workshop')}
+            data-testid="knowledge-mobile-workshop-tab"
           >
             <Bot className="mr-1.5 h-4 w-4" />
             {t('artifact.aiWorkshop')}
@@ -288,6 +290,7 @@ export function KnowledgeDetailPanel({
           onCollapsedChange={setIsDocumentPanelCollapsed}
           mobileVisible={mobileWorkspaceTab === 'workshop'}
           isOrganization={groupInfo?.groupType === 'organization'}
+          canManageKb={canManageKb}
           onAskArtifactNode={request => {
             setArtifactPromptRequest(request)
             setMobileWorkspaceTab('chat')

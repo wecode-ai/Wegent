@@ -1061,10 +1061,9 @@ function ChatAreaContent({
       return
     }
     consumedExternalPromptRef.current = externalPromptRequest.requestId
+    onExternalPromptConsumed?.(externalPromptRequest.requestId)
     void sendOrConfirmPendingReplacement(externalPromptRequest.message, {
       artifactContext: externalPromptRequest.artifactContext,
-    }).finally(() => {
-      onExternalPromptConsumed?.(externalPromptRequest.requestId)
     })
   }, [externalPromptRequest, onExternalPromptConsumed, sendOrConfirmPendingReplacement])
 

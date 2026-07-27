@@ -16,8 +16,7 @@ eliminating the need to pass separate attachment_ids and knowledge_base_ids.
 """
 
 import logging
-from types import SimpleNamespace
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from fastapi import HTTPException, status
 from langchain_core.tools import BaseTool
@@ -25,6 +24,7 @@ from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.api.ws.events import ContextItem
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
@@ -45,6 +45,9 @@ from shared.prompts import (
 from shared.utils.attachment_block import build_attachment_header
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.models.task import TaskResource
 
 # Table context prompt template - will be dynamically generated with table info
 TABLE_PROMPT_TEMPLATE = """
@@ -650,7 +653,7 @@ def link_selected_documents_to_subtask(
     if not document_ids:
         return []
 
-    context = SimpleNamespace(
+    context = ContextItem(
         type=ContextType.SELECTED_DOCUMENTS.value,
         data={
             "knowledge_base_id": knowledge_base_id,
@@ -1108,7 +1111,7 @@ def _prepare_contexts_for_creation(
                         f"Prepared selected_documents context: kb_id={knowledge_base_id}, "
                         f"doc_ids={document_ids}"
                     )
-            except HTTPException:
+            except (HTTPException, RuntimeError):
                 raise
             except Exception as e:
                 logger.warning(f"Failed to prepare selected_documents context: {e}")
@@ -1461,9 +1464,8 @@ async def prepare_contexts_for_chat(
         if document_ids
     ]
     if selected_docs_contexts and not selected_scopes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Selected documents context has no valid documents",
+        raise ExternalRefValidationError(
+            "Selected documents context has no valid documents"
         )
 
     # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
