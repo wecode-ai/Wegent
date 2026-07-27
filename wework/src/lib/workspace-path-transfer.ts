@@ -135,6 +135,9 @@ export async function resolveDataTransferWorkspacePaths(
       source === 'clipboard'
         ? await readNativeClipboardWorkspacePaths(dataTransfer)
         : await readNativeDroppedWorkspacePaths(dataTransfer)
+    if (entries.length === 0) {
+      return { attachmentFiles: files, referenceEntries: [] }
+    }
     return partitionLocalWorkspaceTransfer(entries, files)
   } catch (error) {
     console.warn(`[Wework workspace transfer] native ${source} path inspection failed`, error)

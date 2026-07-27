@@ -112,6 +112,20 @@ describe('workspace path transfer', () => {
     })
   })
 
+  test('keeps pasted files as attachments when no native path can be resolved', async () => {
+    const file = new File(['archive'], 'feedback.zip', { type: 'application/zip' })
+    const data = clipboardData({}, [file])
+    mocks.invoke.mockResolvedValue([])
+
+    await expect(resolveDataTransferWorkspacePaths(data, 'clipboard', 'local')).resolves.toEqual({
+      attachmentFiles: [file],
+      referenceEntries: [],
+    })
+    expect(mocks.invoke).toHaveBeenCalledWith('read_clipboard_workspace_paths', {
+      fallbackPaths: [],
+    })
+  })
+
   test('reads bytes only for image paths when resolving stored local paths', async () => {
     const image = new File(['image'], 'preview.png', { type: 'image/png' })
     mocks.invoke.mockResolvedValue([
