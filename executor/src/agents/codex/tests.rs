@@ -98,6 +98,28 @@ fn normalize_reasoning_effort_uses_default_for_disabled_or_unknown_values() {
 }
 
 #[test]
+fn streaming_patch_overrides_enable_freeform_apply_patch() {
+    let overrides = codex_streaming_patch_config_overrides();
+    assert!(overrides.contains(&"features.apply_patch_streaming_events=true".to_owned()));
+    assert!(overrides.contains(&"features.apply_patch_freeform=true".to_owned()));
+    assert!(overrides.contains(&"suppress_unstable_features_warning=true".to_owned()));
+}
+
+#[test]
+fn persistent_app_server_enables_deferred_mcp_tool_search() {
+    let request_config = CodexLaunchConfig::default();
+
+    let config = persistent_codex_app_server_launch_config(&request_config);
+
+    assert!(config
+        .config_overrides
+        .contains(&"features.tool_search=true".to_owned()));
+    assert!(!config
+        .config_overrides
+        .contains(&"features.tool_search_always_defer_mcp_tools=false".to_owned()));
+}
+
+#[test]
 fn wework_codex_home_defaults_to_executor_home_codex() {
     let _lock = crate::test_env::lock();
     let home = unique_test_path("wework-codex-home-default");
@@ -272,6 +294,35 @@ fn custom_model_without_catalog_entry_uses_upstream_id() {
 }
 
 #[test]
+fn native_responses_upstream_preserves_custom_tools_by_default() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "gpt-5.6-sol",
+            "upstream_api_format": "openai-responses"
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert!(!upstream.convert_custom_tools);
+}
+
+#[test]
+fn function_tool_profile_enables_responses_tool_conversion() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "gateway-model",
+            "upstream_api_format": "openai-responses",
+            "tool_profile": "function"
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert!(upstream.convert_custom_tools);
+}
+
+#[test]
 fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
     let request = ExecutionRequest {
         model_config: json!({
@@ -427,6 +478,58 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
         assert_eq!(params["modelProvider"], codex_model_catalog::PROVIDER_ID);
     }
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn user_configured_provider_preserves_native_responses_tools() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("configured-provider-native-responses");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(
+        root.join("config.toml"),
+        "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1:3456/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nupstream_api_format = \"openai-responses\"\n",
+    )
+    .expect("config should be written");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
+
+    let upstream = configured_codex_provider("wework-e2e").expect("configured provider");
+
+    assert_eq!(upstream.api_format, "openai-responses");
+    assert_eq!(
+        upstream.request_url.as_deref(),
+        Some("http://127.0.0.1:3456/v1/responses")
+    );
+    assert!(!upstream.convert_custom_tools);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn user_configured_provider_converts_tools_for_non_responses_upstreams() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("configured-provider-anthropic");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(
+        root.join("config.toml"),
+        "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1:3456/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nupstream_api_format = \"anthropic-messages\"\n",
+    )
+    .expect("config should be written");
+    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
+
+    let upstream = configured_codex_provider("wework-e2e").expect("configured provider");
+
+    assert_eq!(upstream.api_format, "anthropic-messages");
+    assert_eq!(
+        upstream.request_url.as_deref(),
+        Some("http://127.0.0.1:3456/v1/messages")
+    );
+    assert!(upstream.convert_custom_tools);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -604,6 +707,12 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     assert!(launch_config
         .config_overrides
         .contains(&"goals=true".to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.apply_patch_freeform=true".to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.apply_patch_streaming_events=true".to_owned()));
     assert!(launch_config.model_provider.is_none());
     assert!(launch_config.effort.is_none());
     assert!(launch_config.summary.is_none());
@@ -917,6 +1026,27 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
         );
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_runtime_workspace_roots_are_applied_to_thread_and_turn_requests() {
+    let request = ExecutionRequest {
+        project_workspace_path: Some("/workspace/web".to_owned()),
+        runtime_workspace_roots: vec!["/workspace/web".to_owned(), "/workspace/api".to_owned()],
+        ..ExecutionRequest::default()
+    };
+    let launch_config = CodexLaunchConfig::default();
+    let thread_start = thread_start_params(&request, &launch_config);
+    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+    let turn_start = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+
+    for params in [thread_start, thread_resume, thread_fork, turn_start] {
+        assert_eq!(
+            params["runtimeWorkspaceRoots"],
+            json!(["/workspace/web", "/workspace/api"])
+        );
     }
 }
 

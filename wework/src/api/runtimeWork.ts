@@ -48,6 +48,8 @@ import type {
   RuntimeWorkspaceSearchResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
+  RuntimeLocalProjectUpsertRequest,
+  RuntimeLocalProjectUpsertResponse,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
@@ -145,6 +147,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/open', data)
+    },
+    upsertLocalRuntimeProject(
+      data: RuntimeLocalProjectUpsertRequest
+    ): Promise<RuntimeLocalProjectUpsertResponse> {
+      return client.post('/runtime-work/projects/local', data)
     },
     renameRuntimeWorkspace(
       data: RuntimeWorkspaceRenameRequest

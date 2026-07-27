@@ -92,7 +92,7 @@ export function EnvironmentInfoPopover({
   onManageTodo,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
+  const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
@@ -101,6 +101,7 @@ export function EnvironmentInfoPopover({
   const [floatingPopoverStyle, setFloatingPopoverStyle] = useState<CSSProperties>()
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const copiedWorkspacePathTimeoutRef = useRef<number | null>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
   const device = info.deviceId ? findWorkbenchDevice(devices, info.deviceId) : undefined
@@ -135,9 +136,12 @@ export function EnvironmentInfoPopover({
   const hasDiffStats = gitRepositoryAvailable && Boolean(info.additions || info.deletions)
   const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
   const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
-  const workspacePathDisplayName = info.workspacePath
-    ? getWorkspacePathDisplayName(info.workspacePath)
-    : ''
+  const workspacePaths =
+    info.workspaceRoots && info.workspaceRoots.length > 0
+      ? info.workspaceRoots
+      : info.workspacePath
+        ? [info.workspacePath]
+        : []
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
@@ -152,15 +156,26 @@ export function EnvironmentInfoPopover({
     }
   }
 
-  async function handleCopyWorkspacePath() {
-    if (!info.workspacePath) {
-      return
+  async function handleCopyWorkspacePath(workspacePath: string) {
+    await copyTextToClipboard(workspacePath)
+    if (copiedWorkspacePathTimeoutRef.current !== null) {
+      window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
     }
-
-    await copyTextToClipboard(info.workspacePath)
-    setWorkspacePathCopied(true)
-    window.setTimeout(() => setWorkspacePathCopied(false), 2000)
+    setCopiedWorkspacePath(workspacePath)
+    copiedWorkspacePathTimeoutRef.current = window.setTimeout(() => {
+      setCopiedWorkspacePath(current => (current === workspacePath ? null : current))
+      copiedWorkspacePathTimeoutRef.current = null
+    }, 2000)
   }
+
+  useEffect(
+    () => () => {
+      if (copiedWorkspacePathTimeoutRef.current !== null) {
+        window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
+      }
+    },
+    []
+  )
 
   function getCommitErrorMessage(error: unknown) {
     const fallback = t('workbench.environment_commit_failed', '提交失败')
@@ -307,46 +322,65 @@ export function EnvironmentInfoPopover({
                 data-testid="environment-device-section"
                 className="flex w-full min-w-0 flex-col gap-1"
               >
-                {info.workspacePath && (
-                  <div className="flex h-7 min-w-0 items-center gap-2">
-                    <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-                    <button
-                      type="button"
-                      data-testid="environment-workspace-path-button"
-                      onClick={handleCopyWorkspacePath}
-                      title={info.workspacePath}
-                      aria-label={`${t('workbench.environment_workspace_path')} · ${info.workspacePath}`}
-                      className="flex min-w-0 flex-1 items-center gap-1 rounded py-1 text-left hover:text-text-primary"
+                {workspacePaths.map((workspacePath, index) => {
+                  const copied = copiedWorkspacePath === workspacePath
+                  return (
+                    <div
+                      key={workspacePath}
+                      className="flex h-11 min-w-0 items-center gap-2 md:h-7"
+                      data-testid={`environment-workspace-root-row-${index}`}
                     >
-                      <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
-                      <span
-                        data-testid="environment-workspace-path"
-                        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-text-primary"
+                      <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                      <button
+                        type="button"
+                        data-testid={
+                          index === 0
+                            ? 'environment-workspace-path-button'
+                            : `environment-workspace-root-button-${index}`
+                        }
+                        onClick={() => void handleCopyWorkspacePath(workspacePath)}
+                        title={workspacePath}
+                        aria-label={`${t('workbench.environment_workspace_path')} · ${workspacePath}`}
+                        className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded py-1 text-left hover:text-text-primary md:min-h-0"
                       >
-                        {workspacePathDisplayName}
-                      </span>
-                      <span
-                        data-testid="environment-workspace-path-copy-icon"
-                        className={cn(
-                          'flex h-3.5 w-3.5 shrink-0 items-center justify-center',
-                          workspacePathCopied ? 'text-green-500' : 'text-text-muted'
-                        )}
-                        aria-hidden="true"
-                      >
-                        {workspacePathCopied ? (
-                          <Check className="h-3.5 w-3.5" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </span>
-                      {workspacePathCopied && (
-                        <span role="status" className="sr-only">
-                          {t('workbench.environment_copied')}
+                        <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
+                        <span
+                          data-testid={
+                            index === 0
+                              ? 'environment-workspace-path'
+                              : `environment-workspace-root-${index}`
+                          }
+                          className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-text-primary"
+                        >
+                          {getWorkspacePathDisplayName(workspacePath)}
                         </span>
-                      )}
-                    </button>
-                  </div>
-                )}
+                        <span
+                          data-testid={
+                            index === 0
+                              ? 'environment-workspace-path-copy-icon'
+                              : `environment-workspace-root-copy-icon-${index}`
+                          }
+                          className={cn(
+                            'flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                            copied ? 'text-green-500' : 'text-text-muted'
+                          )}
+                          aria-hidden="true"
+                        >
+                          {copied ? (
+                            <Check className="h-3.5 w-3.5" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                        {copied && (
+                          <span role="status" className="sr-only">
+                            {t('workbench.environment_copied')}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  )
+                })}
                 <div
                   data-testid="environment-execution-target-row"
                   title={`${executionTargetLabel} · ${executionLabel}; ${deviceTitle}`}

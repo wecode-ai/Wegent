@@ -686,6 +686,45 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
   })
 
+  test('does not overwrite the address draft while page-state polling continues', async () => {
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'bad.invalid' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockClear()
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Invalid address',
+      url: 'https://bad.invalid/',
+    })
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'https://replacement.test/' } })
+
+    await waitFor(
+      () => expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled(),
+      { timeout: 2500 }
+    )
+    expect(input).toHaveValue('https://replacement.test/')
+
+    fireEvent.blur(input)
+    expect(input).toHaveValue('https://bad.invalid/')
+  })
+
+  test('preserves an unsubmitted address draft when focus leaves before navigation', () => {
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'https://example.com/session-state' } })
+    fireEvent.blur(input)
+
+    expect(input).toHaveValue('https://example.com/session-state')
+  })
+
   test('hides the native browser when the browser panel becomes inactive', async () => {
     mockBrowserHostRect()
     const { rerender } = render(<WorkspaceBrowserPanel active />)
@@ -753,6 +792,53 @@ describe('WorkspaceBrowserPanel', () => {
         detail: { id: 'workspace-add-menu', occluded: false },
       })
     )
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        true,
+        'workspace-browser'
+      )
+    })
+  })
+
+  test('automatically hides the native browser while an intersecting dialog is open', async () => {
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    const dialogOverlay = document.createElement('div')
+    dialogOverlay.className = 'fixed inset-0 z-modal'
+    document.body.append(dialogOverlay)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        false,
+        'workspace-browser'
+      )
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    dialogOverlay.remove()
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(

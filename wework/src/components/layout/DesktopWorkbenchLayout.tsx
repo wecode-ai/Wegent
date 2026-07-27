@@ -98,6 +98,7 @@ export function DesktopWorkbenchLayout() {
     listGitRepositories: onListGitRepositories,
     listGitBranches: onListGitBranches,
     updateProjectName: onUpdateProjectName,
+    updateLocalRuntimeProject: onUpdateLocalRuntimeProject,
     removeProject: onRemoveProject,
     reorderRuntimeProjects: onReorderRuntimeProjects,
     setRuntimeProjectPinned: onSetRuntimeProjectPinned,
@@ -611,14 +612,11 @@ export function DesktopWorkbenchLayout() {
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onOpenPlugins={() => navigateTo('/plugins')}
       onRefreshDevices={onRefreshDevices}
-      onOpenBlankStandaloneProject={() => {
-        setBlankProjectDialogOpen(true)
-        setStandaloneWorkspaceDialogMode(null)
-      }}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
       }}
       onUpdateProjectName={onUpdateProjectName}
+      onUpdateLocalRuntimeProject={onUpdateLocalRuntimeProject}
       onRemoveProject={onRemoveProject}
       onReorderRuntimeProjects={onReorderRuntimeProjects}
       onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}

@@ -13,7 +13,7 @@ vi.mock('@/hooks/useConfiguredKeybinding', () => ({
 }))
 
 const modelExecutionMock = vi.hoisted(() => ({
-  getModelExecutionOverride: vi.fn(),
+  supportsResponsesApi: vi.fn().mockReturnValue(false),
 }))
 vi.mock('@/features/cloud-connection/modelExecution', () => modelExecutionMock)
 
@@ -100,7 +100,6 @@ describe('ModelSelector desktop layout', () => {
   beforeEach(() => {
     isMobileMock.mockReturnValue(false)
     configuredKeybindingMock.mockReturnValue(null)
-    modelExecutionMock.getModelExecutionOverride.mockReturnValue(undefined)
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: WINDOW_INNER_WIDTH,
@@ -137,7 +136,13 @@ describe('ModelSelector desktop layout', () => {
       />
     )
 
-    expect(screen.getByTestId('model-selector-width-measure')).toHaveClass('left-0', 'top-0')
+    expect(screen.getByTestId('model-selector-button')).toHaveClass('text-sm', 'font-normal')
+    expect(screen.getByTestId('model-selector-width-measure')).toHaveClass(
+      'left-0',
+      'top-0',
+      'text-sm',
+      'font-normal'
+    )
   })
 
   test('positions the menu to the left of the right workspace panel shell', async () => {

@@ -31,6 +31,12 @@ pub(crate) const ROUTE: &str = "/v1/codex-router/models";
 pub(crate) const PROVIDER_ID: &str = "wework-router";
 pub(crate) const KIMI_K3_MODEL: &str = "wework-kimi-k3";
 pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
+const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
+const GPT_56_TERRA_MODEL: &str = "gpt-5.6-terra";
+const GPT_56_LUNA_MODEL: &str = "gpt-5.6-luna";
+const WEWORK_GPT_56_SOL_MODEL: &str = "wework-gpt-5.6-sol";
+const WEWORK_GPT_56_TERRA_MODEL: &str = "wework-gpt-5.6-terra";
+const WEWORK_GPT_56_LUNA_MODEL: &str = "wework-gpt-5.6-luna";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_BASE_INSTRUCTIONS: &str =
     include_str!("../../../shared/assets/gptDefaultInstructions.md");
@@ -90,7 +96,16 @@ pub(crate) fn catalog() -> Value {
 }
 
 pub(crate) fn models() -> Vec<Value> {
-    let mut models = vec![kimi_k3_model_entry(), kimi_k27_model_entry()];
+    let mut models = vec![
+        kimi_k3_model_entry(),
+        kimi_k27_model_entry(),
+        gpt_56_sol_model_entry(),
+        gpt_56_terra_model_entry(),
+        gpt_56_luna_model_entry(),
+        wework_gpt_56_sol_model_entry(),
+        wework_gpt_56_terra_model_entry(),
+        wework_gpt_56_luna_model_entry(),
+    ];
     models.extend(read_custom_models());
     models
 }
@@ -260,6 +275,54 @@ fn kimi_k27_model_entry() -> Value {
         Value::String("Kimi K2.7 Code profile for stable agentic coding".to_owned());
     entry["context_window"] = Value::Number(262_144.into());
     entry["max_context_window"] = Value::Number(262_144.into());
+    entry
+}
+
+fn gpt_56_sol_model_entry() -> Value {
+    let mut entry = picker_model_entry(GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"), 1);
+    entry["description"] = Value::String("GPT 5.6 Sol profile for agentic coding".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn gpt_56_terra_model_entry() -> Value {
+    let mut entry = picker_model_entry(GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"), 2);
+    entry["description"] = Value::String("GPT 5.6 Terra profile for agentic coding".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn gpt_56_luna_model_entry() -> Value {
+    let mut entry = picker_model_entry(GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"), 3);
+    entry["description"] = Value::String("GPT 5.6 Luna profile for agentic coding".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn wework_gpt_56_sol_model_entry() -> Value {
+    let mut entry = model_entry(WEWORK_GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"));
+    entry["description"] = Value::String("Wework GPT 5.6 Sol compatibility profile".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn wework_gpt_56_terra_model_entry() -> Value {
+    let mut entry = model_entry(WEWORK_GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"));
+    entry["description"] = Value::String("Wework GPT 5.6 Terra compatibility profile".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn wework_gpt_56_luna_model_entry() -> Value {
+    let mut entry = model_entry(WEWORK_GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"));
+    entry["description"] = Value::String("Wework GPT 5.6 Luna compatibility profile".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
     entry
 }
 
@@ -461,6 +524,18 @@ fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&st
     entry
 }
 
+fn picker_model_entry(
+    slug: &str,
+    display_name: &str,
+    apply_patch_tool_type: Option<&str>,
+    priority: i64,
+) -> Value {
+    let mut entry = model_entry(slug, display_name, apply_patch_tool_type);
+    entry["visibility"] = Value::String("list".to_owned());
+    entry["priority"] = Value::Number(priority.into());
+    entry
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +555,60 @@ mod tests {
         assert_eq!(models[0]["supports_parallel_tool_calls"], false);
         assert_eq!(models[1]["slug"], KIMI_K27_MODEL);
         assert_eq!(models[1]["context_window"], 262_144);
+    }
+
+    #[test]
+    fn catalog_includes_wework_gpt_56_compatibility_profiles() {
+        let catalog = catalog();
+        let models = catalog["models"].as_array().expect("models array");
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|model| model["slug"].as_str())
+            .collect();
+        assert!(slugs.contains(&WEWORK_GPT_56_SOL_MODEL));
+        assert!(slugs.contains(&WEWORK_GPT_56_TERRA_MODEL));
+        assert!(slugs.contains(&WEWORK_GPT_56_LUNA_MODEL));
+
+        let sol = models
+            .iter()
+            .find(|model| model["slug"] == WEWORK_GPT_56_SOL_MODEL)
+            .expect("wework gpt-5.6-sol entry");
+        assert_eq!(sol["apply_patch_tool_type"], "freeform");
+        assert_eq!(sol["supports_parallel_tool_calls"], false);
+        assert_eq!(sol["visibility"], "none");
+    }
+
+    #[test]
+    fn catalog_lists_official_gpt_56_models_without_exposing_internal_profiles() {
+        let catalog = catalog();
+        let models = catalog["models"].as_array().expect("models array");
+
+        for (slug, priority) in [
+            (GPT_56_SOL_MODEL, 1),
+            (GPT_56_TERRA_MODEL, 2),
+            (GPT_56_LUNA_MODEL, 3),
+        ] {
+            let model = models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing official model {slug}"));
+            assert_eq!(model["visibility"], "list");
+            assert_eq!(model["priority"], priority);
+        }
+
+        for slug in [
+            KIMI_K3_MODEL,
+            KIMI_K27_MODEL,
+            WEWORK_GPT_56_SOL_MODEL,
+            WEWORK_GPT_56_TERRA_MODEL,
+            WEWORK_GPT_56_LUNA_MODEL,
+        ] {
+            let model = models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing internal profile {slug}"));
+            assert_eq!(model["visibility"], "none");
+        }
     }
 
     #[test]

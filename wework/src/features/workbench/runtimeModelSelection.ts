@@ -1,6 +1,7 @@
 import {
+  getCloudModelUpstreamApiFormat,
   resolveModelExecutionSelection,
-  supportsResponsesApi,
+  supportsCloudExecution,
 } from '@/features/cloud-connection/modelExecution'
 import { getDefaultModelOptions, normalizeModelOptionAliases } from '@/lib/model-ui'
 import type {
@@ -10,11 +11,10 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 
-const MODEL_EXECUTION_CONFIG_KEY = 'weworkExecution'
 export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
 export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUserId'
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
-export const CLOUD_MODEL_CATALOG_MODEL_ID_OPTION = 'weworkCloudModelCatalogModelId'
+export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = 'weworkCloudModelUpstreamApiFormat'
 
 function getStringConfigValue(
   config: Record<string, unknown> | null | undefined,
@@ -32,16 +32,6 @@ function getRawStringConfigValue(
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function getObjectConfigValue(
-  config: Record<string, unknown> | null | undefined,
-  key: string
-): Record<string, unknown> | null {
-  const value = config?.[key]
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
-}
-
 function getBooleanConfigValue(
   config: Record<string, unknown> | null | undefined,
   key: string
@@ -56,20 +46,11 @@ function modelKind(model: UnifiedModel): string {
   )
 }
 
-function modelExecutionSource(model: UnifiedModel): string {
-  const override = getObjectConfigValue(model.config, MODEL_EXECUTION_CONFIG_KEY)
-  const source = override?.source
-  return typeof source === 'string' ? source : ''
-}
-
 function isLocalModel(model: UnifiedModel): boolean {
-  return modelExecutionSource(model) === 'local' || model.provider === 'local'
+  return model.provider === 'local'
 }
 
 function isCloudModel(model: UnifiedModel): boolean {
-  const source = modelExecutionSource(model)
-  if (source === 'cloud') return true
-  if (source === 'local') return false
   return model.provider !== 'local'
 }
 
@@ -82,7 +63,7 @@ function selectionForModel(model: UnifiedModel): ModelSelectionConfig {
 }
 
 function isCodexCompatibleModel(model: UnifiedModel): boolean {
-  return supportsResponsesApi(model)
+  return supportsCloudExecution(model)
 }
 
 export function resolveAutomaticModel(models: UnifiedModel[]): UnifiedModel | null {
@@ -138,9 +119,11 @@ export function selectedModelExecutionFields(
     if (typeof executionModel.resourceUserId === 'number') {
       modelOptions[CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = String(executionModel.resourceUserId)
     }
-    if (selectedModel.modelId?.trim()) {
-      modelOptions[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION] = selectedModel.modelId.trim()
+    const upstreamApiFormat = getCloudModelUpstreamApiFormat(selectedModel)
+    if (upstreamApiFormat) {
+      modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
     }
+
     const contextWindow =
       selectedModel.config?.model_context_window ??
       selectedModel.config?.context_window ??

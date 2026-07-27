@@ -4,7 +4,9 @@ sidebar_position: 5
 
 # Coding workbench
 
-The right workspace displays project files, previews, and change reviews. Local file links in an AI response open the file and can jump to a referenced line.
+The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
+
+Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
 Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.
 
@@ -22,7 +24,7 @@ Conversation panes with a running Terminal or Wework built-in browser remain mou
 
 A conversation opens at its latest message the first time. Conversations that were at the bottom remain at the bottom, while conversations viewed in the middle restore their distance from the bottom. Long conversations mount only messages near the viewport and reuse measured message heights to limit WebView memory growth while scrolling.
 
-Message, scroll-position, and virtual-measurement caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
+Message, scroll-position, and measured-height caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
 
 ## Use selected response text
 

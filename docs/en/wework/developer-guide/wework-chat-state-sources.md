@@ -8,20 +8,20 @@ This document records the state sources for the Wework chat path. The goal is to
 
 ## Core Principles
 
-1. `useWorkbenchPaneSession` is the state boundary for a chat pane.
-2. `paneSession.status` is the only chat runtime status entry point for layouts.
-3. `runtimePaneMessages.ts` only converts runtime stream events into message actions.
-4. `runtimePaneStatus.ts` derives runtime status from messages, the local send phase, and the runtime work execution snapshot.
-5. Compatibility fields `paneSession.sending` and `paneSession.waitingForAssistant` must be derived from `paneSession.status`; they must not become independent state again.
+1. `RuntimeTaskMachine` is the aggregate root for one task's execution, turn, Goal, and unread lifecycle; its reducer is an internal transition implementation.
+2. `RuntimeTaskLifecycleStore` owns all task machines, routes executor/UI/transcript events, and is the only frontend source for task lifecycle state.
+3. `RuntimeTaskLifecycleProvider` only exposes Store subscriptions to React. It does not own, cache, or derive lifecycle state.
+4. `useWorkbenchPaneSession` owns pane content such as messages and queued input, but reads all task and turn lifecycle facts from the Store.
+5. `runtimePaneStatus.ts` is a read-only projection from a lifecycle snapshot to existing pane presentation fields. It must not infer execution or turn state independently.
 
 ## State Source Inventory
 
 | State                                 | Single Source                                                                                                          | Derived Values / Consumers                                                                                         | Maintenance Rule                                                                                                                                                                                                                            |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Message content and status            | `useWorkbenchPaneSession.messages`                                                                                     | `MessageList`, export, file changes, request user input                                                            | Update only through transcript reset or `reduceWorkbenchMessages`                                                                                                                                                                           |
-| Whether the assistant is streaming    | `paneSession.status.isAssistantStreaming`                                                                              | Desktop/mobile composer pause button, close-task guard                                                             | Derived from the latest `assistant + streaming` message; layouts must not scan messages directly                                                                                                                                            |
-| Local send phase                      | `sendPhase: idle/submitting/awaiting_assistant`                                                                        | `status.isSubmitting`, `status.isWaitingForAssistantIndicator`, compatibility fields `sending/waitingForAssistant` | Use `submitting` while the API call is in flight, `awaiting_assistant` after runtime accepts the request, and `idle` after start/done/error or a settled transcript                                                                         |
-| Current runtime execution snapshot    | `getRuntimePaneTaskExecution(state.runtimeWork, address)`                                                              | `status.taskExecution`, queue advancement, `currentRuntimeTaskRunning`                                             | Read only from `RuntimeWorkListResponse.localTasks[].running/status`                                                                                                                                                                        |
+| Whether the assistant turn is active  | `RuntimeTaskLifecycleStore` task snapshot `turn.phase`                                                                 | Streaming message presentation and debug state                                                                     | Live stream and transcript events are routed into the task machine; layouts and pane code must not independently infer turn activity from messages                                                                                          |
+| Local send phase                      | `RuntimeTaskLifecycleStore` task snapshot `turn.phase`                                                                 | `status.isSubmitting`, `status.isWaitingForAssistantIndicator`, compatibility fields `sending/waitingForAssistant` | Optimistic send, acknowledgement, rejection, stream start, and settlement are events owned by the task machine                                                                                                                              |
+| Current runtime running snapshot      | Executor `running` input routed through `RuntimeTaskLifecycleStore`                                                    | Lifecycle snapshot, sidebar, composer, message area, queue advancement                                             | The executor field is the authoritative external fact; the lifecycle Store is the only frontend access point and keeps optimistic transitions in the same machine                                                                           |
 | Whether the pane is busy              | `paneSession.status.isBusy`                                                                                            | Whether the current pane queue may advance                                                                         | Composed from `isSubmitting`, `isAwaitingAssistant`, `isAssistantStreaming`, and `taskExecution.running`                                                                                                                                    |
 | Queued messages                       | `queuedMessages`                                                                                                       | `ConversationQueuePanel`, automatic next follow-up send                                                            | Mutate only inside the pane session; advancement must use `status.canSendQueuedMessage`                                                                                                                                                     |
 | Guidance messages                     | `queuedMessages` + local user messages in `messages`                                                                   | `ConversationQueuePanel`, `MessageList`                                                                            | When guidance sending starts, mark the queued message as `sending` and immediately insert the local user message at the current streaming assistant position; do not wait for the guidance RPC to return                                    |
@@ -43,6 +43,67 @@ This document records the state sources for the Wework chat path. The goal is to
 6. When opening a historical task, `runtime.tasks.transcript.contextUsage` only restores the current task's `projectChat.contextUsage`; UI code must not add extra fallbacks that rescan messages or task lists.
 7. `chat:done`, `chat:error`, and cancellation events settle the assistant message through the reducer and refresh the work list.
 8. If runtime work and message state disagree, do not settle it with fallback logic; fix the missing stream event, transcript data, or reducer action.
+
+During send startup, Wework may first receive an empty transcript with
+`source: pending_local_task` and `running: false` before the real runtime task
+appears in the task list. While the turn remains `submitting` or
+`awaiting_assistant` and no assistant has settled, that transcript must not
+settle the executor or turn. The later task-list `running: true` snapshot is
+authoritative once the executor has started. An explicit `running: false`
+received while an assistant is already streaming remains terminal and must
+settle normally; false snapshots must not be ignored indiscriminately.
+
+A Codex provider may send only an `item/completed` snapshot containing the
+complete assistant text, without any `item/agentMessage/delta`. If the current
+final response has not received a delta, the executor must convert that text
+into one `response.output_text.delta`. If deltas were already received, it
+must ignore the completed snapshot to avoid duplicate text. Temporary chats
+use ephemeral threads and cannot depend on `thread/read(includeTurns)` to
+recover live text that was dropped.
+
+When the first message carries a pending Goal seed, both the send entry point
+and pane initialization must write the seed status into
+`RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
+may return no Goal before persistence completes; while the seed still belongs
+to the current task, that empty result must not clear the lifecycle Goal
+status. This lets an active Goal continue to constrain task lifecycle even
+when stream settlement races ahead of Goal persistence.
+
+## Local Multi-Root Projects and Task Ownership
+
+A local Codex project may contain an ordered list of workspace roots. The first
+entry is the primary root used by the composer's default workspace and the
+execution request `cwd`. The complete deduplicated root list is project-level
+execution context and must not be reduced to the current workspace.
+
+Multi-root context follows this primary path:
+
+1. Wework reads the runtime project's `roots`. It derives roots from
+   `deviceWorkspaces` only when that field is absent, then sends
+   `runtimeProjectKey`, `runtimeProjectName`, and `runtimeWorkspaceRoots` when
+   creating a task or sending a message.
+2. Local services write those fields into execution request metadata.
+3. The executor persists the project key and roots in `RuntimeTaskLink`, then
+   passes `runtimeWorkspaceRoots` to Codex `thread/start`, `thread/fork`,
+   `thread/resume`, and `turn/start`.
+4. If a follow-up request omits project metadata, the executor restores it from
+   the existing `RuntimeTaskLink`, so the same thread and a reopened
+   conversation keep the same project scope.
+5. Codex global thread assignment uses the explicit project key before path
+   matching, preventing one multi-root project from splitting into several
+   sidebar projects.
+
+The latest local `runtimeWork` snapshot is authoritative for local task
+presentation. An asynchronous cloud refresh must merge with the latest local
+snapshot when the refresh completes; it must not overwrite a newly created
+task with state captured before the request began. **New chat** clears only the
+current chat pane. It does not archive or delete the previous task, which must
+remain under its project and be reopenable. The environment popover must list
+and copy every project root, not only the primary root.
+
+These rules apply only to local Codex projects. Remote and cloud tasks retain
+their existing single-workspace selection semantics; local multi-root support
+must not implicitly broaden a remote execution scope.
 
 ### Web Search Tool Blocks
 
@@ -75,6 +136,22 @@ the window before its pause request arrives. If pausing the goal fails, Wework m
 current response as stopped. While goal details are still loading, the stop flow must use the
 `goalStatus` from the task-list snapshot to decide whether to pause; it must not skip persistence
 merely because the goal bar has not rendered yet.
+
+## Task Execution, Continuity, and Unread State
+
+The sidebar running indicator, composer state, message state, and unread reminder represent different facts and must not share one ambiguous "active" boolean:
+
+| State          | Definition                                                                        | UI contract                                                                                                  |
+| -------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Running        | `task.running === true`                                                           | Show the sidebar spinner, pause in the current pane composer, and "Thinking" in the message area             |
+| Turn streaming | `task.running === true` with a streaming assistant message                        | Use only for streaming-message lifecycle; it must not create a second running definition for other UI states |
+| Settled unread | The task transitions from running to not running while it is not the current task | Show the blue unread dot in the sidebar and optionally send one completion notification                      |
+
+`running` is the executor's authoritative task-lifecycle state, not the state of one individual turn. While an Active Goal continuation loop is alive, the executor must continue reporting `running: true` even when no assistant message is streaming between two automatic turns. The sidebar spinner, composer pause button, and message-area "Thinking" therefore remain visible without creating unread state. If the executor restarts without restoring that execution loop, it must report `running: false` even when the persisted `goalStatus` is still `active`; Wework must not infer execution from the Goal status. A stale streaming message from the previous turn must not be revived.
+
+A terminal task event must immediately mark the local task as `running: false` and refresh the work list. If a concurrent refresh returns an older `running: true` snapshot, the reducer must preserve the locally settled state until the same task receives a new start event; a stale response must not relight the spinner, pause button, or "Thinking". Execution identity is `deviceId + taskId`. `workspacePath` is routing metadata that may change between creation, refresh, and transcript recovery, so it must not participate in execution-state identity.
+
+Unread is created only when the current Wework renderer observes a `running: true -> false` edge. It must not infer execution history from free-form `status` text or persisted records; local persistence stores only unread results that were already created, never running state. A task whose persisted Goal remains `active` while the executor is no longer running is waiting for recovery and must not become completion-unread because the application or executor restarted. The current task and every running task must be excluded from visible unread state. Opening a task clears its unread state.
 
 ## Composer Mode Indicators
 
@@ -149,12 +226,13 @@ The message area stores each task's reading position by `conversationKey`. Durin
 - Composer disabled state no longer reads independent `paneSession.sending`; it reads `paneSession.status.isSubmitting`.
 - Message waiting indicators no longer combine `sending || waitingForAssistant`; they read `paneSession.status.isWaitingForAssistantIndicator`.
 - Queue advancement no longer uses scattered `currentRuntimeTask && !busy`; it reads `paneSession.status.canSendQueuedMessage`.
-- `currentRuntimeTaskRunning` is derived through `getRuntimePaneTaskExecution`, avoiding another implementation of runtime running lookup.
-- `runtimePaneMessages.ts` no longer owns active assistant lookup; status queries are centralized in `runtimePaneStatus.ts`.
+- Sidebar, composer, and message-area task status all subscribe to `RuntimeTaskLifecycleStore`; none reads `runtimeWork.running` directly.
+- Optimistic send state and executor-confirmed state use the same task machine, so send acknowledgement and stream races cannot create separate frontend authorities.
+- `runtimePaneStatus.ts` only projects the lifecycle snapshot into compatibility presentation fields; it does not maintain task or turn state.
 
 ## Maintenance Rules
 
-- Add new chat runtime state by extending `RuntimePaneStatus` first, then read it from layouts or components.
-- Do not recompute `assistant streaming`, `busy`, or `can send queued message` in layouts.
-- Do not add independent `isSending`, `isRunning`, or `isStreaming` React state unless it represents a new external fact source and this document is updated.
+- Add new task lifecycle state or transitions to `RuntimeTaskMachine` and its internal reducer first, then expose a Store event and derived snapshot field.
+- Do not recompute task running, turn activity, busy, or unread state in layouts, pane hooks, or components.
+- Do not add independent `isSending`, `isRunning`, or `isStreaming` React state. New external facts must enter through Store event routing.
 - When runtime work and message state disagree, do not override display inside UI components and do not add fallback settlement; fix the primary path.

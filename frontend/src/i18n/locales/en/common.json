@@ -1266,6 +1266,8 @@
     "supports_image_input_hint": "When enabled, the model is marked as able to understand image content directly.",
     "supports_video_input": "Supports video understanding",
     "supports_video_input_hint": "When enabled, the model is marked as able to understand video content directly.",
+    "wework_available": "Available in wework",
+    "wework_available_hint": "When enabled, the wework desktop client can use this model.",
     "rerank_top_n": "Top N Results",
     "rerank_top_n_hint": "Number of top results to return",
     "rerank_return_documents": "Return Documents",

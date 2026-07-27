@@ -8,20 +8,20 @@ sidebar_position: 18
 
 ## 核心原则
 
-1. `useWorkbenchPaneSession` 是聊天 pane 的状态边界。
-2. `paneSession.status` 是布局层判断聊天运行态的唯一入口。
-3. `runtimePaneMessages.ts` 只负责把 runtime stream 事件转换成 message action，不再承载 UI 状态判断。
-4. `runtimePaneStatus.ts` 负责从消息、发送阶段和 runtime work 执行快照派生运行态。
-5. 兼容字段 `paneSession.sending` 和 `paneSession.waitingForAssistant` 只能由 `paneSession.status` 派生，不能再独立写入。
+1. `RuntimeTaskMachine` 是单个任务执行、turn、Goal 和未读生命周期的聚合根；reducer 只是状态机内部的转换实现。
+2. `RuntimeTaskLifecycleStore` 管理所有任务状态机并路由 executor、UI 和 transcript 事件，是前端任务生命周期的唯一信源。
+3. `RuntimeTaskLifecycleProvider` 只把 Store 订阅适配给 React，不持有、不缓存、也不派生生命周期状态。
+4. `useWorkbenchPaneSession` 管理消息、排队输入等 pane 内容，但任务和 turn 生命周期事实全部读取 Store。
+5. `runtimePaneStatus.ts` 只是把生命周期快照投影到现有 pane 展示字段的只读适配层，不能自行推断执行或 turn 状态。
 
 ## 状态信源清单
 
 | 状态                          | 唯一信源                                                                                           | 派生值/使用方                                                                                          | 维护规则                                                                                                                                                                        |
 | ----------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 消息内容与消息状态            | `useWorkbenchPaneSession.messages`                                                                 | `MessageList`、导出、文件变更、request user input                                                      | 只能通过 transcript reset 或 `reduceWorkbenchMessages` 更新                                                                                                                     |
-| assistant 是否正在输出        | `paneSession.status.isAssistantStreaming`                                                          | 桌面/移动 composer 的暂停按钮、关闭任务提示                                                            | 由 `messages` 中最后一个 `assistant + streaming` 消息派生，布局层不能自行扫描                                                                                                   |
-| 本地发送阶段                  | `sendPhase: idle/submitting/awaiting_assistant`                                                    | `status.isSubmitting`、`status.isWaitingForAssistantIndicator`、兼容字段 `sending/waitingForAssistant` | API 调用中为 `submitting`，请求被 runtime 接受后为 `awaiting_assistant`，收到 start/done/error 或 transcript 已结算后回到 `idle`                                                |
-| 当前 runtime 执行快照         | `getRuntimePaneTaskExecution(state.runtimeWork, address)`                                          | `status.taskExecution`、队列推进、`currentRuntimeTaskRunning`                                          | 只能从 `RuntimeWorkListResponse.localTasks[].running/status` 读取                                                                                                               |
+| assistant turn 是否活跃       | `RuntimeTaskLifecycleStore` 中任务快照的 `turn.phase`                                              | 消息流式展示、调试状态                                                                                 | 实时 stream 与 transcript 事件统一路由到任务状态机；布局和 pane 代码不能再从消息自行推断 turn 是否活跃                                                                          |
+| 本地发送阶段                  | `RuntimeTaskLifecycleStore` 中任务快照的 `turn.phase`                                              | `status.isSubmitting`、`status.isWaitingForAssistantIndicator`、兼容字段 `sending/waitingForAssistant` | 乐观发送、确认、拒绝、stream 开始与结算都作为任务状态机事件处理                                                                                                                 |
+| 当前 runtime 运行快照         | executor 的 `running` 输入经 `RuntimeTaskLifecycleStore` 路由                                      | 生命周期快照、侧栏、composer、消息区、队列推进                                                         | executor 字段是权威外部事实；生命周期 Store 是前端唯一访问入口，乐观转换也由同一状态机维护                                                                                      |
 | pane 是否忙碌                 | `paneSession.status.isBusy`                                                                        | 当前 pane 队列是否可推进                                                                               | 由 `isSubmitting`、`isAwaitingAssistant`、`isAssistantStreaming`、`taskExecution.running` 合成                                                                                  |
 | 队列消息                      | `queuedMessages`                                                                                   | `ConversationQueuePanel`、自动发送下一条 follow-up                                                     | 只在 pane session 内增删改；推进条件必须使用 `status.canSendQueuedMessage`                                                                                                      |
 | 引导消息                      | `queuedMessages` + `messages` 中的本地 user message                                                | `ConversationQueuePanel`、`MessageList`                                                                | 发送引导时先把队列消息标记为 sending，再立即在当前 streaming assistant 位置插入本地 user message；不能等引导 RPC 返回后再插入                                                   |
@@ -43,6 +43,52 @@ sidebar_position: 18
 6. 打开历史任务时，`runtime.tasks.transcript.contextUsage` 只恢复当前任务的 `projectChat.contextUsage`，不能通过额外 UI fallback 重新扫描消息或任务列表。
 7. `chat:done`、`chat:error`、取消事件通过 reducer 结算 assistant 消息，并触发 work list 刷新。
 8. 如果 runtime work 与消息状态不一致，不做兜底结算；必须修正缺失的 stream event、transcript 数据或 reducer action。
+
+发送启动期间可能先收到 `source: pending_local_task`、空消息且
+`running: false` 的本地 transcript，此时真实 runtime task 尚未出现在任务列表中。
+当 turn 仍处于 `submitting` 或 `awaiting_assistant` 且没有已结算 assistant 时，这个
+transcript 不能结算 executor 或 turn；后续任务列表的 `running: true` 才是已启动
+executor 的权威快照。流式 assistant 已明确存在时返回的 `running: false` 仍然是终态，
+必须正常结算，不能把所有 false 快照一概忽略。
+
+Codex provider 可能只发送带完整正文的 `item/completed`，而不发送
+`item/agentMessage/delta`。executor 必须在当前最终回复尚未接收任何 delta 时把该完整
+正文转换为一次 `response.output_text.delta`；已接收 delta 时则忽略完成快照，避免
+重复正文。临时聊天是 ephemeral thread，不能依赖 `thread/read(includeTurns)` 补回
+丢失的实时文本。
+
+首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
+写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
+空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
+stream 结算先于 Goal 持久化完成，active Goal 也能继续约束任务生命周期。
+
+## 本地多目录项目与任务归属
+
+本地 Codex 项目可以包含一个有序的根目录列表。第一项是主根，用于 composer
+默认工作区和执行请求的 `cwd`；完整、去重后的根目录列表是项目级执行上下文，不能
+缩减为当前 workspace。
+
+多目录上下文按以下主链路传递：
+
+1. Wework 从 runtime project 的 `roots` 读取目录；仅在该字段缺失时才从
+   `deviceWorkspaces` 派生，并在创建任务和发送消息时传递
+   `runtimeProjectKey`、`runtimeProjectName` 和 `runtimeWorkspaceRoots`。
+2. local services 将这些字段写入 execution request metadata。
+3. executor 把项目 key 和根目录列表保存到 `RuntimeTaskLink`，并在 Codex
+   `thread/start`、`thread/fork`、`thread/resume` 和 `turn/start` 请求中传递
+   `runtimeWorkspaceRoots`。
+4. follow-up 请求缺少项目 metadata 时，executor 从现有 `RuntimeTaskLink`
+   恢复这些字段，保证同一 thread 和重新打开后的会话继续使用相同项目范围。
+5. Codex 全局线程归属优先使用显式 project key，再进行路径匹配，避免一个多目录
+   项目在侧栏中被拆成多个项目。
+
+`runtimeWork` 的本地快照是本地任务展示的当前事实。异步云端刷新必须与刷新完成时的
+最新本地快照合并，不能用请求发起前捕获的旧状态覆盖新建任务。用户选择“新建会话”
+只清空当前聊天 pane，不归档或删除原任务；原任务继续显示在项目下，并可重新打开。
+环境弹层必须展示和复制项目的全部根目录，而不是只显示主根。
+
+这些规则只改变本地 Codex 项目。远程和云端任务仍遵循其原有的单 workspace 选择
+语义，不能因为本地多目录支持而隐式扩大远程执行范围。
 
 ### 网页搜索工具块
 
@@ -73,6 +119,22 @@ pane 切换到其他任务时才清除该状态。
 turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal 暂停失败，不得继续把
 当前回复标记为已停止。Goal 详情仍在加载时，停止流程必须使用任务列表快照中的
 `goalStatus` 判断是否需要暂停，不能因为尚未渲染 Goal 条而跳过持久化。
+
+## 任务运行、持续与未读
+
+左侧运行标记、输入框状态、消息状态和未读提醒表达的是不同事实，不能共用一个模糊的“活跃”布尔值：
+
+| 状态       | 判定                                                    | UI 约束                                                                        |
+| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 运行中     | `task.running === true`                                 | 左侧显示运行 spinner；当前 pane 的 composer 显示暂停能力；消息区显示“正在思考” |
+| 单轮输出中 | `task.running === true` 且存在 streaming assistant 消息 | 只用于流式消息生命周期，不得成为侧栏、composer 或未读状态的另一套运行判定      |
+| 已结束未读 | 任务从“运行中”转换为“不再运行”，且不是当前打开任务      | 左侧显示蓝色未读点，并可触发一次完成通知                                       |
+
+`running` 是 executor 对任务级执行生命周期的权威判断，不是当前单个 turn 的状态。Active Goal 的 continuation loop 仍存活时，即使两个自动 turn 之间暂时没有 streaming assistant 消息，executor 也必须继续报告 `running: true`，因此左侧 spinner、composer 暂停按钮和消息区“正在思考”保持可见且不产生未读。executor 重启后若没有恢复该执行循环，则即使持久化的 `goalStatus` 仍为 `active`，也必须报告 `running: false`；Wework 不得自行把它推断为运行中。前一轮残留的 streaming 消息不能复活。
+
+任务终止事件应立即把本地任务标记为 `running: false`，并刷新 work list。若并发刷新返回了更早的 `running: true` 快照，reducer 必须保留本地已结算状态，直到同一任务收到新的启动事件，不能让旧响应把 spinner、暂停按钮或“正在思考”重新点亮。同一任务的执行身份由 `deviceId + taskId` 决定；`workspacePath` 是可能在创建、刷新和 transcript 恢复间变化的路由元数据，不能参与运行状态身份判断。
+
+未读只在当前 Wework renderer 生命周期内观察到 `running: true -> false` 边沿时产生，不根据 `status` 文本或持久化记录猜测运行历史；本地持久化只保存已经产生的未读结果，不保存运行态。持久化 Goal 仍为 `active` 但 executor 已不再运行的任务属于待恢复状态，不得因应用或 executor 重启产生完成未读。当前任务和所有运行中任务都必须从可见未读集合排除；打开任务会清除其未读状态。
 
 ## Composer 模式提示
 
@@ -147,12 +209,13 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 - composer 禁用状态不再读取独立 `paneSession.sending`，统一读取 `paneSession.status.isSubmitting`。
 - 消息等待指示不再拼接 `sending || waitingForAssistant`，统一读取 `paneSession.status.isWaitingForAssistantIndicator`。
 - 队列推进不再使用散落的 `currentRuntimeTask && !busy`，统一读取 `paneSession.status.canSendQueuedMessage`。
-- `currentRuntimeTaskRunning` 改为通过 `getRuntimePaneTaskExecution` 派生，避免重复实现 runtime running 读取逻辑。
-- `runtimePaneMessages.ts` 删除了 active assistant 查询逻辑，状态查询集中到 `runtimePaneStatus.ts`。
+- 侧栏、composer 和消息区的任务状态全部订阅 `RuntimeTaskLifecycleStore`，没有模块直接读取 `runtimeWork.running`。
+- 乐观发送态与 executor 确认态使用同一个任务状态机，发送确认和 stream 竞态不会产生多个前端权威源。
+- `runtimePaneStatus.ts` 只把生命周期快照投影成兼容展示字段，不维护任务或 turn 状态。
 
 ## 后续维护规则
 
-- 新增聊天运行态时，先扩展 `RuntimePaneStatus`，再由布局或组件读取。
-- 不要在布局层重新计算 `assistant streaming`、`busy`、`can send queued message`。
-- 不要新增独立的 `isSending`、`isRunning`、`isStreaming` React state；除非它是新的外部事实信源，并且写入本表。
+- 新增任务生命周期状态或转换时，先扩展 `RuntimeTaskMachine` 及其内部 reducer，再暴露 Store 事件与派生快照字段。
+- 不要在布局、pane hook 或组件中重新计算任务运行、turn 活跃、busy 或未读状态。
+- 不要新增独立的 `isSending`、`isRunning`、`isStreaming` React state；新的外部事实必须通过 Store 事件路由进入状态机。
 - runtime work 与消息状态冲突时，不允许在 UI 组件里临时覆盖显示，也不允许新增 fallback 结算；必须修主路径。

@@ -481,6 +481,8 @@ sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   - 使用可见性切换按钮 (👁️) 显示/隐藏密钥
 - **Base URL**: 可选的自定义 API 端点 (用于代理或自托管服务)
 
+选择的提供商会保存为 `spec.protocol`，对应的 API 格式（例如 OpenAI Chat Completions 保存为 `chat/completions`，OpenAI Responses 保存为 `responses`）会保存为 `spec.apiFormat`。如果界面提供 **Wework 可用** 开关，它会控制 `spec.isWeworkAvailable`，只有标记为可用的模型才会分发到 wework 桌面客户端。
+
 #### 步骤 3: 测试连接
 
 在保存之前，使用 **测试连接** 功能验证您的配置:

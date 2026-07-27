@@ -333,6 +333,11 @@ class ModelSpec(BaseModel):
         None,
         description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
     )
+    isWeworkAvailable: Optional[bool] = Field(
+        None,
+        description="Whether this model is available in the wework desktop client. "
+        "Only models with this field set to True are returned to wework.",
+    )
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
         description="Declared multimodal capabilities (supportsImage / supportsVideo). "

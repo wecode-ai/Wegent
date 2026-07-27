@@ -1,6 +1,7 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
+import type { CloudProject } from '@/api/deliveries'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import { displaySkillNameFromName, localSkillTestId } from './composerMentions'
 
@@ -41,11 +42,24 @@ export type ComposerMentionCandidate =
       enabled: boolean
       reference: string
       searchAliases: string[]
+      statusLabel?: string
+      project?: CloudProject
     }
 
 export type ComposerSkillMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'skill' }>
 export type ComposerAppMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'app' }>
 export type ComposerCloudMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'cloud' }>
+
+export function matchesMentionQuery(candidate: ComposerMentionCandidate, query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return true
+  const description = candidate.description || ''
+  return (
+    candidate.title.toLowerCase().includes(normalizedQuery) ||
+    description.toLowerCase().includes(normalizedQuery) ||
+    candidate.searchAliases.some(alias => alias.toLowerCase().includes(normalizedQuery))
+  )
+}
 
 export function displaySkillName(skill: LocalDeviceSkill): string {
   return displaySkillNameFromName(skill.name)

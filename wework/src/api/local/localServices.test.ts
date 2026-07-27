@@ -85,9 +85,9 @@ describe('createLocalAppServices', () => {
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
-          name: 'gpt-5.5',
+          name: 'gpt-5.6-sol',
           type: 'runtime',
-          modelId: 'gpt-5.5',
+          modelId: 'gpt-5.6-sol',
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
         expect.objectContaining({
@@ -106,6 +106,7 @@ describe('createLocalAppServices', () => {
       ]),
     })
     const modelIds = models.data.map(model => model.modelId)
+    expect(modelIds).not.toContain('gpt-5.5')
     expect(modelIds).not.toContain('Sol')
     expect(modelIds).not.toContain('Terra')
     expect(modelIds).not.toContain('Luna')
@@ -121,7 +122,7 @@ describe('createLocalAppServices', () => {
     ])
     const preferences = {
       wework_new_chat_model_selection: {
-        modelName: 'gpt-5.5',
+        modelName: 'gpt-5.4',
         modelType: 'runtime' as const,
         options: { collaborationMode: 'plan' },
       },
@@ -439,6 +440,9 @@ describe('createLocalAppServices', () => {
       teamId: 0,
       deviceId: 'local-device',
       workspacePath: '/Users/me/project',
+      runtimeProjectKey: 'product',
+      runtimeProjectName: 'Product',
+      runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
       taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
@@ -474,6 +478,9 @@ describe('createLocalAppServices', () => {
       teamId: 0,
       deviceId: 'device-uuid',
       workspacePath: '/Users/me/project',
+      runtimeProjectKey: 'product',
+      runtimeProjectName: 'Product',
+      runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
       taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
@@ -540,6 +547,9 @@ describe('createLocalAppServices', () => {
         execution_target_type: 'local',
         workspace_source: 'local_path',
         project_workspace_path: '/Users/me/project',
+        runtime_project_key: 'product',
+        runtime_project_name: 'Product',
+        runtime_workspace_roots: ['/Users/me/project', '/Users/me/api'],
         new_session: true,
         collaborationMode: 'plan',
         skill_names: ['planner'],
@@ -777,7 +787,7 @@ describe('createLocalAppServices', () => {
       },
       message: 'continue',
       clientMessageId: 'runtime-local-pane-1',
-      modelId: 'gpt-5.5',
+      modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
         reasoning: 'extra_high',
@@ -839,7 +849,7 @@ describe('createLocalAppServices', () => {
           client_user_message_id: 'runtime-local-pane-1',
           model_config: expect.objectContaining({
             model: 'openai',
-            model_id: 'gpt-5.5',
+            model_id: 'gpt-5.4',
             api_format: 'responses',
             protocol: 'openai-responses',
             runtime_config: {
@@ -911,7 +921,6 @@ describe('createLocalAppServices', () => {
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
-        weworkCloudModelCatalogModelId: 'gpt-5.6-luna',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
       },
@@ -936,7 +945,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model_id: 'shared-model',
-            codex_catalog_model_id: 'gpt-5.6-luna',
+            codex_catalog_model_id: 'wework-gpt-5.6-sol',
             base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
             api_key: 'cloud-login-token',
             default_headers: {
@@ -967,7 +976,7 @@ describe('createLocalAppServices', () => {
       },
       message: 'edited question',
       messageId: 'user-last',
-      modelId: 'gpt-5.5',
+      modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
         reasoning: 'high',
@@ -997,7 +1006,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model: 'openai',
-            model_id: 'gpt-5.5',
+            model_id: 'gpt-5.4',
             api_format: 'responses',
             protocol: 'openai-responses',
           }),
@@ -1275,6 +1284,7 @@ describe('createLocalAppServices', () => {
         model: 'openai',
         model_id: 'shared-model',
         api_format: 'responses',
+        tool_profile: 'custom',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
@@ -1295,13 +1305,68 @@ describe('createLocalAppServices', () => {
     )
     expect(payload.executionRequest.mcp_servers).toEqual([
       {
-        name: 'wegent-delivery',
+        name: 'wegent_delivery',
         type: 'streamable-http',
         url: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
         headers: { Authorization: 'Bearer cloud-login-token' },
       },
     ])
     expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
+  })
+
+  test('builds cloud model gateway config with upstream_api_format for chat-completions protocol', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'shared-model',
+        api_format: 'responses',
+        upstream_api_format: 'openai-chat-completions',
+        tool_profile: 'custom',
+        protocol: 'openai-responses',
+        base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        api_key: 'cloud-login-token',
+        default_headers: {
+          'X-Wegent-Model-Type': 'user',
+          'X-Wegent-Model-Namespace': 'default',
+          'X-Wegent-Model-User-Id': '42',
+        },
+        runtime_config: {
+          codex: {
+            use_user_config: false,
+            configured: true,
+          },
+        },
+      })
+    )
   })
 
   test('injects trusted cloud collaboration context without changing the visible message', async () => {
@@ -1314,7 +1379,7 @@ describe('createLocalAppServices', () => {
     const additionalContext = {
       cloudCollaboration: {
         kind: 'application' as const,
-        value: 'Current TODO: WEG-1. Use the wegent-delivery MCP tools when needed.',
+        value: 'Current TODO: WEG-1. Use the wegent_delivery MCP tools when needed.',
       },
     }
 
@@ -1349,6 +1414,31 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.prompt).toContain('Current TODO: WEG-1')
   })
 
+  test('activates project-space capabilities for a generic cloud reference', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-project-space',
+      runtime: 'codex',
+      message: '[$项目空间](cloud://projects) 帮我创建一个新项目',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    const prompt = payload.executionRequest.prompt as string
+    expect(prompt).toContain('[projectSpaceCapability]')
+    expect(prompt).toContain('wegent_delivery is a server id, not a callable tool')
+    expect(prompt).toContain('create_cloud_project')
+    expect(prompt).toContain('do not use list_mcp_resources to discover tools')
+  })
+
   test('adds configured local proxy to local runtime execution requests', async () => {
     saveLocalProxyUrl('http://127.0.0.1:7890')
     const request = vi.fn().mockResolvedValue({ accepted: true })
@@ -1366,7 +1456,7 @@ describe('createLocalAppServices', () => {
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
-      modelId: 'gpt-5.5',
+      modelId: 'gpt-5.4',
     })
 
     const createPayload = request.mock.calls.find(
@@ -1448,7 +1538,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model: 'openai',
-            model_id: 'gpt-5.5',
+            model_id: 'gpt-5.6-sol',
             api_format: 'responses',
             protocol: 'openai-responses',
           }),

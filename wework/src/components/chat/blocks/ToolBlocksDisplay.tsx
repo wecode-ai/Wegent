@@ -20,7 +20,11 @@ import {
   isRequestUserInputBlock,
   type RequestUserInputBlock,
 } from '../requestUserInputMessages'
-import { ToolBlockItem, type FileEditDuration } from './ToolBlockItem'
+import {
+  ToolBlockItem,
+  type FileEditDuration,
+  type FileEditDurationsByBlock,
+} from './ToolBlockItem'
 import {
   RequestUserInputCard,
   RequestUserInputSummary,
@@ -57,6 +61,7 @@ type ProcessingDisplayItem =
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
+  fileEditDurationBlocks?: ProcessingBlock[]
   isStreaming: boolean
   // Wall-clock epoch ms when the turn started (the assistant turn's
   // created_at). Used as the duration anchor so the elapsed time survives a
@@ -81,6 +86,7 @@ interface ToolBlocksDisplayProps {
 
 export function ToolBlocksDisplay({
   blocks,
+  fileEditDurationBlocks,
   isStreaming,
   startedAt,
   forceExpanded = false,
@@ -178,7 +184,10 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
-  const fileEditDurations = useMemo(() => getFileEditDurations(blocks), [blocks])
+  const fileEditDurations = useMemo(
+    () => getFileEditDurations(fileEditDurationBlocks ?? blocks, rows),
+    [blocks, fileEditDurationBlocks, rows]
+  )
   const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
   const hasRequestUserInput = displayItems.some(item => item.type === 'request_user_input')
   const hasActiveContextCompaction = blocks.some(
@@ -489,7 +498,7 @@ function LiveProcessingPreview({
   rows: ProcessingDisplayRow[]
   showThinking: boolean
   onOpenWorkspaceFile?: (path: string) => void
-  fileEditDurations: ReadonlyMap<string, FileEditDuration>
+  fileEditDurations: FileEditDurationsByBlock
   stateKey?: string
 }) {
   const { t } = useTranslation('chat')
@@ -565,7 +574,7 @@ function LiveProcessingPreviewRow({
   shimmer: boolean
   durationStartedAt?: number
   durationEndAt?: number
-  fileEditDurations: ReadonlyMap<string, FileEditDuration>
+  fileEditDurations: FileEditDurationsByBlock
   onOpenWorkspaceFile?: (path: string) => void
   onExpandedChange: (rowId: string, expanded: boolean) => void
   stateKey?: string
@@ -620,23 +629,34 @@ function LiveProcessingPreviewRow({
   )
 }
 
-function getFileEditDurations(blocks: ProcessingBlock[]): ReadonlyMap<string, FileEditDuration> {
-  const edits = blocks.flatMap(block => {
-    if (block.type !== 'tool' || !isFileEditToolName(block.toolName)) return []
-    const completedAt = block.completedAt
-    if (completedAt === undefined) {
-      return []
-    }
-    return getFileInputPaths(block).map(path => ({
-      path: normalizeActivityPath(path),
-      startedAt: block.createdAt,
-      completedAt,
-    }))
-  })
-  const durations = new Map<string, FileEditDuration>()
+function getFileEditDurations(
+  blocks: ProcessingBlock[],
+  rows: ProcessingDisplayRow[]
+): FileEditDurationsByBlock {
+  type FileEditActivity = FileEditDuration & {
+    path: string
+    isRunning: boolean
+  }
+  const edits: FileEditActivity[] = []
+  const sourceDurations = new Map<string, ReadonlyMap<string, FileEditDuration>>()
+  const durations = new Map<string, ReadonlyMap<string, FileEditDuration>>()
 
   blocks.forEach(block => {
+    if (block.type === 'tool' && isFileEditToolName(block.toolName)) {
+      edits.push(
+        ...getFileInputPaths(block).map(path => ({
+          id: block.id,
+          path: normalizeActivityPath(path),
+          startedAt: block.createdAt,
+          completedAt: block.completedAt,
+          isRunning: block.status !== 'done' && block.status !== 'error',
+        }))
+      )
+      return
+    }
     if (block.type !== 'file_changes') return
+
+    const blockDurations = new Map<string, FileEditDuration>()
     block.fileChanges.files.forEach(file => {
       const filePath = normalizeActivityPath(file.path)
       const matches = edits.filter(
@@ -646,11 +666,28 @@ function getFileEditDurations(blocks: ProcessingBlock[]): ReadonlyMap<string, Fi
           filePath.endsWith(`/${edit.path}`)
       )
       if (matches.length === 0) return
-      durations.set(file.path, {
-        startedAt: Math.min(...matches.map(match => match.startedAt)),
-        completedAt: Math.max(...matches.map(match => match.completedAt)),
+      const durationMatch = matches.at(-1)
+      if (!durationMatch) return
+      blockDurations.set(file.path, {
+        id: durationMatch.id,
+        startedAt: durationMatch.startedAt,
+        ...(!durationMatch.isRunning && durationMatch.completedAt !== undefined
+          ? { completedAt: durationMatch.completedAt }
+          : {}),
       })
     })
+    if (blockDurations.size > 0) sourceDurations.set(block.id, blockDurations)
+  })
+
+  rows.forEach(row => {
+    if (row.type !== 'block' || row.block.type !== 'file_changes') return
+    const blockDurations = new Map<string, FileEditDuration>()
+    row.sourceBlockIds.forEach(sourceBlockId => {
+      sourceDurations.get(sourceBlockId)?.forEach((duration, path) => {
+        blockDurations.set(path, duration)
+      })
+    })
+    if (blockDurations.size > 0) durations.set(row.block.id, blockDurations)
   })
 
   return durations

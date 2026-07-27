@@ -2,6 +2,10 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import { updateAppPreferences } from '@/tauri/appPreferences'
 import type { InstalledPlugin, LocalDeviceSkill } from '@/types/api'
 import './i18n'
@@ -104,7 +108,6 @@ const workbenchValue: WorkbenchContextValue = {
     listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '/', entries: [] }),
     readWorkspaceTextFile: vi.fn(),
   },
-  currentRuntimeTaskRunning: false,
   isAwaitingAssistantStart: false,
   isRuntimeTranscriptLoading: false,
   runtimeTranscriptHasMoreBefore: false,
@@ -337,6 +340,15 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: () => mockViewport.isMobile,
 }))
+
+function renderApp() {
+  const lifecycleStore = new RuntimeTaskLifecycleStore('app-plugins-test')
+  return render(
+    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+      <App />
+    </RuntimeTaskLifecycleProvider>
+  )
+}
 
 function mockSystemSkillsFetch() {
   const skillsResponse = {
@@ -685,7 +697,7 @@ describe('App plugins route', () => {
   test('opens the plugins page from the desktop sidebar', async () => {
     window.history.pushState({}, '', '/')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(screen.getByTestId('plugins-button'))
 
@@ -712,7 +724,7 @@ describe('App plugins route', () => {
     } as Response)
     window.history.pushState({}, '', '/sites')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
       '站点功能尚未推出'
@@ -778,7 +790,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByText('云端站点')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
@@ -816,7 +828,7 @@ describe('App plugins route', () => {
     })
     window.history.pushState({}, '', '/sites')
 
-    render(<App />)
+    renderApp()
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
 
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
@@ -852,7 +864,7 @@ describe('App plugins route', () => {
     vi.mocked(workbenchValue.startNewSkillChat).mockResolvedValue(true)
     window.history.pushState({}, '', '/sites')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByTestId('sites-create-button'))
 
@@ -880,7 +892,7 @@ describe('App plugins route', () => {
     ])
     window.history.pushState({}, '', '/sites')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByTestId('sites-create-button'))
 
@@ -906,7 +918,7 @@ describe('App plugins route', () => {
     )
     window.history.pushState({}, '', '/sites')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByTestId('sites-create-button'))
 
@@ -950,7 +962,7 @@ describe('App plugins route', () => {
     }
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByTestId('runtime-local-task-row-plugin-task'))
 
@@ -969,7 +981,7 @@ describe('App plugins route', () => {
   test('preserves the workbench composer while visiting plugins', async () => {
     window.history.pushState({}, '', '/')
 
-    render(<App />)
+    renderApp()
 
     const composer = await screen.findByTestId('chat-message-input')
     fireEvent.input(composer, { target: { textContent: '保留这段草稿' } })
@@ -986,7 +998,7 @@ describe('App plugins route', () => {
   test('renders the plugins page on direct /plugins visit', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     const pluginsDragRegion = within(screen.getByTestId('plugins-topbar-drag-region')).getByTestId(
       'macos-titlebar-drag-region'
@@ -1007,7 +1019,7 @@ describe('App plugins route', () => {
   test('collapses and expands the desktop sidebar on plugin routes', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
@@ -1027,7 +1039,7 @@ describe('App plugins route', () => {
     localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
@@ -1039,7 +1051,7 @@ describe('App plugins route', () => {
   test('collapses and expands the desktop sidebar on plugin management route', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
@@ -1054,7 +1066,7 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
@@ -1068,7 +1080,7 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
@@ -1084,7 +1096,7 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
@@ -1094,7 +1106,7 @@ describe('App plugins route', () => {
   test('navigates to plugin management from the manage button', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(screen.getByTestId('plugins-manage-button'))
 
@@ -1111,7 +1123,7 @@ describe('App plugins route', () => {
   test('renders plugin management on direct /plugins/manage visit', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
@@ -1125,7 +1137,7 @@ describe('App plugins route', () => {
   test('keeps installed plugin switch knobs anchored inside the track', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: 'MCP 1' }))
     const switchKnob = (await screen.findByTestId('installed-mcp-toggle-7')).querySelector('span')
@@ -1136,7 +1148,7 @@ describe('App plugins route', () => {
   test('toggles installed MCPs from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: 'MCP 1' }))
     expect(await screen.findByText('Custom Docs MCP')).toBeInTheDocument()
@@ -1154,7 +1166,7 @@ describe('App plugins route', () => {
   test('creates custom MCPs from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
     await userEvent.click(screen.getByTestId('plugins-create-mcp-option'))
@@ -1193,7 +1205,7 @@ describe('App plugins route', () => {
   test('configures provider token and installs provider MCPs', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: '市场 1' }))
     expect(screen.getByText('MCP Router')).toBeInTheDocument()
@@ -1226,7 +1238,7 @@ describe('App plugins route', () => {
   test('toggles installed system skills from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
 
@@ -1245,7 +1257,7 @@ describe('App plugins route', () => {
   test('uninstalls system skills from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
     expect(await screen.findByText('wehot')).toBeInTheDocument()
@@ -1262,7 +1274,7 @@ describe('App plugins route', () => {
   test('shows and uninstalls personal skills from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
     expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
@@ -1289,7 +1301,7 @@ describe('App plugins route', () => {
   test('opens the management create menu and uploads a personal skill', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
     expect(screen.getByTestId('plugins-create-skill-option')).toBeInTheDocument()

@@ -70,9 +70,13 @@ Conversation rendering still uses `WorkbenchMessage` values produced from transc
 
 ### Pane Cache and Resource Lifetimes
 
-The desktop workbench caches at most 10 ordinary panes and evicts them in least-recently-used order. An inactive pane that is no longer running releases transcript messages, historical DOM, pagination ranges, navigation indexes, and processing expansion state; returning to it reloads from the original runtime transcript. Historical messages far from the viewport in the current pane also retain only a height placeholder and restore their contents when scrolled near the viewport.
+The desktop workbench caches at most 10 ordinary panes and evicts them in least-recently-used order. An inactive pane that is no longer running releases transcript messages, historical DOM, pagination ranges, navigation indexes, and processing expansion state; returning to it reloads from the original runtime transcript.
 
-Terminal and built-in browser sessions are stateful active resources and do not follow ordinary pane eviction. A pane remains mounted while it owns a Terminal or browser tab so its terminal process and page session survive task switches. After the corresponding resources close, the pane is subject to the ordinary cache limit again. Changes to this boundary must continue to cover ordinary-pane LRU eviction, resource-pane retention, historical-message windowing, and the desktop memory E2E.
+Tauri conversations use one `@tanstack/react-virtual` message-row virtualizer for every conversation size instead of switching implementations at a message-count threshold. The virtualizer uses `anchorTo: 'end'` to anchor the list at its end, while scroll snapshots are consistently represented as the distance from the viewport bottom to the list bottom. Its shared `ResizeObserver` measures mounted message rows. While the user remains at the bottom, height changes preserve the end distance. After the user scrolls upward, the list instead records the first visible text scroll anchor and its viewport offset, then restores that text anchor when streaming content is remeasured. This keeps bottom-follow behavior without allowing the text being read to drift upward during streaming. The rendered range keeps 2 rows of overscan on each side. Message rows no longer use `IntersectionObserver` as a second windowing layer; an individual oversized Markdown response retains independent chunk windowing to bound the DOM inside one visible message. Remaining `IntersectionObserver` usage covers independent behavior such as bottom-follow state and attachment previews.
+
+Each conversation stores only a bounded TanStack measurement snapshot alongside its distance-from-bottom scroll snapshot. Changes to this path must cover short and long conversations, streaming bottom-follow behavior, text-anchor stability after scrolling upward, historical-position restoration, reopen after switching away, forced mounting for turn navigation, and cache eviction when a task is archived.
+
+Terminal and built-in browser sessions are stateful active resources and do not follow ordinary pane eviction. A pane remains mounted while it owns a Terminal or browser tab so its terminal process and page session survive task switches. After the corresponding resources close, the pane is subject to the ordinary cache limit again. Changes to this boundary must continue to cover ordinary-pane LRU eviction, resource-pane retention, message-row virtualization, and the desktop memory E2E.
 
 ## Local Codex Streaming Logs
 
@@ -142,6 +146,8 @@ Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS incl
 - Whether `domNodeCount` keeps growing.
 - Dense `longtask` or `event-loop-lag` events.
 - Repeated `slow-react-commit` events.
+
+The workbench's full-height sidebar and content-wide top bar should use ordinary semantic backgrounds instead of applying `backdrop-filter` to large persistent surfaces. These filters can cause WebKit to retain additional graphics backing stores for the entire region. When investigating Web Content memory, compare `physical_footprint_kib` before and after the change at the same window size and page state, and exclude the temporary reclaimable high-water mark created by Web Inspector heap snapshots from the steady-state baseline.
 
 Manual marks can also be added:
 
