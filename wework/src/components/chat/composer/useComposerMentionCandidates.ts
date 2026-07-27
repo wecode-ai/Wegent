@@ -8,6 +8,7 @@ import {
   displayAppName,
   displaySkillName,
   displaySkillSource,
+  matchesMentionQuery,
   skillReference,
   type ComposerAppMentionCandidate,
   type ComposerCloudMentionCandidate,
@@ -65,18 +66,10 @@ export function useComposerMentionCandidates(
     () => [...cloudCandidates, ...skillCandidates, ...appCandidates],
     [appCandidates, cloudCandidates, skillCandidates]
   )
-  const filteredMentionCandidates = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    if (!normalizedQuery) return mentionCandidates
-    return mentionCandidates.filter(candidate => {
-      const description = candidate.description || ''
-      return (
-        candidate.title.toLowerCase().includes(normalizedQuery) ||
-        description.toLowerCase().includes(normalizedQuery) ||
-        candidate.searchAliases.some(alias => alias.toLowerCase().includes(normalizedQuery))
-      )
-    })
-  }, [mentionCandidates, query])
+  const filteredMentionCandidates = useMemo(
+    () => mentionCandidates.filter(candidate => matchesMentionQuery(candidate, query)),
+    [mentionCandidates, query]
+  )
 
   return { appCandidates, skillCandidates, mentionCandidates, filteredMentionCandidates }
 }

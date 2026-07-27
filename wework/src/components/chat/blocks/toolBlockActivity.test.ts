@@ -222,7 +222,7 @@ describe('toolBlockActivity', () => {
     })
   })
 
-  test('merges consecutive file changes into a single display row', () => {
+  test('merges consecutive file changes into a single display row with a stable id', () => {
     const rows = buildProcessingDisplayRows([
       fileChangesBlock('file-changes-1', 'src/config.ts', 3, 3),
       fileChangesBlock('file-changes-2', 'src/config.ts', 3, 0, 1770000000001),
@@ -231,7 +231,7 @@ describe('toolBlockActivity', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       type: 'block',
-      id: 'file-changes-file-changes-1-file-changes-2',
+      id: 'file-changes-file-changes-1',
       block: {
         type: 'file_changes',
         fileChanges: {

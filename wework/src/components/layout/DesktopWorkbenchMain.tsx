@@ -27,6 +27,7 @@ import {
 import {
   createLocalAttachmentWorkspaceTarget,
   createLocalFileWorkspaceTarget,
+  resolveProjectRuntimeWorkspaceTargets,
 } from '@/lib/workspace-target'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
@@ -69,6 +70,7 @@ import { DesktopWindowControls } from './DesktopWindowControls'
 import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getLocalPathKind } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
@@ -137,6 +139,25 @@ const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
+
+function cloudLoopItemStatusLabel(
+  status: CloudLoopItem['status'],
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  switch (status) {
+    case 'inbox':
+      return t('workbench.cloud_todo_status_inbox', '收集箱')
+    case 'pending':
+      return t('workbench.cloud_todo_status_pending', '待处理')
+    case 'in_progress':
+      return t('workbench.cloud_todo_status_in_progress', '进行中')
+    case 'in_review':
+      return t('workbench.cloud_todo_status_in_review', '待评审')
+    case 'completed':
+      return t('workbench.cloud_todo_status_completed', '已完成')
+  }
+}
+
 function cloudItemAsLocalWorkItem(
   item: CloudLoopItem,
   runtimeTask: RuntimeTaskAddress
@@ -513,6 +534,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     pendingProjectForTask(currentRuntimeTask)
   )
   const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
+  const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
+  const [cloudActionNotice, setCloudActionNotice] = useState<string | null>(null)
   const [cloudMentionState, setCloudMentionState] = useState<{
     todoId: string
     candidates: ComposerCloudMentionCandidate[]
@@ -547,7 +570,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         value: [
           ...scope.filter((line): line is string => Boolean(line)),
           'When the user refers to “this project” or “this task”, use this current cloud context.',
-          'Use the wegent-delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
+          'Use the wegent_delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
         ].join('\n'),
       },
     }
@@ -687,44 +710,47 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           title: string,
           description: string,
           reference: string,
-          aliases: string[]
+          aliases: string[],
+          statusLabel?: string
         ): ComposerCloudMentionCandidate => ({
           kind: 'cloud',
           key,
           title,
           description,
-          metaLabel: '云空间',
+          metaLabel: t('workbench.mention_cloud_space', '云空间'),
           testId: key.replace(/[^a-zA-Z0-9_-]/g, '-'),
           enabled: true,
-          reference: `[$${title}](${reference})`,
+          reference,
           searchAliases: aliases,
+          statusLabel,
         })
         setCloudMentionState({
           todoId: composerTodoItem?.id ?? `project:${projectId}`,
           candidates: [
             candidate(
               `cloud-project:${projectId}`,
-              '云空间',
-              '当前云项目的共享内容',
-              `cloud://projects/${projectId}`,
+              t('workbench.mention_cloud_whole_space', '整个空间'),
+              t('workbench.mention_cloud_whole_space_description', '共享文件 + 看板全部内容'),
+              `[$${t('workbench.mention_cloud_whole_space', '整个空间')}](cloud://projects/${projectId})`,
               ['云项目', 'cloud', 'workspace']
-            ),
-            ...files.items.map(file =>
-              candidate(
-                `cloud-file:${file.id}`,
-                file.name,
-                file.path,
-                `cloud://projects/${projectId}/files/${file.id}`,
-                [file.path, file.kind, '文件', '目录']
-              )
             ),
             ...items.items.map(item =>
               candidate(
                 `cloud-todo:${item.id}`,
                 item.id,
                 item.title,
-                `cloud://projects/${projectId}/todos/${item.id}`,
-                [item.title, item.status, 'TODO', '任务']
+                `[$${t('workbench.mention_cloud_todo_chip', '任务')}:${item.id}](cloud://projects/${projectId}/todos/${item.id})`,
+                [item.title, item.status, 'TODO', '任务'],
+                cloudLoopItemStatusLabel(item.status, t)
+              )
+            ),
+            ...files.items.map(file =>
+              candidate(
+                `cloud-file:${file.id}`,
+                file.name,
+                file.path,
+                `[$${file.name}](cloud://projects/${projectId}/files/${file.id})`,
+                [file.path, file.kind, '文件', '目录']
               )
             ),
             ...deliveries.items.map(delivery =>
@@ -732,7 +758,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 `cloud-delivery:${delivery.id}`,
                 `交付 ${delivery.id.slice(0, 8)}`,
                 delivery.delivered_at ?? delivery.created_at,
-                `cloud://projects/${projectId}/deliveries/${delivery.id}`,
+                `[$交付 ${delivery.id.slice(0, 8)}](cloud://projects/${projectId}/deliveries/${delivery.id})`,
                 ['交付', 'delivery', delivery.id]
               )
             ),
@@ -745,12 +771,100 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       active = false
     }
-  }, [composerCloudProject, composerTodoItem, services?.deliveryApi])
+  }, [composerCloudProject, composerTodoItem, services?.deliveryApi, t])
   const visibleCloudMentionCandidates =
     composerCloudProject &&
     cloudMentionState?.todoId === (composerTodoItem?.id ?? `project:${composerCloudProject.id}`)
       ? cloudMentionState.candidates
       : []
+
+  // Accessible cloud projects power the @ 项目空间 entry even when the current
+  // session is not bound to a cloud project yet.
+  useEffect(() => {
+    let active = true
+    const api = services?.deliveryApi
+    if (!api) {
+      queueMicrotask(() => {
+        if (active) setCloudProjects([])
+      })
+      return () => {
+        active = false
+      }
+    }
+    void api
+      .listCloudProjects()
+      .then(result => {
+        if (active) setCloudProjects(result.items)
+      })
+      .catch(() => {
+        if (active) setCloudProjects([])
+      })
+    return () => {
+      active = false
+    }
+  }, [services?.deliveryApi])
+  const cloudProjectMentionCandidates = useMemo<ComposerCloudMentionCandidate[]>(
+    () =>
+      cloudProjects.map(project => {
+        const spaceLabel = t('workbench.mention_cloud_project_space', '项目空间')
+        return {
+          kind: 'cloud',
+          key: `cloud-project-space:${project.id}`,
+          title: project.name,
+          description: project.description || project.project_key || undefined,
+          metaLabel: t('workbench.mention_cloud_space', '云空间'),
+          testId: `cloud-project-space-${String(project.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+          enabled: true,
+          reference: `[$${spaceLabel}:${project.name}](cloud://projects/${project.id})`,
+          searchAliases: [
+            project.name,
+            project.project_key,
+            project.description,
+            spaceLabel,
+            'project space',
+            'project-space',
+            'cloud',
+          ].filter(alias => Boolean(alias)),
+          project,
+        }
+      }),
+    [cloudProjects, t]
+  )
+  const bindComposerCloudProject = useCallback(
+    (project: CloudProject, notice: string) => {
+      setCloudActionNotice(notice)
+      if (!currentRuntimeTask) {
+        setPendingCloudContext(project, null)
+        return
+      }
+      const api = services?.deliveryApi
+      if (!api) return
+      void api
+        .bindProjectTask(project.id, currentRuntimeTask, runtimeTaskTitle)
+        .then(() => {
+          setBoundCloudProject(project)
+          setBoundCloudItem(null)
+          setDeliveryItem(null)
+        })
+        .catch(cause => {
+          setTodoBindingError(
+            cause instanceof Error
+              ? cause.message
+              : t('workbench.cloud_project_bind_failed', '关联项目空间失败')
+          )
+        })
+    },
+    [currentRuntimeTask, runtimeTaskTitle, services?.deliveryApi, setPendingCloudContext, t]
+  )
+  const handleSelectCloudProject = useCallback(
+    (project: CloudProject) => {
+      bindComposerCloudProject(
+        project,
+        t('workbench.cloud_project_bound_notice', { name: project.name })
+      )
+    },
+    [bindComposerCloudProject, t]
+  )
 
   const activeDeliveryItem =
     currentRuntimeTask &&
@@ -865,6 +979,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
+  const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
+    string | null
+  >(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
@@ -1009,6 +1126,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [activeDeviceId, workspaceProject, workspaceTarget]
   )
   const effectiveWorkspaceTarget = workspaceTarget ?? standaloneRootWorkspaceTarget
+  const projectFileWorkspaceTargets = useMemo(
+    () =>
+      resolveProjectRuntimeWorkspaceTargets({
+        currentProject: workspaceProject,
+        runtimeWork,
+      }),
+    [runtimeWork, workspaceProject]
+  )
+  const fileWorkspaceTargets = useMemo(() => {
+    const candidates = effectiveWorkspaceTarget
+      ? [effectiveWorkspaceTarget, ...projectFileWorkspaceTargets]
+      : projectFileWorkspaceTargets
+    return candidates.filter(
+      (candidate, index) =>
+        candidates.findIndex(
+          item => item.deviceId === candidate.deviceId && item.path === candidate.path
+        ) === index
+    )
+  }, [effectiveWorkspaceTarget, projectFileWorkspaceTargets])
   const composerWorkspaceTarget =
     workspaceTarget ??
     (activeDeviceId && state.standaloneWorkspacePath
@@ -1032,7 +1168,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           source: 'runtime' as const,
         }
       : null)
-  const fileWorkspaceTarget = openFileRequest?.target ?? effectiveWorkspaceTarget
+  const selectedFileWorkspaceTarget =
+    fileWorkspaceTargets.find(
+      target => `${target.deviceId}:${target.path}` === selectedFileWorkspaceTargetKey
+    ) ?? null
+  const fileWorkspaceTarget =
+    openFileRequest?.target ?? selectedFileWorkspaceTarget ?? effectiveWorkspaceTarget
   const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
   const workspaceTargetDevice = effectiveWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === effectiveWorkspaceTarget.deviceId)
@@ -1189,7 +1330,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     selectedAssistantPlanContent ?? selectedAssistantPlan?.fallbackContent ?? null
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
-  const paneIsResponseStreaming = paneSession.status.isAssistantStreaming
+  const paneIsBusy = paneSession.status.isBusy
   const latestPreviousTurnSubtaskId = useMemo(() => {
     for (let index = paneMessages.length - 1; index >= 0; index -= 1) {
       const message = paneMessages[index]
@@ -1504,6 +1645,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!canBrowseFiles) return
     openRightPanelTab('files')
   }, [canBrowseFiles, openRightPanelTab])
+  const selectFileWorkspaceTarget = useCallback((target: WorkspaceTarget) => {
+    setSelectedFileWorkspaceTargetKey(`${target.deviceId}:${target.path}`)
+    setOpenFileRequest(null)
+  }, [])
   const selectBrowserView = useCallback(() => {
     openRightPanelTab('browser')
   }, [openRightPanelTab])
@@ -1518,20 +1663,40 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openRightPanelTab])
 
   const openWorkspaceFileFromMessage = useCallback(
-    (path: string, options?: WorkspaceFileOpenOptions) => {
+    async (path: string, options?: WorkspaceFileOpenOptions) => {
       const trimmedPath = path.trim()
       if (!trimmedPath) return
-      const localTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
+      const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
+      const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
+      let localTarget =
+        attachmentTarget ??
+        (absoluteLocalTarget &&
+        (!effectiveWorkspaceTarget ||
+          effectiveWorkspaceTarget.workspaceSource === 'local' ||
+          effectiveWorkspaceTarget.deviceId === absoluteLocalTarget.deviceId)
+          ? absoluteLocalTarget
+          : null)
+      let isDirectory = options?.isDirectory
+      if (localTarget && isDirectory === undefined) {
+        isDirectory = (await getLocalPathKind(trimmedPath)) === 'directory'
+      }
+      if (localTarget && isDirectory) {
+        localTarget = {
+          ...localTarget,
+          path: trimmedPath.replace(/\\/g, '/').replace(/\/+$/, '') || '/',
+        }
+      }
       setOpenFileRequest(current => ({
         id: (current?.id ?? 0) + 1,
         path: trimmedPath,
         lineStart: options?.lineStart,
         lineEnd: options?.lineEnd,
+        isDirectory,
         target: localTarget ?? undefined,
       }))
       openRightPanelTab('files')
     },
-    [devices, openRightPanelTab, setOpenFileRequest]
+    [devices, effectiveWorkspaceTarget, openRightPanelTab, setOpenFileRequest]
   )
 
   const openLocalSkillFile = useCallback(
@@ -1758,7 +1923,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onDeliver={
-        currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
           ? () => {
               if (activeDeliveryItem) {
                 setDeliveryDialogOpen(true)
@@ -1773,7 +1938,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
       }
       onManageTodo={
-        currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
           ? () => {
               setDeliverAfterBinding(false)
               setTodoBindingPickerOpen(true)
@@ -2169,7 +2334,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             guidanceMessages={paneGuidanceMessages}
                             codeComments={paneSession.codeCommentContexts}
                             cloudMentionCandidates={visibleCloudMentionCandidates}
-                            isStreaming={paneIsResponseStreaming}
+                            cloudProjectCandidates={cloudProjectMentionCandidates}
+                            cloudSpaceEnabled={Boolean(services?.deliveryApi)}
+                            onSelectCloudProject={handleSelectCloudProject}
+                            isStreaming={paneIsBusy}
                             onPause={pauseCurrentResponse}
                             onCompactContext={compactCurrentContext}
                             goal={paneSession.goal}
@@ -2246,6 +2414,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onOpenAssistantPlan={openAssistantPlan}
                 onEditLastUserMessage={paneSession.editLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
+                onForkMessage={message => {
+                  const workspacePath =
+                    currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
+                  if (!currentRuntimeTask || !message.turnId || !workspacePath) return
+                  return forkCurrentRuntimeTask(
+                    {
+                      deviceId: currentRuntimeTask.deviceId,
+                      workspacePath,
+                    },
+                    { lastTurnId: message.turnId }
+                  )
+                }}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                 onAddSelectionToConversation={addSelectionToConversation}
@@ -2288,7 +2468,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     guidanceMessages={paneGuidanceMessages}
                     codeComments={paneSession.codeCommentContexts}
                     cloudMentionCandidates={visibleCloudMentionCandidates}
-                    isStreaming={paneIsResponseStreaming}
+                    cloudProjectCandidates={cloudProjectMentionCandidates}
+                    cloudSpaceEnabled={Boolean(services?.deliveryApi)}
+                    onSelectCloudProject={handleSelectCloudProject}
+                    isStreaming={paneIsBusy}
                     onPause={pauseCurrentResponse}
                     onCompactContext={compactCurrentContext}
                     goal={paneSession.goal}
@@ -2378,6 +2561,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               devices={devices}
               workspaceTarget={effectiveWorkspaceTarget}
               fileWorkspaceTarget={fileWorkspaceTarget}
+              fileWorkspaceTargets={fileWorkspaceTargets}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
               terminalContextTitle={runtimeTaskTitle}
               workspaceSessionApi={workspaceSessionApi}
@@ -2392,6 +2576,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               reviewViewOptions={reviewViewOptions}
               canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
               onAddCodeComment={paneSession.addCodeComment}
+              onSelectFileWorkspaceTarget={selectFileWorkspaceTarget}
               onSelectReview={selectReviewView}
               onSelectTerminal={selectTerminalView}
               onSelectBrowser={selectBrowserView}
@@ -2430,7 +2615,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           runtimeWork={runtimeWork}
           currentProject={currentProject}
           devices={devices}
-          requiresStop={paneIsResponseStreaming}
+          requiresStop={paneIsBusy}
           onOpenChange={setForkDialogOpen}
           onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
           onPrepareDeviceWorkspace={prepareDeviceWorkspace}
@@ -2487,6 +2672,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           tone="error"
           onClear={() => setTodoBindingError(null)}
         />
+        <TransientNotice message={cloudActionNotice} onClear={() => setCloudActionNotice(null)} />
         {deliveryDialogOpen &&
           activeDeliveryItem &&
           currentRuntimeTask &&

@@ -6,6 +6,7 @@ import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { isGitWorkspaceProject } from '@/lib/projectClassification'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { isCloudDevice } from '@/lib/device-selection'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import {
@@ -102,6 +103,31 @@ export function useWorkbenchPaneEnvironment({
     selectedWorkspaceProject,
     state.projects,
   ])
+  const workspaceRootsKey = (() => {
+    if (!workspaceProject) return ''
+    const projectWork = state.runtimeWork?.projects.find(
+      item => String(runtimeProjectUiId(item.project)) === String(workspaceProject.id)
+    )
+    const projectRoots =
+      projectWork?.project.roots
+        ?.map(root => normalizeRuntimeWorkspacePath(root.path))
+        .filter(Boolean) ?? []
+    const roots =
+      projectRoots.length > 0
+        ? [...new Set(projectRoots)]
+        : [
+            ...new Set(
+              (projectWork?.deviceWorkspaces ?? [])
+                .map(workspace => normalizeRuntimeWorkspacePath(workspace.workspacePath))
+                .filter(Boolean)
+            ),
+          ]
+    return JSON.stringify(roots)
+  })()
+  const workspaceRoots = useMemo<string[]>(
+    () => (workspaceRootsKey ? JSON.parse(workspaceRootsKey) : []),
+    [workspaceRootsKey]
+  )
   const workspaceTargetResolverApi = useMemo(
     () => ({ getProjectWorkspaceRoot }),
     [getProjectWorkspaceRoot]
@@ -248,6 +274,7 @@ export function useWorkbenchPaneEnvironment({
                 executionTarget: info.executionTarget,
                 deviceId: activeWorkspaceTarget?.deviceId,
                 workspacePath: activeWorkspaceTarget?.path,
+                workspaceRoots,
                 loading: true,
               }
         )
@@ -269,6 +296,7 @@ export function useWorkbenchPaneEnvironment({
           )
           setEnvironmentInfo({
             ...info,
+            workspaceRoots,
             executionTarget: actualDevice
               ? isCloudDevice(actualDevice)
                 ? 'cloud'
@@ -292,6 +320,7 @@ export function useWorkbenchPaneEnvironment({
       activeWorkspaceTarget?.path,
       environmentWorkspaceReady,
       loadEnvironmentInfo,
+      workspaceRoots,
       workspaceTargetError,
       workspaceTargetResolving,
     ]

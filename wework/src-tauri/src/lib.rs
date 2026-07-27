@@ -14,7 +14,7 @@ mod workbench_background;
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
 };
 use tauri::Manager;
@@ -207,6 +207,15 @@ const TRAY_USAGE_SPACE_WIDTH: u32 = 1;
 const TRAY_USAGE_LINE_GAP: u32 = 2;
 #[cfg(desktop)]
 const TRAY_USAGE_MAX_LINE: &str = "7d 100%";
+#[cfg(desktop)]
+const FRONTEND_RESUME_PROBE_FUNCTION: &str = "__WEWORK_NATIVE_RESUME_PROBE__";
+#[cfg(desktop)]
+const FRONTEND_RESUME_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(desktop)]
+const FRONTEND_RESUME_MIN_UNFOCUSED_DURATION: std::time::Duration =
+    std::time::Duration::from_secs(60);
+#[cfg(desktop)]
+const MAIN_WINDOW_RECREATE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 #[cfg(desktop)]
 const LOG_DIRECTORY_APP_NAME: &str = "Wework";
 #[cfg(desktop)]
@@ -542,6 +551,11 @@ struct MainWindowLifecycleState {
     dock_icon_visible: AtomicBool,
     destroy_to_tray_in_progress: AtomicBool,
     pending_open_action: Mutex<Option<MainWindowOpenAction>>,
+    frontend_recovery_ready: AtomicBool,
+    frontend_probe_in_flight: AtomicBool,
+    next_frontend_probe_id: AtomicU64,
+    acknowledged_frontend_probe_id: AtomicU64,
+    last_main_window_unfocused_at: Mutex<Option<std::time::Instant>>,
 }
 
 #[cfg(desktop)]
@@ -551,8 +565,22 @@ impl Default for MainWindowLifecycleState {
             dock_icon_visible: AtomicBool::new(true),
             destroy_to_tray_in_progress: AtomicBool::new(false),
             pending_open_action: Mutex::new(None),
+            frontend_recovery_ready: AtomicBool::new(false),
+            frontend_probe_in_flight: AtomicBool::new(false),
+            next_frontend_probe_id: AtomicU64::new(0),
+            acknowledged_frontend_probe_id: AtomicU64::new(0),
+            last_main_window_unfocused_at: Mutex::new(None),
         }
     }
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy)]
+struct MainWindowPlacement {
+    position: Option<(i32, i32)>,
+    size: Option<(u32, u32)>,
+    maximized: bool,
+    fullscreen: bool,
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -1667,6 +1695,19 @@ fn local_path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+#[tauri::command]
+fn get_local_path_kind(path: String) -> Option<&'static str> {
+    let path = normalized_non_empty(path)?;
+    let metadata = std::fs::metadata(path).ok()?;
+    if metadata.is_dir() {
+        Some("directory")
+    } else if metadata.is_file() {
+        Some("file")
+    } else {
+        Some("other")
+    }
+}
+
 fn local_workspace_opener_app_name(opener: &str) -> Option<&'static str> {
     match opener {
         "vscode" => Some("Visual Studio Code"),
@@ -1753,8 +1794,8 @@ fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
 fn open_local_file(path: String) -> Result<(), String> {
     let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
 
-    if !std::path::Path::new(&path).is_file() {
-        return Err("Local file does not exist".to_string());
+    if !std::path::Path::new(&path).exists() {
+        return Err("Local path does not exist".to_string());
     }
 
     open_local_file_with_default_app(&path)
@@ -1763,8 +1804,8 @@ fn open_local_file(path: String) -> Result<(), String> {
 #[tauri::command]
 fn reveal_local_file(path: String) -> Result<(), String> {
     let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
-    if !std::path::Path::new(&path).is_file() {
-        return Err("Local file does not exist".to_string());
+    if !std::path::Path::new(&path).exists() {
+        return Err("Local path does not exist".to_string());
     }
 
     #[cfg(target_os = "macos")]
@@ -2324,21 +2365,11 @@ fn main_window_config<R: tauri::Runtime>(
 }
 
 #[cfg(desktop)]
-pub(crate) fn ensure_main_window<R: tauri::Runtime>(
+fn create_main_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     action: Option<MainWindowOpenAction>,
+    placement: Option<MainWindowPlacement>,
 ) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        set_dock_icon_visible(app, true);
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        if let Some(action) = action {
-            emit_main_window_open_action(app, action);
-        }
-        return Ok(());
-    }
-
     {
         let state = app.state::<MainWindowLifecycleState>();
         let mut pending_action = state
@@ -2359,10 +2390,204 @@ pub(crate) fn ensure_main_window<R: tauri::Runtime>(
         })
         .build()
         .map_err(|error| format!("Failed to create main window: {error}"))?;
+    if let Some(placement) = placement {
+        if let Some((x, y)) = placement.position {
+            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+        if let Some((width, height)) = placement.size {
+            let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+        }
+        if placement.maximized {
+            let _ = window.maximize();
+        }
+        if placement.fullscreen {
+            let _ = window.set_fullscreen(true);
+        }
+    }
     let _ = window.show();
     set_dock_icon_visible(app, true);
     let _ = window.set_focus();
     Ok(())
+}
+
+#[cfg(desktop)]
+pub(crate) fn ensure_main_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    action: Option<MainWindowOpenAction>,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        set_dock_icon_visible(app, true);
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        if let Some(action) = action {
+            emit_main_window_open_action(app, action);
+        }
+        return Ok(());
+    }
+
+    create_main_window(app, action, None)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn register_frontend_recovery_bridge(app: tauri::AppHandle) {
+    app.state::<MainWindowLifecycleState>()
+        .frontend_recovery_ready
+        .store(true, Ordering::SeqCst);
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn register_frontend_recovery_bridge() {}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn acknowledge_frontend_resume_probe(app: tauri::AppHandle, probe_id: u64) {
+    let state = app.state::<MainWindowLifecycleState>();
+    state
+        .acknowledged_frontend_probe_id
+        .fetch_max(probe_id, Ordering::SeqCst);
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn acknowledge_frontend_resume_probe(_probe_id: u64) {}
+
+#[cfg(desktop)]
+fn should_probe_frontend_after_focus(unfocused_duration: std::time::Duration) -> bool {
+    unfocused_duration >= FRONTEND_RESUME_MIN_UNFOCUSED_DURATION
+}
+
+#[cfg(desktop)]
+fn main_window_placement<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> MainWindowPlacement {
+    MainWindowPlacement {
+        position: window
+            .outer_position()
+            .ok()
+            .map(|position| (position.x, position.y)),
+        size: window
+            .outer_size()
+            .ok()
+            .map(|size| (size.width, size.height)),
+        maximized: window.is_maximized().unwrap_or(false),
+        fullscreen: window.is_fullscreen().unwrap_or(false),
+    }
+}
+
+#[cfg(desktop)]
+fn recreate_unresponsive_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    let placement = main_window_placement(&window);
+    let state = app.state::<MainWindowLifecycleState>();
+    state.frontend_recovery_ready.store(false, Ordering::SeqCst);
+    state
+        .destroy_to_tray_in_progress
+        .store(true, Ordering::SeqCst);
+
+    log::warn!("Recreating unresponsive main WebView after resume probe timed out");
+    if let Err(error) = window.destroy() {
+        state
+            .destroy_to_tray_in_progress
+            .store(false, Ordering::SeqCst);
+        state
+            .frontend_probe_in_flight
+            .store(false, Ordering::SeqCst);
+        state.frontend_recovery_ready.store(true, Ordering::SeqCst);
+        log::warn!("Failed to destroy unresponsive main WebView: {error}");
+        return;
+    }
+
+    std::thread::spawn(move || {
+        std::thread::sleep(MAIN_WINDOW_RECREATE_DELAY);
+        let app_for_create = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let state = app_for_create.state::<MainWindowLifecycleState>();
+            if let Err(error) = create_main_window(&app_for_create, None, Some(placement)) {
+                log::warn!("Failed to recreate unresponsive main WebView: {error}");
+                set_dock_icon_visible(&app_for_create, true);
+            }
+            state
+                .frontend_probe_in_flight
+                .store(false, Ordering::SeqCst);
+        });
+    });
+}
+
+#[cfg(desktop)]
+fn schedule_frontend_resume_probe<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<MainWindowLifecycleState>();
+    if !state.frontend_recovery_ready.load(Ordering::SeqCst)
+        || state.frontend_probe_in_flight.swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+
+    let probe_id = state.next_frontend_probe_id.fetch_add(1, Ordering::SeqCst) + 1;
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        state
+            .frontend_probe_in_flight
+            .store(false, Ordering::SeqCst);
+        return;
+    };
+    let script = format!("window.{FRONTEND_RESUME_PROBE_FUNCTION}?.({probe_id})");
+    if let Err(error) = window.eval(&script) {
+        state
+            .frontend_probe_in_flight
+            .store(false, Ordering::SeqCst);
+        log::warn!("Failed to evaluate frontend resume probe: {error}");
+        return;
+    }
+    log::info!("Checking main WebView responsiveness after resume: probe_id={probe_id}");
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(FRONTEND_RESUME_PROBE_TIMEOUT);
+        let app_for_check = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let state = app_for_check.state::<MainWindowLifecycleState>();
+            if state.acknowledged_frontend_probe_id.load(Ordering::SeqCst) >= probe_id {
+                state
+                    .frontend_probe_in_flight
+                    .store(false, Ordering::SeqCst);
+                log::info!("Main WebView resumed successfully: probe_id={probe_id}");
+                return;
+            }
+            recreate_unresponsive_main_window(app_for_check.clone());
+        });
+    });
+}
+
+#[cfg(desktop)]
+fn handle_main_window_focus_for_frontend_recovery<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    focused: bool,
+) {
+    if window.label() != MAIN_WINDOW_LABEL {
+        return;
+    }
+
+    let state = window.app_handle().state::<MainWindowLifecycleState>();
+    if !focused {
+        if let Ok(mut unfocused_at) = state.last_main_window_unfocused_at.lock() {
+            *unfocused_at = Some(std::time::Instant::now());
+        }
+        return;
+    }
+
+    let unfocused_duration = state
+        .last_main_window_unfocused_at
+        .lock()
+        .ok()
+        .and_then(|mut unfocused_at| unfocused_at.take())
+        .map(|unfocused_at| unfocused_at.elapsed());
+    if unfocused_duration.is_some_and(should_probe_frontend_after_focus) {
+        schedule_frontend_resume_probe(window.app_handle());
+    }
 }
 
 #[cfg(desktop)]
@@ -3427,6 +3652,8 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
+    #[cfg(desktop)]
+    use super::should_probe_frontend_after_focus;
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root, install_wework_cli_impl,
         local_workspace_opener_app_name, normalized_browser_link_target,
@@ -3440,6 +3667,8 @@ mod tests {
         related_macos_webkit_process_ids, LaunchServicesProcess, RawProcessInfo,
     };
     use std::collections::HashSet;
+    #[cfg(desktop)]
+    use std::time::Duration;
 
     fn test_temp_dir(name: &str) -> std::path::PathBuf {
         let path =
@@ -3454,6 +3683,14 @@ mod tests {
         assert_eq!(tray_template_pixel([255, 255, 255, 255]), [0, 0, 0, 0]);
         assert_eq!(tray_template_pixel([0, 0, 0, 255]), [0, 0, 0, 255]);
         assert_eq!(tray_template_pixel([20, 120, 220, 128]), [0, 0, 0, 117]);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn probes_frontend_only_after_a_meaningful_unfocused_interval() {
+        assert!(!should_probe_frontend_after_focus(Duration::from_secs(59)));
+        assert!(should_probe_frontend_after_focus(Duration::from_secs(60)));
+        assert!(should_probe_frontend_after_focus(Duration::from_secs(120)));
     }
 
     #[test]
@@ -3862,8 +4099,13 @@ pub fn run() {
         .manage(system_sleep::SystemSleepState::default())
         .on_window_event(|window, event| {
             #[cfg(desktop)]
-            if hide_main_window_on_close(window, event) {
-                return;
+            {
+                if let tauri::WindowEvent::Focused(focused) = event {
+                    handle_main_window_focus_for_frontend_recovery(window, *focused);
+                }
+                if hide_main_window_on_close(window, event) {
+                    return;
+                }
             }
         })
         .setup(|app| {
@@ -3946,6 +4188,8 @@ pub fn run() {
             appshots::open_appshots_permission_settings,
             appshots::take_pending_appshots,
             desktop_capture::capture_main_webview,
+            acknowledge_frontend_resume_probe,
+            register_frontend_recovery_bridge,
             #[cfg(desktop)]
             feedback::export_feedback_bundle,
             embedded_browser::embedded_browser_close,
@@ -3996,6 +4240,7 @@ pub fn run() {
             download_local_file_to_downloads,
             save_text_file_to_downloads,
             local_path_exists,
+            get_local_path_kind,
             open_local_file,
             reveal_local_file,
             list_local_file_openers,
@@ -4027,6 +4272,15 @@ pub fn run() {
     app.run(|app_handle, event| {
         #[cfg(desktop)]
         match event {
+            tauri::RunEvent::Resumed => {
+                if app_handle
+                    .get_webview_window(MAIN_WINDOW_LABEL)
+                    .and_then(|window| window.is_focused().ok())
+                    .unwrap_or(false)
+                {
+                    schedule_frontend_resume_probe(app_handle);
+                }
+            }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen {
                 has_visible_windows: false,

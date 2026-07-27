@@ -1,20 +1,18 @@
-import type { RuntimeTaskSummary, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
-import { findRuntimeTask } from './workbenchRuntimeHelpers'
+import type { RuntimeTaskLifecycleSnapshot } from './runtimeTaskLifecycle'
 
 export type RuntimePaneSendPhase = 'idle' | 'submitting' | 'awaiting_assistant'
-
-export interface RuntimePaneTaskExecution {
-  known: boolean
-  running: boolean
-  continuable: boolean
-  status: string | null
-}
 
 export interface RuntimePaneStatus {
   sendPhase: RuntimePaneSendPhase
   activeAssistantMessage: WorkbenchMessage | null
-  taskExecution: RuntimePaneTaskExecution
+  taskExecution: {
+    known: boolean
+    running: boolean
+    continuable: boolean
+    status: string | null
+  }
   isSubmitting: boolean
   isAwaitingAssistant: boolean
   isAssistantStreaming: boolean
@@ -24,73 +22,49 @@ export interface RuntimePaneStatus {
   canSendQueuedMessage: boolean
 }
 
-export function getRuntimePaneTaskExecution(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress | null | undefined
-): RuntimePaneTaskExecution {
-  const task = findRuntimeTask(runtimeWork, address)
-  if (!task) {
-    return { known: false, running: false, continuable: false, status: null }
-  }
-
-  const running = typeof task.running === 'boolean' ? task.running : null
-  return {
-    known: running !== null,
-    running: running === true,
-    continuable: task.continuable !== false,
-    status: normalizeTaskStatus(task),
-  }
-}
-
-export function hasRunningRuntimeTask(
-  runtimeWork: RuntimeWorkListResponse | null | undefined
-): boolean {
-  if (!runtimeWork) return false
-
-  return [
-    ...runtimeWork.chats,
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-  ]
-    .flatMap(workspace => workspace.tasks)
-    .some(task => task.running === true)
-}
-
 export function deriveRuntimePaneStatus({
   messages,
-  sendPhase,
   currentRuntimeTask,
-  taskExecution,
+  lifecycle,
 }: {
   messages: WorkbenchMessage[]
-  sendPhase: RuntimePaneSendPhase
   currentRuntimeTask: RuntimeTaskAddress | null
-  taskExecution: RuntimePaneTaskExecution
+  lifecycle: RuntimeTaskLifecycleSnapshot | null
 }): RuntimePaneStatus {
-  const messageStreamingCanDriveExecution = !taskExecution.known || taskExecution.running
-  const activeAssistantMessage = messageStreamingCanDriveExecution
-    ? (findActiveAssistantMessage(messages) ?? null)
-    : null
-  const isSubmitting = sendPhase === 'submitting'
-  const isAwaitingAssistant = sendPhase === 'awaiting_assistant'
-  const isAssistantStreaming = Boolean(activeAssistantMessage)
-  const isResponseActive = isAwaitingAssistant || isAssistantStreaming
-  const isBusy = isSubmitting || isResponseActive || taskExecution.running
-  const isWaitingForAssistantMessage =
-    !isAssistantStreaming && isLastMessageWaitingForAssistant(messages)
+  const turnPhase = lifecycle?.turn.phase ?? 'idle'
+  const sendPhase: RuntimePaneSendPhase =
+    turnPhase === 'submitting'
+      ? 'submitting'
+      : turnPhase === 'awaiting'
+        ? 'awaiting_assistant'
+        : 'idle'
+  const activeAssistantMessage =
+    turnPhase === 'streaming' ? (findActiveAssistantMessage(messages) ?? null) : null
+  const isSubmitting = turnPhase === 'submitting'
+  const isAwaitingAssistant = turnPhase === 'awaiting'
+  const isAssistantStreaming = turnPhase === 'streaming'
+  const isResponseActive = lifecycle?.derived.isTurnActive ?? false
+  const isBusy = lifecycle?.derived.isBusy ?? false
+  const running = lifecycle?.derived.isRunning ?? false
+  const continuable = lifecycle?.continuable ?? false
 
   return {
     sendPhase,
     activeAssistantMessage,
-    taskExecution,
+    taskExecution: {
+      known: lifecycle?.execution.known ?? false,
+      running,
+      continuable,
+      status: lifecycle?.task?.status?.trim().toLowerCase() || null,
+    },
     isSubmitting,
     isAwaitingAssistant,
     isAssistantStreaming,
     isResponseActive,
     isBusy,
     isWaitingForAssistantIndicator:
-      (isSubmitting || isAwaitingAssistant || taskExecution.running) &&
-      isWaitingForAssistantMessage,
-    canSendQueuedMessage: Boolean(currentRuntimeTask) && taskExecution.continuable && !isBusy,
+      isSubmitting || isAwaitingAssistant || (running && !isAssistantStreaming),
+    canSendQueuedMessage: Boolean(currentRuntimeTask) && continuable && !isBusy,
   }
 }
 
@@ -106,13 +80,4 @@ export function hasSettledAssistantMessage(messages: WorkbenchMessage[]): boolea
   return (
     messages.some(message => message.role === 'assistant') && !findActiveAssistantMessage(messages)
   )
-}
-
-function normalizeTaskStatus(task: RuntimeTaskSummary): string | null {
-  return task.status?.trim().toLowerCase() || null
-}
-
-function isLastMessageWaitingForAssistant(messages: WorkbenchMessage[]): boolean {
-  const lastMessage = [...messages].reverse().find(message => message.role !== 'system')
-  return !lastMessage || lastMessage.role === 'user' || lastMessage.status === 'failed'
 }

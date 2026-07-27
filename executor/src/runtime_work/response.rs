@@ -39,6 +39,8 @@ pub(crate) struct RuntimeTaskLink {
     pub runtime_handle: Value,
     pub parent: Option<Value>,
     pub ephemeral: bool,
+    pub runtime_project_key: Option<String>,
+    pub runtime_workspace_roots: Vec<String>,
     #[serde(skip)]
     pub list_order: Option<usize>,
     #[serde(skip)]
@@ -72,6 +74,8 @@ impl RuntimeTaskLink {
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -107,6 +111,8 @@ impl RuntimeTaskLink {
             runtime_handle,
             parent: Some(parent),
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -194,6 +200,13 @@ impl RuntimeTaskLink {
                 .unwrap_or_else(|| json!({})),
             parent: local_link.as_ref().and_then(|link| link.parent.clone()),
             ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
+            runtime_project_key: local_link
+                .as_ref()
+                .and_then(|link| link.runtime_project_key.clone()),
+            runtime_workspace_roots: local_link
+                .as_ref()
+                .map(|link| link.runtime_workspace_roots.clone())
+                .unwrap_or_default(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -222,6 +235,8 @@ impl RuntimeTaskLink {
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
+            runtime_project_key: self.runtime_project_key.clone(),
+            runtime_workspace_roots: self.runtime_workspace_roots.clone(),
             list_order: self.list_order,
             group_workspace_path: self.group_workspace_path.clone(),
             group_project_key: self.group_project_key.clone(),
@@ -273,6 +288,8 @@ impl Default for RuntimeTaskLink {
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -571,6 +588,9 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     );
     if let Some(turn_status) = link.turn_status.clone() {
         task.insert("turnStatus".to_owned(), Value::String(turn_status));
+    }
+    if let Some(goal_status) = link.goal_status.clone() {
+        task.insert("goalStatus".to_owned(), Value::String(goal_status));
     }
     task.insert("pinned".to_owned(), Value::Bool(link.pinned));
     if let Some(order) = link.pinned_order {
@@ -1031,7 +1051,7 @@ mod tests {
 
     #[test]
     fn current_turn_state_is_exposed_separately_from_conversation_lifecycle() {
-        let link = RuntimeTaskLink::from_thread_metadata(
+        let mut link = RuntimeTaskLink::from_thread_metadata(
             &json!({
                 "id": "thread-1",
                 "status": {"type": "active", "activeFlags": []},
@@ -1042,6 +1062,7 @@ mod tests {
             "/workspace/project".to_owned(),
             true,
         );
+        link.goal_status = Some("active".to_owned());
         let payload = local_task_json(link);
 
         assert_eq!(payload["status"], "running");
@@ -1049,6 +1070,7 @@ mod tests {
         assert_eq!(payload["continuable"], true);
         assert_eq!(payload["threadStatus"], "active");
         assert_eq!(payload["turnStatus"], "inProgress");
+        assert_eq!(payload["goalStatus"], "active");
     }
 
     #[test]

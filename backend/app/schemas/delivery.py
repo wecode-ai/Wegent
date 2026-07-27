@@ -7,9 +7,11 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
+from app.schemas.tagging import MAX_TAGS_PER_ITEM
+from app.schemas.tagging import normalize_tags as _normalize_tags
 
 
 class LoopItemCreate(BaseModel):
@@ -22,6 +24,9 @@ class LoopItemCreate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
+    tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
+
+    _normalize = field_validator("tags", mode="before")(_normalize_tags)
 
 
 class LoopItemUpdate(BaseModel):
@@ -35,6 +40,19 @@ class LoopItemUpdate(BaseModel):
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
+    tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+
+    _normalize = field_validator("tags", mode="before")(
+        lambda value: None if value is None else _normalize_tags(value)
+    )
+
+
+class LoopItemReorder(BaseModel):
+    """Manual order of the TODOs inside one board lane (parent + status)."""
+
+    parent_id: str | None = Field(default=None, max_length=64)
+    status: Literal["inbox", "pending", "in_progress", "in_review", "completed"]
+    item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
 class LoopItemResponse(BaseModel):
@@ -51,12 +69,42 @@ class LoopItemResponse(BaseModel):
     priority: str
     due_at: datetime | None
     sort_order: int
+    tags: list[str] = []
     created_by_user_id: int
     current_delivery_id: str | None
     version: int
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_tags(cls, value: object) -> object:
+        """Fill tags from the metadata JSON when the input has no tags key."""
+        if isinstance(value, dict) and "tags" not in value:
+            metadata = value.get("metadata_json")
+            tags = metadata.get("tags") if isinstance(metadata, dict) else None
+            return {**value, "tags": _normalize_tags(tags)}
+        return value
+
+    @field_validator("parent_id", "current_delivery_id", mode="before")
+    @classmethod
+    def normalize_empty_id(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @field_validator("assignee_user_id", mode="before")
+    @classmethod
+    def normalize_empty_user_id(cls, value: object) -> object:
+        return None if value == 0 else value
+
+    @field_validator("due_at", "completed_at", mode="before")
+    @classmethod
+    def normalize_unset_datetime(cls, value: object) -> object:
+        if isinstance(value, datetime) and value == datetime(1970, 1, 1, 0, 0, 1):
+            return None
+        if isinstance(value, str) and value.startswith("1970-01-01 00:00:01"):
+            return None
+        return value
 
 
 class LoopItemListResponse(BaseModel):
@@ -74,6 +122,11 @@ class LoopItemAttachmentResponse(BaseModel):
     sha256: str
     created_by_user_id: int
     created_at: datetime
+
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def normalize_empty_content_type(cls, value: object) -> object:
+        return None if value == "" else value
 
 
 class LoopItemAttachmentAccessResponse(BaseModel):
@@ -130,6 +183,21 @@ class LoopItemTaskBindingResponse(BaseModel):
     linked_at: datetime
     unlinked_at: datetime | None
 
+    @field_validator("loop_item_id", "task_title", mode="before")
+    @classmethod
+    def normalize_empty_text(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @field_validator("backend_task_id", mode="before")
+    @classmethod
+    def normalize_empty_task_id(cls, value: object) -> object:
+        return None if value == 0 else value
+
+    @field_validator("unlinked_at", mode="before")
+    @classmethod
+    def normalize_unlinked_at(cls, value: object) -> object:
+        return LoopItemResponse.normalize_unset_datetime(value)
+
 
 class CloudTaskContextResponse(LoopItemTaskBindingResponse):
     project: CloudProjectResponse
@@ -153,6 +221,11 @@ class DeliveryAssetResponse(BaseModel):
     size_bytes: int
     sha256: str
 
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def normalize_empty_content_type(cls, value: object) -> object:
+        return None if value == "" else value
+
 
 class DeliveryAssetAccessResponse(BaseModel):
     url: str
@@ -171,6 +244,21 @@ class DeliveryResponse(BaseModel):
     created_at: datetime
     delivered_at: datetime | None
     assets: list[DeliveryAssetResponse] = Field(default_factory=list)
+
+    @field_validator("source_task_binding_id", mode="before")
+    @classmethod
+    def normalize_empty_binding_id(cls, value: object) -> object:
+        return None if value in ("", 0) else value
+
+    @field_validator("source_task_snapshot", mode="before")
+    @classmethod
+    def normalize_empty_snapshot(cls, value: object) -> object:
+        return None if value == {} else value
+
+    @field_validator("delivered_at", mode="before")
+    @classmethod
+    def normalize_delivered_at(cls, value: object) -> object:
+        return LoopItemResponse.normalize_unset_datetime(value)
 
 
 class DeliveryDetailResponse(DeliveryResponse):

@@ -44,6 +44,7 @@ import {
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { isImeEnterEvent } from '@/lib/ime'
@@ -110,6 +111,7 @@ interface MessageListProps {
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
+  onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
@@ -126,13 +128,33 @@ const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
 const SELECTION_ACTION_GAP = 8
-const MESSAGE_WINDOW_ROOT_MARGIN = '400px 0px'
-const ALWAYS_MOUNT_RECENT_MESSAGE_COUNT = 4
-const VIRTUAL_MESSAGE_MIN_COUNT = 20
 const VIRTUAL_MESSAGE_OVERSCAN = 2
+const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
 const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
+
+function ForkTurnIcon() {
+  return (
+    <svg
+      data-testid="fork-message-icon"
+      aria-hidden="true"
+      className="h-4 w-4"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 12h4c4 0 4-6 8-6h6" />
+      <path d="M7 12c4 0 4 6 8 6h6" />
+      <path d="m18 3 3 3-3 3" />
+      <path d="m18 15 3 3-3 3" />
+    </svg>
+  )
+}
+
 interface MessageTextSelection {
   text: string
   left: number
@@ -140,7 +162,6 @@ interface MessageTextSelection {
   conversationKey?: string | number | null
 }
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
-const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
 const CODEX_IMPLEMENT_PLAN_USER_MESSAGE_PREFIX = 'PLEASE IMPLEMENT THIS PLAN:'
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:apng|avif|gif|jpe?g|png|webp|bmp|svg)$/i
@@ -181,6 +202,7 @@ export const MessageList = memo(function MessageList({
   onOpenAssistantPlan,
   onEditLastUserMessage,
   canEditLastUserMessage = false,
+  onForkMessage,
   onLoadFullTranscript,
   loadingFullTranscript = false,
   hideRequestUserInputBlocks,
@@ -211,16 +233,9 @@ export const MessageList = memo(function MessageList({
     editingMessageId === editableLastUserMessageId ? editingMessageId : null
   const activeSubmittingEditMessageId =
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
-  const lastVisibleMessage = visibleMessages.at(-1)
-  const waitingForAssistantTurn =
-    !lastVisibleMessage ||
-    lastVisibleMessage.role === 'user' ||
-    lastVisibleMessage.status === 'failed'
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
-    waitingForAssistantTurn &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
-  const windowMessages = isTauri && !disableContentVisibility && !isTextSelectionActive
   const messageIntrinsicHeights = useMemo(() => {
     return new Map(
       visibleMessages.map(message => [
@@ -232,11 +247,7 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages =
-    isTauri &&
-    Boolean(scrollElementRef) &&
-    visibleMessages.length >= VIRTUAL_MESSAGE_MIN_COUNT &&
-    !disableContentVisibility
+  const virtualMessages = isTauri && Boolean(scrollElementRef)
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>
@@ -289,8 +300,12 @@ export const MessageList = memo(function MessageList({
     paddingStart: MESSAGE_LIST_PADDING_TOP_PX,
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
+    anchorTo: 'end',
     rangeExtractor: range => {
-      const indexes = defaultRangeExtractor(range)
+      const indexes =
+        range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
+          ? Array.from({ length: range.count }, (_, index) => index)
+          : defaultRangeExtractor(range)
       if (forcedVirtualMessageIndex < 0 || indexes.includes(forcedVirtualMessageIndex)) {
         return indexes
       }
@@ -302,12 +317,13 @@ export const MessageList = memo(function MessageList({
   useEffect(
     () => () => {
       if (!virtualMessages || virtualMeasurementKey === null) return
-      setVirtualMeasurementSnapshot(virtualMeasurementKey, messageVirtualizer.takeSnapshot())
+      cacheConversationVirtualMeasurements(virtualMeasurementKey, messageVirtualizer.takeSnapshot())
     },
     [messageVirtualizer, virtualMeasurementKey, virtualMessages]
   )
 
   useLayoutEffect(() => {
+    if (!virtualMessages) return
     const element = listRef.current
     if (!element) return
 
@@ -341,7 +357,7 @@ export const MessageList = memo(function MessageList({
         layoutWidthUpdateTimerRef.current = null
       }
     }
-  }, [])
+  }, [virtualMessages])
 
   useEffect(() => {
     if (isTauri && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
@@ -501,18 +517,16 @@ export const MessageList = memo(function MessageList({
         const { index } = row
         const message = visibleMessages[index]
         const nextMessage = visibleMessages[index + 1]
-        const forceMounted =
-          index >= visibleMessages.length - ALWAYS_MOUNT_RECENT_MESSAGE_COUNT ||
-          message.status === 'streaming' ||
-          message.id === activeEditingMessageId ||
-          message.id === activeSubmittingEditMessageId
         const article = (
-          <WindowedMessageArticle
-            enabled={windowMessages && !virtualMessages}
-            estimatedHeight={messageIntrinsicHeights.get(message.id)}
-            forceMounted={forceMounted}
-            messageRole={message.role}
-            useContentVisibility={!isTauri && !disableContentVisibility && !isTextSelectionActive}
+          <article
+            className={cn(
+              'min-w-0',
+              !isTauri &&
+                !disableContentVisibility &&
+                !isTextSelectionActive &&
+                '[content-visibility:auto]',
+              message.role === 'user' && 'flex justify-end'
+            )}
             data-message-id={message.id}
             data-testid={`message-${message.role}`}
           >
@@ -559,9 +573,10 @@ export const MessageList = memo(function MessageList({
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                onFork={onForkMessage && message.turnId ? () => onForkMessage(message) : undefined}
               />
             )}
-          </WindowedMessageArticle>
+          </article>
         )
         const gap = renderGapAfterMessage?.(message, nextMessage)
         return virtualMessages ? (
@@ -610,84 +625,6 @@ function getVirtualMeasurementSnapshot(
   if (snapshot.some(item => typeof item.key === 'string' && !messageIds.has(item.key))) return []
 
   return snapshot
-}
-
-function setVirtualMeasurementSnapshot(key: string, snapshot: VirtualItem[]) {
-  cacheConversationVirtualMeasurements(key, snapshot)
-}
-
-function WindowedMessageArticle({
-  enabled,
-  estimatedHeight,
-  forceMounted,
-  messageRole,
-  useContentVisibility,
-  children,
-  ...attributes
-}: {
-  enabled: boolean
-  estimatedHeight: number | undefined
-  forceMounted: boolean
-  messageRole: WorkbenchMessage['role']
-  useContentVisibility: boolean
-  children: ReactNode
-  'data-message-id': string
-  'data-testid': string
-}) {
-  const articleRef = useRef<HTMLElement>(null)
-  const canObserve = enabled && typeof IntersectionObserver !== 'undefined'
-  const [nearViewport, setNearViewport] = useState(!canObserve || forceMounted)
-  const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
-  const mounted = forceMounted || !canObserve || nearViewport
-
-  useEffect(() => {
-    if (!canObserve || forceMounted) return
-
-    const article = articleRef.current
-    if (!article) return
-    const observer = new IntersectionObserver(
-      entries => {
-        const entry = entries[0]
-        if (!entry) return
-        if (!entry.isIntersecting) {
-          const height = article.getBoundingClientRect().height
-          if (height > 0) setRetainedHeight(height)
-        }
-        setNearViewport(entry.isIntersecting)
-      },
-      { rootMargin: MESSAGE_WINDOW_ROOT_MARGIN }
-    )
-    observer.observe(article)
-    return () => observer.disconnect()
-  }, [canObserve, forceMounted])
-
-  const placeholderHeight = Math.ceil(retainedHeight ?? estimatedHeight ?? 220)
-  return (
-    <article
-      ref={articleRef}
-      className={cn(
-        'min-w-0',
-        useContentVisibility && '[content-visibility:auto]',
-        messageRole === 'user' && 'flex justify-end'
-      )}
-      style={
-        mounted
-          ? useContentVisibility
-            ? getMessageContainmentStyle(estimatedHeight)
-            : undefined
-          : { minHeight: placeholderHeight }
-      }
-      {...attributes}
-    >
-      {mounted ? children : null}
-    </article>
-  )
-}
-
-function getMessageContainmentStyle(estimatedHeight: number | undefined): CSSProperties {
-  return {
-    containIntrinsicSize: `0 ${Math.ceil(estimatedHeight ?? 220)}px`,
-  } as CSSProperties
 }
 
 function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLElement[] {
@@ -761,6 +698,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
+    previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
     previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
     previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
@@ -980,7 +918,7 @@ function UserMessage({
     [message.content]
   )
   const displayContent = normalizeCodexUserMessageContent(
-    codexLocalFileMentions?.requestText ?? message.content
+    codexLocalFileMentions?.requestText ?? visibleRuntimeUserMessage(message.content)
   )
   const imageAttachments = useMemo(
     () => (message.attachments ?? []).filter(isImageAttachment),
@@ -1294,14 +1232,9 @@ function parseCodexLocalFileMentions(content: string): {
 } | null {
   if (!CODEX_FILE_MENTIONS_HEADER_PATTERN.test(content)) return null
 
-  const requestMarker = content.match(CODEX_REQUEST_MARKER_PATTERN)
-  const requestText =
-    requestMarker?.index === undefined
-      ? ''
-      : content.slice(requestMarker.index + requestMarker[0].length).trim()
-
-  const filesText =
-    requestMarker?.index === undefined ? content : content.slice(0, requestMarker.index)
+  const messageParts = splitRuntimeUserMessage(content)
+  const requestText = messageParts?.request ?? ''
+  const filesText = messageParts?.prefix ?? content
   const images: Array<{ filename: string; path: string }> = []
   const files: Array<{ filename: string; path: string }> = []
   for (const match of filesText.matchAll(CODEX_FILE_MENTION_LINE_PATTERN)) {
@@ -1539,13 +1472,17 @@ function MessageHoverActions({
   align,
   visible,
   onEdit,
+  onFork,
 }: {
   message: WorkbenchMessage
   align: 'left' | 'right'
   visible: boolean
   onEdit?: () => void
+  onFork?: () => Promise<void> | void
 }) {
+  const { t } = useTranslation('chat')
   const [copied, setCopied] = useState(false)
+  const [forking, setForking] = useState(false)
   const resetCopiedAfterHideRef = useRef(false)
   const time = formatMessageTime(message.createdAt)
 
@@ -1646,6 +1583,37 @@ function MessageHoverActions({
     </span>
   ) : null
 
+  const forkAction = onFork ? (
+    <span className="group/fork relative flex h-6 w-6 items-center justify-center">
+      <button
+        type="button"
+        data-testid="fork-message-button"
+        onClick={() => {
+          if (forking) return
+          setForking(true)
+          void (async () => {
+            try {
+              await onFork()
+            } catch {
+              // The workbench callback owns user-visible error reporting.
+            } finally {
+              setForking(false)
+            }
+          })()
+        }}
+        disabled={forking}
+        title={t('continue_in_new_task')}
+        aria-label={t('continue_in_new_task')}
+        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-secondary disabled:pointer-events-none disabled:opacity-50"
+      >
+        <ForkTurnIcon />
+      </button>
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-base px-1.5 py-0.5 text-xs text-text-secondary opacity-0 shadow-sm transition-opacity group-hover/fork:opacity-100">
+        {t('continue_in_new_task')}
+      </span>
+    </span>
+  ) : null
+
   const timeLabel = time ? (
     <span
       data-testid="message-hover-time"
@@ -1676,6 +1644,7 @@ function MessageHoverActions({
         <>
           {editAction}
           {copyAction}
+          {forkAction}
           {timeLabel}
         </>
       )}
@@ -1754,7 +1723,12 @@ function renderUserContent(
         onClick={event => {
           event.preventDefault()
           if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
-          if (pathReference && !pathReference.directory) onOpenWorkspaceFile?.(pathReference.path)
+          if (pathReference) {
+            onOpenWorkspaceFile?.(
+              pathReference.path,
+              pathReference.directory ? { isDirectory: true } : undefined
+            )
+          }
         }}
       >
         {mentionKind === 'folder' ? (
@@ -1856,6 +1830,7 @@ function AssistantMessage({
   loadingFullTranscript,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onFork,
 }: {
   message: WorkbenchMessage
   conversationKey?: string | number | null
@@ -1886,6 +1861,7 @@ function AssistantMessage({
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onFork?: () => Promise<void> | void
 }) {
   const { t } = useTranslation('chat')
   const isCancelled = isCancelledAssistantMessage(message)
@@ -1948,6 +1924,7 @@ function AssistantMessage({
         <ToolBlocksDisplay
           key={`${segment.kind}:${index}`}
           blocks={segment.blocks}
+          fileEditDurationBlocks={displayBlocks}
           isStreaming={isStreaming}
           startedAt={segment.blocks[0]?.createdAt}
           forceExpanded={segment.kind === 'narrative'}
@@ -2090,7 +2067,12 @@ function AssistantMessage({
         {message.status !== 'streaming' &&
           !isCancelled &&
           (hasVisibleContent || message.status === 'failed') && (
-            <MessageHoverActions message={message} align="left" visible={areHoverActionsVisible} />
+            <MessageHoverActions
+              message={message}
+              align="left"
+              visible={areHoverActionsVisible}
+              onFork={onFork}
+            />
           )}
       </div>
     </div>

@@ -38,7 +38,7 @@ function ToolbarButton({ label, testId, active = false, onClick, children }: Too
         if (event.detail === 0) onClick()
       }}
       className={cn(
-        'flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-hover hover:text-text-primary',
+        'flex h-7 items-center justify-center gap-1 rounded-lg px-1.5 text-xs text-text-muted hover:bg-hover hover:text-text-primary',
         active && 'bg-selected text-text-primary'
       )}
     >
@@ -148,6 +148,7 @@ export function TaskDescriptionEditor({ value, onChange }: TaskDescriptionEditor
           onClick={() => editor.chain().focus().toggleBulletList().run()}
         >
           <List className="h-3.5 w-3.5" />
+          列表
         </ToolbarButton>
         <ToolbarButton
           label="有序列表"
@@ -156,6 +157,7 @@ export function TaskDescriptionEditor({ value, onChange }: TaskDescriptionEditor
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
         >
           <ListOrdered className="h-3.5 w-3.5" />
+          列表
         </ToolbarButton>
         <ToolbarButton
           label="任务列表"
@@ -164,6 +166,7 @@ export function TaskDescriptionEditor({ value, onChange }: TaskDescriptionEditor
           onClick={() => editor.chain().focus().toggleTaskList().run()}
         >
           <ListChecks className="h-3.5 w-3.5" />
+          任务
         </ToolbarButton>
         <ToolbarButton
           label="引用"
@@ -172,9 +175,12 @@ export function TaskDescriptionEditor({ value, onChange }: TaskDescriptionEditor
           onClick={() => editor.chain().focus().toggleBlockquote().run()}
         >
           <Quote className="h-3.5 w-3.5" />
+          引用
         </ToolbarButton>
+        <span className="mx-1 h-4 w-px bg-border" />
         <ToolbarButton label="链接" testId="cloud-todo-description-link" onClick={setLink}>
           <Link2 className="h-3.5 w-3.5" />
+          链接
         </ToolbarButton>
       </div>
     </div>

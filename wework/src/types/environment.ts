@@ -5,6 +5,7 @@ export interface EnvironmentInfo {
   isGitRepository?: boolean
   deviceId?: string
   workspacePath?: string
+  workspaceRoots?: string[]
   branchName?: string
   createPullRequestUrl?: string
   error?: string

@@ -68,6 +68,7 @@ export type WorkbenchMessage = Omit<
 > & {
   blocks?: ProcessingBlock[]
   runtimeMessageIndex?: number | null
+  turnId?: string | null
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
@@ -185,7 +186,6 @@ export interface WorkbenchState {
   runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
   currentRuntimeTask: RuntimeTaskAddress | null
-  activeRuntimeTasks: RuntimeTaskAddress[]
   standaloneChatKey: number
   selectedDeviceWorkspaceId: number | null
   pendingProjectWorkspaceProjectId: number | null

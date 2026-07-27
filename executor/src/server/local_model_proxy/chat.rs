@@ -51,18 +51,58 @@ enum ToolKind {
     Custom,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolIdentity {
+    name: String,
+    namespace: Option<String>,
+    kind: ToolKind,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct ToolContext {
-    kinds: BTreeMap<String, ToolKind>,
+    tools: BTreeMap<String, ToolIdentity>,
+    wire_names: BTreeMap<(Option<String>, String), String>,
 }
 
 impl ToolContext {
+    fn insert_tool(&mut self, wire_name: String, identity: ToolIdentity) {
+        self.wire_names
+            .entry((identity.namespace.clone(), identity.name.clone()))
+            .or_insert_with(|| wire_name.clone());
+        self.tools.entry(wire_name).or_insert(identity);
+    }
+
+    #[cfg(test)]
     fn insert(&mut self, name: String, kind: ToolKind) {
-        self.kinds.entry(name).or_insert(kind);
+        self.insert_tool(
+            name.clone(),
+            ToolIdentity {
+                name,
+                namespace: None,
+                kind,
+            },
+        );
     }
 
     fn is_custom(&self, name: &str) -> bool {
-        self.kinds.get(name) == Some(&ToolKind::Custom)
+        self.tools
+            .get(name)
+            .or_else(|| {
+                self.wire_name(None, name)
+                    .and_then(|wire_name| self.tools.get(wire_name))
+            })
+            .map(|tool| &tool.kind)
+            == Some(&ToolKind::Custom)
+    }
+
+    fn wire_name(&self, namespace: Option<&str>, name: &str) -> Option<&str> {
+        self.wire_names
+            .get(&(namespace.map(str::to_owned), name.to_owned()))
+            .map(String::as_str)
+    }
+
+    fn identity(&self, wire_name: &str) -> Option<&ToolIdentity> {
+        self.tools.get(wire_name)
     }
 }
 
@@ -116,7 +156,7 @@ pub(super) fn responses_to_chat(body: &Value) -> Result<(Value, ToolContext), St
         result.insert("tools".to_owned(), Value::Array(tools));
         if let Some(choice) = body.get("tool_choice") {
             if choice != "auto" {
-                result.insert("tool_choice".to_owned(), chat_tool_choice(choice));
+                result.insert("tool_choice".to_owned(), chat_tool_choice(choice, &context));
             }
         }
     }
@@ -130,13 +170,61 @@ fn copy_field(body: &Value, result: &mut Map<String, Value>, source: &str, targe
 }
 
 fn build_tool_context(body: &Value) -> ToolContext {
-    let mut context = ToolContext::default();
-    for tool in body
+    let tools = body
         .get("tools")
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut name_counts = BTreeMap::<String, usize>::new();
+    for tool in tools {
+        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+            for inner_tool in tool
+                .get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(name) = inner_tool.get("name").and_then(Value::as_str) {
+                    *name_counts.entry(name.to_owned()).or_default() += 1;
+                }
+            }
+        } else if let Some(name) = tool.get("name").and_then(Value::as_str) {
+            *name_counts.entry(name.to_owned()).or_default() += 1;
+        }
+    }
+
+    let mut context = ToolContext::default();
+    for tool in tools {
+        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+            let Some(namespace) = tool.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            for inner_tool in tool
+                .get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(name) = inner_tool.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let preferred_wire_name = if name_counts.get(name) == Some(&1) {
+                    bounded_wire_name(name)
+                } else {
+                    flattened_namespace_tool_name(namespace, name)
+                };
+                let wire_name = unique_wire_name(&context, preferred_wire_name);
+                context.insert_tool(
+                    wire_name,
+                    ToolIdentity {
+                        name: name.to_owned(),
+                        namespace: Some(namespace.to_owned()),
+                        kind: ToolKind::Function,
+                    },
+                );
+            }
+            continue;
+        }
         let Some(name) = tool.get("name").and_then(Value::as_str) else {
             continue;
         };
@@ -145,60 +233,145 @@ fn build_tool_context(body: &Value) -> ToolContext {
         } else {
             ToolKind::Function
         };
-        context.insert(name.to_owned(), kind);
+        let preferred_wire_name = if name_counts.get(name) == Some(&1) {
+            bounded_wire_name(name)
+        } else {
+            bounded_wire_name(&format!("functions__{name}"))
+        };
+        let wire_name = unique_wire_name(&context, preferred_wire_name);
+        context.insert_tool(
+            wire_name,
+            ToolIdentity {
+                name: name.to_owned(),
+                namespace: None,
+                kind,
+            },
+        );
     }
     context
 }
 
+fn flattened_namespace_tool_name(namespace: &str, name: &str) -> String {
+    let flattened = if namespace.ends_with('_') || name.starts_with('_') {
+        format!("{namespace}{name}")
+    } else {
+        format!("{namespace}__{name}")
+    };
+    bounded_wire_name(&flattened)
+}
+
+fn bounded_wire_name(value: &str) -> String {
+    const MAX_TOOL_NAME_BYTES: usize = 64;
+    let sanitized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.len() <= MAX_TOOL_NAME_BYTES {
+        return sanitized;
+    }
+
+    let hash = sanitized
+        .as_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
+        });
+    let suffix = format!("__{hash:016x}");
+    let prefix_bytes = MAX_TOOL_NAME_BYTES - suffix.len();
+    format!("{}{}", &sanitized[..prefix_bytes], suffix)
+}
+
+fn unique_wire_name(context: &ToolContext, preferred: String) -> String {
+    if !context.tools.contains_key(&preferred) {
+        return preferred;
+    }
+    for suffix in 2.. {
+        let candidate = bounded_wire_name(&format!("{preferred}__{suffix}"));
+        if !context.tools.contains_key(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("an unused tool name suffix must exist")
+}
+
 fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
-    body.get("tools")
+    let mut converted = Vec::new();
+    for tool in body
+        .get("tools")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|tool| {
-            let name = tool.get("name")?.as_str()?;
-            if context.is_custom(name) {
-                let definition = serde_json::to_string(tool).ok()?;
-                let contract = if name == "apply_patch" {
-                    format!("{APPLY_PATCH_OUTPUT_CONTRACT}\n\n")
-                } else {
-                    "Put only the custom tool's raw input in the function's `input` field. Do not add Markdown fences or explanatory text.\n\n".to_owned()
-                };
-                let description =
-                    format!("{contract}Original tool definition:\n```json\n{definition}\n```");
-                return Some(json!({
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": description,
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                CUSTOM_TOOL_INPUT_FIELD: {
-                                    "type": "string",
-                                    "description": CUSTOM_TOOL_INPUT_DESCRIPTION
-                                }
-                            },
-                            "required": [CUSTOM_TOOL_INPUT_FIELD],
-                            "additionalProperties": false
-                        }
-                    }
-                }));
-            }
-            Some(json!({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": tool.get("description").cloned().unwrap_or(Value::Null),
-                    "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({
-                        "type": "object",
-                        "properties": {}
-                    })),
-                    "strict": tool.get("strict").cloned().unwrap_or(Value::Bool(false))
+    {
+        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+            let Some(namespace) = tool.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            for inner_tool in tool
+                .get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(converted_tool) = chat_tool(inner_tool, Some(namespace), context) {
+                    converted.push(converted_tool);
                 }
-            }))
-        })
-        .collect()
+            }
+        } else if let Some(converted_tool) = chat_tool(tool, None, context) {
+            converted.push(converted_tool);
+        }
+    }
+    converted
+}
+
+fn chat_tool(tool: &Value, namespace: Option<&str>, context: &ToolContext) -> Option<Value> {
+    let name = tool.get("name")?.as_str()?;
+    let wire_name = context.wire_name(namespace, name)?;
+    if context.is_custom(wire_name) {
+        let definition = serde_json::to_string(tool).ok()?;
+        let contract = if name == "apply_patch" {
+            format!("{APPLY_PATCH_OUTPUT_CONTRACT}\n\n")
+        } else {
+            "Put only the custom tool's raw input in the function's `input` field. Do not add Markdown fences or explanatory text.\n\n".to_owned()
+        };
+        let description =
+            format!("{contract}Original tool definition:\n```json\n{definition}\n```");
+        return Some(json!({
+            "type": "function",
+            "function": {
+                "name": wire_name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        CUSTOM_TOOL_INPUT_FIELD: {
+                            "type": "string",
+                            "description": CUSTOM_TOOL_INPUT_DESCRIPTION
+                        }
+                    },
+                    "required": [CUSTOM_TOOL_INPUT_FIELD],
+                    "additionalProperties": false
+                }
+            }
+        }));
+    }
+    Some(json!({
+        "type": "function",
+        "function": {
+            "name": wire_name,
+            "description": tool.get("description").cloned().unwrap_or(Value::Null),
+            "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({
+                "type": "object",
+                "properties": {}
+            })),
+            "strict": tool.get("strict").cloned().unwrap_or(Value::Bool(false))
+        }
+    }))
 }
 
 fn responses_tools(tools: &[Value], context: &ToolContext) -> Vec<Value> {
@@ -347,9 +520,11 @@ fn convert_responses_input_item(
     }
 }
 
-fn chat_tool_choice(choice: &Value) -> Value {
+fn chat_tool_choice(choice: &Value, context: &ToolContext) -> Value {
     if let Some(name) = choice.get("name").and_then(Value::as_str) {
-        json!({"type": "function", "function": {"name": name}})
+        let namespace = choice.get("namespace").and_then(Value::as_str);
+        let wire_name = context.wire_name(namespace, name).unwrap_or(name);
+        json!({"type": "function", "function": {"name": wire_name}})
     } else {
         choice.clone()
     }
@@ -375,12 +550,14 @@ fn append_input(
             }
             Some("function_call") | Some("custom_tool_call") => {
                 let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+                let namespace = item.get("namespace").and_then(Value::as_str);
+                let wire_name = context.wire_name(namespace, name).unwrap_or(name);
                 let call_id = item
                     .get("call_id")
                     .or_else(|| item.get("id"))
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let arguments = if context.is_custom(name)
+                let arguments = if context.is_custom(wire_name)
                     || item.get("type").and_then(Value::as_str) == Some("custom_tool_call")
                 {
                     let raw = item
@@ -396,7 +573,7 @@ fn append_input(
                 pending_calls.push(json!({
                     "id": call_id,
                     "type": "function",
-                    "function": {"name": name, "arguments": arguments}
+                    "function": {"name": wire_name, "arguments": arguments}
                 }));
             }
             Some("function_call_output") | Some("custom_tool_call_output") => {
@@ -602,6 +779,8 @@ struct CallState {
     item_id: String,
     call_id: String,
     name: String,
+    namespace: Option<String>,
+    custom: bool,
     arguments: String,
 }
 
@@ -834,6 +1013,7 @@ fn rewrite_responses_sse_block(
     let data = data_lines.join("\n");
     let data = data.trim();
     let mut value = serde_json::from_str::<Value>(data).ok()?;
+    let ids_normalized = normalize_responses_stream_ids(&mut value);
 
     let rewritten = match event_name.as_deref() {
         Some("response.output_item.added") => {
@@ -928,7 +1108,47 @@ fn rewrite_responses_sse_block(
         _ => None,
     };
 
-    rewritten.or_else(|| Some(block.to_owned()))
+    rewritten
+        .or_else(|| {
+            ids_normalized
+                .then(|| rewrite_event_data(block, &value))
+                .flatten()
+        })
+        .or_else(|| Some(block.to_owned()))
+}
+
+fn normalize_responses_stream_ids(value: &mut Value) -> bool {
+    let mut normalized = normalize_id_field(value, "item_id");
+    normalized |= normalize_id_field(value, "call_id");
+
+    if let Some(item) = value.get_mut("item") {
+        normalized |= normalize_responses_item_ids(item);
+    }
+    if let Some(output) = value
+        .pointer_mut("/response/output")
+        .and_then(Value::as_array_mut)
+    {
+        for item in output {
+            normalized |= normalize_responses_item_ids(item);
+        }
+    }
+    normalized
+}
+
+fn normalize_responses_item_ids(item: &mut Value) -> bool {
+    normalize_id_field(item, "id") | normalize_id_field(item, "call_id")
+}
+
+fn normalize_id_field(value: &mut Value, field: &str) -> bool {
+    let Some(id) = value.get(field).and_then(Value::as_str) else {
+        return false;
+    };
+    let normalized = super::normalized_responses_api_id(id);
+    if normalized != id {
+        value[field] = Value::String(normalized);
+        return true;
+    }
+    false
 }
 
 fn format_sse_event(event: &str, data: &Value) -> String {
@@ -1240,13 +1460,21 @@ impl<S> ChatStreamState<S> {
             }
             _ => String::new(),
         };
-        let (needs_start, call_id, complete_name) = {
+        let (needs_start, call_id, complete_name, complete_namespace, custom) = {
             let state = self.calls.entry(index).or_default();
             if !id.is_empty() {
-                state.call_id = id.to_owned();
+                state.call_id = super::normalized_responses_api_id(id);
             }
             if !name.is_empty() {
-                state.name = name.to_owned();
+                if let Some(identity) = self.context.identity(name) {
+                    state.name = identity.name.clone();
+                    state.namespace = identity.namespace.clone();
+                    state.custom = identity.kind == ToolKind::Custom;
+                } else {
+                    state.name = name.to_owned();
+                    state.namespace = None;
+                    state.custom = false;
+                }
             }
             if !arguments.is_empty() {
                 if is_snapshot {
@@ -1259,6 +1487,8 @@ impl<S> ChatStreamState<S> {
                 !state.started && !state.name.is_empty(),
                 state.call_id.clone(),
                 state.name.clone(),
+                state.namespace.clone(),
+                state.custom,
             )
         };
         if needs_start {
@@ -1274,26 +1504,25 @@ impl<S> ChatStreamState<S> {
             state.output_index = output_index;
             state.item_id = item_id.clone();
             state.call_id = call_id.clone();
-            let item_type = if self.context.is_custom(&complete_name) {
+            let item_type = if custom {
                 "custom_tool_call"
             } else {
                 "function_call"
             };
-            let item = if item_type == "custom_tool_call" {
+            let mut item = if item_type == "custom_tool_call" {
                 json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name, "input": ""})
             } else {
                 json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name, "arguments": ""})
             };
+            if let Some(namespace) = complete_namespace {
+                item["namespace"] = Value::String(namespace);
+            }
             self.emit(sse("response.output_item.added", json!({"type": "response.output_item.added", "output_index": output_index, "item": item})));
         }
         if !arguments.is_empty() {
             let (output_index, item_id, custom) = {
                 let state = self.calls.entry(index).or_default();
-                (
-                    state.output_index,
-                    state.item_id.clone(),
-                    self.context.is_custom(&state.name),
-                )
+                (state.output_index, state.item_id.clone(), state.custom)
             };
             if !custom && !item_id.is_empty() {
                 let event = "response.function_call_arguments.delta";
@@ -1336,17 +1565,20 @@ impl<S> ChatStreamState<S> {
             if !state.started {
                 continue;
             }
-            let custom = self.context.is_custom(&state.name);
+            let custom = state.custom;
             let arguments = if custom {
                 custom_input(&state.name, &state.arguments)
             } else {
                 normalize_arguments(&state.arguments)
             };
-            let item = if custom {
+            let mut item = if custom {
                 json!({"id": state.item_id, "type": "custom_tool_call", "status": "completed", "call_id": state.call_id, "name": state.name, "input": arguments})
             } else {
                 json!({"id": state.item_id, "type": "function_call", "status": "completed", "call_id": state.call_id, "name": state.name, "arguments": arguments})
             };
+            if let Some(namespace) = state.namespace {
+                item["namespace"] = Value::String(namespace);
+            }
             let done_event = if custom {
                 "response.custom_tool_call_input.done"
             } else {
@@ -1648,6 +1880,115 @@ mod tests {
     }
 
     #[test]
+    fn flattens_namespace_tools_and_namespaced_history_for_chat() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "browser_snapshot",
+                    "namespace": "wework_browser",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "snapshot"
+                }
+            ],
+            "tools": [{
+                "type": "namespace",
+                "name": "wework_browser",
+                "description": "Wework built-in browser tools",
+                "tools": [{
+                    "type": "function",
+                    "name": "browser_snapshot",
+                    "description": "Capture the page",
+                    "parameters": {"type": "object", "properties": {}}
+                }]
+            }],
+            "tool_choice": {
+                "type": "function",
+                "name": "browser_snapshot",
+                "namespace": "wework_browser"
+            }
+        });
+
+        let (converted, context) = responses_to_chat(&input).expect("request should convert");
+
+        assert_eq!(converted["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            converted["tools"][0]["function"]["name"],
+            "browser_snapshot"
+        );
+        assert_eq!(
+            converted["messages"][0]["tool_calls"][0]["function"]["name"],
+            "browser_snapshot"
+        );
+        assert_eq!(
+            converted["tool_choice"]["function"]["name"],
+            "browser_snapshot"
+        );
+        assert_eq!(
+            context.identity("browser_snapshot"),
+            Some(&ToolIdentity {
+                name: "browser_snapshot".to_owned(),
+                namespace: Some("wework_browser".to_owned()),
+                kind: ToolKind::Function,
+            })
+        );
+    }
+
+    #[test]
+    fn disambiguates_colliding_namespace_tool_names() {
+        let input = json!({
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "calendar",
+                    "tools": [{
+                        "type": "function",
+                        "name": "search",
+                        "parameters": {"type": "object"}
+                    }]
+                },
+                {
+                    "type": "namespace",
+                    "name": "mail",
+                    "tools": [{
+                        "type": "function",
+                        "name": "search",
+                        "parameters": {"type": "object"}
+                    }]
+                }
+            ]
+        });
+
+        let (converted, context) = responses_to_chat(&input).expect("request should convert");
+        let names = converted["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.pointer("/function/name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["calendar__search", "mail__search"]);
+        assert_eq!(
+            context
+                .identity("calendar__search")
+                .and_then(|tool| tool.namespace.as_deref()),
+            Some("calendar")
+        );
+        assert_eq!(
+            context
+                .identity("mail__search")
+                .and_then(|tool| tool.namespace.as_deref()),
+            Some("mail")
+        );
+    }
+
+    #[test]
     fn explains_apply_patch_hunk_failures_and_requests_a_retry() {
         let input = json!({
             "model": "kimi-for-coding",
@@ -1723,6 +2064,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn normalizes_provider_tool_call_ids_in_responses_streams() {
+        let chunks = vec![Ok::<_, std::io::Error>(Bytes::from(concat!(
+            "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"tool_calls\":[{",
+            "\"index\":0,\"id\":\"functions.exec_command:0\",\"function\":{",
+            "\"name\":\"exec_command\",\"arguments\":\"{\"}}]},",
+            "\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"tool_calls\":[{",
+            "\"index\":0,\"id\":\"functions.exec_command:0\",\"function\":{",
+            "\"name\":\"exec_command\",\"arguments\":\"}\"}}]},",
+            "\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        )))];
+
+        let output =
+            chat_sse_to_responses(futures_util::stream::iter(chunks), ToolContext::default())
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(Result::unwrap)
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .collect::<String>();
+        let call_id = super::super::normalized_responses_api_id("functions.exec_command:0");
+        let item_id = format!("fc_{}", call_id.trim_start_matches("call_"));
+
+        assert!(output.contains(&format!("\"call_id\":\"{call_id}\"")));
+        assert!(output.contains(&format!("\"id\":\"{item_id}\"")));
+        assert!(!output.contains("functions.exec_command:0"));
+    }
+
+    #[tokio::test]
     async fn normalizes_wrapped_apply_patch_function_arguments() {
         let chunks = vec![Ok::<_, std::io::Error>(Bytes::from(
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"apply_patch\",\"arguments\":\"{\\\"patch\\\":\\\"```diff\\\\n*** Update File: a.txt\\\\n@@\\\\n-old\\\\n+new\\\\n```\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
@@ -1791,6 +2162,33 @@ mod tests {
         .await;
         assert!(output.contains("\"call_id\":\"call_1\""));
         assert!(output.contains("\"name\":\"read_file\""));
+    }
+
+    #[tokio::test]
+    async fn restores_namespace_on_chat_tool_calls() {
+        let input = json!({
+            "tools": [{
+                "type": "namespace",
+                "name": "wework_browser",
+                "tools": [{
+                    "type": "function",
+                    "name": "browser_snapshot",
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+        let context = responses_to_chat(&input).expect("context should build").1;
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"browser_snapshot\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            context,
+        )
+        .await;
+
+        assert!(output.contains("\"name\":\"browser_snapshot\""));
+        assert!(output.contains("\"namespace\":\"wework_browser\""));
     }
 
     #[tokio::test]
@@ -2109,6 +2507,31 @@ mod tests {
         .into_iter()
         .map(|item| String::from_utf8_lossy(&item.expect("stream item")).into_owned())
         .collect()
+    }
+
+    #[tokio::test]
+    async fn normalizes_provider_ids_in_responses_streams() {
+        let output = convert_responses_stream(
+            concat!(
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_functions.exec_command:0\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"functions.exec_command:0\",\"name\":\"exec_command\",\"arguments\":\"\"}}\n\n",
+                "event: response.function_call_arguments.delta\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_functions.exec_command:0\",\"output_index\":0,\"delta\":\"{}\"}\n\n",
+                "event: response.output_item.done\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_functions.exec_command:0\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"functions.exec_command:0\",\"name\":\"exec_command\",\"arguments\":\"{}\"}}\n\n",
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_functions.exec_command:0\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"functions.exec_command:0\",\"name\":\"exec_command\",\"arguments\":\"{}\"}]}}\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        let call_id = super::super::normalized_responses_api_id("functions.exec_command:0");
+        let item_id = super::super::normalized_responses_api_id("fc_functions.exec_command:0");
+
+        assert!(output.contains(&format!("\"call_id\":\"{call_id}\"")));
+        assert!(output.contains(&format!("\"item_id\":\"{item_id}\"")));
+        assert!(output.contains(&format!("\"id\":\"{item_id}\"")));
+        assert!(!output.contains("functions.exec_command:0"));
     }
 
     #[tokio::test]

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { cn } from '@/lib/utils'
 import type { RuntimeTurnNavigationItem } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
@@ -20,7 +21,6 @@ const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
 const NAVIGATION_VIEWPORT_PADDING_PX = 48
 const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [80, 160, 320, 640, 1000, 1600]
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
-const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
 interface MessageTurnNavigationProps {
   messages: WorkbenchMessage[]
@@ -70,9 +70,10 @@ export function MessageTurnNavigation({
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const markersRef = useRef<MessageTurnMarker[]>([])
-  const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
   const navigationScrollTimersRef = useRef<number[]>([])
+  const messagesRef = useRef(messages)
+  const turnNavigationRef = useRef(turnNavigation)
 
   const clearNavigationScrollTimers = useCallback(() => {
     navigationScrollTimersRef.current.forEach(timer => window.clearTimeout(timer))
@@ -139,11 +140,13 @@ export function MessageTurnNavigation({
     [clearNavigationScrollTimers, contentRef, onNavigationScrollTargetChange]
   )
 
-  const userTurns = useMemo(() => {
-    return turnNavigation && turnNavigation.length > 0
-      ? buildUserTurnsFromNavigation(turnNavigation, messages)
-      : buildUserTurns(messages)
-  }, [messages, turnNavigation])
+  const nextUserTurns = buildUserTurnsForNavigation(messages, turnNavigation)
+  const userTurnsSignature = getUserTurnsSignature(nextUserTurns)
+
+  useLayoutEffect(() => {
+    messagesRef.current = messages
+    turnNavigationRef.current = turnNavigation
+  }, [messages, turnNavigation, userTurnsSignature])
 
   const updateActiveMarker = useCallback(
     (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
@@ -181,14 +184,8 @@ export function MessageTurnNavigation({
     (reason: string) => {
       const scroller = scrollRef.current
       const content = contentRef.current
-      if (!scroller || !content || userTurns.length === 0) {
-        markersRef.current = []
-        setMarkers([])
-        setActiveMarkerId(null)
-        return
-      }
-
-      if (scroller.scrollHeight <= scroller.clientHeight + 8) {
+      const userTurns = buildUserTurnsForNavigation(messagesRef.current, turnNavigationRef.current)
+      if (!scroller || !content || userTurns.length < 2) {
         markersRef.current = []
         setMarkers([])
         setActiveMarkerId(null)
@@ -220,34 +217,24 @@ export function MessageTurnNavigation({
       setMarkers(nextMarkers)
       updateActiveMarker(nextMarkers, reason)
     },
-    [contentRef, scrollRef, updateActiveMarker, userTurns]
+    [contentRef, scrollRef, updateActiveMarker]
   )
 
   const scheduleCalculateMarkers = useCallback(
     (reason: string) => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current)
-        timerRef.current = null
-      }
+      if (timerRef.current !== null) return
 
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null
-        timerRef.current = window.setTimeout(() => {
-          timerRef.current = null
-          calculateMarkers(reason)
-        }, 0)
-      })
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null
+        calculateMarkers(reason)
+      }, 0)
     },
     [calculateMarkers]
   )
 
   useEffect(() => {
     scheduleCalculateMarkers('messages-effect')
-  }, [scheduleCalculateMarkers])
+  }, [scheduleCalculateMarkers, userTurnsSignature])
 
   useLayoutEffect(() => {
     if (!pendingScrollTarget) return
@@ -282,23 +269,25 @@ export function MessageTurnNavigation({
     window.addEventListener('resize', handleResize)
 
     const mutationObserver = new MutationObserver(() => scheduleCalculateMarkers('mutation'))
-    mutationObserver.observe(content, { childList: true })
+    mutationObserver.observe(content, {
+      attributes: true,
+      attributeFilter: ['style'],
+      childList: true,
+      subtree: true,
+    })
 
     const resizeObserver =
       typeof ResizeObserver === 'undefined'
         ? null
         : new ResizeObserver(() => scheduleCalculateMarkers('resize-observer'))
     resizeObserver?.observe(content)
+    resizeObserver?.observe(scroller)
 
     return () => {
       scroller.removeEventListener('scroll', handleScroll)
       window.removeEventListener('resize', handleResize)
       mutationObserver.disconnect()
       resizeObserver?.disconnect()
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
       if (timerRef.current !== null) {
         clearTimeout(timerRef.current)
         timerRef.current = null
@@ -345,6 +334,21 @@ export function MessageTurnNavigation({
         return
       }
 
+      const loadedMessageId = findLoadedNavigationMessageId(messages, {
+        navigationId: marker.id,
+        messageIndex: marker.messageIndex,
+      })
+      if (loadedMessageId) {
+        setPendingScrollTarget({
+          navigationId: marker.id,
+          messageIndex: marker.messageIndex,
+        })
+        setLoadingMarkerId(marker.id)
+        onNavigationLoadStateChange?.(true)
+        onNavigationScrollTargetChange?.(loadedMessageId)
+        return
+      }
+
       if (!marker.cursor || !onLoadTurnNavigationItem) {
         return
       }
@@ -369,8 +373,10 @@ export function MessageTurnNavigation({
     [
       activeMarkerId,
       contentRef,
+      messages,
       onLoadTurnNavigationItem,
       onNavigationLoadStateChange,
+      onNavigationScrollTargetChange,
       scrollRef,
       scrollToMessageId,
     ]
@@ -442,6 +448,7 @@ export function MessageTurnNavigation({
                     isLoading && 'cursor-progress'
                   )}
                   data-active={isActive}
+                  data-turn-index={marker.turnIndex}
                   data-testid="message-turn-navigation-marker"
                   onClick={() => handleMarkerClick(marker)}
                   onFocus={() => setHoveredMarkerId(marker.id)}
@@ -469,6 +476,8 @@ export function MessageTurnNavigation({
             'pointer-events-none absolute left-8 z-30 w-[300px] max-w-[calc(100vw-56px)] -translate-y-1/2 rounded-md border border-border bg-background px-2.5 py-2 text-left shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition-opacity duration-150',
             hoveredMarkerId === marker.id ? 'opacity-100' : 'opacity-0'
           )}
+          data-testid="message-turn-navigation-preview"
+          data-turn-index={marker.turnIndex}
           style={{ top: `${getMarkerTopPx(index) - navigationScrollTop}px` }}
         >
           <p className="break-words text-xs font-semibold leading-4 text-text-primary">
@@ -485,6 +494,21 @@ export function MessageTurnNavigation({
   )
 
   return portalTarget ? createPortal(navigation, portalTarget) : navigation
+}
+
+function buildUserTurnsForNavigation(
+  messages: WorkbenchMessage[],
+  navigation?: RuntimeTurnNavigationItem[]
+): UserTurn[] {
+  const messageTurns = buildUserTurns(messages)
+  if (!navigation || navigation.length === 0) return messageTurns
+
+  const navigationTurns = buildUserTurnsFromNavigation(navigation, messages)
+  return navigationTurns.length >= messageTurns.length ? navigationTurns : messageTurns
+}
+
+function getUserTurnsSignature(turns: UserTurn[]) {
+  return JSON.stringify(turns)
 }
 
 function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
@@ -505,10 +529,13 @@ function buildUserTurns(messages: WorkbenchMessage[]): UserTurn[] {
     turns.push({
       id: message.id,
       turnIndex: turns.length,
-      messageIndex: index,
+      messageIndex:
+        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
       promptPreview: getUserPromptPreview(message),
       responsePreview: '',
-      cursor: `offset:${index}`,
+      cursor: `offset:${
+        typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index
+      }`,
       loaded: true,
     })
     pendingResponsePreviewTurnIndexes.push(turns.length - 1)
@@ -521,34 +548,31 @@ function buildUserTurnsFromNavigation(
   navigation: RuntimeTurnNavigationItem[],
   messages: WorkbenchMessage[]
 ): UserTurn[] {
-  const loadedMessagesByIndex = new Map(
-    messages
-      .filter(
-        (message): message is WorkbenchMessage & { runtimeMessageIndex: number } =>
-          message.role === 'user' && typeof message.runtimeMessageIndex === 'number'
-      )
-      .map(message => [message.runtimeMessageIndex, message])
-  )
-  const loadedMessagesById = new Map(messages.map(message => [message.id, message]))
+  const loadedTurns = buildUserTurns(messages)
+  const loadedTurnsByIndex = new Map(loadedTurns.map(turn => [turn.messageIndex, turn]))
+  const loadedTurnsById = new Map(loadedTurns.map(turn => [turn.id, turn]))
 
-  return navigation.map((item, index) => {
-    const loadedMessage =
-      loadedMessagesByIndex.get(item.messageIndex) ?? loadedMessagesById.get(item.id)
+  const navigationTurns = navigation.map((item, index) => {
+    const loadedTurn = loadedTurnsByIndex.get(item.messageIndex) ?? loadedTurnsById.get(item.id)
     return {
-      id: loadedMessage?.id ?? item.id,
+      id: loadedTurn?.id ?? item.id,
       turnIndex: typeof item.turnIndex === 'number' ? item.turnIndex : index,
       messageIndex: item.messageIndex,
-      promptPreview: item.promptPreview,
-      responsePreview: item.responsePreview ?? '',
+      promptPreview: loadedTurn?.promptPreview ?? item.promptPreview,
+      responsePreview: loadedTurn?.responsePreview || item.responsePreview || '',
       cursor: item.cursor ?? `offset:${item.messageIndex}`,
-      loaded: Boolean(loadedMessage),
+      loaded: Boolean(loadedTurn),
     }
   })
+  const navigationMessageIds = new Set(navigationTurns.map(turn => turn.id))
+
+  return [...navigationTurns, ...loadedTurns.filter(turn => !navigationMessageIds.has(turn.id))]
+    .sort((left, right) => left.messageIndex - right.messageIndex)
+    .map((turn, turnIndex) => ({ ...turn, turnIndex }))
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {
-  const codexRequest = extractCodexRequest(message.content)
-  return truncatePreview(codexRequest || message.content, USER_PREVIEW_LENGTH)
+  return truncatePreview(visibleRuntimeUserMessage(message.content), USER_PREVIEW_LENGTH)
 }
 
 function getAssistantPreview(message: WorkbenchMessage) {
@@ -569,13 +593,6 @@ function getFirstTextBlockContent(message: WorkbenchMessage) {
   }
 
   return ''
-}
-
-function extractCodexRequest(content: string) {
-  const requestMarker = content.match(CODEX_REQUEST_MARKER_PATTERN)
-  if (requestMarker?.index === undefined) return ''
-
-  return content.slice(requestMarker.index + requestMarker[0].length).trim()
 }
 
 function truncatePreview(text: string, maxLength: number) {

@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>@ 菜单 · 云空间触发设计 Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  body { background: #ececea; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 24px 16px 0; color: #1a1a18; }
+
+  /* ---------- scenario bar ---------- */
+  .scenario-bar { display: flex; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; justify-content: center; }
+  .scenario-btn { border: 1px solid #d6d6d2; background: #fff; border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; color: #444; transition: all .15s; }
+  .scenario-btn.active { background: #1a1a18; color: #fff; border-color: #1a1a18; }
+  .scenario-note { font-size: 12.5px; color: #777; margin-bottom: 18px; max-width: 720px; text-align: center; line-height: 1.6; }
+  .scenario-note b { color: #1a1a18; }
+
+  /* ---------- chat mock ---------- */
+  .chat { width: 760px; max-width: 100%; background: #f7f7f5; border: 1px solid #e3e3e0; border-radius: 20px 20px 0 0; flex: 1; display: flex; flex-direction: column; padding: 24px 24px 16px; position: relative; }
+  .msg-user { align-self: flex-end; background: #efefec; border-radius: 14px; padding: 8px 14px; font-size: 14px; max-width: 70%; }
+  .msg-ai { align-self: flex-start; margin-top: 14px; font-size: 14px; line-height: 1.8; color: #333; max-width: 85%; }
+  .msg-ai .tool-line { display: flex; align-items: center; gap: 6px; color: #8a8a85; font-size: 12.5px; margin: 4px 0; }
+  .msg-ai .tool-line .dot { width: 6px; height: 6px; border-radius: 50%; background: #4caf7d; }
+  .msg-ai code { background: #efefec; border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
+  .spacer { flex: 1; min-height: 40px; }
+
+  /* ---------- composer ---------- */
+  .composer-wrap { position: relative; }
+  .composer { background: #fff; border: 1px solid #e0e0dc; border-radius: 16px; padding: 12px 14px 10px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+  .composer-input { font-size: 14px; min-height: 22px; outline: none; line-height: 1.6; }
+  .composer-input .placeholder { color: #a9a9a3; }
+  .chip { display: inline-flex; align-items: center; gap: 3px; background: #eaf3ff; color: #1668c9; border-radius: 6px; padding: 0 6px; font-size: 13px; margin-right: 2px; white-space: nowrap; }
+  .chip svg { flex: none; }
+  .composer-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; color: #8a8a85; }
+  .composer-bar .spacer-x { flex: 1; }
+  .send-btn { width: 28px; height: 28px; border-radius: 50%; background: #1a1a18; color: #fff; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; }
+  .pill { border: 1px solid #e0e0dc; border-radius: 999px; padding: 3px 10px; font-size: 12px; display: flex; align-items: center; gap: 4px; }
+
+  /* ---------- mention menu ---------- */
+  .menu { position: absolute; bottom: calc(100% + 8px); left: 0; width: 420px; max-height: 320px; overflow-y: auto; background: #fff; border: 1px solid #e3e3e0; border-radius: 14px; box-shadow: 0 12px 34px rgba(0,0,0,.12); padding: 6px; z-index: 20; }
+  .menu-header { padding: 4px 10px 6px; font-size: 12px; color: #9a9a94; }
+  .menu-row { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 8px; border: none; background: none; border-radius: 8px; cursor: pointer; text-align: left; font-size: 13.5px; color: #1a1a18; }
+  .menu-row:hover, .menu-row.selected { background: #f0f0ed; }
+  .menu-row .icon { width: 15px; height: 15px; color: #6d6d67; flex: none; display: flex; }
+  .menu-row .title { flex: none; font-size: 13.5px; }
+  .menu-row .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9a9a94; font-size: 13px; }
+  .menu-row .meta { flex: none; font-size: 11.5px; color: #9a9a94; }
+  .menu-row .chev { flex: none; color: #b5b5af; display: flex; }
+  .menu-divider { height: 1px; background: #efefec; margin: 5px 8px; }
+  .badge-new { flex: none; font-size: 10px; background: #1a1a18; color: #fff; border-radius: 4px; padding: 1px 5px; margin-left: 2px; }
+  .status-badge { flex: none; font-size: 10.5px; border-radius: 4px; padding: 1px 6px; }
+  .st-inbox { background: #f0f0ed; color: #777; }
+  .st-pending { background: #fff4e0; color: #b07818; }
+  .st-in_progress { background: #e8f1ff; color: #1668c9; }
+  .st-in_review { background: #f3eaff; color: #7b3fd4; }
+  .st-completed { background: #e6f6ec; color: #2c8a4e; }
+
+  /* ---------- dialog ---------- */
+  .overlay { position: absolute; inset: 0; background: rgba(20,20,18,.32); border-radius: 20px 20px 0 0; display: flex; align-items: center; justify-content: center; z-index: 30; }
+  .dialog { width: 380px; background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.2); }
+  .dialog h3 { font-size: 15px; margin-bottom: 4px; }
+  .dialog .sub { font-size: 12.5px; color: #9a9a94; margin-bottom: 16px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12.5px; color: #555; margin-bottom: 5px; }
+  .field label .opt { color: #b0b0aa; }
+  .field input, .field textarea { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 8px 10px; font-size: 13.5px; outline: none; font-family: inherit; }
+  .field input:focus, .field textarea:focus { border-color: #1a1a18; }
+  .dialog-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .btn { border-radius: 8px; padding: 7px 16px; font-size: 13px; cursor: pointer; border: 1px solid #ddd; background: #fff; }
+  .btn-primary { background: #1a1a18; color: #fff; border-color: #1a1a18; }
+
+  .toast { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); background: #1a1a18; color: #fff; font-size: 13px; border-radius: 10px; padding: 8px 16px; z-index: 40; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="scenario-bar">
+  <button class="scenario-btn active" data-scene="1" onclick="go(1)">1 · @菜单新入口</button>
+  <button class="scenario-btn" data-scene="2" onclick="go(2)">2 · 下钻:项目空间</button>
+  <button class="scenario-btn" data-scene="3" onclick="go(3)">3 · 下钻:任务(看板)</button>
+  <button class="scenario-btn" data-scene="4" onclick="go(4)">4 · 选中任务后对话</button>
+  <button class="scenario-btn" data-scene="5" onclick="go(5)">5 · 新建项目空间</button>
+</div>
+<div class="scenario-note" id="note"></div>
+
+<div class="chat">
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- conversation area -->
+  <div id="conv"></div>
+  <div class="spacer"></div>
+
+  <!-- composer -->
+  <div class="composer-wrap">
+    <!-- mention menu -->
+    <div class="menu hidden" id="menu">
+      <div class="menu-header" id="menuHeader">添加</div>
+      <div id="menuRows"></div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-input" id="composerInput"></div>
+      <div class="composer-bar">
+        <span style="font-size:18px; line-height:1;">+</span>
+        <span class="pill">快捷短语</span>
+        <div class="spacer-x"></div>
+        <span class="pill">GPT 5.6 Sol 轻度 ▾</span>
+        <button class="send-btn" onclick="go(4)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- create-project dialog -->
+  <div class="overlay hidden" id="overlay">
+    <div class="dialog">
+      <h3>新建项目空间</h3>
+      <div class="sub">创建后自动绑定到当前会话,可直接 @ 它的任务和文件</div>
+      <div class="field">
+        <label>名称</label>
+        <input id="projName" value="官网改版" />
+      </div>
+      <div class="field">
+        <label>项目标识 <span class="opt">可选,用于任务编号,如 WEG-18</span></label>
+        <input value="GW" />
+      </div>
+      <div class="field">
+        <label>描述 <span class="opt">可选</span></label>
+        <textarea rows="2" placeholder="这个空间用来协作什么?"></textarea>
+      </div>
+      <div class="dialog-btns">
+        <button class="btn" onclick="closeDialog()">取消</button>
+        <button class="btn btn-primary" onclick="createProject()">创建</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+const ICONS = {
+  paperclip: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57A4 4 0 1118 8.84l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>',
+  target: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
+  plan: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><path d="M9 12h6M9 16h6"/></svg>',
+  cloud: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19a4.5 4.5 0 100-9 6 6 0 00-11.5 1.5A4 4 0 007.5 19h10z"/></svg>',
+  plus: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
+  back: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>',
+  chev: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>',
+  todo: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12l3 3 5-6"/></svg>',
+  file: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>',
+  pkg: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>',
+};
+
+const PROJECTS = [
+  { name: 'Wegent 2.0', role: 'Owner', desc: '12 个任务 · 5 个成员' },
+  { name: '官网改版', role: 'Maintainer', desc: '8 个任务 · 3 个成员' },
+  { name: '移动端重构', role: 'Developer', desc: '23 个任务 · 6 个成员' },
+];
+
+const TODOS = [
+  { id: 'WEG-18', title: '接入新版登录页', status: 'in_progress' },
+  { id: 'WEG-21', title: '看板支持拖拽排序', status: 'pending' },
+  { id: 'WEG-22', title: '修复附件上传失败', status: 'in_review' },
+  { id: 'WEG-15', title: '接入 CI 流水线', status: 'completed' },
+];
+
+const FILES = [
+  { name: '需求文档.md', desc: '/docs' },
+  { name: '接口约定.md', desc: '/docs' },
+];
+
+const STATUS_LABEL = { inbox: '收集箱', pending: '待处理', in_progress: '进行中', in_review: '待评审', completed: '已完成' };
+
+let chip = null; // {type:'project'|'todo', name}
+
+function row(icon, title, opts = {}) {
+  return `<button class="menu-row" ${opts.onclick ? `onclick="${opts.onclick}"` : ''}>
+    <span class="icon">${icon}</span>
+    <span class="title">${title}</span>
+    ${opts.badge ? '<span class="badge-new">新</span>' : ''}
+    ${opts.status ? `<span class="status-badge st-${opts.status}">${STATUS_LABEL[opts.status]}</span>` : ''}
+    ${opts.desc ? `<span class="desc">${opts.desc}</span>` : '<span class="desc"></span>'}
+    ${opts.meta ? `<span class="meta">${opts.meta}</span>` : ''}
+    ${opts.chev ? `<span class="chev">${ICONS.chev}</span>` : ''}
+  </button>`;
+}
+
+function renderComposer(text) {
+  let html = '';
+  if (chip) html += `<span class="chip">${ICONS.cloud}<span>${chip.name}</span></span> `;
+  html += text ? escapeHtml(text) : '<span class="placeholder">输入 @ 添加项目空间、任务、文件…</span>';
+  $('#composerInput').innerHTML = html;
+}
+
+function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+function setConv(html) { $('#conv').innerHTML = html; }
+
+function showMenu(header, rowsHtml) {
+  $('#menuHeader').textContent = header;
+  $('#menuRows').innerHTML = rowsHtml;
+  $('#menu').classList.remove('hidden');
+}
+function hideMenu() { $('#menu').classList.add('hidden'); }
+function hideDialog() { $('#overlay').classList.add('hidden'); }
+function closeDialog() { hideDialog(); }
+
+function toast(msg) {
+  const t = $('#toast');
+  t.innerHTML = msg;
+  t.classList.remove('hidden');
+  setTimeout(() => t.classList.add('hidden'), 2600);
+}
+
+/* ---------- scenes ---------- */
+
+function scene1() {
+  chip = null; hideDialog();
+  setConv('');
+  renderComposer('@');
+  showMenu('添加', [
+    row(ICONS.paperclip, '文件和文件夹'),
+    row(ICONS.target, '目标'),
+    row(ICONS.plan, '计划模式'),
+    `<div class="menu-divider"></div>`,
+    row(ICONS.cloud, '项目空间', { desc: '@ 一个云项目空间,看板/文件都在里面', chev: true, badge: true, onclick: 'go(2)' }),
+    row(ICONS.plus, '新建项目空间', { desc: '弹出表单直接创建,不依赖模型', badge: true, onclick: 'go(5)' }),
+    `<div class="menu-divider"></div>`,
+    row(ICONS.pkg, 'Cloudflare:agents Sdk', { desc: 'Build stateful agents on Cloudflare Workers', meta: '个人' }),
+    row(ICONS.pkg, 'Cloudflare:building Ai Agent', { desc: 'Build stateful AI agents on Cloudflare Workers', meta: '个人' }),
+  ].join(''));
+  note('在现有"添加"区追加两个固定入口:<b>项目空间</b>(下钻选择)和<b>新建项目空间</b>(弹对话框)。也可以跳过入口,直接手打 <b>@项目空间:xxx</b> 过滤选择 —— 与其他 mention 行为一致。知识库列表保持不变。');
+}
+
+function scene2() {
+  hideDialog();
+  renderComposer('@项目空间:官');
+  showMenu('项目空间', [
+    row(ICONS.back, '返回', { onclick: 'go(1)' }),
+    `<div class="menu-divider"></div>`,
+    row(ICONS.cloud, '官网改版', { desc: '8 个任务 · 3 个成员', meta: 'Maintainer', chev: true, onclick: 'selectProject(1)' }),
+  ].join(''));
+  note('两种路径等价:从入口点进来,或直接手打 <b>@项目空间:关键词</b> 过滤(图示)。选中后插入 chip <b>项目空间:官网改版</b> —— 底层是 <b>[$项目空间:官网改版](cloud://projects/{id})</b>,与技能 [$name](path)、应用 [$name](app://id) 同一 mention 格式,同时绑定为当前会话云上下文。');
+}
+
+function selectProject(i) {
+  const p = PROJECTS[i];
+  chip = { type: 'project', name: '项目空间:' + p.name };
+  scene3();
+  toast(`已绑定项目空间「${p.name}」`);
+}
+
+function scene3() {
+  hideDialog();
+  if (!chip) chip = { type: 'project', name: '项目空间:Wegent 2.0' };
+  renderComposer('@');
+  showMenu(chip.name.replace('项目空间:', ''), [
+    row(ICONS.back, '返回', { onclick: 'go(2)' }),
+    `<div class="menu-divider"></div>`,
+    row(ICONS.cloud, '整个空间', { desc: '共享文件 + 看板全部内容', onclick: 'pickWholeSpace()' }),
+    `<div class="menu-divider"></div>`,
+    ...TODOS.map(td => row(ICONS.todo, td.id, { desc: td.title, status: td.status, onclick: `pickTodo('${td.id}','${td.title}','${td.status}')` })),
+    `<div class="menu-divider"></div>`,
+    ...FILES.map(f => row(ICONS.file, f.name, { desc: f.desc, onclick: 'pickFile()' })),
+  ].join(''));
+  note('已插入 chip <b>' + chip.name + '</b>,再敲 @ 进入空间内选择:任务(看板)带状态徽章列前,文件在后,输入关键词继续过滤。点任务插入 chip <b>任务:WEG-18</b>(底层 [$任务:WEG-18](cloud://…/todos/WEG-18));点「整个空间」则引用整个项目。');
+}
+
+function pickWholeSpace() {
+  hideMenu();
+  renderComposer('新建任务:补充全站埋点,优先级高');
+  note('chip 引用整个空间后,自然语言驱动:<br>「新建任务:补充全站埋点」→ create_cloud_todo<br>「把看板里高优先级的列一下」→ list_cloud_todos<br>点 ↑ 发送看 agent 侧效果。');
+}
+
+function pickTodo(id, title, status) {
+  chip = { type: 'todo', name: '任务:' + id };
+  hideMenu();
+  renderComposer('把这个任务标记为完成');
+  note(`已插入 chip <b>任务:${id}</b>(底层 [$任务:${id}](cloud://…/todos/${id}))。发送后 agent 先 resolve_cloud_reference 拿到详情,再调 update_cloud_todo(version 乐观锁)改状态。点 ↑ 看效果。`);
+}
+
+function pickFile() {
+  hideMenu();
+  renderComposer('对照这份需求文档,把看板里缺的任务补上');
+  note('文件引用走现有 read_cloud_file,配合 create_cloud_todo 可让 agent 对照文档批量补任务。');
+}
+
+function scene4() {
+  hideMenu(); hideDialog();
+  if (!chip) chip = { type: 'todo', name: '任务:WEG-18' };
+  const isTodo = chip.type === 'todo';
+  setConv(isTodo ? `
+    <div class="msg-user"><span class="chip">${ICONS.cloud}<span>${chip.name}</span></span> 把这个任务标记为完成</div>
+    <div class="msg-ai">
+      <div class="tool-line"><span class="dot"></span>resolve_cloud_reference → 拿到 WEG-18 详情(version 7)</div>
+      <div class="tool-line"><span class="dot"></span>update_cloud_todo(status=completed, version=7)</div>
+      已完成 ✅ <code>WEG-18 接入新版登录页</code> 状态:进行中 → <b>已完成</b>,完成时间已记录。
+    </div>` : `
+    <div class="msg-user"><span class="chip">${ICONS.cloud}<span>${chip.name}</span></span> 新建任务:补充全站埋点,优先级高</div>
+    <div class="msg-ai">
+      <div class="tool-line"><span class="dot"></span>resolve_cloud_reference → 定位到空间「${chip.name.replace('项目空间:', '')}」</div>
+      <div class="tool-line"><span class="dot"></span>create_cloud_todo(title=补充全站埋点, priority=high)</div>
+      已创建 ✅ <code>GW-9 补充全站埋点</code>,优先级 <b>高</b>,已进入看板收集箱。<br><br>
+      看板里还有 2 个进行中的任务,需要我继续处理吗?
+    </div>`);
+  renderComposer('');
+  note('agent 侧链路:@项目空间:xxx + 自然语言「新建」→ resolve_cloud_reference + create_cloud_todo;@任务:xxx +「标记完成」→ update_cloud_todo。删除进回收站:「把 WEG-18 删了」/「恢复刚才删的」→ delete / restore / list_cloud_todo_recycle_bin。');
+}
+
+function scene5() {
+  hideMenu();
+  renderComposer('@');
+  showMenu('添加', [
+    row(ICONS.paperclip, '文件和文件夹'),
+    row(ICONS.target, '目标'),
+    row(ICONS.plan, '计划模式'),
+    `<div class="menu-divider"></div>`,
+    row(ICONS.cloud, '项目空间', { desc: '@ 一个云项目空间,看板/文件都在里面', chev: true, badge: true, onclick: 'go(2)' }),
+    row(ICONS.plus, '新建项目空间', { desc: '弹出表单直接创建,不依赖模型', badge: true, onclick: 'go(5)' }),
+  ].join(''));
+  $('#overlay').classList.remove('hidden');
+  note('<b>通道一(图示)</b>:菜单入口弹表单,前端直调 REST 创建 —— 模型挂了也能用。<br><b>通道二</b>:直接说「帮我创建一个项目空间」,agent 调新增的 MCP 工具 create_cloud_project。创建后自动绑定会话。');
+}
+
+function createProject() {
+  const name = $('#projName').value || '官网改版';
+  hideDialog(); hideMenu();
+  chip = { type: 'project', name: '项目空间:' + name };
+  renderComposer('在这个空间里建三个任务:首页改版、SEO 优化、性能压测');
+  toast(`项目空间「${name}」已创建并绑定`);
+  note('创建成功 → 自动绑定为当前会话云上下文 + 插入 chip「项目空间:' + name + '」。接下来这句话会触发 create_cloud_todo ×3。');
+}
+
+function note(html) { $('#note').innerHTML = html; }
+
+function go(n) {
+  document.querySelectorAll('.scenario-btn').forEach(b => b.classList.toggle('active', b.dataset.scene == n));
+  ({1: scene1, 2: scene2, 3: scene3, 4: scene4, 5: scene5})[n]();
+}
+
+const initial = parseInt((location.hash || '').replace('#', ''), 10);
+go(initial >= 1 && initial <= 5 ? initial : 1);
+</script>
+</body>
+</html>
