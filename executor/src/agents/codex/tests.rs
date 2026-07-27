@@ -687,6 +687,19 @@ fn codex_launch_config_forwards_runtime_proxy_env() {
 }
 
 #[test]
+fn required_loopback_hosts_are_merged_into_no_proxy() {
+    assert_eq!(
+        merge_required_no_proxy(Some("example.com, localhost")),
+        "example.com,localhost,127.0.0.1,::1,host.docker.internal"
+    );
+    assert_eq!(
+        merge_required_no_proxy(Some("LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL")),
+        "LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL"
+    );
+    assert_eq!(merge_required_no_proxy(None), DEFAULT_NO_PROXY);
+}
+
+#[test]
 fn codex_launch_config_does_not_forward_task_identity() {
     let request = ExecutionRequest {
         task_id: "task-525".to_owned(),
