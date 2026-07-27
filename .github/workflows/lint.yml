@@ -194,6 +194,9 @@ jobs:
       - name: Test CI change classifier
         run: .github/scripts/test-classify-ci-changes.sh
 
+      - name: Test repository policy workflow
+        run: scripts/test-repository-policy-workflow.sh
+
       - name: Run repository policy check
         # Fork PRs run this in repository-policy.yml using pull_request_target
         # with the trusted base-branch script and the PR merge tree as data.
