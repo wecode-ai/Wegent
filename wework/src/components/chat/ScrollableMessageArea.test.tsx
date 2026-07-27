@@ -1613,6 +1613,71 @@ describe('ScrollableMessageArea', () => {
     vi.unstubAllGlobals()
   })
 
+  test('does not render a gap for transcript indexes already covered by a loaded page', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'retried-user',
+            role: 'user',
+            content: '重试后的请求',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'successful-retry',
+            role: 'assistant',
+            content: '最终成功响应',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:03.000Z',
+            runtimeMessageIndex: 3,
+          },
+        ]}
+        loadedTranscriptRanges={[{ start: 0, end: 4 }]}
+        onLoadTranscriptGap={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('runtime-transcript-gap-marker')).not.toBeInTheDocument()
+  })
+
+  test('loads only the uncovered part between partially loaded transcript ranges', () => {
+    const onLoadTranscriptGap = vi.fn()
+
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'before-partial-gap',
+            role: 'user',
+            content: '缺口之前',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'after-partial-gap',
+            role: 'assistant',
+            content: '缺口之后',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:05.000Z',
+            runtimeMessageIndex: 5,
+          },
+        ]}
+        loadedTranscriptRanges={[
+          { start: 0, end: 3 },
+          { start: 4, end: 6 },
+        ]}
+        onLoadTranscriptGap={onLoadTranscriptGap}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('runtime-transcript-gap-marker').querySelector('button')!)
+
+    expect(onLoadTranscriptGap).toHaveBeenCalledWith({ start: 3, end: 4 })
+  })
+
   test('pins the conversation to the bottom after opening a chat', () => {
     render(
       <ScrollableMessageArea

@@ -2301,6 +2301,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     transcriptLoadingMoreBefore,
     transcriptLoadingFullContent,
     transcriptFullContent,
+    loadedTranscriptRanges,
     turnNavigation,
     subagentStatuses,
     goal,
