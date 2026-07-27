@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-      - master
-      - develop
     paths:
       - ".github/workflows/wework-e2e.yml"
       - "package.json"
@@ -17,8 +15,6 @@ on:
   pull_request:
     branches:
       - main
-      - master
-      - develop
     paths:
       - ".github/workflows/wework-e2e.yml"
       - "package.json"
@@ -28,9 +24,11 @@ on:
       - "packages/chat-core/**"
       - "wework/**"
   workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -39,6 +37,7 @@ permissions:
 jobs:
   wework-e2e:
     name: Wework E2E
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -102,9 +101,23 @@ jobs:
           retention-days: 7
 
   wework-desktop-e2e:
-    name: Wework Desktop E2E
+    name: Wework Desktop E2E (${{ matrix.name }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: plugins
+            name: Plugins
+            command: e2e:desktop:plugins
+          - id: core
+            name: Core
+            command: e2e:desktop
+          - id: cloud
+            name: Cloud
+            command: e2e:desktop:cloud
 
     steps:
       - name: Checkout code
@@ -163,21 +176,20 @@ jobs:
         working-directory: ./wework
         run: pnpm run prepare:codex
 
-      - name: Run Wework desktop task-flow E2E
+      - name: Run Wework desktop ${{ matrix.name }} E2E
         env:
           CI: true
           CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
         run: |
           test -x "$CODEX_BIN"
-          xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop:plugins
-          xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop
-          xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop:cloud
+          xvfb-run -a --server-args="-screen 0 1280x720x24" \
+            pnpm --filter wework ${{ matrix.command }}
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wework-desktop-e2e-diagnostics
+          name: wework-desktop-${{ matrix.id }}-e2e-diagnostics
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
@@ -186,6 +198,7 @@ jobs:
 
   wework-desktop-memory-e2e:
     name: Wework Desktop Memory E2E
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory')
     runs-on: macos-14
     timeout-minutes: 30
 
