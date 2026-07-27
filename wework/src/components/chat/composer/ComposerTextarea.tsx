@@ -7,7 +7,9 @@ import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
   openNativeWorkspacePathPicker,
+  type NativeWorkspacePath,
 } from '@/lib/native-workspace-path-picker'
+import { resolveDataTransferWorkspacePaths } from '@/lib/workspace-path-transfer'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import {
   ComposerProseMirrorEditor,
@@ -34,6 +36,7 @@ import {
   replaceComposerMentionTrigger,
   resolveComposerWorkspacePath,
 } from './composerMentions'
+import { workspacePathReferenceText } from './composerPathTransfer'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
@@ -562,6 +565,27 @@ export function ComposerTextarea({
     [onChange, updateAutocompleteTrigger]
   )
 
+  const insertPathReferences = useCallback(
+    (entries: NativeWorkspacePath[]) => {
+      if (entries.length === 0) return
+      const editor = editorRef.current
+      if (!editor) return
+
+      const references = workspacePathReferenceText(entries)
+      const current = editor.getSnapshot()
+      const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
+      const nextValue =
+        current.value.slice(0, current.selectionOffset) +
+        spacer +
+        references +
+        ' ' +
+        current.value.slice(current.selectionOffset)
+      commitEditorValue(nextValue, current.selectionOffset + spacer.length + references.length + 1)
+      editor.focus()
+    },
+    [commitEditorValue]
+  )
+
   const selectMentionCandidate = useCallback(
     (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
       const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
@@ -691,27 +715,7 @@ export function ComposerTextarea({
       if (row.kind === 'plan-action') onSetPlanMode?.()
       if (row.kind === 'files-action') {
         void openNativeWorkspacePathPicker(workspaceTarget?.path)
-          .then(entries => {
-            if (entries.length === 0) return
-            const currentEditor = editorRef.current
-            if (!currentEditor) return
-            const references = entries
-              .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
-              .join(' ')
-            const current = currentEditor.getSnapshot()
-            const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
-            const nextValue =
-              current.value.slice(0, current.selectionOffset) +
-              spacer +
-              references +
-              ' ' +
-              current.value.slice(current.selectionOffset)
-            commitEditorValue(
-              nextValue,
-              current.selectionOffset + spacer.length + references.length + 1
-            )
-            currentEditor.focus()
-          })
+          .then(insertPathReferences)
           .catch(error => {
             console.warn('[Wework composer] native workspace picker failed', error)
           })
@@ -723,6 +727,7 @@ export function ComposerTextarea({
       closeAutocompleteMenu,
       cloudSpaceDirectReference,
       commitEditorValue,
+      insertPathReferences,
       onSelectCloudProject,
       onSetGoal,
       onSetPlanMode,
@@ -1021,35 +1026,48 @@ export function ComposerTextarea({
 
   const handlePaste = useCallback(
     (event: ClipboardEvent) => {
-      if (!onPasteFiles || !event.clipboardData) return false
-      const files = Array.from(event.clipboardData.files)
+      if (!event.clipboardData) return false
+      const clipboardData = event.clipboardData
+      const files = Array.from(clipboardData.files)
       if (files.length > 0) {
         event.preventDefault()
-        onPasteFiles(files)
+        void resolveDataTransferWorkspacePaths(
+          clipboardData,
+          'clipboard',
+          workspaceTarget?.workspaceSource
+        ).then(({ attachmentFiles, referenceEntries }) => {
+          insertPathReferences(referenceEntries)
+          if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+        })
         return true
       }
-      const textAttachment = createLongPastedTextAttachment(
-        event.clipboardData.getData('text/plain')
-      )
+      if (!onPasteFiles) return false
+      const textAttachment = createLongPastedTextAttachment(clipboardData.getData('text/plain'))
       if (!textAttachment) return false
       event.preventDefault()
       onPasteFiles([textAttachment])
       return true
     },
-    [onPasteFiles]
+    [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
   )
 
   const handleDrop = useCallback(
     (event: DragEvent) => {
-      if (!onPasteFiles) return false
-      const files = Array.from(event.dataTransfer?.files ?? [])
-      if (files.length === 0) return false
+      const dataTransfer = event.dataTransfer
+      if (!dataTransfer || !Array.from(dataTransfer.types).includes('Files')) return false
       event.preventDefault()
       event.stopPropagation()
-      onPasteFiles(files)
+      void resolveDataTransferWorkspacePaths(
+        dataTransfer,
+        'drop',
+        workspaceTarget?.workspaceSource
+      ).then(({ attachmentFiles, referenceEntries }) => {
+        insertPathReferences(referenceEntries)
+        if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+      })
       return true
     },
-    [onPasteFiles]
+    [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
   )
 
   return (

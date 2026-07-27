@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   applyRuntimeConversationAction,
-  cacheRuntimeConversationMessages,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
+  cacheRuntimeConversationMessages,
+  cacheRuntimeConversationQueuedMessages,
+  cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
   evictRuntimeConversation,
   getConversationScrollSnapshot,
   getConversationVirtualMeasurements,
   getRuntimeConversationMessages,
+  getRuntimeConversationQueuedMessages,
+  getRuntimeConversationQueuePaused,
 } from './runtimeConversationCache'
 
 const address = {
@@ -109,10 +113,21 @@ describe('runtimeConversationCache', () => {
     cacheConversationVirtualMeasurements('device-1:task-1', [
       { index: 0, key: 'user-1', start: 0, end: 120, size: 120, lane: 0 },
     ])
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'queued-1',
+        content: 'follow up',
+        status: 'queued',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+    ])
+    cacheRuntimeConversationQueuePaused(address, true)
 
     evictRuntimeConversation(address)
 
     expect(getRuntimeConversationMessages(address)).toEqual([])
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
+    expect(getRuntimeConversationQueuePaused(address)).toBe(false)
     expect(getConversationScrollSnapshot('device-1:task-1')).toBeUndefined()
     expect(getConversationVirtualMeasurements('device-1:task-1')).toBeUndefined()
   })

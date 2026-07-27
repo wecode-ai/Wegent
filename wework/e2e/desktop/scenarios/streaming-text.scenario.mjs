@@ -15,7 +15,7 @@ const ATTACHMENT_FILENAME = 'streaming-turn-navigation.png'
 const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
-const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll"]`
+const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
 const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] p[data-scroll-anchor]:nth-of-type(13)`
 const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   if (index === 11) {
@@ -169,6 +169,21 @@ async function getSingleElementMetrics(control, selector, description) {
   return metrics[0]
 }
 
+function distanceFromBottom(metrics) {
+  return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
+async function waitForBottom(control, description, timeoutMs) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
+    if (distanceFromBottom(metrics) <= 8) return metrics
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
+}
+
 async function waitForFolderPath(control, expectedPath, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -237,7 +252,8 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText, timeoutMs
   throw new Error(`The streaming task row did not appear for ${expectedText}`)
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({ resultDir, standalone, uiTimeoutMs, workspacePath }) {
+  let active = false
   let releaseAppend
   let releaseResponse
   let resolveRequest
@@ -253,9 +269,8 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
   })
 
   return {
-    codexConfigToml: '\n[features]\nplugins = false\n',
-
     async handleHttp(request, response, url) {
+      if (!active) return false
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname)) {
         return false
       }
@@ -302,7 +317,13 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
     },
 
     async verify(control) {
-      await createLocalProject(control, workspacePath, uiTimeoutMs)
+      active = true
+      if (standalone) {
+        await createLocalProject(control, workspacePath, uiTimeoutMs)
+      } else {
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      }
       const knownTaskRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
           testId.startsWith('runtime-local-task-row-')
@@ -365,6 +386,16 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
         streamingSnapshot.text.indexOf(MARKER) < streamingSnapshot.text.lastIndexOf('正在思考'),
         'The thinking indicator was not rendered below the partial assistant response'
       )
+      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      const pinnedBeforeSwitch = await waitForBottom(
+        control,
+        'The streaming conversation before switching tasks',
+        5_000
+      )
+      assert.ok(
+        distanceFromBottom(pinnedBeforeSwitch) <= 8,
+        `The streaming conversation was ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom before switching tasks`
+      )
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
@@ -376,6 +407,16 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       await new Promise(resolve => setTimeout(resolve, 1_500))
+      const pinnedAfterSwitch = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The bottom-pinned streaming conversation after switching back'
+      )
+      assert.ok(
+        distanceFromBottom(pinnedAfterSwitch) <= 8,
+        `The bottom-pinned streaming conversation reopened ${distanceFromBottom(pinnedAfterSwitch)}px from the bottom`
+      )
+      await capture(control, resultDir, 'streaming-text-01-bottom-restored-after-task-switch.png')
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
         2,
@@ -398,30 +439,56 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
         !streamingTurnPreview.includes('application_context'),
         'The streaming turn preview exposed injected application context'
       )
-      await capture(control, resultDir, 'streaming-text-01-thinking-below-partial-response.png')
+      await capture(control, resultDir, 'streaming-text-02-thinking-below-partial-response.png')
 
       assert.equal(
         await control.command('getText', VIEWPORT_ANCHOR_SELECTOR),
         `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`,
         'The viewport anchor paragraph was not rendered at the expected position'
       )
-      await control.command('scrollIntoViewAsUser', VIEWPORT_ANCHOR_SELECTOR)
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`,
-        { timeoutMs: uiTimeoutMs }
+      await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.35' })
+      const userScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The streaming conversation immediately after the user scrolled upward'
       )
+      assert.ok(
+        distanceFromBottom(userScrollPosition) > 8,
+        'The simulated user scroll did not move the streaming conversation away from the bottom'
+      )
+      await new Promise(resolve => setTimeout(resolve, 750))
+      const stableUserScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The streaming conversation after pending bottom restores had time to run'
+      )
+      assert.ok(
+        Math.abs(stableUserScrollPosition.scrollTop - userScrollPosition.scrollTop) <= 8,
+        `The streaming conversation jumped from ${userScrollPosition.scrollTop}px to ${stableUserScrollPosition.scrollTop}px after the user scrolled upward`
+      )
+
+      await control.command('scrollIntoView', VIEWPORT_ANCHOR_SELECTOR)
+      await new Promise(resolve => setTimeout(resolve, 250))
       const scrollerBeforeAppend = await getSingleElementMetrics(
         control,
         SCROLLER_SELECTOR,
         'The streaming conversation scroller before later content'
+      )
+      assert.ok(
+        distanceFromBottom(scrollerBeforeAppend) > 8,
+        'The simulated user scroll did not move the streaming conversation away from the bottom'
       )
       const anchorBeforeAppend = await getSingleElementMetrics(
         control,
         VIEWPORT_ANCHOR_SELECTOR,
         'The viewport anchor before later content'
       )
-      await capture(control, resultDir, 'streaming-text-02-user-scrolled-up.png')
+      assert.ok(
+        anchorBeforeAppend.top >= scrollerBeforeAppend.top &&
+          anchorBeforeAppend.bottom <= scrollerBeforeAppend.bottom,
+        `The viewport anchor was not visible after the user scroll (top=${anchorBeforeAppend.top}px, bottom=${anchorBeforeAppend.bottom}px)`
+      )
+      await capture(control, resultDir, 'streaming-text-03-user-scrolled-up.png')
 
       releaseAppend()
       await control.command(
@@ -447,7 +514,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
         Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
         `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
       )
-      await capture(control, resultDir, 'streaming-text-03-anchor-stable-after-append.png')
+      await capture(control, resultDir, 'streaming-text-04-anchor-stable-after-append.png')
 
       releaseResponse()
       await control.command(
@@ -470,7 +537,8 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, workspacePath })
         !completedSnapshot.testIds.includes('pause-response-button'),
         'The pause button remained after completion'
       )
-      await capture(control, resultDir, 'streaming-text-04-response-completed.png')
+      await capture(control, resultDir, 'streaming-text-05-response-completed.png')
+      active = false
     },
 
     diagnostics() {

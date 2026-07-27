@@ -10,6 +10,8 @@ use axum::body::Bytes;
 use futures_util::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
 
+use crate::logging::log_executor_event;
+
 use super::chat::{self, ToolContext};
 
 pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext), String> {
@@ -331,16 +333,21 @@ impl<S> AnthropicStreamState<S> {
                     .pointer("/usage/output_tokens")
                     .and_then(Value::as_u64)
                     .unwrap_or(self.output_tokens);
-                let stop = event
-                    .pointer("/delta/stop_reason")
-                    .and_then(Value::as_str)
-                    .map(|value| {
-                        if value == "max_tokens" {
-                            "length"
-                        } else {
-                            "stop"
-                        }
-                    });
+                let upstream_stop = event.pointer("/delta/stop_reason").and_then(Value::as_str);
+                let stop = upstream_stop.map(anthropic_finish_reason);
+                if let Some(upstream_stop) = upstream_stop {
+                    log_executor_event(
+                        "local model proxy anthropic stop reason",
+                        &[
+                            ("upstream_stop_reason", upstream_stop.to_owned()),
+                            (
+                                "mapped_finish_reason",
+                                anthropic_finish_reason(upstream_stop).to_owned(),
+                            ),
+                            ("output_tokens", self.output_tokens.to_string()),
+                        ],
+                    );
+                }
                 self.emit(json!({
                     "choices": [{"delta": {}, "finish_reason": stop}],
                     "usage": {"prompt_tokens": self.input_tokens, "completion_tokens": self.output_tokens}
@@ -355,6 +362,20 @@ impl<S> AnthropicStreamState<S> {
         let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
         let block = event.get("content_block").unwrap_or(&Value::Null);
         if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+            log_executor_event(
+                "local model proxy anthropic tool use",
+                &[
+                    ("tool_index", index.to_string()),
+                    (
+                        "tool_name",
+                        block
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ),
+                ],
+            );
             self.emit(json!({"choices": [{"delta": {"tool_calls": [{
                 "index": index,
                 "id": block.get("id"),
@@ -386,6 +407,14 @@ impl<S> AnthropicStreamState<S> {
             "data: {}\n\n",
             serde_json::to_string(&value).unwrap_or_default()
         ))));
+    }
+}
+
+fn anthropic_finish_reason(value: &str) -> &str {
+    match value {
+        "max_tokens" => "length",
+        "tool_use" => "tool_calls",
+        _ => "stop",
     }
 }
 
@@ -548,6 +577,13 @@ mod tests {
 
         assert!(output.contains("\"name\":\"browser_snapshot\""));
         assert!(output.contains("\"namespace\":\"wework_browser\""));
+    }
+
+    #[test]
+    fn maps_anthropic_tool_stop_reason_to_tool_calls() {
+        assert_eq!(anthropic_finish_reason("tool_use"), "tool_calls");
+        assert_eq!(anthropic_finish_reason("max_tokens"), "length");
+        assert_eq!(anthropic_finish_reason("end_turn"), "stop");
     }
 
     #[tokio::test]

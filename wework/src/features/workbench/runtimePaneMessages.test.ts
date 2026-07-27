@@ -740,6 +740,140 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
       content: 'hello',
     })
   })
+
+  test('replaces a failed attempt when the same user message is retried successfully', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'provider-user-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'fix the failure',
+        status: 'done',
+        createdAt: '2026-07-17T00:00:00.000Z',
+      },
+      {
+        id: 'assistant-failed',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'request failed',
+        createdAt: '2026-07-17T00:00:01.000Z',
+      },
+      {
+        id: 'provider-user-2',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'fix the failure',
+        status: 'done',
+        createdAt: '2026-07-17T00:00:02.000Z',
+      },
+      {
+        id: 'assistant-success',
+        role: 'assistant',
+        content: 'fixed',
+        status: 'done',
+        subtaskId: 'turn-2',
+        createdAt: '2026-07-17T00:00:03.000Z',
+      },
+    ])
+
+    expect(messages.map(message => message.id)).toEqual([
+      'runtime-local-pane-1',
+      'assistant-success',
+    ])
+    expect(messages.some(message => message.status === 'failed')).toBe(false)
+  })
+
+  test('keeps the latest failure when repeated retries continue to fail', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'provider-user-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'fix the failure',
+        status: 'done',
+      },
+      {
+        id: 'assistant-failed-1',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'first failure',
+      },
+      {
+        id: 'provider-user-2',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'fix the failure',
+        status: 'done',
+      },
+      {
+        id: 'assistant-failed-2',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-2',
+        error: 'second failure',
+      },
+    ])
+
+    expect(messages.map(message => message.id)).toEqual([
+      'runtime-local-pane-1',
+      'assistant-failed-2',
+    ])
+    expect(messages[1]).toMatchObject({ error: 'second failure' })
+  })
+
+  test('does not collapse an older failed turn across a newer user message', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'provider-user-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'first request',
+        status: 'done',
+      },
+      {
+        id: 'assistant-failed-1',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'first failure',
+      },
+      {
+        id: 'provider-user-2',
+        clientMessageId: 'runtime-local-pane-2',
+        role: 'user',
+        content: 'second request',
+        status: 'done',
+      },
+      {
+        id: 'assistant-success-2',
+        role: 'assistant',
+        content: 'second response',
+        status: 'done',
+        subtaskId: 'turn-2',
+      },
+      {
+        id: 'provider-user-1-retry',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'first request',
+        status: 'done',
+      },
+    ])
+
+    expect(messages.map(message => message.id)).toEqual([
+      'runtime-local-pane-1',
+      'assistant-failed-1',
+      'runtime-local-pane-2',
+      'assistant-success-2',
+      'runtime-local-pane-1',
+    ])
+  })
 })
 
 describe('runtimeMessagesToWorkbenchMessages', () => {

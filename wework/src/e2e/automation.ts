@@ -224,6 +224,14 @@ function seedDesktopE2ECloudConnection() {
             toolProfile: 'function' as const,
             requestPath: '/v1/messages',
           },
+          {
+            id: 'desktop-e2e-luna-overseas',
+            displayName: 'GPT 5.6 Luna (海外)',
+            modelId: 'gpt-5.6-luna',
+            apiFormat: 'openai-responses' as const,
+            toolProfile: 'custom' as const,
+            requestPath: '/v1/responses',
+          },
         ]
       : []
   for (const model of localModels) {
@@ -623,6 +631,49 @@ function pasteDesktopControlFile(command: DesktopControlCommand): string {
   return filename
 }
 
+function dispatchDesktopControlPaths(
+  command: DesktopControlCommand,
+  eventType: 'drop' | 'paste'
+): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const descriptors = JSON.parse(command.value ?? '[]') as Array<{
+    uri: string
+    name: string
+    mimeType?: string
+    isDirectory?: boolean
+  }>
+  if (descriptors.length === 0) {
+    throw new Error(
+      `${eventType === 'drop' ? 'dropPaths' : 'pastePaths'} requires at least one path`
+    )
+  }
+
+  const transfer = new DataTransfer()
+  for (const descriptor of descriptors) {
+    const file = new File(descriptor.isDirectory ? [] : ['path-reference'], descriptor.name, {
+      type: descriptor.mimeType ?? '',
+    })
+    transfer.items.add(file)
+    const item = transfer.items[transfer.items.length - 1]
+    if (item && descriptor.isDirectory) {
+      Object.defineProperty(item, 'webkitGetAsEntry', {
+        value: () => ({ isDirectory: true }),
+      })
+    }
+  }
+  transfer.setData('text/uri-list', descriptors.map(descriptor => descriptor.uri).join('\r\n'))
+  const event =
+    eventType === 'drop'
+      ? new DragEvent('drop', { bubbles: true, cancelable: true, composed: true })
+      : new ClipboardEvent('paste', { bubbles: true, cancelable: true, composed: true })
+  Object.defineProperty(event, eventType === 'drop' ? 'dataTransfer' : 'clipboardData', {
+    value: transfer,
+  })
+  element.dispatchEvent(event)
+  return descriptors.map(descriptor => descriptor.name).join(',')
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -652,8 +703,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return dragDesktopControlElement(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
+    case 'dropPaths':
+      return dispatchDesktopControlPaths(command, 'drop')
     case 'pasteFile':
       return pasteDesktopControlFile(command)
+    case 'pastePaths':
+      return dispatchDesktopControlPaths(command, 'paste')
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
@@ -719,6 +774,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       return element.textContent?.trim() ?? ''
+    }
+    case 'scrollToBottomAsUser': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.scrollTop = element.scrollHeight
+      element.dispatchEvent(new Event('scroll', { bubbles: true }))
+      return String(element.scrollTop)
+    }
+    case 'scrollToRatioAsUser': {
+      const scroller = findDesktopControlElements(command.selector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+      const ratio = Number(command.value)
+      if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
+        throw new Error('scrollToRatioAsUser requires a value between 0 and 1')
+      }
+
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const nextScrollTop = maxScrollTop * ratio
+      scroller.scrollTop = nextScrollTop
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      return String(scroller.scrollTop)
     }
     case 'click': {
       const element = findDesktopControlElements(command.selector)[0]

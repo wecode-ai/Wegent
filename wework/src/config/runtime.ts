@@ -143,6 +143,19 @@ function normalizeBackendUrl(value: string): string {
   return trimTrailingSlash(`${url.origin}${backendPath}`)
 }
 
+export function getConfiguredSocketBaseUrl(): string {
+  const overrides = runtimeOverrides()
+  return resolveRuntimeString(
+    overrides,
+    'socketBaseUrl',
+    firstStringValue(
+      import.meta.env.VITE_SOCKET_BASE_URL,
+      import.meta.env.VITE_WEGENT_SOCKET_URL?.trim()
+    ),
+    ''
+  )
+}
+
 export function getRuntimeConfig(): RuntimeConfig {
   const overrides = runtimeOverrides()
   const appBasePath = normalizeBasePath(
@@ -166,15 +179,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     import.meta.env.VITE_API_BASE_URL,
     wegentBackendUrl ? `${wegentBackendUrl}/api` : joinAppPath(appBasePath, '/api')
   )
-  const socketBaseUrl = resolveRuntimeString(
-    overrides,
-    'socketBaseUrl',
-    firstStringValue(
-      import.meta.env.VITE_SOCKET_BASE_URL,
-      import.meta.env.VITE_WEGENT_SOCKET_URL?.trim()
-    ),
-    wegentBackendUrl || window.location.origin
-  )
+  const socketBaseUrl = getConfiguredSocketBaseUrl() || wegentBackendUrl || window.location.origin
   const socketPath = resolveRuntimeString(
     overrides,
     'socketPath',

@@ -4,7 +4,7 @@
 
 """Shared cloud project endpoints."""
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -25,6 +25,7 @@ from app.schemas.cloud_project import (
     CloudProjectMemberCreate,
     CloudProjectMemberResponse,
     CloudProjectMemberUpdate,
+    CloudProjectProviderCredentialResponse,
     CloudProjectResponse,
     CloudProjectUpdate,
     LocalBindingCreate,
@@ -67,6 +68,23 @@ def get_cloud_project(
 ) -> CloudProjectResponse:
     project = cloud_project_service.get(db, project_id, current_user.id)
     return CloudProjectResponse.model_validate(project)
+
+
+@router.get(
+    "/{project_id}/provider-credential",
+    response_model=CloudProjectProviderCredentialResponse,
+)
+def get_cloud_project_provider_credential(
+    project_id: int,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CloudProjectProviderCredentialResponse:
+    response.headers["Cache-Control"] = "no-store"
+    token = cloud_project_service.get_provider_credential(
+        db, project_id, current_user.id
+    )
+    return CloudProjectProviderCredentialResponse(token=token)
 
 
 @router.patch("/{project_id}", response_model=CloudProjectResponse)

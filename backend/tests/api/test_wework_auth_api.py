@@ -28,11 +28,31 @@ def test_wework_config_exposes_wegent_frontend_url(
     monkeypatch,
 ):
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://frontend.example.com/")
+    monkeypatch.setattr(settings, "WEGENT_SOCKET_URL", "wss://socket.example.com/")
 
     response = test_client.get("/api/auth/wework/config")
 
     assert response.status_code == 200
-    assert response.json()["web_url"] == "https://frontend.example.com"
+    assert response.json() == {
+        "web_url": "https://frontend.example.com",
+        "socket_url": "wss://socket.example.com",
+    }
+
+
+def test_wework_config_returns_null_for_unconfigured_socket_url(
+    test_client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://frontend.example.com")
+    monkeypatch.setattr(settings, "WEGENT_SOCKET_URL", "")
+
+    response = test_client.get("/api/auth/wework/config")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "web_url": "https://frontend.example.com",
+        "socket_url": None,
+    }
 
 
 def test_create_wework_auth_session_uses_dedicated_authorize_base_url(

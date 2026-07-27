@@ -358,7 +358,37 @@ function normalizeToolName(toolName: string): string {
 export function runtimeMessagesToWorkbenchMessages(
   messages: NormalizedRuntimeMessage[]
 ): WorkbenchMessage[] {
-  return messages.map(runtimeMessageToWorkbenchMessage)
+  return collapseRetriedFailedTurns(messages.map(runtimeMessageToWorkbenchMessage))
+}
+
+function collapseRetriedFailedTurns(messages: WorkbenchMessage[]): WorkbenchMessage[] {
+  const collapsed: WorkbenchMessage[] = []
+  let latestUserId: string | null = null
+  let latestUserIndex = -1
+
+  for (const message of messages) {
+    if (message.role !== 'user') {
+      collapsed.push(message)
+      continue
+    }
+
+    const latestAttempt = collapsed.slice(latestUserIndex + 1)
+    const retriesLatestFailedTurn =
+      latestUserId === message.id &&
+      latestAttempt.some(
+        candidate => candidate.role === 'assistant' && candidate.status === 'failed'
+      )
+    if (retriesLatestFailedTurn) {
+      collapsed.splice(latestUserIndex + 1)
+      continue
+    }
+
+    latestUserId = message.id
+    latestUserIndex = collapsed.length
+    collapsed.push(message)
+  }
+
+  return collapsed
 }
 
 export function findFileChangesBySubtaskId(

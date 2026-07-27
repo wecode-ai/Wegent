@@ -101,6 +101,10 @@ describe('CloudConnectionProvider', () => {
     }))
     const token = `header.${btoa(JSON.stringify({ exp: 2_000_000_000 })).replace(/=/g, '')}.sig`
     httpMocks.get.mockResolvedValueOnce({ status: 'healthy' })
+    httpMocks.get.mockResolvedValueOnce({
+      web_url: 'https://cloud.example.com',
+      socket_url: 'wss://backend-socket.example.com',
+    })
     httpMocks.post.mockResolvedValueOnce({
       session_id: 'session-1',
       poll_token: 'poll-1',
@@ -138,6 +142,9 @@ describe('CloudConnectionProvider', () => {
     expect(createHttpClient).toHaveBeenCalled()
     expect(httpMocks.post).toHaveBeenCalledWith('/auth/wework/sessions')
     expect(closeAuthorizationWindow).toHaveBeenCalled()
+    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').socketBaseUrl).toBe(
+      'wss://backend-socket.example.com'
+    )
   })
 
   it('uses the configured Socket URL for the packaged Backend', async () => {
@@ -156,10 +163,18 @@ describe('CloudConnectionProvider', () => {
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-07-20T00:00:00.000Z',
     })
-    httpMocks.get.mockResolvedValueOnce({
-      id: 7,
-      user_name: 'alice',
-      email: 'alice@example.com',
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'https://cloud.example.com',
+          socket_url: 'wss://backend-socket.example.com',
+        })
+      }
+      return Promise.resolve({
+        id: 7,
+        user_name: 'alice',
+        email: 'alice@example.com',
+      })
     })
 
     render(
@@ -176,6 +191,86 @@ describe('CloudConnectionProvider', () => {
         'wss://wss-cloud.example.com'
       )
     })
+  })
+
+  it('uses the Backend declaration when the package only configures the Backend URL', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      wegentBackendUrl: 'https://cloud.example.com/api',
+    }
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://cloud.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    })
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'https://cloud.example.com',
+          socket_url: 'wss://backend-socket.example.com',
+        })
+      }
+      return Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' })
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-socket-base-url')).toHaveTextContent(
+        'wss://backend-socket.example.com'
+      )
+    })
+    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').socketBaseUrl).toBe(
+      'wss://backend-socket.example.com'
+    )
+  })
+
+  it('keeps the user Socket URL ahead of the Backend declaration', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://api.example.com',
+      apiBaseUrl: 'https://api.example.com/api',
+      socketBaseUrl: 'wss://user-socket.example.com',
+      socketBaseUrlOverride: 'wss://user-socket.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://app.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    })
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'https://app.example.com',
+          socket_url: 'wss://backend-socket.example.com',
+        })
+      }
+      return Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' })
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-socket-base-url')).toHaveTextContent(
+        'wss://user-socket.example.com'
+      )
+    })
+    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').socketBaseUrl).toBe(
+      'wss://user-socket.example.com'
+    )
   })
 
   it('corrects and stores the Web URL for an existing cloud connection', async () => {
@@ -244,6 +339,10 @@ describe('CloudConnectionProvider', () => {
     }))
     const token = `header.${btoa(JSON.stringify({ exp: 2_000_000_000 })).replace(/=/g, '')}.sig`
     httpMocks.get.mockResolvedValueOnce({ status: 'healthy' })
+    httpMocks.get.mockResolvedValueOnce({
+      web_url: 'https://cloud.example.com',
+      socket_url: 'wss://backend-socket.example.com',
+    })
     httpMocks.post.mockResolvedValueOnce({
       session_id: 'session-1',
       poll_token: 'poll-1',
@@ -289,6 +388,10 @@ describe('CloudConnectionProvider', () => {
       }),
     }))
     httpMocks.get.mockResolvedValueOnce({ status: 'healthy' })
+    httpMocks.get.mockResolvedValueOnce({
+      web_url: 'https://cloud.example.com',
+      socket_url: 'wss://backend-socket.example.com',
+    })
     httpMocks.post.mockResolvedValueOnce({
       session_id: 'session-1',
       poll_token: 'poll-1',
@@ -310,6 +413,6 @@ describe('CloudConnectionProvider', () => {
 
     await waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
     expect((onError.mock.calls[0][0] as Error).message).toBe('云端授权窗口已关闭，请重新连接')
-    expect(httpMocks.get).toHaveBeenCalledTimes(1)
+    expect(httpMocks.get).toHaveBeenCalledTimes(2)
   })
 })

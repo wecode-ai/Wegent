@@ -629,7 +629,7 @@ function limitTextContent(
   if (currentChars <= maxChars) {
     return {
       text: value,
-      truncated: originalChars > currentChars,
+      truncated: originalChars > maxChars && originalChars > currentChars,
       originalChars
     }
   }

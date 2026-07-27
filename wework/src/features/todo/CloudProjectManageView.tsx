@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Pencil, Search, Tag, Trash2, X } from 'lucide-react'
+import { Check, GitBranch, LockKeyhole, Pencil, Search, Tag, Trash2, X } from 'lucide-react'
 import type {
   CloudLoopItem,
   CloudProject,
@@ -8,6 +8,7 @@ import type {
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { cn } from '@/lib/utils'
+import { repositoryAddress, repositoryProviderConfig } from './projectProviderConfig'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -39,6 +40,14 @@ export function CloudProjectManageView({
   const [renamingTag, setRenamingTag] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [tagBusy, setTagBusy] = useState(false)
+  const externalProvider =
+    project.task_provider === 'github' || project.task_provider === 'gitlab'
+      ? project.task_provider
+      : null
+  const [providerRepository, setProviderRepository] = useState(() => repositoryAddress(project))
+  const [providerToken, setProviderToken] = useState('')
+  const [providerBusy, setProviderBusy] = useState(false)
+  const [providerSaved, setProviderSaved] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -71,6 +80,31 @@ export function CloudProjectManageView({
     setRegistryTags(updated.tags ?? [])
     setProjectVersion(updated.version)
     onProjectUpdated?.(updated)
+  }
+
+  async function saveProviderConfig() {
+    if (!externalProvider || providerBusy) return
+    setProviderBusy(true)
+    setProviderSaved(false)
+    setError(null)
+    try {
+      const updated = await api.updateCloudProject(project.id, {
+        version: projectVersion,
+        provider_config: {
+          ...repositoryProviderConfig(providerRepository, externalProvider),
+          ...(providerToken.trim() ? { token: providerToken.trim() } : {}),
+        },
+      })
+      setProjectVersion(updated.version)
+      setProviderRepository(repositoryAddress(updated))
+      setProviderToken('')
+      setProviderSaved(true)
+      onProjectUpdated?.(updated)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存任务来源失败')
+    } finally {
+      setProviderBusy(false)
+    }
   }
 
   async function createTag() {
@@ -349,7 +383,7 @@ export function CloudProjectManageView({
               data-testid="cloud-project-tag-create-confirm"
               disabled={!newTag.trim() || tagBusy}
               onClick={() => void createTag()}
-              className="h-9 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
+              className="h-9 rounded-lg bg-black px-3.5 text-sm font-medium text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:bg-black disabled:text-white"
             >
               新建标签
             </button>
@@ -437,6 +471,76 @@ export function CloudProjectManageView({
             ))}
           </div>
         </div>
+
+        {externalProvider && (
+          <section className="mt-10">
+            <h2 className="text-heading-md font-semibold">任务来源</h2>
+            <p className="mt-1 text-sm text-text-muted">
+              云端保存项目和访问令牌，本地 Executor 直接读取和更新{' '}
+              {externalProvider === 'github' ? 'GitHub' : 'GitLab'} Issues。
+            </p>
+            <div className="mt-4 rounded-xl border border-border bg-background p-4 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <GitBranch className="h-4 w-4 text-text-secondary" />
+                {externalProvider === 'github' ? 'GitHub' : 'GitLab'}
+                <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-normal text-text-muted">
+                  {project.provider_config.credential_configured ? '令牌已配置' : '需要配置令牌'}
+                </span>
+              </div>
+              <label className="mt-4 block text-sm font-medium">
+                仓库地址
+                <input
+                  data-testid="cloud-project-provider-manage-repository"
+                  value={providerRepository}
+                  onChange={event => {
+                    setProviderRepository(event.target.value)
+                    setProviderSaved(false)
+                  }}
+                  className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal outline-none focus:border-text-muted"
+                />
+              </label>
+              <label className="mt-4 block text-sm font-medium">
+                访问令牌
+                <span className="ml-1 text-xs font-normal text-text-muted">
+                  {project.provider_config.credential_configured
+                    ? '留空则保留当前令牌'
+                    : '当前项目尚未配置'}
+                </span>
+                <div className="relative mt-2">
+                  <LockKeyhole className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-text-muted" />
+                  <input
+                    data-testid="cloud-project-provider-manage-token"
+                    type="password"
+                    autoComplete="new-password"
+                    value={providerToken}
+                    onChange={event => {
+                      setProviderToken(event.target.value)
+                      setProviderSaved(false)
+                    }}
+                    className="h-10 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm font-normal outline-none focus:border-text-muted"
+                    placeholder="输入新令牌"
+                  />
+                </div>
+              </label>
+              <div className="mt-4 flex items-center justify-end gap-3">
+                {providerSaved && <span className="text-xs text-emerald-600">已保存</span>}
+                <button
+                  type="button"
+                  data-testid="cloud-project-provider-manage-save"
+                  disabled={
+                    providerBusy ||
+                    !providerRepository.trim() ||
+                    (!project.provider_config.credential_configured && !providerToken.trim())
+                  }
+                  onClick={() => void saveProviderConfig()}
+                  className="h-9 rounded-lg bg-black px-3.5 text-sm font-medium text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:bg-black disabled:text-white"
+                >
+                  {providerBusy ? '保存中…' : '保存任务来源'}
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
       </div>
     </div>
   )

@@ -3939,6 +3939,6 @@ def test_message_with_cloud_reference_activates_project_space_capability() -> No
     )
 
     assert "[projectSpaceCapability]" in message
-    assert "wegent_delivery is a server id, not a callable tool" in message
-    assert "create_cloud_project" in message
+    assert "wegent_delivery and wegent_tasks are server ids" in message
+    assert "Never create or copy a cloud project" in message
     assert "do not use list_mcp_resources to discover tools" in message
