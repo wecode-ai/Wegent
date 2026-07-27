@@ -250,6 +250,46 @@ function TodoColumnDropzone({
   )
 }
 
+// Placeholder shown while a project's items load. Renders the familiar board
+// column layout with pulsing blocks instead of content, matching the modern
+// skeleton ("留白加载") pattern.
+function CloudTodoBoardSkeleton() {
+  return (
+    <div
+      data-testid="cloud-todo-board-loading"
+      aria-busy="true"
+      className="flex h-full min-h-0 items-start gap-3.5 px-6"
+    >
+      {columns.map((column, columnIndex) => (
+        <section
+          key={column.status}
+          className="flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5"
+        >
+          <header className="flex items-center px-2.5 pb-2 pt-1.5">
+            <span className={cn('mr-2 h-2 w-2 rounded-full', columnDotClasses[column.status])} />
+            <span className="text-sm font-semibold">{column.label}</span>
+          </header>
+          <div className="animate-pulse space-y-2 px-2 pb-2 pt-2">
+            {Array.from({ length: columnIndex % 2 === 0 ? 2 : 1 }, (_, cardIndex) => (
+              <div
+                key={cardIndex}
+                className="rounded-xl border border-border bg-background px-3 py-3 shadow-sm"
+              >
+                <div className="h-3 w-24 rounded-md bg-text-primary/10" />
+                <div className="mt-2.5 h-4 w-4/5 rounded-md bg-text-primary/10" />
+                <div className="mt-2.5 flex items-center gap-2">
+                  <div className="h-4 w-12 rounded-full bg-text-primary/10" />
+                  <div className="ml-auto h-3 w-9 rounded-md bg-text-primary/10" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
 function cloudProjectRequestError(cause: unknown): string {
   if (!(cause instanceof ApiError)) {
     return cause instanceof Error ? cause.message : '创建项目空间失败'
@@ -616,6 +656,9 @@ export function CloudTodoWorkspace({
   const [projectMembers, setProjectMembers] = useState<Record<string, CloudProjectMember[]>>({})
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [items, setItems] = useState<CloudLoopItem[]>([])
+  // Which project's items are currently in `items`. Anything else rendered on
+  // the board would be stale, so the board shows the skeleton instead.
+  const [itemsProjectId, setItemsProjectId] = useState<string | null>(null)
   const [myWork, setMyWork] = useState<CloudMyWorkItem[]>([])
   const [rootView, setRootView] = useState<RootView>('projects')
   const [projectView, setProjectView] = useState<ProjectView>('board')
@@ -639,6 +682,17 @@ export function CloudTodoWorkspace({
   const [loading, setLoading] = useState(true)
   const [boardError, setBoardError] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // Applies a freshly fetched board snapshot. `boardError` distinguishes a
+  // loaded-but-empty project (renders empty columns) from a failed fetch
+  // (renders the skeleton plus the error banner instead of an empty board).
+  const applyBoardItems = useCallback(
+    (projectId: string, fetchedItems: CloudLoopItem[], error: string | null) => {
+      setItems(fetchedItems)
+      setItemsProjectId(projectId)
+      setBoardError(error)
+    },
+    []
+  )
   const selectedProject = projects.find(project => project.id === selectedProjectId) ?? null
   const apiForProjectId = useCallback(
     (projectId: string) => {
@@ -652,6 +706,13 @@ export function CloudTodoWorkspace({
     [availableProjectSpaceApis, projectSpaceApis, projects, services.deliveryApi]
   )
   const selectedProjectApi = selectedProject ? apiForProjectId(selectedProject.id) : undefined
+  // Only render board items that belong to the selected project. On a project
+  // switch this flips to the skeleton in the same render, before the fetch.
+  // `boardError` distinguishes a failed fetch (skeleton stays) from a
+  // successfully loaded but empty project (renders the empty columns).
+  const boardItemsLoading =
+    selectedProject !== null &&
+    (itemsProjectId !== selectedProjectId || (items.length === 0 && !boardError))
   const selectedItemApi = selectedItem ? apiForProjectId(selectedItem.cloud_project_id) : undefined
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
@@ -740,8 +801,7 @@ export function CloudTodoWorkspace({
         .listLoopItems(selectedProjectId)
         .then(response => {
           if (!active) return
-          setBoardError(null)
-          setItems(response.items)
+          applyBoardItems(selectedProjectId, response.items, null)
           // Only sync the open drawer when it belongs to this project; a drawer
           // opened from another view (e.g. my work) must not be closed here.
           setSelectedItem(current =>
@@ -756,8 +816,11 @@ export function CloudTodoWorkspace({
             error,
           })
           if (!active) return
-          setItems([])
-          setBoardError(error instanceof Error ? error.message : '任务加载失败')
+          applyBoardItems(
+            selectedProjectId,
+            [],
+            error instanceof Error ? error.message : '任务加载失败'
+          )
         })
     }
     refreshItems()
@@ -768,7 +831,7 @@ export function CloudTodoWorkspace({
       active = false
       window.clearInterval(interval)
     }
-  }, [selectedProjectApi, selectedProjectId])
+  }, [applyBoardItems, selectedProjectApi, selectedProjectId])
   useEffect(() => {
     if (rootView !== 'my-work') return
     void Promise.all(availableProjectSpaceApis.map(({ api }) => api.listMyWork())).then(responses =>
@@ -1075,31 +1138,31 @@ export function CloudTodoWorkspace({
             </button>
           </div>
         ) : !selectedProject ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
-            <div className="mx-auto max-w-[880px]">
-              <div className="flex items-start">
-                <div>
-                  <h1 className="text-heading-md font-semibold">项目空间</h1>
-                  <p className="mt-1 text-sm text-text-muted">
-                    多人和 AI 在各自本地工作区协作，共享任务、文件与交付。
-                  </p>
-                </div>
-                <span className="flex-1" />
-                <button
-                  type="button"
-                  onClick={() => setCreateProjectOpen(true)}
-                  className="flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90"
-                >
-                  <Plus className="h-3.5 w-3.5" /> 新建项目空间
-                </button>
+          <div className="flex min-h-0 flex-1 flex-col px-8 py-7">
+            <div className="mx-auto flex w-full max-w-[880px] items-start">
+              <div>
+                <h1 className="text-heading-md font-semibold">项目空间</h1>
+                <p className="mt-1 text-sm text-text-muted">
+                  多人和 AI 在各自本地工作区协作，共享任务、文件与交付。
+                </p>
               </div>
-              <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
-                <div className="grid h-10 grid-cols-[minmax(0,1fr)_80px_120px_170px] items-center bg-muted/30 px-4 text-xs text-text-muted">
-                  <span>项目</span>
-                  <span>任务</span>
-                  <span>更新时间</span>
-                  <span>成员</span>
-                </div>
+              <span className="flex-1" />
+              <button
+                type="button"
+                onClick={() => setCreateProjectOpen(true)}
+                className="flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90"
+              >
+                <Plus className="h-3.5 w-3.5" /> 新建项目空间
+              </button>
+            </div>
+            <div className="mx-auto mt-6 flex min-h-0 w-full max-w-[880px] flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
+              <div className="grid h-10 shrink-0 grid-cols-[minmax(0,1fr)_80px_120px_170px] items-center bg-muted/30 px-4 text-xs text-text-muted">
+                <span>项目</span>
+                <span>任务</span>
+                <span>更新时间</span>
+                <span>成员</span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 {projects
                   .filter(project =>
                     `${project.name} ${project.project_key} ${project.description}`
@@ -1153,10 +1216,10 @@ export function CloudTodoWorkspace({
                     )
                   })}
               </div>
-              <p className="mt-5 text-xs text-text-muted">
-                本地空间保存在当前设备；云端空间可与项目成员共享任务、文件和交付。
-              </p>
             </div>
+            <p className="mx-auto mt-5 w-full max-w-[880px] text-xs text-text-muted">
+              本地空间保存在当前设备；云端空间可与项目成员共享任务、文件和交付。
+            </p>
           </div>
         ) : (
           <>
@@ -1325,102 +1388,108 @@ export function CloudTodoWorkspace({
                     {boardError}
                   </p>
                 )}
-                <div className="min-h-0 flex-1 overflow-x-auto">
-                  <DndContext
-                    sensors={boardSensors}
-                    collisionDetection={boardCollisionDetection}
-                    onDragStart={event => setActiveDragItemId(String(event.active.id))}
-                    onDragCancel={() => setActiveDragItemId(null)}
-                    onDragEnd={finishBoardDrop}
-                  >
-                    <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
-                      {columns.map(column => {
-                        const normalizedSearch = searchQuery.trim().toLowerCase()
-                        const columnItems = items.filter(
-                          item =>
-                            item.parent_id === boardParentId &&
-                            item.status === column.status &&
-                            (!tagFilter || (item.tags ?? []).includes(tagFilter)) &&
-                            (!normalizedSearch ||
-                              `${item.id} ${item.title} ${item.description}`
-                                .toLowerCase()
-                                .includes(normalizedSearch))
-                        )
-                        return (
-                          <section
-                            key={column.status}
-                            data-testid={`cloud-todo-column-${column.status}`}
-                            className="group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5"
-                          >
-                            <header className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
-                              <span className="flex min-w-0 items-center">
-                                <span
-                                  className={cn(
-                                    'mr-2 h-2 w-2 rounded-full',
-                                    columnDotClasses[column.status]
-                                  )}
-                                />
-                                <span className="text-sm font-semibold">{column.label}</span>
-                                <span className="ml-2 text-xs text-text-muted">
-                                  {columnItems.length}
+                {boardItemsLoading ? (
+                  <div className="min-h-0 flex-1 overflow-x-auto">
+                    <CloudTodoBoardSkeleton />
+                  </div>
+                ) : (
+                  <div className="min-h-0 flex-1 overflow-x-auto">
+                    <DndContext
+                      sensors={boardSensors}
+                      collisionDetection={boardCollisionDetection}
+                      onDragStart={event => setActiveDragItemId(String(event.active.id))}
+                      onDragCancel={() => setActiveDragItemId(null)}
+                      onDragEnd={finishBoardDrop}
+                    >
+                      <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
+                        {columns.map(column => {
+                          const normalizedSearch = searchQuery.trim().toLowerCase()
+                          const columnItems = items.filter(
+                            item =>
+                              item.parent_id === boardParentId &&
+                              item.status === column.status &&
+                              (!tagFilter || (item.tags ?? []).includes(tagFilter)) &&
+                              (!normalizedSearch ||
+                                `${item.id} ${item.title} ${item.description}`
+                                  .toLowerCase()
+                                  .includes(normalizedSearch))
+                          )
+                          return (
+                            <section
+                              key={column.status}
+                              data-testid={`cloud-todo-column-${column.status}`}
+                              className="group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5"
+                            >
+                              <header className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
+                                <span className="flex min-w-0 items-center">
+                                  <span
+                                    className={cn(
+                                      'mr-2 h-2 w-2 rounded-full',
+                                      columnDotClasses[column.status]
+                                    )}
+                                  />
+                                  <span className="text-sm font-semibold">{column.label}</span>
+                                  <span className="ml-2 text-xs text-text-muted">
+                                    {columnItems.length}
+                                  </span>
                                 </span>
-                              </span>
-                              <button
-                                type="button"
-                                data-testid={`cloud-todo-column-add-${column.status}`}
-                                onClick={() => openTodoCreation(boardParent, column.status)}
-                                className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                aria-label={`在${column.label}中新建任务`}
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                              </button>
-                            </header>
-                            <TodoColumnDropzone status={column.status}>
-                              {columnItems.map(item => (
-                                <DraggableTodoCard
-                                  key={item.id}
-                                  item={item}
-                                  childCount={
-                                    items.filter(child => child.parent_id === item.id).length
-                                  }
-                                  onClick={() => setSelectedItem(item)}
-                                  onAddChild={() => openTodoCreation(item)}
-                                  onOpenChildren={() => setBoardParentId(item.id)}
-                                />
-                              ))}
-                              {columnItems.length === 0 && columnEmptyHints[column.status] && (
-                                <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
-                                  {columnEmptyHints[column.status]}
-                                </div>
-                              )}
-                            </TodoColumnDropzone>
-                            <div className="shrink-0 px-2 pb-2">
-                              <button
-                                type="button"
-                                data-testid={`cloud-todo-column-bottom-add-${column.status}`}
-                                onClick={() => openTodoCreation(boardParent, column.status)}
-                                className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
-                                aria-label={`在${column.label}中新建任务`}
-                              >
-                                <Plus className="h-4 w-4" />
-                                新建任务
-                              </button>
-                            </div>
-                          </section>
-                        )
-                      })}
-                    </div>
-                    <DragOverlay dropAnimation={null}>
-                      {activeDragItemId ? (
-                        <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
-                          <TodoCardContent
-                            item={items.find(item => item.id === activeDragItemId)!}
-                          />
-                        </div>
-                      ) : null}
-                    </DragOverlay>
-                  </DndContext>
-                </div>
+                                <button
+                                  type="button"
+                                  data-testid={`cloud-todo-column-add-${column.status}`}
+                                  onClick={() => openTodoCreation(boardParent, column.status)}
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                  aria-label={`在${column.label}中新建任务`}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </button>
+                              </header>
+                              <TodoColumnDropzone status={column.status}>
+                                {columnItems.map(item => (
+                                  <DraggableTodoCard
+                                    key={item.id}
+                                    item={item}
+                                    childCount={
+                                      items.filter(child => child.parent_id === item.id).length
+                                    }
+                                    onClick={() => setSelectedItem(item)}
+                                    onAddChild={() => openTodoCreation(item)}
+                                    onOpenChildren={() => setBoardParentId(item.id)}
+                                  />
+                                ))}
+                                {columnItems.length === 0 && columnEmptyHints[column.status] && (
+                                  <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+                                    {columnEmptyHints[column.status]}
+                                  </div>
+                                )}
+                              </TodoColumnDropzone>
+                              <div className="shrink-0 px-2 pb-2">
+                                <button
+                                  type="button"
+                                  data-testid={`cloud-todo-column-bottom-add-${column.status}`}
+                                  onClick={() => openTodoCreation(boardParent, column.status)}
+                                  className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                                  aria-label={`在${column.label}中新建任务`}
+                                >
+                                  <Plus className="h-4 w-4" />
+                                  新建任务
+                                </button>
+                              </div>
+                            </section>
+                          )
+                        })}
+                      </div>
+                      <DragOverlay dropAnimation={null}>
+                        {activeDragItemId ? (
+                          <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
+                            <TodoCardContent
+                              item={items.find(item => item.id === activeDragItemId)!}
+                            />
+                          </div>
+                        ) : null}
+                      </DragOverlay>
+                    </DndContext>
+                  </div>
+                )}
               </div>
             )}
           </>

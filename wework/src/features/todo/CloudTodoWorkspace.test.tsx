@@ -175,6 +175,63 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByText('创建第一个项目空间')).not.toBeInTheDocument()
   })
 
+  it('clears the previous project items and shows a skeleton while switching projects', async () => {
+    const otherProject = {
+      ...project,
+      id: 12,
+      project_key: 'OTHER',
+      name: 'Other Project',
+    }
+    const otherItem = {
+      ...item,
+      id: 'OTHER-1',
+      cloud_project_id: 12,
+      title: 'Other project task',
+    }
+    let resolveBoardFetch: (() => void) | undefined
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [project, otherProject],
+    }))
+    const selectedProjectIds = new Set<number>()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async (projectId: number) => {
+      // The bootstrap preloads counts for every project; only the board fetch
+      // for the selected project stays pending so the skeleton can be asserted.
+      if (selectedProjectIds.has(projectId)) {
+        await new Promise<void>(resolve => {
+          resolveBoardFetch = () => resolve()
+        })
+      }
+      selectedProjectIds.add(projectId)
+      return { items: projectId === 12 ? [otherItem] : [item] }
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await waitFor(() => expect(screen.getByTestId('cloud-todo-board-loading')).toBeInTheDocument())
+    expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
+    resolveBoardFetch?.()
+    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getAllByText('Other Project')[0])
+
+    // The previous project's cards disappear immediately and the skeleton
+    // stays until the new project's items resolve.
+    expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-board-loading')).toBeInTheDocument()
+
+    resolveBoardFetch?.()
+    expect(await screen.findByTestId('cloud-todo-card-OTHER-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
+  })
+
   it('shows only one hierarchy level at a time on the board', async () => {
     const workbenchServices = services()
     const child = {
