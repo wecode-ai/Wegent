@@ -32,6 +32,7 @@ export function useWorkbenchProjectWorkControls({
       currentProjectId: currentProject?.id,
       currentStandaloneDeviceId: state.standaloneDeviceId,
       currentRuntimeDeviceId: pane.currentRuntimeTask?.deviceId ?? null,
+      currentRuntimeTask: pane.currentRuntimeTask,
       selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
       executionMode: projectExecutionMode,

@@ -67,6 +67,7 @@ export function ComposerTextarea({
   workspaceTarget,
   workspaceFileApi,
   cloudMentionCandidates = [],
+  conversationMentionCandidates = [],
   cloudProjectCandidates = [],
   cloudSpaceEnabled = false,
   onSelectCloudProject,
@@ -130,7 +131,8 @@ export function ComposerTextarea({
       activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention'
         ? activeMenu.trigger.query
         : '',
-      cloudMentionCandidates
+      cloudMentionCandidates,
+      conversationMentionCandidates
     )
 
   const workspaceSearch = useWorkspaceMentionSearch(
