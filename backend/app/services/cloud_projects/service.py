@@ -107,7 +107,7 @@ class CloudProjectService:
             ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
-        projects = (
+        return (
             db.query(CloudProject)
             .filter(
                 CloudProject.status == "active",
@@ -119,13 +119,6 @@ class CloudProjectService:
             .order_by(CloudProject.updated_at.desc())
             .all()
         )
-        logger.info(
-            "Cloud project list loaded user_id=%s project_count=%s project_ids=%s",
-            user_id,
-            len(projects),
-            [project.id for project in projects],
-        )
-        return projects
 
     def get(self, db: Session, project_id: int, user_id: int) -> CloudProject:
         return require_cloud_project_role(db, project_id, user_id).project
@@ -144,33 +137,11 @@ class CloudProjectService:
                 project.task_provider, metadata.get("provider_config")
             )
         except ValueError as exc:
-            logger.warning(
-                "Cloud project provider credential decrypt failed "
-                "user_id=%s project_id=%s task_provider=%s error=%s",
-                user_id,
-                project_id,
-                project.task_provider,
-                exc,
-            )
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         if not token:
-            logger.warning(
-                "Cloud project provider credential missing "
-                "user_id=%s project_id=%s task_provider=%s",
-                user_id,
-                project_id,
-                project.task_provider,
-            )
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Provider credential is not configured"
             )
-        logger.info(
-            "Cloud project provider credential loaded "
-            "user_id=%s project_id=%s task_provider=%s",
-            user_id,
-            project_id,
-            project.task_provider,
-        )
         return token
 
     def update(

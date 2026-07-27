@@ -694,71 +694,24 @@ export function CloudTodoWorkspace({
 
   useEffect(() => {
     let active = true
-    console.warn('[Wework project bootstrap] project-space loading started', {
-      locations: availableProjectSpaceApis.map(({ location }) => location),
-    })
     void Promise.all(
       availableProjectSpaceApis.map(async ({ api, location }) => {
-        console.warn('[Wework project bootstrap] project source loading started', { location })
         let response
         try {
           response = await api.listCloudProjects()
-        } catch (error) {
-          console.error('[Wework project bootstrap] project source list failed', {
-            location,
-            error,
-          })
+        } catch {
           return { details: [], projects: [] }
         }
         const projects = response.items.map(project => ({ ...project, location }))
-        console.warn('[Wework project bootstrap] project source list received', {
-          location,
-          projectCount: projects.length,
-          projectIds: projects.map(project => project.id),
-        })
         const details = await Promise.all(
           projects.map(async project => {
-            console.warn('[Wework project bootstrap] project details loading started', {
-              location,
-              projectId: project.id,
-              projectStore: project.project_store,
-              taskProvider: project.task_provider,
-            })
             const [loopItemsResult, membersResult] = await Promise.allSettled([
               api.listLoopItems(project.id),
               api.listCloudProjectMembers(project.id),
             ])
-            if (loopItemsResult.status === 'rejected') {
-              console.error('[Wework project bootstrap] project details loading failed', {
-                location,
-                projectId: project.id,
-                projectStore: project.project_store,
-                taskProvider: project.task_provider,
-                stage: 'issues',
-                error: loopItemsResult.reason,
-              })
-            }
-            if (membersResult.status === 'rejected') {
-              console.error('[Wework project bootstrap] project details loading failed', {
-                location,
-                projectId: project.id,
-                projectStore: project.project_store,
-                taskProvider: project.task_provider,
-                stage: 'members',
-                error: membersResult.reason,
-              })
-            }
             const issueCount =
               loopItemsResult.status === 'fulfilled' ? loopItemsResult.value.items.length : 0
             const members = membersResult.status === 'fulfilled' ? membersResult.value : []
-            console.warn('[Wework project bootstrap] project details loaded', {
-              location,
-              projectId: project.id,
-              issueCount,
-              memberCount: members.length,
-              issuesAvailable: loopItemsResult.status === 'fulfilled',
-              membersAvailable: membersResult.status === 'fulfilled',
-            })
             return [project.id, issueCount, members] as const
           })
         )
@@ -771,9 +724,6 @@ export function CloudTodoWorkspace({
         setProjects(results.flatMap(result => result.projects))
         setProjectCounts(Object.fromEntries(details.map(([id, count]) => [id, count])))
         setProjectMembers(Object.fromEntries(details.map(([id, , members]) => [id, members])))
-      })
-      .catch(error => {
-        console.error('[Wework project bootstrap] project-space loading failed', { error })
       })
       .finally(() => {
         if (active) setLoading(false)

@@ -43,18 +43,7 @@ export function createCloudProjectSpaceApi(
   return {
     ...storeApi,
     async listCloudProjects() {
-      console.warn('[Wework project restore] backend project list requested')
-      let response
-      try {
-        response = await storeApi.listCloudProjects()
-      } catch (error) {
-        console.error('[Wework project restore] backend project list failed', { error })
-        throw error
-      }
-      console.warn('[Wework project restore] backend project list received', {
-        projectCount: response.items.length,
-        projectIds: response.items.map(project => project.id),
-      })
+      const response = await storeApi.listCloudProjects()
       await Promise.all(
         response.items.map(async project => {
           rememberProject(project)
@@ -62,47 +51,17 @@ export function createCloudProjectSpaceApi(
             isExternalProject(project) &&
             project.provider_config.credential_configured !== false
           ) {
-            console.warn('[Wework project restore] provider credential requested', {
-              projectId: project.id,
-              projectStore: project.project_store,
-              taskProvider: project.task_provider,
-            })
             let credential
             try {
               credential = await storeApi.getCloudProjectProviderCredential(project.id)
-            } catch (error) {
-              console.error('[Wework project restore] provider credential request failed', {
-                projectId: project.id,
-                projectStore: project.project_store,
-                taskProvider: project.task_provider,
-                error,
-              })
+            } catch {
               return
             }
-            console.warn('[Wework project restore] configuring provider in local executor', {
-              projectId: project.id,
-              projectStore: project.project_store,
-              taskProvider: project.task_provider,
-            })
             try {
               await externalIssueApi.configureProject(project, credential.token)
-            } catch (error) {
-              console.error(
-                '[Wework project restore] local executor provider configuration failed',
-                {
-                  projectId: project.id,
-                  projectStore: project.project_store,
-                  taskProvider: project.task_provider,
-                  error,
-                }
-              )
+            } catch {
               return
             }
-            console.warn('[Wework project restore] local executor provider configured', {
-              projectId: project.id,
-              projectStore: project.project_store,
-              taskProvider: project.task_provider,
-            })
           }
         })
       )
