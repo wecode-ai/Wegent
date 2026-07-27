@@ -243,6 +243,7 @@ const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
 const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
 const PASTED_WORKSPACE_PATHS_ONLY = process.argv.includes('--pasted-workspace-paths-only')
 const DROPPED_WORKSPACE_PATHS_ONLY = process.argv.includes('--dropped-workspace-paths-only')
+const SYSTEM_DRAG_PANEL_ONLY = process.argv.includes('--system-drag-panel-only')
 const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
@@ -1820,11 +1821,7 @@ async function verifyProviderSwitchRetry(control, composerSelector) {
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await selectE2EModel(
-    control,
-    PROVIDER_SWITCH_LUNA_OPTION_ID,
-    PROVIDER_SWITCH_LUNA_LABEL
-  )
+  await selectE2EModel(control, PROVIDER_SWITCH_LUNA_OPTION_ID, PROVIDER_SWITCH_LUNA_LABEL)
   await sendPrompt(control, composerSelector, PROVIDER_SWITCH_PROMPT)
   await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
     visible: true,
@@ -2452,6 +2449,44 @@ async function verifyPastedZipAttachment({ composerSelector, control }) {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'pasted-zip-attachment.png')
+}
+
+async function verifySystemDragPanelLayout(control) {
+  await control.command('navigate', 'body', { value: '/system-drag' })
+  await control.command('waitFor', '[data-testid="system-drag-panel"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+    visible: true,
+  })
+  const [metrics] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="system-drag-panel"]')
+  )
+  assert.deepEqual(
+    { height: metrics.height, width: metrics.width },
+    { height: 60, width: 440 },
+    'The system drag panel did not use the compact desktop dimensions'
+  )
+  const snapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="system-drag-panel"]')
+  )
+  assert.match(
+    snapshot.text,
+    /Create new chat|创建新对话/,
+    'The system drag panel did not expose the new-chat destination'
+  )
+  assert.match(
+    snapshot.text,
+    /Temporary stash|临时暂存/,
+    'The system drag panel did not expose the stash destination'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'system-drag-panel.png',
+    '[data-testid="system-drag-panel"]'
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="new-chat-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 }
 
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {
@@ -6751,6 +6786,13 @@ async function main() {
     )
     await control.command('focusMainWindow', 'body')
 
+    if (SYSTEM_DRAG_PANEL_ONLY) {
+      phase = 'system-drag-panel-layout'
+      await verifySystemDragPanelLayout(control)
+      console.log(`Wework desktop system-drag-panel E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (CLOUD_ONLY) {
       phase = 'local-connected-model-protocol-matrix'
       await verifyConnectedModelsOnLocalExecution({
@@ -6982,6 +7024,9 @@ async function main() {
         return
       }
     }
+
+    phase = 'system-drag-panel-layout'
+    await verifySystemDragPanelLayout(control)
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
