@@ -227,8 +227,19 @@ frontend/src/__tests__/
 ### GitHub Actions 工作流
 
 `.github/workflows/test.yml` 工作流在以下情况下自动运行：
-- 推送到 `main`、`master` 或 `develop` 分支
-- 向这些分支提交的拉取请求
+- 推送到 `main` 分支
+- 向 `main` 分支提交的拉取请求
+
+CI 会先运行 `.github/scripts/classify-ci-changes.sh`，根据改动路径决定需要执行的
+模块任务。模块依赖也会纳入判断，例如修改 `shared/` 时会同时运行 Backend、
+Executor Manager、Knowledge Engine、Shared 和 CLI 测试；修改
+`packages/chat-core/` 时会同时运行 Frontend 与 Wework 检查。修改测试 workflow
+或分类脚本本身时会运行全部模块，确保 CI 编排变更经过完整验证。
+
+功能分支不在普通 `push` 事件中运行重复 CI；创建 PR 后由 `pull_request` 事件验证。
+同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和
+`lint-summary` 始终存在，并验证所有被分类为必需的任务确实成功，未执行的无关模块
+不会导致汇总任务误报失败。
 
 ### 工作流任务
 
@@ -248,7 +259,13 @@ frontend/src/__tests__/
 
 E2E 使用独立 workflow：`.github/workflows/e2e-tests.yml` 覆盖产品端到端流程，
 `.github/workflows/wework-e2e.yml` 覆盖 Wework 流程。它们提供额外的跨模块验证，
-不会替代 `.github/workflows/test.yml` 中的模块测试。
+不会替代 `.github/workflows/test.yml` 中的模块测试。平台 E2E 只在 Backend、
+Frontend、Executor、Executor Manager、Shared、Chat Shell、Chat Core、Docker
+或相关构建配置变化时运行，因此 Wework-only PR 不会再启动无关的平台 E2E。
+Draft PR 跳过昂贵的 E2E，转为 Ready for review 后再运行。
+
+完整的平台 E2E 每天 UTC 02:00 定时运行；完整 Wework E2E 每天 UTC 04:00 定时
+运行。定时任务与 `main` push 使用不同的 concurrency group，互相不会取消。
 
 ### 覆盖率报告
 
