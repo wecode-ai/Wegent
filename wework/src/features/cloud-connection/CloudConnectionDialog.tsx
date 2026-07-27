@@ -270,7 +270,10 @@ export function CloudConnectionDialog({
                 {submitting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    {t('workbench.cloud_connection_waiting_authorization', '等待云端授权')}
+                    {t(
+                      'workbench.cloud_connection_waiting_authorization',
+                      '请在弹出窗口中完成 Wework 授权'
+                    )}
                   </>
                 ) : (
                   <>
