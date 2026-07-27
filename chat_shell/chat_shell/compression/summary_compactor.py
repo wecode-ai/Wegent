@@ -74,8 +74,11 @@ Include:
 - Critical facts, paths, parameters, and tool findings needed to continue
 - The most important next step
 
-Output only the summary. Be concise, structured, and focused on helping the next \
-model seamlessly continue the work."""
+Output ONLY the summary content itself. Do NOT restate this instruction, and do \
+NOT add any preamble or meta-commentary (no "The user wants…", no "Let me \
+summarize…", no "Here is the summary"). Start directly with the current \
+objective. Be concise, structured, and focused on helping the next model \
+seamlessly continue the work."""
 
 
 @dataclass
