@@ -496,13 +496,15 @@ fn user_configured_provider_preserves_native_responses_tools() {
     env::set_var(WEGENT_CODEX_HOME_ENV, &root);
     env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
 
-    let upstream = configured_codex_provider("wework-e2e").expect("configured provider");
+    let upstream = configured_codex_provider("wework-e2e", Some("http://127.0.0.1:7890"))
+        .expect("configured provider");
 
     assert_eq!(upstream.api_format, "openai-responses");
     assert_eq!(
         upstream.request_url.as_deref(),
         Some("http://127.0.0.1:3456/v1/responses")
     );
+    assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
     assert!(!upstream.convert_custom_tools);
     let _ = fs::remove_dir_all(root);
 }
@@ -522,7 +524,7 @@ fn user_configured_provider_converts_tools_for_non_responses_upstreams() {
     env::set_var(WEGENT_CODEX_HOME_ENV, &root);
     env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
 
-    let upstream = configured_codex_provider("wework-e2e").expect("configured provider");
+    let upstream = configured_codex_provider("wework-e2e", None).expect("configured provider");
 
     assert_eq!(upstream.api_format, "anthropic-messages");
     assert_eq!(

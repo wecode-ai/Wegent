@@ -1475,6 +1475,8 @@
     "mention_loading": "Searching...",
     "mention_search_error": "Search failed",
     "mention_no_results": "No matches",
+    "mention_conversation": "Conversation",
+    "mention_conversation_load_failed": "Unable to load the referenced conversation",
     "mention_files_and_folders": "Files and folders",
     "mention_path_picker_add": "Add",
     "mention_path_picker_back": "Back",

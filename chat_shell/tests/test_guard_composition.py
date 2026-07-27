@@ -83,6 +83,53 @@ class TestChainPreModelHooks:
         assert result["llm_input_messages"][0].content == "late"
 
     @pytest.mark.asyncio
+    async def test_llm_input_producers_compose_via_roll_forward(self):
+        """A later model-input producer that builds on the prior hook's
+        ``llm_input_messages`` stacks instead of clobbering it — this is what
+        lets user guidance and attempt guidance both reach the model."""
+
+        def guard(state):
+            # Mutating hook: compacts the channel (drop raw, add summary).
+            return {
+                "messages": [
+                    RemoveMessage(id="r-1"),
+                    HumanMessage(content="summary", id="sum-1"),
+                ]
+            }
+
+        def guidance_a(state):
+            base = state.get("llm_input_messages") or state["messages"]
+            return {"llm_input_messages": [*base, HumanMessage(content="guidance-A")]}
+
+        def guidance_b(state):
+            base = state.get("llm_input_messages") or state["messages"]
+            return {"llm_input_messages": [*base, HumanMessage(content="guidance-B")]}
+
+        chained = chain_pre_model_hooks(guard, guidance_a, guidance_b)
+        result = await chained({"messages": [HumanMessage(content="raw", id="r-1")]})
+
+        contents = [m.content for m in result["llm_input_messages"]]
+        assert contents == ["summary", "guidance-A", "guidance-B"]
+        # The channel update carries only the guard's compaction (the removal and
+        # the summary), never the guidance (guidance rides llm_input_messages).
+        channel_contents = [
+            m.content for m in result["messages"] if not isinstance(m, RemoveMessage)
+        ]
+        assert channel_contents == ["summary"]
+
+    @pytest.mark.asyncio
+    async def test_empty_update_keeps_prior_llm_input(self):
+        """A no-op guidance hook (no active guidance) must not discard the prior
+        producer's model input."""
+
+        def producer(state):
+            return {"llm_input_messages": [HumanMessage(content="kept")]}
+
+        chained = chain_pre_model_hooks(producer, lambda state: {})
+        result = await chained({"messages": []})
+        assert [m.content for m in result["llm_input_messages"]] == ["kept"]
+
+    @pytest.mark.asyncio
     async def test_empty_updates_are_dropped(self):
         chained = chain_pre_model_hooks(
             lambda state: {},

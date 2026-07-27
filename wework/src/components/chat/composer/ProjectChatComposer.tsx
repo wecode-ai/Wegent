@@ -19,7 +19,10 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { readDroppedFiles } from '@/tauri/droppedFiles'
 import type { CloudProject } from '@/api/deliveries'
-import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
 
 interface ProjectChatComposerProps {
   value: string
@@ -50,6 +53,7 @@ interface ProjectChatComposerProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
@@ -104,6 +108,7 @@ export function ProjectChatComposer({
   workspaceTarget,
   workspaceFileApi,
   cloudMentionCandidates,
+  conversationMentionCandidates,
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
@@ -264,6 +269,7 @@ export function ProjectChatComposer({
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
           cloudMentionCandidates={cloudMentionCandidates}
+          conversationMentionCandidates={conversationMentionCandidates}
           cloudProjectCandidates={cloudProjectCandidates}
           cloudSpaceEnabled={cloudSpaceEnabled}
           onSelectCloudProject={onSelectCloudProject}
