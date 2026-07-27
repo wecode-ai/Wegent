@@ -626,6 +626,19 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(screen.getByText('需要配置令牌')).toBeInTheDocument()
+    const tagHeading = screen.getByRole('heading', { name: '标签管理' })
+    const providerHeading = screen.getByRole('heading', { name: '任务来源' })
+    expect(
+      tagHeading.compareDocumentPosition(providerHeading) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(screen.getByTestId('cloud-project-provider-manage-save')).toHaveClass(
+      'bg-black',
+      'text-white'
+    )
+    expect(screen.getByTestId('cloud-project-tag-create-confirm')).toHaveClass(
+      'bg-black',
+      'text-white'
+    )
     await userEvent.type(screen.getByTestId('cloud-project-provider-manage-token'), 'gitlab-secret')
     await userEvent.click(screen.getByTestId('cloud-project-provider-manage-save'))
 
