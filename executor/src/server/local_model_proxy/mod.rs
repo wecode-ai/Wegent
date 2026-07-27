@@ -69,6 +69,12 @@ struct RegisteredUpstream {
     active_references: usize,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ModelRequestRouting {
+    model_switched: bool,
+    model_to_commit: Option<String>,
+}
+
 #[derive(Default)]
 struct LocalModelProxyRegistry {
     routes: HashMap<String, RegisteredUpstream>,
@@ -243,7 +249,7 @@ async fn handle_for_token(
     body: Bytes,
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
-    let (upstream, history, model_switched) = {
+    let (upstream, history, model_routing) = {
         let mut registry = registry()
             .lock()
             .expect("local model proxy registry should not be poisoned");
@@ -253,12 +259,12 @@ async fn handle_for_token(
             detail: "unknown or expired local model proxy token".to_owned(),
         })?;
         authorize_task_thread(registered, &body)?;
-        let model_switched = begin_model_request(registered, &body);
+        let model_routing = begin_model_request(registered, &body);
         registered.last_used = Instant::now();
         (
             registered.upstream.clone(),
             registered.history.clone(),
-            model_switched,
+            model_routing,
         )
     };
     log_stale_requested_model(&upstream, &body);
@@ -277,7 +283,8 @@ async fn handle_for_token(
         history.as_ref(),
     )
     .await?;
-    let request_body = prepare_model_switch_request(&upstream, request_body, model_switched)?;
+    let request_body =
+        prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
     log_executor_event(
         "local model proxy request started",
         &[
@@ -318,6 +325,9 @@ async fn handle_for_token(
         detail: format!("Local model proxy request failed: {error}"),
     })?;
     let status = upstream_response.status();
+    if status.is_success() {
+        commit_model_request(&token, &model_routing);
+    }
     log_executor_event(
         "local model proxy upstream headers received",
         &[
@@ -573,7 +583,7 @@ fn log_stale_requested_model(upstream: &LocalModelProxyUpstream, body: &[u8]) {
     );
 }
 
-fn begin_model_request(registered: &mut RegisteredUpstream, body: &[u8]) -> bool {
+fn begin_model_request(registered: &RegisteredUpstream, body: &[u8]) -> ModelRequestRouting {
     let current_model = registered
         .upstream
         .routing_model_id
@@ -581,19 +591,39 @@ fn begin_model_request(registered: &mut RegisteredUpstream, body: &[u8]) -> bool
         .or(registered.upstream.model_id.as_deref())
         .map(str::to_owned);
     let Some(current_model) = current_model else {
-        return false;
+        return ModelRequestRouting::default();
     };
     match registered.last_routed_model.as_deref() {
-        None => {
-            registered.last_routed_model = Some(current_model);
-            false
-        }
-        Some(previous_model) if previous_model == current_model => false,
-        Some(_) if request_contains_model_switch_marker(body) => {
-            registered.last_routed_model = Some(current_model);
-            true
-        }
-        Some(_) => false,
+        None => ModelRequestRouting {
+            model_switched: false,
+            model_to_commit: Some(current_model),
+        },
+        Some(previous_model) if previous_model == current_model => ModelRequestRouting::default(),
+        Some(_) if request_contains_model_switch_marker(body) => ModelRequestRouting {
+            model_switched: true,
+            model_to_commit: Some(current_model),
+        },
+        Some(_) => ModelRequestRouting::default(),
+    }
+}
+
+fn commit_model_request(token: &str, routing: &ModelRequestRouting) {
+    let Some(model_to_commit) = routing.model_to_commit.as_deref() else {
+        return;
+    };
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let Some(registered) = registry.routes.get_mut(token) else {
+        return;
+    };
+    let current_model = registered
+        .upstream
+        .routing_model_id
+        .as_deref()
+        .or(registered.upstream.model_id.as_deref());
+    if current_model == Some(model_to_commit) {
+        registered.last_routed_model = Some(model_to_commit.to_owned());
     }
 }
 
@@ -1863,10 +1893,22 @@ mod tests {
             },
         );
         {
-            let mut entries = registry().lock().expect("registry lock");
-            let route = entries.routes.get_mut(&token).expect("task route");
-            assert!(!begin_model_request(route, marker_body));
+            let entries = registry().lock().expect("registry lock");
+            let route = entries.routes.get(&token).expect("task route");
+            let routing = begin_model_request(route, marker_body);
+            assert!(!routing.model_switched);
+            assert_eq!(
+                routing.model_to_commit.as_deref(),
+                Some("wework-gpt-5.6-luna")
+            );
         }
+        commit_model_request(
+            &token,
+            &ModelRequestRouting {
+                model_switched: false,
+                model_to_commit: Some("wework-gpt-5.6-luna".to_owned()),
+            },
+        );
         let repeated_token = register(
             "model-switch-consumed-once",
             LocalModelProxyUpstream {
@@ -1883,10 +1925,24 @@ mod tests {
         );
         assert_eq!(repeated_token, token);
         {
-            let mut entries = registry().lock().expect("registry lock");
-            let route = entries.routes.get_mut(&token).expect("updated task route");
-            assert!(begin_model_request(route, marker_body));
-            assert!(!begin_model_request(route, marker_body));
+            let entries = registry().lock().expect("registry lock");
+            let route = entries.routes.get(&token).expect("updated task route");
+            let routing = begin_model_request(route, marker_body);
+            assert!(routing.model_switched);
+            assert_eq!(routing.model_to_commit.as_deref(), Some("gpt-5.6-sol"));
+            assert!(begin_model_request(route, marker_body).model_switched);
+        }
+        commit_model_request(
+            &token,
+            &ModelRequestRouting {
+                model_switched: true,
+                model_to_commit: Some("gpt-5.6-sol".to_owned()),
+            },
+        );
+        {
+            let entries = registry().lock().expect("registry lock");
+            let route = entries.routes.get(&token).expect("updated task route");
+            assert!(!begin_model_request(route, marker_body).model_switched);
         }
 
         unregister(&token);
@@ -2071,6 +2127,107 @@ mod tests {
         assert!(String::from_utf8_lossy(&body).contains("tools are unsupported"));
 
         unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_model_switch_remains_pending_for_retry() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/responses",
+                    post(|| async {
+                        (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"error": {"message": "request rejected"}})),
+                        )
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register(
+            "failed-model-switch",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/responses")),
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("gpt-5.6-luna".to_owned()),
+                routing_model_id: Some("gpt-5.6-luna".to_owned()),
+            },
+        );
+        {
+            let mut entries = registry().lock().expect("registry lock");
+            entries
+                .routes
+                .get_mut(&token)
+                .expect("task route")
+                .last_routed_model = Some("gpt-5.6-luna".to_owned());
+        }
+        let repeated_token = register(
+            "failed-model-switch",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/responses")),
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("gpt-5.6-sol".to_owned()),
+                routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            },
+        );
+        assert_eq!(repeated_token, token);
+        let body = serde_json::to_vec(&json!({
+            "model": "stale-codex-model",
+            "previous_response_id": "resp_luna",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [],
+                    "encrypted_content": "encrypted-luna-state"
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "<model_switch>Use the selected model.</model_switch>"
+                    }]
+                }
+            ]
+        }))
+        .expect("request body");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("authorization"),
+        );
+
+        let response = handle(headers, Bytes::from(body.clone()))
+            .await
+            .expect("upstream rejection should be preserved");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        {
+            let entries = registry().lock().expect("registry lock");
+            let route = entries.routes.get(&token).expect("task route");
+            assert_eq!(route.last_routed_model.as_deref(), Some("gpt-5.6-luna"));
+            assert!(begin_model_request(route, &body).model_switched);
+        }
+
+        unregister(&token);
+        unregister(&repeated_token);
         server.abort();
     }
 
