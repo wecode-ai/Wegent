@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, createHttpClient } from '@/api/http'
-import { getRuntimeConfig } from '@/config/runtime'
+import { getConfiguredSocketBaseUrl, getRuntimeConfig } from '@/config/runtime'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -37,23 +37,33 @@ interface WeworkAuthSessionPollResponse {
   error?: string
 }
 
+interface WeworkCloudConfigResponse {
+  web_url?: unknown
+  socket_url?: unknown
+}
+
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2000
 const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重新连接'
 
 function resolveCloudRuntimeConfig(
   backendUrl: string,
-  socketBaseUrlOverride?: string
+  socketBaseUrlOverride?: string,
+  backendSocketUrl?: string
 ): CloudConnectionRuntimeConfig {
   const normalized = normalizeCloudBackendUrl(backendUrl)
   if (socketBaseUrlOverride?.trim()) {
     return normalizeCloudBackendUrl(backendUrl, socketBaseUrlOverride)
   }
   const runtimeConfig = getRuntimeConfig()
-  if (!runtimeConfig.wegentBackendUrl) return normalized
-
-  const configuredBackend = normalizeCloudBackendUrl(runtimeConfig.wegentBackendUrl)
-  return normalized.backendUrl === configuredBackend.backendUrl
-    ? normalizeCloudBackendUrl(backendUrl, runtimeConfig.socketBaseUrl)
+  if (runtimeConfig.wegentBackendUrl) {
+    const configuredBackend = normalizeCloudBackendUrl(runtimeConfig.wegentBackendUrl)
+    const configuredSocketBaseUrl = getConfiguredSocketBaseUrl()
+    if (normalized.backendUrl === configuredBackend.backendUrl && configuredSocketBaseUrl) {
+      return normalizeCloudBackendUrl(backendUrl, configuredSocketBaseUrl)
+    }
+  }
+  return backendSocketUrl?.trim()
+    ? normalizeCloudBackendUrl(backendUrl, backendSocketUrl)
     : normalized
 }
 
@@ -194,15 +204,24 @@ async function checkCloudHealth(config: CloudConnectionRuntimeConfig): Promise<v
   )
 }
 
-async function fetchCloudWebUrl(config: CloudConnectionRuntimeConfig): Promise<string> {
+async function fetchCloudConfig(
+  config: CloudConnectionRuntimeConfig
+): Promise<{ webUrl: string; socketUrl?: string }> {
   const client = createCloudClient(config, null)
-  const metadata = await client.get<{ web_url?: unknown }>('/auth/wework/config', {
+  const metadata = await client.get<WeworkCloudConfigResponse>('/auth/wework/config', {
     redirectOnUnauthorized: false,
   })
   if (typeof metadata.web_url !== 'string' || !metadata.web_url.trim()) {
     throw new Error('Cloud Backend did not provide a Web URL')
   }
-  return metadata.web_url.replace(/\/+$/, '')
+  const socketUrl =
+    typeof metadata.socket_url === 'string' && metadata.socket_url.trim()
+      ? metadata.socket_url.trim()
+      : undefined
+  return {
+    webUrl: metadata.web_url.replace(/\/+$/, ''),
+    socketUrl,
+  }
 }
 
 async function fetchCloudUser(config: CloudConnectionRuntimeConfig, token: string): Promise<User> {
@@ -298,17 +317,27 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (snapshot.status !== 'connected' || !snapshot.backendUrl) return
-    const config = resolveCloudRuntimeConfig(snapshot.backendUrl, snapshot.socketBaseUrlOverride)
-    void fetchCloudWebUrl(config)
-      .then(webUrl => {
+    const backendUrl = snapshot.backendUrl
+    const config = resolveCloudRuntimeConfig(backendUrl, snapshot.socketBaseUrlOverride)
+    void fetchCloudConfig(config)
+      .then(metadata => {
+        const resolvedConfig = resolveCloudRuntimeConfig(
+          backendUrl,
+          snapshot.socketBaseUrlOverride,
+          metadata.socketUrl
+        )
         setSnapshot(current => {
-          const nextSnapshot = { ...current, webUrl }
+          const nextSnapshot = {
+            ...current,
+            ...resolvedConfig,
+            webUrl: metadata.webUrl,
+          }
           persistSnapshot(nextSnapshot)
           return nextSnapshot
         })
       })
       .catch(error => {
-        console.error('[CloudConnection] Failed to resolve cloud Web URL', error)
+        console.error('[CloudConnection] Failed to resolve cloud configuration', error)
       })
   }, [snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
 
@@ -318,7 +347,7 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
       openAuthorizationUrl?: OpenCloudAuthorizationUrl,
       socketBaseUrlOverride?: string
     ): Promise<User> => {
-      const config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
+      let config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
       setSnapshot(current => ({
         ...current,
         ...config,
@@ -328,6 +357,12 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
 
       try {
         await checkCloudHealth(config)
+        const metadata = await fetchCloudConfig(config)
+        config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride, metadata.socketUrl)
+        setSnapshot(current => ({
+          ...current,
+          ...config,
+        }))
         const session = await createWeworkAuthSession(config)
         const authorizationHandle = await openAuthorizationUrl?.(session.authorize_url)
         const windowClosed = authWindowClosedPromise(authorizationHandle)
