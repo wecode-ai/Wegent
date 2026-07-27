@@ -176,6 +176,8 @@ If a task fails:
 2. **Click retry button** - Re-execute the task
 3. **Or modify and retry** - Adjust task description and resend
 
+After the retry request is accepted, the failed message turn is removed from the conversation. When the retry succeeds, the conversation keeps the original user message and the new successful response without retaining the old failure card or leaving an empty response turn. Wework applies the same rule when the task is reopened.
+
 ## Sending Follow-ups While Running
 
 While a Wework task is running, you can choose among three send modes:

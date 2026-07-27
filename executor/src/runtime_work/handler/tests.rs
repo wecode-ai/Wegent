@@ -506,14 +506,20 @@ fn transcript_navigation_uses_client_message_id_for_live_message_matching() {
 
 #[test]
 fn transcript_appends_cached_failed_assistant_missing_from_provider() {
-    let mut provider_messages =
-        vec![json!({"id": "user-1", "role": "user", "content": "retry this"})];
+    let mut provider_messages = vec![json!({
+        "id": "user-1",
+        "role": "user",
+        "content": "retry this",
+        "createdAt": 1_780_000_000
+    })];
     let cached_messages = vec![json!({
         "id": "failed-assistant-1",
         "role": "assistant",
         "content": "",
         "status": "failed",
-        "error": "Codex failure"
+        "error": "Codex failure",
+        "subtaskId": "turn-1",
+        "createdAt": 1_780_000_001
     })];
 
     append_missing_cached_failed_assistant_messages(&mut provider_messages, cached_messages);
@@ -522,6 +528,86 @@ fn transcript_appends_cached_failed_assistant_missing_from_provider() {
     assert_eq!(provider_messages[1]["id"], "failed-assistant-1");
     assert_eq!(provider_messages[1]["status"], "failed");
     assert_eq!(provider_messages[1]["error"], "Codex failure");
+}
+
+#[test]
+fn transcript_keeps_cached_failed_assistant_in_original_turn_order() {
+    let mut provider_messages = vec![
+        json!({
+            "id": "user-1",
+            "role": "user",
+            "content": "first request",
+            "createdAt": 1_780_000_000
+        }),
+        json!({
+            "id": "user-2",
+            "role": "user",
+            "content": "second request",
+            "createdAt": 1_780_000_010
+        }),
+        json!({
+            "id": "assistant-2",
+            "role": "assistant",
+            "content": "second response",
+            "status": "done",
+            "subtaskId": "turn-2",
+            "createdAt": 1_780_000_011
+        }),
+    ];
+    let cached_messages = vec![json!({
+        "id": "failed-assistant-1",
+        "role": "assistant",
+        "content": "",
+        "status": "failed",
+        "error": "Codex failure",
+        "subtaskId": "turn-1",
+        "createdAt": 1_780_000_005
+    })];
+
+    append_missing_cached_failed_assistant_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(
+        provider_messages
+            .iter()
+            .map(|message| message["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["user-1", "failed-assistant-1", "user-2", "assistant-2"]
+    );
+}
+
+#[test]
+fn transcript_drops_stale_cached_failure_when_provider_has_same_assistant_turn() {
+    let mut provider_messages = vec![
+        json!({
+            "id": "user-1",
+            "role": "user",
+            "content": "request",
+            "createdAt": 1_780_000_000
+        }),
+        json!({
+            "id": "provider-assistant-1",
+            "role": "assistant",
+            "content": "completed response",
+            "status": "done",
+            "subtask_id": "turn-1",
+            "createdAt": 1_780_000_001
+        }),
+    ];
+    let cached_messages = vec![json!({
+        "id": "failed-assistant-1",
+        "role": "assistant",
+        "content": "",
+        "status": "failed",
+        "error": "codex app-server notification stream lagged",
+        "subtaskId": "turn-1",
+        "createdAt": 1_780_000_002
+    })];
+
+    append_missing_cached_failed_assistant_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(provider_messages.len(), 2);
+    assert_eq!(provider_messages[1]["id"], "provider-assistant-1");
+    assert_eq!(provider_messages[1]["status"], "done");
 }
 
 #[tokio::test]

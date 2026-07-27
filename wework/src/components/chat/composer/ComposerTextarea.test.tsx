@@ -15,9 +15,18 @@ const nativeWorkspacePickerMocks = vi.hoisted(() => ({
   open: vi.fn(),
 }))
 
+const nativeClipboardPathMocks = vi.hoisted(() => ({
+  resolve: vi.fn(),
+}))
+
 vi.mock('@/lib/native-workspace-path-picker', () => ({
   canOpenNativeWorkspacePathPicker: () => true,
   openNativeWorkspacePathPicker: nativeWorkspacePickerMocks.open,
+}))
+
+vi.mock('@/lib/workspace-path-transfer', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/workspace-path-transfer')>()),
+  resolveDataTransferWorkspacePaths: nativeClipboardPathMocks.resolve,
 }))
 
 const GMAIL_SKILL: LocalDeviceSkill = {
@@ -68,6 +77,11 @@ describe('ComposerTextarea', () => {
   beforeEach(() => {
     nativeWorkspacePickerMocks.open.mockReset()
     nativeWorkspacePickerMocks.open.mockResolvedValue([])
+    nativeClipboardPathMocks.resolve.mockReset()
+    nativeClipboardPathMocks.resolve.mockResolvedValue({
+      attachmentFiles: [],
+      referenceEntries: [],
+    })
   })
 
   test('places the caret at the end when returning to a restored new-chat draft', async () => {
@@ -463,6 +477,196 @@ describe('ComposerTextarea', () => {
       )
       expect(screen.getByTestId('composer-path-chip-frontend')).toHaveTextContent('frontend')
     })
+  })
+
+  test('pastes local files and folders as path references without uploading them', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onPasteFiles = vi.fn()
+    const workspaceTarget: WorkspaceTarget = {
+      deviceId: 'local-device',
+      path: '/workspace/project',
+      source: 'project',
+      workspaceSource: 'local',
+    }
+    nativeClipboardPathMocks.resolve.mockResolvedValue({
+      attachmentFiles: [],
+      referenceEntries: [
+        { path: '/workspace/project/frontend', isDirectory: true },
+        { path: '/workspace/project/README.md', isDirectory: false },
+      ],
+    })
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          workspaceTarget={workspaceTarget}
+          onPasteFiles={onPasteFiles}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input')
+    const folder = new File([], 'frontend')
+    const file = new File(['# Project'], 'README.md', { type: 'text/markdown' })
+    const pasteEvent = new Event('paste', {
+      bubbles: true,
+      cancelable: true,
+    }) as ClipboardEvent
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: {
+        files: [folder, file],
+        items: [
+          {
+            kind: 'file',
+            getAsFile: () => folder,
+            webkitGetAsEntry: () => ({ isDirectory: true }),
+          },
+          {
+            kind: 'file',
+            getAsFile: () => file,
+            webkitGetAsEntry: () => ({ isDirectory: false }),
+          },
+        ],
+        getData: () => '',
+      },
+    })
+    fireEvent(editor, pasteEvent)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('composer-path-chip-frontend')).toHaveAttribute(
+        'data-composer-path-kind',
+        'folder'
+      )
+      expect(screen.getByTestId('composer-path-chip-README-md')).toHaveAttribute(
+        'data-composer-path-kind',
+        'file'
+      )
+    })
+    expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledOnce()
+    expect(onPasteFiles).not.toHaveBeenCalled()
+  })
+
+  test('keeps pasted images on the attachment path', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onPasteFiles = vi.fn()
+    const image = new File(['image'], 'preview.png', { type: 'image/png' })
+    nativeClipboardPathMocks.resolve.mockResolvedValue({
+      attachmentFiles: [image],
+      referenceEntries: [],
+    })
+
+    render(
+      <ComposerTextarea
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend={false}
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        onPasteFiles={onPasteFiles}
+      />
+    )
+    const editor = screen.getByTestId('chat-message-input')
+    const pasteEvent = new Event('paste', {
+      bubbles: true,
+      cancelable: true,
+    }) as ClipboardEvent
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: {
+        files: [image],
+        items: [
+          {
+            kind: 'file',
+            getAsFile: () => image,
+            webkitGetAsEntry: () => ({ isDirectory: false }),
+          },
+        ],
+        getData: () => '',
+      },
+    })
+    fireEvent(editor, pasteEvent)
+
+    await waitFor(() => expect(onPasteFiles).toHaveBeenCalledWith([image]))
+    expect(screen.queryByTestId('composer-path-chip-preview-png')).not.toBeInTheDocument()
+  })
+
+  test('drops local files and folders as path references without uploading them', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onPasteFiles = vi.fn()
+    const workspaceTarget: WorkspaceTarget = {
+      deviceId: 'local-device',
+      path: '/workspace/project',
+      source: 'project',
+      workspaceSource: 'local',
+    }
+    nativeClipboardPathMocks.resolve.mockResolvedValue({
+      attachmentFiles: [],
+      referenceEntries: [
+        { path: '/workspace/project/frontend', isDirectory: true },
+        { path: '/workspace/project/README.md', isDirectory: false },
+      ],
+    })
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          workspaceTarget={workspaceTarget}
+          onPasteFiles={onPasteFiles}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input')
+    const folder = new File([], 'frontend')
+    const file = new File(['# Project'], 'README.md', { type: 'text/markdown' })
+    const dropEvent = new Event('drop', {
+      bubbles: true,
+      cancelable: true,
+    }) as DragEvent
+    Object.defineProperty(dropEvent, 'dataTransfer', {
+      value: {
+        files: [folder, file],
+        items: [],
+        types: ['Files'],
+        getData: () => '',
+      },
+    })
+    fireEvent(editor, dropEvent)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('composer-path-chip-frontend')).toHaveAttribute(
+        'data-composer-path-kind',
+        'folder'
+      )
+      expect(screen.getByTestId('composer-path-chip-README-md')).toHaveAttribute(
+        'data-composer-path-kind',
+        'file'
+      )
+    })
+    expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledOnce()
+    expect(onPasteFiles).not.toHaveBeenCalled()
   })
 
   test('shows the cloud space entries in the @ menu when cloud is enabled', async () => {
