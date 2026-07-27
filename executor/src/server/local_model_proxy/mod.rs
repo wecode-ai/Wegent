@@ -513,9 +513,7 @@ fn stale_requested_model(
     upstream: &LocalModelProxyUpstream,
     body: &[u8],
 ) -> Option<(String, String)> {
-    let Some(expected_model) = upstream.routing_model_id.as_deref() else {
-        return None;
-    };
+    let expected_model = upstream.routing_model_id.as_deref()?;
     let requested_model = requested_model(body)?;
     if requested_model == expected_model {
         return None;
