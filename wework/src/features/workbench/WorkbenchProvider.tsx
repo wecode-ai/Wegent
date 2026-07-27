@@ -95,7 +95,7 @@ import {
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
-import { defaultNewChatModelSelection } from './runtimeModelSelection'
+import { defaultNewChatModelSelection, disableCrossProviderModels } from './runtimeModelSelection'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
@@ -467,6 +467,14 @@ export function WorkbenchProvider({
   const activeModel = useMemo(
     () => findModelForSelection(modelSelection.models, modelSelectionConfig),
     [modelSelection.models, modelSelectionConfig]
+  )
+  const conversationModels = useMemo(
+    () =>
+      disableCrossProviderModels(
+        modelSelection.models,
+        state.currentRuntimeTask ? activeModel : null
+      ),
+    [activeModel, modelSelection.models, state.currentRuntimeTask]
   )
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -1422,7 +1430,7 @@ export function WorkbenchProvider({
   const projectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
-      models: modelSelection.models,
+      models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
       activeModel,
@@ -1471,7 +1479,7 @@ export function WorkbenchProvider({
       listLocalSkills,
       listLocalApps,
       modelSelection.isSelectionReady,
-      modelSelection.models,
+      conversationModels,
       activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
@@ -1490,7 +1498,7 @@ export function WorkbenchProvider({
   const paneProjectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
-      models: modelSelection.models,
+      models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
       activeModel,
@@ -1538,7 +1546,7 @@ export function WorkbenchProvider({
       listLocalSkills,
       listLocalApps,
       modelSelection.isSelectionReady,
-      modelSelection.models,
+      conversationModels,
       activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,

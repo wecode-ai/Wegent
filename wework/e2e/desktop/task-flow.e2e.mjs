@@ -1825,7 +1825,7 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   )
 }
 
-async function verifyProviderSwitchRetry(control, composerSelector) {
+async function verifyProviderBoundaryRestriction(control, composerSelector) {
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1851,20 +1851,34 @@ async function verifyProviderSwitchRetry(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-selector-menu"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await selectE2EModel(control, PROVIDER_SWITCH_SOL_OPTION_ID, PROVIDER_SWITCH_SOL_LABEL)
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: PROVIDER_SWITCH_COMPLETION,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
-  assert.equal(
-    control.scenarioRequests.get('provider_switch_retry')?.length,
-    2,
-    'The provider-switch retry did not make exactly one Luna request and one Sol request'
-  )
-  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}`)
+  const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}"]`
+  await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_SOL_LABEL,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  const disabledModelText = await control.command('getText', officialModelSelector)
+  assert.match(
+    disabledModelText,
+    /官方 Codex|Official Codex/,
+    'The official Codex option did not explain the provider boundary restriction'
+  )
+  await assert.rejects(
+    control.command('click', officialModelSelector),
+    /disabled/,
+    'The official Codex option remained selectable in a third-party conversation'
+  )
+  assert.equal(
+    control.scenarioRequests.get('provider_switch_retry')?.length,
+    1,
+    'Selecting the disabled official Codex option unexpectedly sent another request'
+  )
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    snapshot.testIds.includes('model-selector-menu'),
+    'The model selector closed after clicking a disabled cross-provider option'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
@@ -7797,7 +7811,7 @@ async function main() {
         }
       }
       phase = 'provider-switch-retry'
-      await verifyProviderSwitchRetry(control, composerSelector)
+      await verifyProviderBoundaryRestriction(control, composerSelector)
       await writeFile(
         join(resultDir, 'model-switch-protocol-verification.json'),
         `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,

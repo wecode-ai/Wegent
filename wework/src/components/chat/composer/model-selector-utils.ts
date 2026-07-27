@@ -157,6 +157,12 @@ export function modelCompatibilityDisabledMessage(
   if (reason === 'unavailable') {
     return resolveLabel('workbench.model_disabled_unavailable', 'This model is unavailable')
   }
+  if (reason === 'provider_boundary_mismatch') {
+    return resolveLabel(
+      'workbench.model_disabled_provider_boundary_mismatch',
+      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
+    )
+  }
   return resolveLabel(
     'workbench.model_disabled_runtime_family_mismatch',
     'Incompatible with the current model protocol'
