@@ -465,8 +465,11 @@ export function WorkbenchProvider({
     onSelectionBlocked: handleBlockedModelSelection,
   })
   const activeModel = useMemo(
-    () => findModelForSelection(modelSelection.models, modelSelectionConfig),
-    [modelSelection.models, modelSelectionConfig]
+    () =>
+      state.currentRuntimeTask
+        ? findModelForSelection(modelSelection.models, modelSelectionConfig)
+        : null,
+    [modelSelection.models, modelSelectionConfig, state.currentRuntimeTask]
   )
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
