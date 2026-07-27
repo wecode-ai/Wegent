@@ -170,7 +170,7 @@ export function ArtifactPanel({
       )}
 
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{t('artifact.recentTasks')}</h3>
+        <h3 className="text-sm font-semibold">{t('artifact.recentGenerations')}</h3>
         {items.some(item => item.status === 'queued' || item.status === 'running') && (
           <span className="text-xs text-text-secondary">
             {t('artifact.runningCount', {
