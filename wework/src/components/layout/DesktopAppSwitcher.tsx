@@ -136,10 +136,6 @@ export function DesktopAppSwitcher({
         key: 'todo',
         label: t('workbench.app_weloop_label', '看板'),
         description: t('workbench.app_weloop_description', '用 AI 管理项目的规划、执行与反馈'),
-        availabilityLabel: cloudConnection?.isConnected
-          ? undefined
-          : t('workbench.app_weloop_requires_cloud', '连接云端后可用'),
-        disabled: !cloudConnection?.isConnected,
       })
     }
 
@@ -150,7 +146,6 @@ export function DesktopAppSwitcher({
       availabilityLabel: cloudConnection?.isConnected
         ? undefined
         : t('workbench.app_wegent_requires_cloud', '连接云端后可用'),
-      disabled: !cloudConnection?.isConnected && activeApp !== 'wegent',
     })
 
     return appOptions

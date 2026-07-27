@@ -62,7 +62,8 @@ describe('DesktopAppSwitcher', () => {
     ).toEqual(['任务使用 AI 解决具体问题', '智能体构建并交付可嵌入业务的云端智能体'])
   })
 
-  test('keeps Kanban visible but unavailable while disconnected', () => {
+  test('keeps Kanban navigable while disconnected', () => {
+    vi.useFakeTimers()
     experimentalFeatures.enabled = true
     const onNavigate = vi.fn()
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} />)
@@ -73,14 +74,8 @@ describe('DesktopAppSwitcher', () => {
       '任务使用 AI 解决具体问题'
     )
     const todoOption = screen.getByTestId('app-switcher-option-todo')
-    expect(todoOption).toBeDisabled()
-    const todoUnavailableStatus = screen.getByTestId('app-switcher-unavailable-todo')
-    expect(todoUnavailableStatus).toHaveAccessibleName('连接云端后可用')
-    fireEvent.mouseEnter(todoUnavailableStatus)
-    expect(screen.getByRole('tooltip')).toHaveTextContent('连接云端后可用')
-    fireEvent.mouseLeave(todoUnavailableStatus)
-    fireEvent.click(todoOption)
-    expect(onNavigate).not.toHaveBeenCalled()
+    expect(todoOption).toBeEnabled()
+    expect(screen.queryByTestId('app-switcher-unavailable-todo')).not.toBeInTheDocument()
     const wegentOption = screen.getByTestId('app-switcher-option-wegent')
     expect(wegentOption).not.toHaveClass('opacity-60')
     expect(within(wegentOption).getByText('智能体')).toBeInTheDocument()
@@ -93,9 +88,28 @@ describe('DesktopAppSwitcher', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     fireEvent.focus(unavailableStatus)
     expect(screen.getByRole('tooltip')).toHaveTextContent('连接云端后可用')
-    expect(wegentOption).toBeDisabled()
+    expect(wegentOption).toBeEnabled()
+
+    fireEvent.click(todoOption)
+    act(() => vi.advanceTimersByTime(260))
+    expect(onNavigate).toHaveBeenCalledWith('todo')
+  })
+
+  test('allows opening Agent to manage its disconnected state', () => {
+    vi.useFakeTimers()
+    const onNavigate = vi.fn()
+    render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} />)
+
+    fireEvent.click(screen.getByTestId('chrome-tab-wework'))
+    const wegentOption = screen.getByTestId('app-switcher-option-wegent')
+    expect(wegentOption).toBeEnabled()
+    expect(screen.getByTestId('app-switcher-unavailable-wegent')).toHaveAccessibleName(
+      '连接云端后可用'
+    )
+
     fireEvent.click(wegentOption)
-    expect(onNavigate).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(260))
+    expect(onNavigate).toHaveBeenCalledWith('wegent')
   })
 
   test('shows Kanban when experimental features are enabled', () => {
