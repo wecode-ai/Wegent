@@ -35,6 +35,7 @@ async function loadTranslations() {
     'promptOptimization',
     'subscription',
     'resource-library',
+    'knowledge-stat',
   ]
 
   for (const lng of supportedLanguages) {
@@ -93,6 +94,7 @@ export async function initI18n() {
       'promptOptimization',
       'subscription',
       'resource-library',
+      'knowledge-stat',
     ],
   })
 

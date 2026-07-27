@@ -5,11 +5,13 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PanelRightClose, PanelRightOpen, FileText, Shield, Plus } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, FileText, Shield, Plus, BarChart3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
+import { KbStatView } from './KbStatView'
+import { isKbStatEnabled } from '@/features/knowledge-stat'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -104,7 +106,9 @@ export function DocumentPanel({
   const { t: tCommon } = useTranslation('common')
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
+  // 'statistics' is only switchable when the KB-stat feature flag is on.
+  type PanelTab = 'documents' | 'permissions' | 'statistics'
+  const [activeTab, setActiveTab] = useState<PanelTab>('documents')
 
   // Initialize state with localStorage values
   const [panelWidth, setPanelWidth] = useState(() =>
@@ -244,24 +248,38 @@ export function DocumentPanel({
         <div className="absolute inset-y-0 -left-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
 
-      {/* Content area with tabs */}
-      {canManagePermissions ? (
+      {/* Content area with tabs.
+          Tabs are shown when either permission management or statistics is
+          available — otherwise (no perm + stat off) render the bare doc list. */}
+      {canManagePermissions || isKbStatEnabled() ? (
         <Tabs
           value={activeTab}
-          onValueChange={value => setActiveTab(value as 'documents' | 'permissions')}
+          onValueChange={value => setActiveTab(value as PanelTab)}
           className="flex-1 flex flex-col overflow-hidden"
         >
           {/* Header row with tabs and action buttons */}
           <div className="flex items-center justify-between px-4 pt-3">
-            <TabsList className="grid w-auto grid-cols-2">
+            <TabsList
+              className={`grid w-auto ${
+                canManagePermissions && isKbStatEnabled() ? 'grid-cols-3' : 'grid-cols-2'
+              }`}
+            >
               <TabsTrigger value="documents" className="gap-1.5">
                 <FileText className="w-4 h-4" />
                 {t('chatPage.documents')}
               </TabsTrigger>
-              <TabsTrigger value="permissions" className="gap-1.5">
-                <Shield className="w-4 h-4" />
-                {t('document.permission.management')}
-              </TabsTrigger>
+              {canManagePermissions && (
+                <TabsTrigger value="permissions" className="gap-1.5">
+                  <Shield className="w-4 h-4" />
+                  {t('document.permission.management')}
+                </TabsTrigger>
+              )}
+              {isKbStatEnabled() && (
+                <TabsTrigger value="statistics" className="gap-1.5">
+                  <BarChart3 className="w-4 h-4" />
+                  {t('statistics')}
+                </TabsTrigger>
+              )}
             </TabsList>
             <div className="flex items-center gap-1">
               {/* New chat button */}
@@ -311,12 +329,26 @@ export function DocumentPanel({
               initialDocPath={initialDocPath}
             />
           </TabsContent>
-          <TabsContent value="permissions" className="flex-1 overflow-auto mt-0">
-            <PermissionManagementTab
-              kbId={knowledgeBase.id}
-              kbNamespace={knowledgeBase.namespace}
-            />
-          </TabsContent>
+          {canManagePermissions && (
+            <TabsContent value="permissions" className="flex-1 overflow-auto mt-0">
+              <PermissionManagementTab
+                kbId={knowledgeBase.id}
+                kbNamespace={knowledgeBase.namespace}
+              />
+            </TabsContent>
+          )}
+          {isKbStatEnabled() && (
+            <TabsContent value="statistics" className="flex-1 overflow-auto mt-0">
+              {/* KbStatView's own header shows the KB name + date filter,
+                  pass an empty fragment as headerActions to avoid duplicate
+                  tab strip (we already render the tab above). */}
+              <KbStatView
+                kbId={knowledgeBase.id}
+                kbName={knowledgeBase.name}
+                headerActions={null}
+              />
+            </TabsContent>
+          )}
         </Tabs>
       ) : (
         /* Document List only - no permission management */

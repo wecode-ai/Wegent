@@ -1,0 +1,413 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Collection runner: orchestrates all registered collectors.
+
+Creates a run record, executes each collector in its own transaction,
+and handles failure isolation.
+"""
+
+import json
+import logging
+from datetime import date, datetime, timedelta, timezone
+from typing import Callable, Optional, Sequence
+
+# SoftTimeLimitExceeded is a celery exception; import lazily so the engine
+# can be used without celery installed (e.g. CLI scripts). The try/except
+# guard ensures this module loads even if celery is not in the environment.
+try:
+    from celery.exceptions import SoftTimeLimitExceeded
+except ImportError:  # pragma: no cover
+
+    class SoftTimeLimitExceeded(Exception):
+        """Fallback when celery is not installed."""
+
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session, sessionmaker
+
+from knowledge_engine.stat.filters import MetricFilter
+from knowledge_engine.stat.models.runs import CollectorRun, Run
+from knowledge_engine.stat.registry import (
+    all_collectors,
+    collectors_by_domains,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def collect_all(
+    *,
+    target_date: date,
+    kb_ids: Optional[Sequence[int]] = None,
+    triggered_by: str = "beat",
+    triggered_user_id: Optional[int] = None,
+    domains: Optional[Sequence[str]] = None,
+    lookback_days: int = 30,
+    source_session_factory: Callable[[], Session],
+    stat_session_factory: Callable[[], Session],
+) -> int:
+    """Run all (or selected domain) collectors and return the run_id.
+
+    Each collector executes in its own transaction boundary.
+    A single collector failure does not prevent others from running.
+    """
+    # Trigger collector registration
+    import knowledge_engine.stat.collectors  # noqa: F401
+
+    mfilter = MetricFilter(
+        target_date=target_date, kb_ids=kb_ids, lookback_days=lookback_days
+    )
+
+    stat_session = stat_session_factory()
+    source_session = source_session_factory()
+
+    # Create run record
+    run_id = _create_run(
+        stat_session,
+        target_date=target_date,
+        kb_ids=kb_ids,
+        triggered_by=triggered_by,
+        triggered_user_id=triggered_user_id,
+        stat_start=mfilter.effective_period_start,
+        stat_end=mfilter.period_end_date,
+    )
+
+    # Select collectors
+    if domains:
+        collectors = collectors_by_domains(domains)
+    else:
+        collectors = all_collectors()
+
+    total_rows = 0
+    collector_results: list[str] = []  # track success/failed per collector
+
+    try:
+        for collector in collectors:
+            collector_run_id = _create_collector_run(
+                stat_session,
+                run_id=run_id,
+                domain=collector.domain,
+                name=collector.name,
+            )
+            try:
+                stat_session.begin()
+                rows = collector.fn(
+                    run_id,
+                    mfilter,
+                    source_session=source_session,
+                    stat_session=stat_session,
+                )
+                stat_session.commit()
+                _update_collector_run(
+                    stat_session,
+                    collector_run_id,
+                    status="success",
+                    rows_written=rows or 0,
+                )
+                total_rows += rows or 0
+                collector_results.append("success")
+            except SoftTimeLimitExceeded:
+                # Re-raise so stat_tasks.py's soft-time-limit handler fires
+                # and the run aborts cleanly. Without this the except Exception
+                # below swallows the soft timeout, the loop continues running
+                # collectors past the deadline, and only the hard time_limit
+                # (which kills the worker) stops it.
+                stat_session.rollback()
+                _update_collector_run(
+                    stat_session,
+                    collector_run_id,
+                    status="failed",
+                    error_message="soft time limit exceeded",
+                )
+                raise
+            except Exception as e:
+                stat_session.rollback()
+                _update_collector_run(
+                    stat_session,
+                    collector_run_id,
+                    status="failed",
+                    error_message=str(e)[:2000],
+                )
+                logger.warning(f"[kb_stat] collector {collector.name} failed: {e}")
+                collector_results.append("failed")
+
+        # Determine overall run status
+        if all(r == "success" for r in collector_results):
+            run_status = "completed"
+        elif any(r == "success" for r in collector_results):
+            run_status = "partial"
+        else:
+            run_status = "failed"
+
+        failed_names = [
+            c.name for c, r in zip(collectors, collector_results) if r == "failed"
+        ]
+        error_msg = ", ".join(failed_names) if failed_names else None
+    except Exception as exc:
+        run_status = "failed"
+        error_msg = str(exc)[:2000]
+        logger.error(f"[kb_stat] run_id={run_id} aborted: {exc}")
+
+    _finalize_run(
+        stat_session,
+        run_id=run_id,
+        status=run_status,
+        metrics_count=total_rows,
+        error_message=error_msg,
+    )
+
+    source_session.close()
+    stat_session.close()
+
+    logger.info(
+        f"[kb_stat] run_id={run_id} target_date={target_date} "
+        f"status={run_status} metrics_count={total_rows}"
+    )
+    return run_id
+
+
+def prune_old_runs(
+    *,
+    retention_days: int = 400,
+    stat_session_factory: Callable[[], Session],
+) -> int:
+    """Delete runs older than retention_days. Returns count of deleted runs.
+
+    Special case: ``retention_days <= 0`` disables pruning entirely
+    (retain forever). This guards against accidental mass-deletion when
+    someone sets ``KNOWLEDGE_STAT_RETENTION_DAYS=0`` expecting "no
+    retention" — the arithmetic ``today - 0`` would otherwise make
+    ``cutoff = today`` and delete every run with ``target_date < today``
+    (i.e. almost the entire stat DB).
+
+    The recommended way to retain data forever is setting
+    ``KB_STAT_PRUNE_ENABLED=false`` on the backend (drops the prune beat),
+    but this short-circuit is a safety net for manual invocations
+    (``celery call kb_stat.prune_old_runs``, ``kb_stat_backfill.py``).
+    """
+    if retention_days <= 0:
+        logger.info(
+            "[kb_stat] pruning disabled (retention_days=%s <= 0); "
+            "all historical data retained",
+            retention_days,
+        )
+        return 0
+
+    stat_session = stat_session_factory()
+    cutoff = datetime.now(timezone.utc).date()
+    cutoff_date = cutoff - timedelta(days=retention_days)
+
+    # Delete metric rows associated with old runs first
+    # Due to foreign key concerns, delete by run_id
+    old_runs = stat_session.execute(
+        text(
+            "SELECT id FROM kb_stat_runs WHERE target_date < :cutoff AND status != 'running'"
+        ),
+        {"cutoff": cutoff_date},
+    ).fetchall()
+
+    if not old_runs:
+        stat_session.close()
+        return 0
+
+    run_ids = [r.id for r in old_runs]
+
+    # Discover all stat metric tables from the ORM metadata so newly added
+    # tables are pruned automatically — a hardcoded list silently goes stale
+    # (it already missed the per-KB detail tables). kb_stat_runs is deleted
+    # separately below.
+    import knowledge_engine.stat.models.metrics  # noqa: F401
+    from knowledge_engine.stat.models.base import StatBase
+
+    metric_tables = sorted(
+        name
+        for name in StatBase.metadata.tables
+        if name.startswith("kb_stat_") and name != "kb_stat_runs"
+    )
+
+    # Chunk the run_ids to avoid a single massive transaction that holds
+    # locks for too long (the prune runs weekly and may delete several days'
+    # worth of runs across 70+ tables). Each chunk is committed independently.
+    CHUNK_SIZE = 100
+    total_deleted = 0
+
+    for chunk_start in range(0, len(run_ids), CHUNK_SIZE):
+        chunk = run_ids[chunk_start : chunk_start + CHUNK_SIZE]
+        placeholders = ", ".join(f":rid_{i}" for i in range(len(chunk)))
+        params = {f"rid_{i}": rid for i, rid in enumerate(chunk)}
+
+        try:
+            for table in metric_tables:
+                stat_session.execute(
+                    text(f"DELETE FROM `{table}` WHERE run_id IN ({placeholders})"),
+                    params,
+                )
+
+            # Delete the runs themselves
+            stat_session.execute(
+                text(f"DELETE FROM kb_stat_runs WHERE id IN ({placeholders})"),
+                params,
+            )
+
+            stat_session.commit()
+            total_deleted += len(chunk)
+            logger.info(
+                "[kb_stat] pruned chunk %d/%d (%d runs)",
+                chunk_start // CHUNK_SIZE + 1,
+                (len(run_ids) + CHUNK_SIZE - 1) // CHUNK_SIZE,
+                len(chunk),
+            )
+        except Exception:
+            stat_session.rollback()
+            logger.warning(
+                "[kb_stat] prune chunk failed at offset %d, skipping",
+                chunk_start,
+                exc_info=True,
+            )
+
+    stat_session.close()
+
+    logger.info(f"[kb_stat] pruned {total_deleted} runs older than {cutoff_date}")
+    return total_deleted
+
+
+_STALE_RUN_ERROR_MESSAGE = "Run timed out (worker may have crashed)"
+
+
+def mark_kb_stat_stale_runs(
+    *,
+    stale_minutes: int = 60,
+    stat_session_factory: Callable[[], Session],
+) -> int:
+    """Mark runs stuck in 'running' for longer than stale_minutes as 'failed'.
+
+    This handles cases where the Celery worker crashed or was killed before
+    updating the run status. Returns count of marked runs.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+    with stat_session_factory() as stat_session:
+        result = stat_session.execute(
+            text(
+                """
+            UPDATE kb_stat_runs
+            SET status = 'failed', completed_at = NOW(),
+                error_message = :err
+            WHERE status = 'running'
+              AND started_at < :cutoff
+        """
+            ),
+            {"err": _STALE_RUN_ERROR_MESSAGE, "cutoff": cutoff},
+        )
+        stat_session.commit()
+        marked = result.rowcount
+
+    if marked:
+        logger.info(f"[kb_stat] marked {marked} stale run(s) as failed")
+    return marked
+
+
+def _create_run(
+    session: Session,
+    *,
+    target_date: date,
+    kb_ids: Optional[Sequence[int]],
+    triggered_by: str,
+    triggered_user_id: Optional[int],
+    stat_start: date,
+    stat_end: date,
+) -> int:
+    result = session.execute(
+        text(
+            """
+            INSERT INTO kb_stat_runs
+                (started_at, status, target_date, kb_filter, triggered_by,
+                 triggered_user_id, stat_start, stat_end, metrics_count)
+            VALUES (NOW(), 'running', :target_date, :kb_filter, :triggered_by,
+                    :triggered_user_id, :stat_start, :stat_end, 0)
+        """
+        ),
+        {
+            "target_date": target_date,
+            "kb_filter": json.dumps(list(kb_ids)) if kb_ids else None,
+            "triggered_by": triggered_by,
+            "triggered_user_id": triggered_user_id,
+            "stat_start": stat_start,
+            "stat_end": stat_end,
+        },
+    )
+    session.commit()
+    return result.lastrowid
+
+
+def _create_collector_run(
+    session: Session, *, run_id: int, domain: str, name: str
+) -> int:
+    result = session.execute(
+        text(
+            """
+            INSERT INTO kb_stat_collector_runs
+                (run_id, domain, collector_name, status, started_at, rows_written)
+            VALUES (:run_id, :domain, :name, 'running', NOW(), 0)
+        """
+        ),
+        {"run_id": run_id, "domain": domain, "name": name},
+    )
+    session.commit()
+    return result.lastrowid
+
+
+def _update_collector_run(
+    session: Session,
+    collector_run_id: int,
+    *,
+    status: str,
+    rows_written: int = 0,
+    error_message: Optional[str] = None,
+) -> None:
+    session.execute(
+        text(
+            """
+            UPDATE kb_stat_collector_runs
+            SET status = :status, completed_at = NOW(),
+                rows_written = :rows_written, error_message = :error_message
+            WHERE id = :id
+        """
+        ),
+        {
+            "id": collector_run_id,
+            "status": status,
+            "rows_written": rows_written,
+            "error_message": error_message,
+        },
+    )
+    session.commit()
+
+
+def _finalize_run(
+    session: Session,
+    *,
+    run_id: int,
+    status: str,
+    metrics_count: int,
+    error_message: Optional[str] = None,
+) -> None:
+    session.execute(
+        text(
+            """
+            UPDATE kb_stat_runs
+            SET status = :status, completed_at = NOW(),
+                metrics_count = :metrics_count, error_message = :error_message
+            WHERE id = :id
+        """
+        ),
+        {
+            "id": run_id,
+            "status": status,
+            "metrics_count": metrics_count,
+            "error_message": error_message,
+        },
+    )
+    session.commit()

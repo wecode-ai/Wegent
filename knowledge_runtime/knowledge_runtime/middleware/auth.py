@@ -11,7 +11,6 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
 from knowledge_runtime.config import get_settings
 
 # HTTPBearer security scheme for OpenAPI documentation

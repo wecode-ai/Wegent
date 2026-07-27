@@ -15,7 +15,9 @@
     "system_config": "System Config",
     "im_channels": "IM Channels",
     "monitor": "Subscription Monitor",
-    "device_monitor": "Device Monitor"
+    "device_monitor": "Device Monitor",
+    "knowledge_stats": "KB Statistics",
+    "knowledge_stat_runs": "Stat Runs"
   },
   "stats": {
     "total_users": "Total Users",

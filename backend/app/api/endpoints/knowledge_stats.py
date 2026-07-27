@@ -1,0 +1,157 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Single KB stat endpoints (KB manager + admin access)."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.api.dependencies import get_db
+from app.core.security import get_current_user
+from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceType
+from app.models.user import User
+from app.services.kb_stat import get_kb_stat_gateway
+from app.services.kb_stat.dependencies import require_kb_stat_enabled
+from app.services.runtime_client import RemoteRuntimeError
+from shared.models.kb_stat import (
+    DashboardResponse,
+    KbStatFilter,
+    MetricBatchRequest,
+    MetricBatchResponse,
+    MetricListResponse,
+    MetricResponse,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(dependencies=[Depends(require_kb_stat_enabled)])
+
+
+@router.post("/{kb_id}/stats/dashboard", response_model=DashboardResponse)
+async def kb_dashboard(
+    kb_id: int,
+    payload: KbStatFilter,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    kb = _load_kb_or_404(db, kb_id)
+    _ensure_can_view_kb_stat(db, kb, current_user)
+
+    secured_payload = payload.model_copy(update={"kb_ids": [kb_id]})
+    gateway = get_kb_stat_gateway()
+    try:
+        return await gateway.dashboard(secured_payload)
+    except RemoteRuntimeError as e:
+        _handle_remote_error(e)
+
+
+@router.post("/{kb_id}/stats/metrics/batch", response_model=MetricBatchResponse)
+async def kb_metric_batch(
+    kb_id: int,
+    payload: MetricBatchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Batch-fetch many metrics for one KB (forces kb_ids to the path KB).
+
+    Declared before the {name} route so "batch" matches this literal path
+    instead of being captured as a metric name.
+    """
+    kb = _load_kb_or_404(db, kb_id)
+    _ensure_can_view_kb_stat(db, kb, current_user)
+
+    secured_payload = payload.model_copy(update={"kb_ids": [kb_id]})
+    gateway = get_kb_stat_gateway()
+    try:
+        return await gateway.metric_batch(secured_payload)
+    except RemoteRuntimeError as e:
+        _handle_remote_error(e)
+
+
+@router.post("/{kb_id}/stats/metrics/{name}", response_model=MetricResponse)
+async def kb_metric(
+    kb_id: int,
+    name: str,
+    payload: KbStatFilter,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    kb = _load_kb_or_404(db, kb_id)
+    _ensure_can_view_kb_stat(db, kb, current_user)
+
+    secured_payload = payload.model_copy(update={"kb_ids": [kb_id]})
+    gateway = get_kb_stat_gateway()
+    try:
+        return await gateway.metric(name, secured_payload)
+    except RemoteRuntimeError as e:
+        if e.status_code == 404:
+            raise HTTPException(404, f"unknown metric: {name}")
+        _handle_remote_error(e)
+
+
+@router.get("/{kb_id}/stats/metrics/list", response_model=MetricListResponse)
+async def kb_list_metrics(
+    kb_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    kb = _load_kb_or_404(db, kb_id)
+    _ensure_can_view_kb_stat(db, kb, current_user)
+
+    gateway = get_kb_stat_gateway()
+    try:
+        return await gateway.list_metrics(scope="kb")
+    except RemoteRuntimeError as e:
+        _handle_remote_error(e)
+
+
+def _load_kb_or_404(db: Session, kb_id: int) -> Kind:
+    kb = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "KnowledgeBase",
+            Kind.id == kb_id,
+        )
+        .first()
+    )
+    if not kb:
+        raise HTTPException(404, f"Knowledge base {kb_id} not found")
+    return kb
+
+
+def _ensure_can_view_kb_stat(db: Session, kb: Kind, user: User) -> None:
+    """Only KB owner, manager, or admin can view stats."""
+    if user.role == "admin":
+        return
+    if kb.user_id == user.id:
+        return
+    # Check ResourceMember for manager role
+    member = (
+        db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE,
+            ResourceMember.resource_id == kb.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user.id),
+            ResourceMember.status == MemberStatus.APPROVED,
+        )
+        .first()
+    )
+    if member and member.role == "manager":
+        return
+    raise HTTPException(403, "Only KB manager or admin can view stats")
+
+
+def _handle_remote_error(e: RemoteRuntimeError) -> None:
+    if e.retryable:
+        raise HTTPException(502, {"code": "remote_transport_error", "message": str(e)})
+    if e.status_code:
+        raise HTTPException(e.status_code, str(e))
+    raise HTTPException(502, str(e))

@@ -26,6 +26,7 @@ Beat Scheduler Storage:
 import logging
 
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import after_setup_logger, after_setup_task_logger
 
 from app.core.config import settings
@@ -84,12 +85,41 @@ celery_app.conf.update(
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes
         },
+        "kb-stat-collect-daily": {
+            "task": "kb_stat.collect_all",
+            # 北京时间 03:07 = UTC 19:07 (celery timezone=UTC)
+            "schedule": crontab(hour=19, minute=7),
+            "kwargs": {"lookback_days": 1},
+            "options": {"queue": "kb_stat"},
+        },
+        "kb-stat-prune-weekly": {
+            "task": "kb_stat.prune_old_runs",
+            # 北京时间周一 04:13 = UTC 周日 20:13 (celery timezone=UTC)
+            "schedule": crontab(day_of_week=6, hour=20, minute=13),
+            "options": {"queue": "kb_stat"},
+        },
     },
     # Beat scheduler class - Use default PersistentScheduler (file-based)
     # Note: Only run ONE Celery Beat instance in production
     # Application-level distributed lock in check_due_subscriptions prevents duplicate execution
     beat_scheduler="celery.beat:PersistentScheduler",
 )
+
+
+# Feature-switch gating for KB-stat beat entries.
+#
+# KB_STAT_ENABLED=false        → drop both collect and prune beats (the
+#                                runtime will also 503 on the HTTP layer).
+# KB_STAT_PRUNE_ENABLED=false  → drop only the prune beat so historical
+#                                stat data is retained forever (compliance
+#                                archive / long-term trend). The runtime
+#                                also short-circuits prune_old_runs when
+#                                retention_days<=0 as a defense-in-depth.
+if not settings.KB_STAT_ENABLED:
+    celery_app.conf.beat_schedule.pop("kb-stat-collect-daily", None)
+    celery_app.conf.beat_schedule.pop("kb-stat-prune-weekly", None)
+elif not settings.KB_STAT_PRUNE_ENABLED:
+    celery_app.conf.beat_schedule.pop("kb-stat-prune-weekly", None)
 
 
 # Configure Celery logging to use the same format as backend (with request_id)

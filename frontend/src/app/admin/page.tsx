@@ -12,6 +12,7 @@ import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, ResizableSidebar } from '@/features/tasks/components/sidebar'
 import { AdminTabNav } from '@/features/admin/components/AdminTabNav'
 import type { AdminTabId } from '@/features/admin/components/AdminTabNav'
+import { isKbStatEnabled } from '@/features/knowledge-stat'
 import { ShieldExclamationIcon } from '@heroicons/react/24/outline'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { TaskSessionProvider } from '@/features/tasks/session/TaskSession'
@@ -73,6 +74,15 @@ const GlobalAdminSetupWizard = dynamic(
   { ssr: false }
 )
 
+// Knowledge base statistics admin panel (kb-business-stat feature)
+const KnowledgeStatsAdminPanel = dynamic(
+  () =>
+    import('@/features/knowledge-stat').then(mod => ({
+      default: mod.KnowledgeStatsAdminPanel,
+    })),
+  { ssr: false }
+)
+
 function AccessDenied() {
   const { t } = useTranslation()
 
@@ -120,6 +130,8 @@ function AdminContent() {
         'im-channels',
         'monitor',
         'device-monitor',
+        // KB-stat tab only valid when the feature flag is on.
+        ...(isKbStatEnabled() ? (['knowledge-stats'] as const) : []),
       ].includes(tab)
     ) {
       return tab as AdminTabId
@@ -191,6 +203,11 @@ function AdminContent() {
         return <BackgroundExecutionMonitorPanel />
       case 'device-monitor':
         return <DeviceMonitorPanel />
+      case 'knowledge-stats':
+        // Defense-in-depth: the tab nav already filters this out when
+        // the flag is off, but keep the render path guarded too in case
+        // the URL is hit directly with ?tab=knowledge-stats.
+        return isKbStatEnabled() ? <KnowledgeStatsAdminPanel /> : <UserList />
       default:
         return <UserList />
     }

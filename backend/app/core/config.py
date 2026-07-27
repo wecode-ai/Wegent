@@ -280,6 +280,21 @@ class Settings(BaseSettings):
     # When False, Celery must be started separately (for production)
     EMBEDDED_CELERY_ENABLED: bool = True
 
+    # KB statistics feature switches.
+    # KB_STAT_ENABLED is the master switch — when false, the stat API
+    # endpoints return 503 (kb_stat_disabled) and beat entries for
+    # kb_stat.collect_all / kb_stat.prune_old_runs are removed.
+    # Set to false to fully disable the KB statistics feature.
+    KB_STAT_ENABLED: bool = True
+    # KB_STAT_PRUNE_ENABLED controls the weekly prune task independently.
+    # When false, beat entry "kb-stat-prune-weekly" is removed so that
+    # historical stat data is retained forever (compliance archive /
+    # long-term trend analysis). The collect task still runs.
+    # Note: KNOWLEDGE_STAT_RETENTION_DAYS<=0 also short-circuits prune at
+    # runtime (see knowledge_engine.stat.runner.prune_old_runs); this
+    # switch is the recommended way to disable pruning.
+    KB_STAT_PRUNE_ENABLED: bool = True
+
     @field_validator(
         "CELERY_BROKER_URL",
         "CELERY_RESULT_BACKEND",
