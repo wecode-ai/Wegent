@@ -123,8 +123,14 @@ def test_cloud_project_generates_key_when_omitted(
 
 
 def test_cloud_project_persists_external_task_provider_and_encrypted_token(
-    test_client: TestClient, test_db: Session, test_token: str
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("GIT_TOKEN_AES_KEY", raising=False)
+    monkeypatch.delenv("GIT_TOKEN_AES_IV", raising=False)
+
     created = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -164,6 +170,9 @@ def test_cloud_project_persists_external_task_provider_and_encrypted_token(
     serialized = str(stored.metadata_json)
     assert "github-secret" not in serialized
     assert "ciphertext" in serialized
+    credential_metadata = stored.metadata_json["provider_config"]["credential"]
+    assert credential_metadata["version"] == 2
+    assert credential_metadata["algorithm"] == "aes-256-gcm"
 
     credential = test_client.get(
         f"/api/v1/cloud-projects/{created.json()['id']}/provider-credential",

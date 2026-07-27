@@ -132,7 +132,9 @@ class CloudProjectService:
             project.metadata_json if isinstance(project.metadata_json, dict) else {}
         )
         try:
-            token = decrypt_provider_token(metadata.get("provider_config"))
+            token = decrypt_provider_token(
+                project.task_provider, metadata.get("provider_config")
+            )
         except ValueError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         if not token:
