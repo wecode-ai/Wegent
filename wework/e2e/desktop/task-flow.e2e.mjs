@@ -6980,6 +6980,15 @@ async function main() {
         control,
         projectRowSelector,
       })
+      if (QUEUE_NAVIGATION_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
+        return
+      }
     }
 
     phase = 'initial-task-completion'
@@ -7141,16 +7150,6 @@ async function main() {
       control.toolOutput,
       'Codex did not report its real tool execution to the model service'
     )
-
-    if (QUEUE_NAVIGATION_ONLY) {
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
-      return
-    }
 
     phase = 'conversation-model-restore'
     const taskSnapshot = await waitForSnapshot(
