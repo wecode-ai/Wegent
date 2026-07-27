@@ -775,6 +775,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       return element.textContent?.trim() ?? ''
     }
+    case 'scrollToBottomAsUser': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.scrollTop = element.scrollHeight
+      element.dispatchEvent(new Event('scroll', { bubbles: true }))
+      return String(element.scrollTop)
+    }
+    case 'scrollToRatioAsUser': {
+      const scroller = findDesktopControlElements(command.selector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+      const ratio = Number(command.value)
+      if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
+        throw new Error('scrollToRatioAsUser requires a value between 0 and 1')
+      }
+
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const nextScrollTop = maxScrollTop * ratio
+      scroller.scrollTop = nextScrollTop
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      return String(scroller.scrollTop)
+    }
     case 'click': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)

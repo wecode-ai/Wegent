@@ -6746,7 +6746,12 @@ async function main() {
 
   const desktopScenario = await loadDesktopScenario(
     process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
-    { resultDir, uiTimeoutMs: UI_TIMEOUT_MS, workspacePath }
+    {
+      resultDir,
+      standalone: DESKTOP_SCENARIO_ONLY,
+      uiTimeoutMs: UI_TIMEOUT_MS,
+      workspacePath,
+    }
   )
   if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
@@ -7074,18 +7079,16 @@ async function main() {
       return
     }
 
-    if (desktopScenario) {
+    if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
       await desktopScenario.verify(control)
-      if (DESKTOP_SCENARIO_ONLY) {
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
-        console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
-        return
-      }
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
+      return
     }
 
     phase = 'system-drag-panel-layout'
@@ -8248,6 +8251,11 @@ async function main() {
       restartDesktopApp,
       workspacePath,
     })
+
+    if (desktopScenario) {
+      phase = 'desktop-extension-scenario'
+      await desktopScenario.verify(control)
+    }
 
     await writeFile(
       join(resultDir, 'model-requests.json'),
