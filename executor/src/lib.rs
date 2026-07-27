@@ -29,6 +29,7 @@ pub mod runtime_work;
 pub mod server;
 pub mod services;
 pub mod stream;
+pub mod task_runtime;
 pub mod version;
 
 #[cfg(test)]

@@ -1434,8 +1434,8 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     const prompt = payload.executionRequest.prompt as string
     expect(prompt).toContain('[projectSpaceCapability]')
-    expect(prompt).toContain('wegent_delivery is a server id, not a callable tool')
-    expect(prompt).toContain('create_cloud_project')
+    expect(prompt).toContain('wegent_delivery and wegent_tasks are server ids')
+    expect(prompt).toContain('Never create or copy a cloud project')
     expect(prompt).toContain('do not use list_mcp_resources to discover tools')
   })
 

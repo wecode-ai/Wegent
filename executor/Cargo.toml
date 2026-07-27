@@ -25,6 +25,7 @@ dev-reload = ["dep:ctrlc", "dep:notify"]
 [dependencies]
 axum = { version = "0.8", features = ["multipart", "ws"] }
 aes = "0.8"
+aes-gcm = "0.10"
 base64 = "0.22"
 cbc = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -51,6 +52,7 @@ tokio = { version = "1.48", features = ["io-std", "io-util", "macros", "net", "p
 tokio-tungstenite = "0.21"
 toml_edit = "0.22"
 url = "2"
+uuid = { version = "1", features = ["v4"] }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

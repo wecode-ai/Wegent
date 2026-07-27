@@ -130,6 +130,362 @@ async fn app_ipc_routes_codex_app_server_request() {
 }
 
 #[tokio::test]
+async fn app_ipc_manages_local_projects_and_nested_todos() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Local Work",
+                "project_key": "LOCAL",
+                "description": "Stored by Executor",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let project_id = project["id"].as_str().unwrap();
+    let updated_project = server
+        .dispatch(
+            "projects.update",
+            json!({
+                "project_id": project_id,
+                "project": {
+                    "version": project["version"],
+                    "name": "Renamed Local Work",
+                    "tags": ["desktop"]
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated_project["name"], "Renamed Local Work");
+    assert_eq!(updated_project["metadata"]["tags"], json!(["desktop"]));
+
+    let parent = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project_id,
+                "todo": {
+                    "title": "Parent",
+                    "status": "inbox",
+                    "priority": "high"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let parent_id = parent["id"].as_str().unwrap();
+
+    let child = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project_id,
+                "todo": {
+                    "title": "Child",
+                    "parent_id": parent_id
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    let todos = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert_eq!(todos.as_array().unwrap().len(), 2);
+    assert_eq!(child["parent_id"], parent["id"]);
+
+    let updated = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": parent_id,
+                "todo": {
+                    "version": parent["version"],
+                    "status": "completed"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated["status"], "completed");
+    assert!(updated["completed_at"].is_string());
+
+    let conflict = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": parent_id,
+                "todo": {
+                    "version": parent["version"],
+                    "title": "Stale update"
+                }
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(conflict.code, "version_conflict");
+    assert!(executor_home.path().join("data/tasks.sqlite").is_file());
+}
+
+#[tokio::test]
+async fn app_ipc_stores_project_files_attachments_and_deliveries_locally() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Content",
+                "project_key": "LOCAL",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let project_id = project["id"].as_str().unwrap();
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({"project_id": project_id, "todo": {"title": "Write report"}}),
+        )
+        .await
+        .unwrap();
+    let task_id = task["id"].as_str().unwrap();
+
+    let uploaded = server
+        .dispatch(
+            "files.upload",
+            json!({
+                "project_id": project_id,
+                "path": "docs/readme.txt",
+                "file": {
+                    "display_name": "readme.txt",
+                    "content_type": "text/plain",
+                    "base64": "aGVsbG8="
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let file_id = uploaded["id"].as_str().unwrap();
+    let access = server
+        .dispatch("files.access", json!({"file_id": file_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(access["path"].as_str().unwrap()).unwrap(),
+        "hello"
+    );
+
+    let moved = server
+        .dispatch(
+            "files.move",
+            json!({
+                "file_id": file_id,
+                "path": "docs/guides/readme.txt",
+                "version": uploaded["version"]
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved["path"], "docs/guides/readme.txt");
+
+    let attachment = server
+        .dispatch(
+            "attachments.add",
+            json!({
+                "project_id": project_id,
+                "item_id": task_id,
+                "file": {
+                    "display_name": "notes.txt",
+                    "base64": "bm90ZXM="
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let attachment_id = attachment["id"].as_str().unwrap();
+    let attachment_access = server
+        .dispatch(
+            "attachments.access",
+            json!({"attachment_id": attachment_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(attachment_access["path"].as_str().unwrap()).unwrap(),
+        "notes"
+    );
+
+    let delivery = server
+        .dispatch(
+            "deliveries.create",
+            json!({
+                "project_id": project_id,
+                "item_id": task_id,
+                "delivery": {
+                    "markdown": "# Result",
+                    "chat": {"messages": []}
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let delivery_id = delivery["id"].as_str().unwrap();
+    let asset = server
+        .dispatch(
+            "deliveries.add_asset",
+            json!({
+                "delivery_id": delivery_id,
+                "relative_path": "assets/result.txt",
+                "file": {
+                    "display_name": "result.txt",
+                    "base64": "ZG9uZQ=="
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let asset_id = asset["id"].as_str().unwrap();
+    let finalized = server
+        .dispatch(
+            "deliveries.finalize",
+            json!({"item_id": task_id, "delivery_id": delivery_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(finalized["status"], "delivered");
+
+    let detail = server
+        .dispatch("deliveries.get", json!({"delivery_id": delivery_id}))
+        .await
+        .unwrap();
+    assert_eq!(detail["markdown"], "# Result");
+    assert_eq!(detail["chat"]["messages"].as_array().unwrap().len(), 0);
+
+    let asset_access = server
+        .dispatch("deliveries.access_asset", json!({"asset_id": asset_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(asset_access["path"].as_str().unwrap()).unwrap(),
+        "done"
+    );
+    assert!(executor_home.path().join("data/objects").is_dir());
+}
+
+#[tokio::test]
+async fn app_ipc_encrypts_provider_credentials_and_masks_project_responses() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "GitHub board",
+                "project_key": "GH",
+                "task_provider": "github",
+                "provider_config": {
+                    "repository": "acme/repo",
+                    "domain": "github.com",
+                    "token": "github-secret"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        project["metadata"]["provider_config"]["credential_configured"],
+        true
+    );
+    assert!(project["metadata"]["provider_config"]
+        .get("credential")
+        .is_none());
+    assert!(!project.to_string().contains("github-secret"));
+
+    let connection =
+        rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();
+    let metadata: String = connection
+        .query_row(
+            "SELECT metadata FROM loop_items WHERE id = ?1",
+            [project["id"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!metadata.contains("github-secret"));
+    let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(
+        metadata["provider_config"]["credential"]["algorithm"],
+        "aes-256-gcm"
+    );
+    assert!(metadata["provider_config"]["credential"]["ciphertext"].is_string());
+    assert!(executor_home
+        .path()
+        .join("credentials/provider-master-key-v1")
+        .is_file());
+
+    let project = server
+        .dispatch(
+            "projects.update",
+            json!({
+                "project_id": project["id"],
+                "project": {
+                    "version": project["version"],
+                    "provider_config": {
+                        "repository": "acme/repo",
+                        "domain": "github.com",
+                        "token": "rotated-secret"
+                    }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        project["metadata"]["provider_config"]["credential_configured"],
+        true
+    );
+    assert!(!project.to_string().contains("rotated-secret"));
+
+    let metadata: String = connection
+        .query_row(
+            "SELECT metadata FROM loop_items WHERE id = ?1",
+            [project["id"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!metadata.contains("github-secret"));
+    assert!(!metadata.contains("rotated-secret"));
+}
+
+#[tokio::test]
 async fn app_ipc_emits_runtime_events_with_device_id() {
     let server = AppIpcServer::new().with_device_id("device-1");
 
@@ -807,6 +1163,55 @@ async fn app_ipc_accepts_gitdir_with_configured_worktree_as_worktree_source() {
     assert!(target_worktree.join("README.md").is_file());
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn app_ipc_routes_external_project_configuration() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-external-project",
+                "method": "external_projects.configure",
+                "params": {
+                    "project": {
+                        "id": "cloud-1",
+                        "public_id": "public-1",
+                        "project_key": "CLOUD",
+                        "name": "Cloud GitLab board",
+                        "project_store": "backend",
+                        "task_provider": "gitlab",
+                        "provider_config": {
+                            "repository": "acme/repo",
+                            "domain": "gitlab.example.com",
+                            "api_base": "https://gitlab.example.com/api/v4",
+                            "token": "gitlab-secret"
+                        },
+                        "version": 1
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["id"], "cloud-1");
+    assert_eq!(response["result"]["metadata"]["task_provider"], "gitlab");
+    assert_eq!(
+        response["result"]["metadata"]["provider_config"]["credential_configured"],
+        true
+    );
+    assert!(!response.to_string().contains("gitlab-secret"));
 }
 
 #[tokio::test]
