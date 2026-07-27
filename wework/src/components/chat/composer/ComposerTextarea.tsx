@@ -7,7 +7,9 @@ import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
   openNativeWorkspacePathPicker,
+  type NativeWorkspacePath,
 } from '@/lib/native-workspace-path-picker'
+import { readNativeClipboardWorkspacePaths } from '@/lib/native-clipboard-paths'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import {
   ComposerProseMirrorEditor,
@@ -48,6 +50,24 @@ export type { ComposerSubmitOptions } from './composerTextareaTypes'
 interface ActiveComposerMenu {
   kind: ComposerTextTrigger['kind']
   trigger: ComposerTextTrigger
+}
+
+function pastedPathName(path: string): string {
+  return path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? path
+}
+
+function isPastedImage(file: File): boolean {
+  return file.type.toLowerCase().startsWith('image/')
+}
+
+function pastedDirectoryNames(clipboardData: DataTransfer): Set<string> {
+  const names = new Set<string>()
+  for (const item of Array.from(clipboardData.items ?? [])) {
+    if (item.kind !== 'file' || item.webkitGetAsEntry?.()?.isDirectory !== true) continue
+    const file = item.getAsFile()
+    if (file) names.add(file.name)
+  }
+  return names
 }
 
 export function ComposerTextarea({
@@ -562,6 +582,29 @@ export function ComposerTextarea({
     [onChange, updateAutocompleteTrigger]
   )
 
+  const insertPathReferences = useCallback(
+    (entries: NativeWorkspacePath[]) => {
+      if (entries.length === 0) return
+      const editor = editorRef.current
+      if (!editor) return
+
+      const references = entries
+        .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
+        .join(' ')
+      const current = editor.getSnapshot()
+      const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
+      const nextValue =
+        current.value.slice(0, current.selectionOffset) +
+        spacer +
+        references +
+        ' ' +
+        current.value.slice(current.selectionOffset)
+      commitEditorValue(nextValue, current.selectionOffset + spacer.length + references.length + 1)
+      editor.focus()
+    },
+    [commitEditorValue]
+  )
+
   const selectMentionCandidate = useCallback(
     (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
       const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
@@ -691,27 +734,7 @@ export function ComposerTextarea({
       if (row.kind === 'plan-action') onSetPlanMode?.()
       if (row.kind === 'files-action') {
         void openNativeWorkspacePathPicker(workspaceTarget?.path)
-          .then(entries => {
-            if (entries.length === 0) return
-            const currentEditor = editorRef.current
-            if (!currentEditor) return
-            const references = entries
-              .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
-              .join(' ')
-            const current = currentEditor.getSnapshot()
-            const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
-            const nextValue =
-              current.value.slice(0, current.selectionOffset) +
-              spacer +
-              references +
-              ' ' +
-              current.value.slice(current.selectionOffset)
-            commitEditorValue(
-              nextValue,
-              current.selectionOffset + spacer.length + references.length + 1
-            )
-            currentEditor.focus()
-          })
+          .then(insertPathReferences)
           .catch(error => {
             console.warn('[Wework composer] native workspace picker failed', error)
           })
@@ -723,6 +746,7 @@ export function ComposerTextarea({
       closeAutocompleteMenu,
       cloudSpaceDirectReference,
       commitEditorValue,
+      insertPathReferences,
       onSelectCloudProject,
       onSetGoal,
       onSetPlanMode,
@@ -1021,22 +1045,55 @@ export function ComposerTextarea({
 
   const handlePaste = useCallback(
     (event: ClipboardEvent) => {
-      if (!onPasteFiles || !event.clipboardData) return false
-      const files = Array.from(event.clipboardData.files)
+      if (!event.clipboardData) return false
+      const clipboardData = event.clipboardData
+      const files = Array.from(clipboardData.files)
       if (files.length > 0) {
         event.preventDefault()
-        onPasteFiles(files)
+        if (
+          workspaceTarget?.workspaceSource === 'remote' ||
+          clipboardData.items == null ||
+          files.every(isPastedImage)
+        ) {
+          onPasteFiles?.(files)
+          return true
+        }
+
+        const directoryNames = pastedDirectoryNames(clipboardData)
+        void readNativeClipboardWorkspacePaths(clipboardData)
+          .then(entries => {
+            const pastedNames = new Set(files.map(file => file.name))
+            const imageNames = new Set(files.filter(isPastedImage).map(file => file.name))
+            const referenceEntries = entries.filter(
+              entry =>
+                pastedNames.has(pastedPathName(entry.path)) &&
+                (entry.isDirectory || !imageNames.has(pastedPathName(entry.path)))
+            )
+            const referencedNames = new Set(
+              referenceEntries.map(entry => pastedPathName(entry.path))
+            )
+            insertPathReferences(referenceEntries)
+
+            const attachmentFiles = files.filter(
+              file => isPastedImage(file) || !referencedNames.has(file.name)
+            )
+            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+          })
+          .catch(error => {
+            console.warn('[Wework composer] native clipboard path inspection failed', error)
+            const attachmentFiles = files.filter(file => !directoryNames.has(file.name))
+            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+          })
         return true
       }
-      const textAttachment = createLongPastedTextAttachment(
-        event.clipboardData.getData('text/plain')
-      )
+      if (!onPasteFiles) return false
+      const textAttachment = createLongPastedTextAttachment(clipboardData.getData('text/plain'))
       if (!textAttachment) return false
       event.preventDefault()
       onPasteFiles([textAttachment])
       return true
     },
-    [onPasteFiles]
+    [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
   )
 
   const handleDrop = useCallback(

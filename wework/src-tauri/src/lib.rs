@@ -26,6 +26,92 @@ struct PickedWorkspacePath {
     is_directory: bool,
 }
 
+fn inspect_workspace_paths(paths: Vec<String>) -> Vec<PickedWorkspacePath> {
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+
+    for raw_path in paths {
+        let path = raw_path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let path = std::path::PathBuf::from(path);
+        if !path.exists() {
+            continue;
+        }
+        let normalized = path.to_string_lossy().into_owned();
+        if !seen.insert(normalized.clone()) {
+            continue;
+        }
+        selected.push(PickedWorkspacePath {
+            is_directory: path.is_dir(),
+            path: normalized,
+        });
+    }
+
+    selected
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn clipboard_workspace_paths_on_macos() -> Result<Vec<PickedWorkspacePath>, String> {
+    use objc2::{runtime::AnyClass, ClassType};
+    use objc2_app_kit::NSPasteboard;
+    use objc2_foundation::{NSArray, NSURL};
+
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let classes = NSArray::<AnyClass>::arrayWithObject(NSURL::class());
+    let Some(values) = (unsafe { pasteboard.readObjectsForClasses_options(&classes, None) }) else {
+        return Ok(Vec::new());
+    };
+    let mut raw_paths = Vec::new();
+    for value in values {
+        let url = value
+            .downcast::<NSURL>()
+            .map_err(|_| "The macOS clipboard contains an invalid file URL".to_string())?;
+        if let Some(path) = url.path() {
+            raw_paths.push(path.to_string());
+        }
+    }
+
+    Ok(inspect_workspace_paths(raw_paths))
+}
+
+#[tauri::command]
+async fn read_clipboard_workspace_paths(
+    app: tauri::AppHandle,
+    fallback_paths: Option<Vec<String>>,
+) -> Result<Vec<PickedWorkspacePath>, String> {
+    let fallback_paths = fallback_paths.unwrap_or_default();
+
+    #[cfg(all(desktop, target_os = "macos"))]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = sender.send(clipboard_workspace_paths_on_macos());
+        })
+        .map_err(|error| format!("Failed to inspect the macOS clipboard: {error}"))?;
+        let native_paths = tauri::async_runtime::spawn_blocking(move || {
+            receiver
+                .recv()
+                .map_err(|_| "The macOS clipboard inspection stopped unexpectedly".to_string())?
+        })
+        .await
+        .map_err(|error| format!("Failed to join clipboard inspection: {error}"))??;
+        let mut paths = native_paths
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+        paths.extend(fallback_paths);
+        Ok(inspect_workspace_paths(paths))
+    }
+
+    #[cfg(not(all(desktop, target_os = "macos")))]
+    {
+        let _ = app;
+        Ok(inspect_workspace_paths(fallback_paths))
+    }
+}
+
 #[cfg(all(desktop, target_os = "macos"))]
 fn pick_workspace_paths_on_macos(
     initial_directory: Option<String>,
@@ -3655,8 +3741,8 @@ mod tests {
     #[cfg(desktop)]
     use super::should_probe_frontend_after_focus;
     use super::{
-        can_replace_wework_cli_path, executor_home_attachment_root, install_wework_cli_impl,
-        local_workspace_opener_app_name, normalized_browser_link_target,
+        can_replace_wework_cli_path, executor_home_attachment_root, inspect_workspace_paths,
+        install_wework_cli_impl, local_workspace_opener_app_name, normalized_browser_link_target,
         parse_local_workspace_open_request, tray_template_pixel, tray_usage_icon,
         wework_cli_launcher_content,
     };
@@ -3683,6 +3769,28 @@ mod tests {
         assert_eq!(tray_template_pixel([255, 255, 255, 255]), [0, 0, 0, 0]);
         assert_eq!(tray_template_pixel([0, 0, 0, 255]), [0, 0, 0, 255]);
         assert_eq!(tray_template_pixel([20, 120, 220, 128]), [0, 0, 0, 117]);
+    }
+
+    #[test]
+    fn inspects_clipboard_paths_without_reading_file_contents() {
+        let root = test_temp_dir("clipboard-paths");
+        let folder = root.join("folder");
+        let file = root.join("context.md");
+        std::fs::create_dir_all(&folder).expect("clipboard folder should be created");
+        std::fs::write(&file, "# Context\n").expect("clipboard file should be created");
+
+        let selected = inspect_workspace_paths(vec![
+            folder.to_string_lossy().into_owned(),
+            file.to_string_lossy().into_owned(),
+            file.to_string_lossy().into_owned(),
+            root.join("missing").to_string_lossy().into_owned(),
+        ]);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].path, folder.to_string_lossy());
+        assert!(selected[0].is_directory);
+        assert_eq!(selected[1].path, file.to_string_lossy());
+        assert!(!selected[1].is_directory);
     }
 
     #[cfg(desktop)]
@@ -4211,6 +4319,7 @@ pub fn run() {
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
             pick_workspace_paths,
+            read_clipboard_workspace_paths,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,

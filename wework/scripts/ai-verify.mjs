@@ -27,7 +27,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|drop-file|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|drop-file|fill|hover|navigate|paste-paths|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -37,6 +37,7 @@ Options:
   --target SELECTOR         Event target selector for pointer-move (default: body)
                             Required destination selector for drag
   --file PATH               File to dispatch for drop-file
+  --value JSON              Path descriptors for paste-paths
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
@@ -389,6 +390,7 @@ async function main() {
     fill: 'fill',
     hover: 'hover',
     navigate: 'navigate',
+    'paste-paths': 'pastePaths',
     'pointer-move': 'pointerMove',
     press: 'press',
     'select-text': 'selectText',
