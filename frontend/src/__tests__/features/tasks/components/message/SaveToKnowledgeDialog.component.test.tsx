@@ -9,11 +9,11 @@ import { ApiError } from '@/apis/client'
 import { createTextKnowledgeDocument } from '@/apis/knowledge'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { SaveToKnowledgeDialog } from '@/features/tasks/components/message/SaveToKnowledgeDialog'
+import { knowledgeBase } from './knowledgeFixtures'
 import type {
   AllGroupedKnowledgeResponse,
-  KnowledgeBaseWithGroupInfo,
   KnowledgeDocument,
-  MemberRole,
+  KnowledgeBaseWithGroupInfo,
 } from '@/types/knowledge'
 
 const mockT = (key: string) => key
@@ -30,7 +30,7 @@ jest.mock('next/dynamic', () => () => {
     return (
       <textarea
         data-testid="mock-markdown-editor"
-        defaultValue={initialContent}
+        value={initialContent}
         onChange={event => onChange?.(event.target.value)}
       />
     )
@@ -85,29 +85,6 @@ jest.mock('@/components/ui/select', () => ({
     <option value={value}>{children}</option>
   ),
 }))
-
-function knowledgeBase(
-  id: number,
-  role: MemberRole,
-  overrides: Partial<KnowledgeBaseWithGroupInfo> = {}
-): KnowledgeBaseWithGroupInfo {
-  return {
-    id,
-    name: `kb-${id}`,
-    description: null,
-    kb_type: 'notebook',
-    namespace: 'default',
-    document_count: 0,
-    updated_at: '2026-07-26T00:00:00Z',
-    created_at: '2026-07-26T00:00:00Z',
-    user_id: 99,
-    group_id: 'default',
-    group_name: 'personal',
-    group_type: 'personal-shared',
-    my_role: role,
-    ...overrides,
-  }
-}
 
 function groupedKnowledgeBases(
   sharedWithMe: KnowledgeBaseWithGroupInfo[]
