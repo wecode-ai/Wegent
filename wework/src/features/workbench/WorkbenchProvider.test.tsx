@@ -2874,6 +2874,112 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('disables third-party models inside an existing official Codex conversation', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.6-sol',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-official',
+          ui: { family: 'codex-official' },
+        },
+      },
+      {
+        name: 'gpt-5.5',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-official',
+          ui: { family: 'codex-official' },
+        },
+      },
+      {
+        name: 'kimi-k2.5',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: { family: 'codex-provider' },
+        },
+      },
+      {
+        name: 'cloud-model',
+        type: 'public',
+        provider: 'cloud',
+        config: {
+          ui: { family: 'gpt' },
+        },
+      },
+    ]
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      modelSelection: {
+                        modelName: 'gpt-5.6-sol',
+                        modelType: 'runtime',
+                        options: {},
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelCompatibilityProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-model-compatibility')).toHaveTextContent(
+        ['gpt-5.6-sol:enabled', 'gpt-5.5:enabled', 'kimi-k2.5:enabled', 'cloud-model:enabled'].join(
+          '|'
+        )
+      )
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-model-compatibility')).toHaveTextContent(
+        [
+          'gpt-5.6-sol:enabled',
+          'gpt-5.5:enabled',
+          'kimi-k2.5:provider_boundary_mismatch',
+          'cloud-model:provider_boundary_mismatch',
+        ].join('|')
+      )
+    )
+  })
+
   test('persists blank new chat model selection as the next default', async () => {
     const models: UnifiedModel[] = [
       {

@@ -18,6 +18,10 @@ The model provides the AI capability; the device determines where files and comm
 
 When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
 
+You can select any available model when starting a new conversation. After the conversation starts, Wework does not allow switching between official Codex models and third-party models. Incompatible choices remain visible in the selector, but are disabled and explain why. Models within the same category remain switchable through the normal flow.
+
+To continue the work with a model from the other category, start a new conversation and use `@` in the composer to reference the current conversation so the new model receives its context.
+
 ## Control a running task
 
 | Action                  | Shortcut                       | Use it when                             |
