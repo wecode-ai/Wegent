@@ -132,6 +132,8 @@ WEGENT_IMAGE_TAG=latest
 EXECUTOR_WORKSPACE=/path/to/workspace
 ```
 
+配置 Sites 平台后,后端会代理 `/api/sites` 请求,把当前登录用户名注入到上游请求中,并使用 `SITES_API_TOKEN` 访问 Sites 平台。未配置 `SITES_API_BASE_URL` 时,站点页会显示不可用状态。请通过 `.env` 或部署密钥注入真实令牌,不要写入示例文件或提交到仓库。
+
 `RUNTIME_WEWORK_CODE_URL` 为空时，Wegent Web 的编码入口会进入 `/chat?agent=code`，并只显示编码智能体；配置后，左侧菜单显示 **WeWork** 而不是 **编码**，并打开该运行时 URL。该配置只通过 `/runtime-config` 下发，不支持 `NEXT_PUBLIC_*` 回退。
 
 ### 步骤 3: 启动服务

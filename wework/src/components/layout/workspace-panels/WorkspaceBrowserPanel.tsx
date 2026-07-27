@@ -1537,7 +1537,8 @@ export function WorkspaceBrowserPanel({
               }}
               onBlur={() => {
                 addressEditingRef.current = false
-                setAddress(activePageUrlRef.current ?? '')
+                const currentPageUrl = activePageUrlRef.current
+                if (currentPageUrl) setAddress(currentPageUrl)
               }}
               placeholder={t('workbench.browser_url_placeholder')}
               className="h-8 w-full rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"

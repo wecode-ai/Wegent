@@ -38,6 +38,17 @@ export async function localPathExists(path?: string): Promise<boolean> {
   return invoke<boolean>('local_path_exists', { path: trimmedPath })
 }
 
+export type LocalPathKind = 'file' | 'directory' | 'other'
+
+export async function getLocalPathKind(path?: string): Promise<LocalPathKind | null> {
+  if (!isLocalTerminalAvailable()) return null
+
+  const trimmedPath = path?.trim()
+  if (!trimmedPath) return null
+
+  return invoke<LocalPathKind | null>('get_local_path_kind', { path: trimmedPath })
+}
+
 export interface StartLocalTerminalOptions {
   cwd?: string
   rows?: number

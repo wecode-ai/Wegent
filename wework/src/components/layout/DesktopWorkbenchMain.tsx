@@ -27,6 +27,7 @@ import {
 import {
   createLocalAttachmentWorkspaceTarget,
   createLocalFileWorkspaceTarget,
+  resolveProjectRuntimeWorkspaceTargets,
 } from '@/lib/workspace-target'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
@@ -69,6 +70,7 @@ import { DesktopWindowControls } from './DesktopWindowControls'
 import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getLocalPathKind } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
@@ -977,6 +979,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
+  const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
+    string | null
+  >(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
@@ -1121,6 +1126,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [activeDeviceId, workspaceProject, workspaceTarget]
   )
   const effectiveWorkspaceTarget = workspaceTarget ?? standaloneRootWorkspaceTarget
+  const projectFileWorkspaceTargets = useMemo(
+    () =>
+      resolveProjectRuntimeWorkspaceTargets({
+        currentProject: workspaceProject,
+        runtimeWork,
+      }),
+    [runtimeWork, workspaceProject]
+  )
+  const fileWorkspaceTargets = useMemo(() => {
+    const candidates = effectiveWorkspaceTarget
+      ? [effectiveWorkspaceTarget, ...projectFileWorkspaceTargets]
+      : projectFileWorkspaceTargets
+    return candidates.filter(
+      (candidate, index) =>
+        candidates.findIndex(
+          item => item.deviceId === candidate.deviceId && item.path === candidate.path
+        ) === index
+    )
+  }, [effectiveWorkspaceTarget, projectFileWorkspaceTargets])
   const composerWorkspaceTarget =
     workspaceTarget ??
     (activeDeviceId && state.standaloneWorkspacePath
@@ -1144,7 +1168,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           source: 'runtime' as const,
         }
       : null)
-  const fileWorkspaceTarget = openFileRequest?.target ?? effectiveWorkspaceTarget
+  const selectedFileWorkspaceTarget =
+    fileWorkspaceTargets.find(
+      target => `${target.deviceId}:${target.path}` === selectedFileWorkspaceTargetKey
+    ) ?? null
+  const fileWorkspaceTarget =
+    openFileRequest?.target ?? selectedFileWorkspaceTarget ?? effectiveWorkspaceTarget
   const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
   const workspaceTargetDevice = effectiveWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === effectiveWorkspaceTarget.deviceId)
@@ -1616,6 +1645,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!canBrowseFiles) return
     openRightPanelTab('files')
   }, [canBrowseFiles, openRightPanelTab])
+  const selectFileWorkspaceTarget = useCallback((target: WorkspaceTarget) => {
+    setSelectedFileWorkspaceTargetKey(`${target.deviceId}:${target.path}`)
+    setOpenFileRequest(null)
+  }, [])
   const selectBrowserView = useCallback(() => {
     openRightPanelTab('browser')
   }, [openRightPanelTab])
@@ -1630,20 +1663,40 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openRightPanelTab])
 
   const openWorkspaceFileFromMessage = useCallback(
-    (path: string, options?: WorkspaceFileOpenOptions) => {
+    async (path: string, options?: WorkspaceFileOpenOptions) => {
       const trimmedPath = path.trim()
       if (!trimmedPath) return
-      const localTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
+      const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
+      const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
+      let localTarget =
+        attachmentTarget ??
+        (absoluteLocalTarget &&
+        (!effectiveWorkspaceTarget ||
+          effectiveWorkspaceTarget.workspaceSource === 'local' ||
+          effectiveWorkspaceTarget.deviceId === absoluteLocalTarget.deviceId)
+          ? absoluteLocalTarget
+          : null)
+      let isDirectory = options?.isDirectory
+      if (localTarget && isDirectory === undefined) {
+        isDirectory = (await getLocalPathKind(trimmedPath)) === 'directory'
+      }
+      if (localTarget && isDirectory) {
+        localTarget = {
+          ...localTarget,
+          path: trimmedPath.replace(/\\/g, '/').replace(/\/+$/, '') || '/',
+        }
+      }
       setOpenFileRequest(current => ({
         id: (current?.id ?? 0) + 1,
         path: trimmedPath,
         lineStart: options?.lineStart,
         lineEnd: options?.lineEnd,
+        isDirectory,
         target: localTarget ?? undefined,
       }))
       openRightPanelTab('files')
     },
-    [devices, openRightPanelTab, setOpenFileRequest]
+    [devices, effectiveWorkspaceTarget, openRightPanelTab, setOpenFileRequest]
   )
 
   const openLocalSkillFile = useCallback(
@@ -2508,6 +2561,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               devices={devices}
               workspaceTarget={effectiveWorkspaceTarget}
               fileWorkspaceTarget={fileWorkspaceTarget}
+              fileWorkspaceTargets={fileWorkspaceTargets}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
               terminalContextTitle={runtimeTaskTitle}
               workspaceSessionApi={workspaceSessionApi}
@@ -2522,6 +2576,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               reviewViewOptions={reviewViewOptions}
               canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
               onAddCodeComment={paneSession.addCodeComment}
+              onSelectFileWorkspaceTarget={selectFileWorkspaceTarget}
               onSelectReview={selectReviewView}
               onSelectTerminal={selectTerminalView}
               onSelectBrowser={selectBrowserView}

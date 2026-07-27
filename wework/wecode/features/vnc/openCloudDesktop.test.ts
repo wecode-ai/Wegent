@@ -3,13 +3,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { getVncConfig } from './api'
 import { openCloudDesktop } from './openCloudDesktop'
-import { buildExternalVncPageUrl, buildVncPageUrl, prepareVncSession } from './session'
+import { buildVncPageUrl, prepareVncSession } from './session'
 import { openSystemBrowserIfCurrent } from './systemBrowser'
 
 vi.mock('@/lib/embedded-browser', () => ({ requestEmbeddedBrowserOpen: vi.fn() }))
 vi.mock('./api', () => ({ getVncConfig: vi.fn() }))
 vi.mock('./session', () => ({
-  buildExternalVncPageUrl: vi.fn(),
   buildVncPageUrl: vi.fn(),
   prepareVncSession: vi.fn(),
 }))
@@ -31,11 +30,8 @@ describe('openCloudDesktop', () => {
       wss_url: 'wss://cloud.example.com/vnc',
     })
     vi.mocked(prepareVncSession).mockResolvedValue('session-1')
-    vi.mocked(buildExternalVncPageUrl).mockResolvedValue(
+    vi.mocked(buildVncPageUrl).mockResolvedValue(
       'http://127.0.0.1:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1'
-    )
-    vi.mocked(buildVncPageUrl).mockReturnValue(
-      'tauri://localhost/vnc.html?sessionId=session-1&sandboxId=sandbox-1'
     )
     vi.mocked(openSystemBrowserIfCurrent).mockResolvedValue(true)
     vi.mocked(requestEmbeddedBrowserOpen).mockReturnValue(true)
@@ -57,7 +53,7 @@ describe('openCloudDesktop', () => {
       socketBaseUrl: 'https://cloud.example.com',
       token: 'cloud-token',
     })
-    expect(buildExternalVncPageUrl).toHaveBeenCalledWith({
+    expect(buildVncPageUrl).toHaveBeenCalledWith({
       sandboxId: 'sandbox-1',
       sessionId: 'session-1',
     })
@@ -95,7 +91,7 @@ describe('openCloudDesktop', () => {
     )
   })
 
-  test('opens a credential-free local page after preparing the secure session', async () => {
+  test('opens a credential-free loopback page in the built-in browser', async () => {
     await expect(
       openCloudDesktop({
         connection,
@@ -119,8 +115,9 @@ describe('openCloudDesktop', () => {
     expect(pageUrl).not.toContain('cloud-token')
     expect(pageUrl).not.toContain('wss://')
     expect(requestEmbeddedBrowserOpen).toHaveBeenCalledWith(
-      'tauri://localhost/vnc.html?sessionId=session-1&sandboxId=sandbox-1'
+      'http://127.0.0.1:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1'
     )
+    expect(openSystemBrowserIfCurrent).not.toHaveBeenCalled()
   })
 
   test('drops a stale request after configuration without preparing a session', async () => {
@@ -146,6 +143,21 @@ describe('openCloudDesktop', () => {
 
     expect(prepareVncSession).toHaveBeenCalledOnce()
     expect(buildVncPageUrl).not.toHaveBeenCalled()
+    expect(requestEmbeddedBrowserOpen).not.toHaveBeenCalled()
+  })
+
+  test('drops a stale embedded request after resolving the loopback viewer', async () => {
+    const isCurrent = vi
+      .fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false)
+
+    await expect(
+      openCloudDesktop({ connection, deviceId: 'device-1', isCurrent, target: 'embedded' })
+    ).resolves.toBe(false)
+
+    expect(buildVncPageUrl).toHaveBeenCalledOnce()
     expect(requestEmbeddedBrowserOpen).not.toHaveBeenCalled()
   })
 

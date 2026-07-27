@@ -22,7 +22,6 @@ macro_rules! invoke_handler {
             $crate::wecode::local_executor::get_startup_env,
             $crate::wecode::local_executor::kill_executor_processes,
             $crate::wecode::vnc_session::get_vnc_external_bridge_url,
-            $crate::wecode::vnc_session::get_vnc_session_config,
             $crate::wecode::vnc_session::prepare_vnc_session,
             $crate::wecode::local_executor::open_executor_logs_directory,
             $crate::wecode::local_executor::run_executor_command,

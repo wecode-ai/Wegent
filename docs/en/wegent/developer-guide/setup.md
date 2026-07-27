@@ -169,6 +169,8 @@ cp .env.example .env
 
 `CHECK_SYSTEM_INITIALIZATION_STATUS` is enabled by default. When enabled, the backend loads the first-run administrator password setup state into memory at startup, and the login page receives the `ADMIN_PASSWORD_SETUP_REQUIRED` error code through the `/users/me` handshake. Set it to `False` for deployments that must skip this check.
 
+`SITES_API_BASE_URL` and `SITES_API_TOKEN` enable the Sites page. When configured, Wegent Backend proxies `/api/sites` requests, injects the current authenticated username into upstream Sites platform requests, and forwards `SITES_API_TOKEN` as the platform access token. When `SITES_API_BASE_URL` is not configured, the frontend shows the Sites unavailable state. Do not commit real tokens; provide them through local `.env` files or deployment secret management.
+
 #### Run Development Server
 
 ```bash

@@ -1228,7 +1228,9 @@ def get_current_user_from_query_or_header(
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.USER_NAME, username)
 
-            user = user_service.get_user_by_name(db=db, user_name=username)
+            # Authentication only needs the user record. Keep this aligned with
+            # get_current_user and avoid decrypting optional Git credentials.
+            user = db.query(User).filter(User.user_name == username).first()
             if user is None:
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")

@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 from jose import jwt
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 from app.core.config import settings
 from app.core.security import (
@@ -17,6 +18,7 @@ from app.core.security import (
     get_admin_user,
     get_auth_context,
     get_current_user,
+    get_current_user_from_query_or_header,
     get_current_user_optional,
     get_password_hash,
     verify_password,
@@ -306,6 +308,26 @@ class TestGetCurrentUser:
 
         assert user is not None
         assert user.user_name == test_user.user_name
+        decrypt_git_info.assert_not_called()
+
+    def test_get_current_user_from_query_or_header_with_valid_header_token(
+        self, test_db: Session, test_user: User, test_token: str, mocker
+    ):
+        decrypt_git_info = mocker.patch(
+            "app.services.user.UserService.decrypt_user_git_info",
+            side_effect=AssertionError(
+                "authentication must not decrypt Git credentials"
+            ),
+        )
+        request = Request({"type": "http", "query_string": b""})
+
+        user = get_current_user_from_query_or_header(
+            request=request,
+            token=test_token,
+            db=test_db,
+        )
+
+        assert user.id == test_user.id
         decrypt_git_info.assert_not_called()
 
     def test_get_current_user_with_invalid_token(self, test_db: Session, mocker):

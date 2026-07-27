@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode, useMemo } from 'react'
+import { StrictMode, useEffect, useMemo } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
@@ -20,6 +20,7 @@ import type {
 import { openExternalUrl } from '@/lib/external-links'
 import {
   closeLocalTerminal,
+  getLocalPathKind,
   getLocalExecutorDeviceId,
   isLocalTerminalAvailable,
   localPathExists,
@@ -27,7 +28,7 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
-import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import {
@@ -57,9 +58,13 @@ const cloudDesktopExtensionMock = vi.hoisted(() => {
         action: ((options?: { notifyOpened?: boolean }) => Promise<void>) | null
       ) => void
     }) => {
-      onLaunchActionChange?.(async options => {
-        await launch(options)
-      })
+      useEffect(() => {
+        const launchAction = async (options?: { notifyOpened?: boolean }) => {
+          await launch(options)
+        }
+        onLaunchActionChange?.(launchAction)
+        return () => onLaunchActionChange?.(null)
+      }, [onLaunchActionChange])
       return null
     },
     isInternalPageUrl: vi.fn(() => false),
@@ -255,6 +260,7 @@ vi.mock('@/features/auth/useAuth', async importOriginal => ({
 
 vi.mock('@/lib/local-terminal', () => ({
   closeLocalTerminal: vi.fn(),
+  getLocalPathKind: vi.fn(),
   getLocalExecutorDeviceId: vi.fn(),
   isLocalTerminalAvailable: vi.fn(),
   localPathExists: vi.fn(),
@@ -434,6 +440,7 @@ const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const localPathExistsMock = vi.mocked(localPathExists)
+const getLocalPathKindMock = vi.mocked(getLocalPathKind)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
@@ -441,6 +448,8 @@ const startCodeServerSessionMock = vi.fn()
 const startDeviceTerminalSessionMock = vi.fn()
 const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
+const createTemporaryRuntimeTaskMock = vi.fn()
+const subscribeRuntimeTaskStreamMock = vi.fn(() => vi.fn())
 
 function createDefaultImNotificationSettings() {
   return {
@@ -558,6 +567,7 @@ describe('DesktopWorkbenchLayout', () => {
     Element.prototype.scrollIntoView = vi.fn()
     Element.prototype.scrollTo = vi.fn()
     isLocalTerminalAvailableMock.mockReturnValue(false)
+    getLocalPathKindMock.mockResolvedValue('file')
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
@@ -600,6 +610,8 @@ describe('DesktopWorkbenchLayout', () => {
       startTerminalSession: startTerminalSessionMock,
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
+    createTemporaryRuntimeTaskMock.mockResolvedValue(false)
+    subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
   })
 
   const baseProps = {
@@ -1019,7 +1031,7 @@ describe('DesktopWorkbenchLayout', () => {
       openRuntimeTask: props.onOpenRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
       searchRuntimeWork: props.onSearchRuntimeWork ?? vi.fn().mockResolvedValue({ items: [] }),
       loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [] }),
-      subscribeRuntimeTaskStream: vi.fn(() => vi.fn()),
+      subscribeRuntimeTaskStream: subscribeRuntimeTaskStreamMock,
       renameRuntimeTask: vi.fn().mockResolvedValue(undefined),
       archiveRuntimeTask: vi.fn().mockResolvedValue(undefined),
       archiveProjectConversations: vi.fn().mockResolvedValue(undefined),
@@ -1085,6 +1097,7 @@ describe('DesktopWorkbenchLayout', () => {
       sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
       cancelRuntimePaneTask: props.onCancelRuntimePaneTask ?? vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
+      createTemporaryRuntimeTask: createTemporaryRuntimeTaskMock,
       retryFailedMessage: vi.fn().mockResolvedValue(true),
       pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
       loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
@@ -4549,6 +4562,77 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
   })
 
+  test('temporary chat subscribes before its runtime create request settles', async () => {
+    const createResult = createDeferred<RuntimeTaskAddress | false>()
+    const optimisticAddress: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      return createResult.promise
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalledWith(
+        optimisticAddress,
+        expect.any(Object)
+      )
+    )
+
+    await act(async () => {
+      createResult.resolve(optimisticAddress)
+      await createResult.promise
+    })
+  })
+
+  test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
+    const createResult = createDeferred<RuntimeTaskAddress | false>()
+    const optimisticAddress: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-failed',
+      workspacePath: '/workspace/project',
+    }
+    const unsubscribe = vi.fn()
+    subscribeRuntimeTaskStreamMock.mockReturnValue(unsubscribe)
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      return createResult.promise
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    await waitFor(() =>
+      expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalledWith(
+        optimisticAddress,
+        expect.any(Object)
+      )
+    )
+
+    await act(async () => {
+      createResult.resolve(false)
+      await createResult.promise
+    })
+
+    await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
+  })
+
   test('moves right workspace tabs into the titlebar in Tauri', async () => {
     const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
       .__TAURI_INTERNALS__
@@ -4965,6 +5049,81 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getWorkspaceCodeViewText()).toContain('/workspace/project/README.md')
   })
 
+  test('switches folders in the file tab for a multi-root project', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: workspacePanelState.currentProject.id, name: 'workspace-project' },
+          deviceWorkspaces: [
+            {
+              id: 301,
+              deviceId: 'workspace-cloud-device',
+              workspacePath: '/workspace/web',
+              workspaceSource: 'local' as const,
+              available: true,
+              tasks: [],
+            },
+            {
+              id: 302,
+              deviceId: 'workspace-cloud-device',
+              workspacePath: '/workspace/api',
+              workspaceSource: 'local' as const,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const listWorkspaceEntries = vi.fn().mockImplementation((_deviceId, path) =>
+      Promise.resolve({
+        path,
+        entries: [],
+      })
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile: vi.fn(),
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          runtimeWork,
+          selectedDeviceWorkspaceId: 301,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+          selectedDeviceWorkspaceId: 301,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
+
+    expect(await screen.findByTestId('workspace-file-root-selector')).toHaveTextContent('web')
+    await user.click(screen.getByTestId('workspace-file-root-selector'))
+    await user.click(screen.getByTitle('/workspace/api'))
+
+    await waitFor(() =>
+      expect(listWorkspaceEntries).toHaveBeenCalledWith('workspace-cloud-device', '/workspace/api')
+    )
+    expect(screen.getByTestId('workspace-file-root-selector')).toHaveTextContent('api')
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent('/workspace/api')
+  })
+
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
@@ -5053,6 +5212,72 @@ describe('DesktopWorkbenchLayout', () => {
       'workspace-cloud-device',
       '/workspace/project/README.md'
     )
+  })
+
+  test('opens a markdown directory link in the workspace tree without reading it as a file', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    getLocalPathKindMock.mockResolvedValue('directory')
+    const listWorkspaceEntries = vi.fn().mockImplementation((_deviceId, path) =>
+      Promise.resolve({
+        path,
+        entries:
+          path === '/workspace/project'
+            ? [
+                {
+                  name: 'docs',
+                  path: '/workspace/project/docs',
+                  isDirectory: true,
+                  size: 0,
+                  modifiedAt: null,
+                },
+              ]
+            : [],
+      })
+    )
+    const readWorkspaceTextFile = vi.fn()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        messages={[
+          {
+            id: 'assistant-directory-link',
+            role: 'assistant',
+            content: '[docs](/workspace/project/docs)',
+            status: 'done',
+            createdAt: '2026-07-25T08:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('assistant-markdown-link'))
+
+    await waitFor(() =>
+      expect(listWorkspaceEntries).toHaveBeenCalledWith('local-device', '/workspace/project/docs')
+    )
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent('/workspace/project/docs')
+    expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
+      'w-[240px]',
+      'opacity-100'
+    )
+    expect(readWorkspaceTextFile).not.toHaveBeenCalled()
+    expect(screen.queryByText(/无法加载|Failed to load/i)).not.toBeInTheDocument()
   })
 
   test('opens a local image link on the local device while the project workspace is remote', async () => {
