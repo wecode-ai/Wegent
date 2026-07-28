@@ -70,12 +70,18 @@ describe('reconcileRuntimeConversationMessages', () => {
           },
         ],
       }),
+      message({
+        id: 'server-final',
+        turnId: 'turn-1',
+        subtaskId: 'turn-1',
+        content: 'Final answer segment',
+      }),
     ]
     const cached = [
       message({
         id: 'cached',
-        turnId: 'turn-1',
-        subtaskId: 'runtime-subtask-1',
+        turnId: 'different-turn-alias',
+        subtaskId: 'turn-1',
         content: 'Complete response',
         blocks: [
           {
@@ -123,6 +129,7 @@ describe('reconcileRuntimeConversationMessages', () => {
       'file-changes-1',
     ])
     expect(reconciled[0].blocks?.[2].status).toBe('done')
+    expect(reconciled[1].blocks).toBeUndefined()
   })
 
   test('does not preserve unfinished live blocks after the transcript settles', () => {
@@ -130,6 +137,7 @@ describe('reconcileRuntimeConversationMessages', () => {
       message({
         id: 'server',
         turnId: 'turn-1',
+        subtaskId: 'turn-1',
         content: 'Complete response',
       }),
     ]
@@ -137,6 +145,7 @@ describe('reconcileRuntimeConversationMessages', () => {
       message({
         id: 'cached',
         turnId: 'turn-1',
+        subtaskId: 'turn-1',
         status: 'streaming',
         blocks: [
           {

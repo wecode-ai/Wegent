@@ -59,7 +59,8 @@ Codex provider 可能只发送带完整正文的 `item/completed`，而不发送
 
 任务结算后，work list 刷新可能立即触发一次已完成 transcript 重载。该 transcript
 负责最终文本、消息状态和文件变更，但 Codex 的 `thread/read` 可能暂时缺少实时流中
-已经完成的工具条目。`useWorkbenchPaneSession` 必须按同一 `turnId` 归并两份消息：
+已经完成的工具条目。实时消息在 `assistant_done` 入口用规范 `turnId` 标准化
+`subtaskId`，`useWorkbenchPaneSession` 只按相同的标准化 `subtaskId` 归并两份消息：
 保留 transcript 的权威字段，同时补回实时消息中状态为 `done` 或 `error` 且 transcript
 尚未包含的 tool block。不得补回 `pending` 或 `streaming` block，否则已完成任务会
 重新显示为执行中。

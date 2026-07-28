@@ -318,7 +318,7 @@ export function reduceWorkbenchMessages<
           limitWorkbenchMessage(
             createAssistantMessage<TAttachment, TFileChanges>({
               messageId: action.messageId,
-              subtaskId: action.subtaskId,
+              subtaskId: action.turnId ?? action.subtaskId,
               turnId: action.turnId,
               content: action.content ?? '',
               status: 'done',
@@ -332,6 +332,7 @@ export function reduceWorkbenchMessages<
         isAssistantMessageForAction(message, action)
           ? limitWorkbenchMessage({
               ...clearMessageError(message),
+              subtaskId: action.turnId ?? message.subtaskId,
               turnId: action.turnId ?? message.turnId,
               content: action.content ?? message.content,
               streamTextOffset: undefined,

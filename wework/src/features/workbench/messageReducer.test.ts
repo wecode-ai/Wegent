@@ -56,6 +56,27 @@ describe('messageReducer', () => {
     })
   })
 
+  test('normalizes a settled assistant subtask to the canonical turn id', () => {
+    const streaming = messageReducer([], {
+      type: 'assistant_started',
+      taskId: '1',
+      subtaskId: 'runtime-subtask-9',
+    })
+
+    const settled = messageReducer(streaming, {
+      type: 'assistant_done',
+      subtaskId: 'runtime-subtask-9',
+      turnId: 'turn-9',
+      content: 'done',
+    })
+
+    expect(settled[0]).toMatchObject({
+      subtaskId: 'turn-9',
+      turnId: 'turn-9',
+      status: 'done',
+    })
+  })
+
   test('preserves backend error type on stream error', () => {
     const state = messageReducer([], {
       type: 'assistant_started',

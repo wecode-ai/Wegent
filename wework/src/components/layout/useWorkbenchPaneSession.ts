@@ -2687,29 +2687,22 @@ function preserveSettledRuntimeBlocks(
   cachedMessages: WorkbenchMessage[]
 ): WorkbenchMessage[] {
   const cachedAssistants = cachedMessages.filter(message => message.role === 'assistant')
+  const restoredSubtaskIds = new Set<string>()
   let changed = false
   const messages = transcriptMessages.map(message => {
-    if (message.role !== 'assistant') return message
-    const cachedMessage = cachedAssistants.find(candidate =>
-      runtimeAssistantMessagesMatch(message, candidate)
+    if (message.role !== 'assistant' || !message.subtaskId) return message
+    if (restoredSubtaskIds.has(message.subtaskId)) return message
+    const cachedMessage = cachedAssistants.find(
+      candidate => candidate.subtaskId === message.subtaskId
     )
+    if (!cachedMessage) return message
+    restoredSubtaskIds.add(message.subtaskId)
     const blocks = mergeSettledRuntimeBlocks(message.blocks, cachedMessage?.blocks)
     if (blocks === message.blocks) return message
     changed = true
     return { ...message, blocks }
   })
   return changed ? messages : transcriptMessages
-}
-
-function runtimeAssistantMessagesMatch(
-  transcriptMessage: WorkbenchMessage,
-  cachedMessage: WorkbenchMessage
-): boolean {
-  if (transcriptMessage.id === cachedMessage.id) return true
-  if (transcriptMessage.turnId && transcriptMessage.turnId === cachedMessage.turnId) return true
-  return Boolean(
-    transcriptMessage.subtaskId && transcriptMessage.subtaskId === cachedMessage.subtaskId
-  )
 }
 
 function mergeSettledRuntimeBlocks(
