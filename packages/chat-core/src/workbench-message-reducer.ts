@@ -311,7 +311,7 @@ export function reduceWorkbenchMessages<
       )
     case 'assistant_done':
       if (
-        !state.some((message) => isAssistantMessageForAction(message, action))
+        !state.some((message) => isAssistantMessageForDoneAction(message, action))
       ) {
         return [
           ...state,
@@ -329,7 +329,7 @@ export function reduceWorkbenchMessages<
         ]
       }
       return state.map((message) =>
-        isAssistantMessageForAction(message, action)
+        isAssistantMessageForDoneAction(message, action)
           ? limitWorkbenchMessage({
               ...clearMessageError(message),
               subtaskId: action.turnId ?? message.subtaskId,
@@ -761,6 +761,18 @@ function isAssistantMessageForAction<TAttachment, TFileChanges>(
   return (
     typeof action.subtaskId === 'string' &&
     message.subtaskId === action.subtaskId
+  )
+}
+
+function isAssistantMessageForDoneAction<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>,
+  action: { messageId?: string; subtaskId?: string; turnId?: string }
+): boolean {
+  if (message.role !== 'assistant') return false
+  if (action.messageId) return message.id === action.messageId
+  return [action.subtaskId, action.turnId].some(
+    identity =>
+      typeof identity === 'string' && message.subtaskId === identity
   )
 }
 

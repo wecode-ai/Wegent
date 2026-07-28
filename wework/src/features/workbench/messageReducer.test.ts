@@ -77,6 +77,31 @@ describe('messageReducer', () => {
     })
   })
 
+  test('matches a replayed settled action by its canonical turn id', () => {
+    const streaming = messageReducer([], {
+      type: 'assistant_started',
+      taskId: '1',
+      subtaskId: 'runtime-subtask-9',
+    })
+    const action = {
+      type: 'assistant_done' as const,
+      subtaskId: 'runtime-subtask-9',
+      turnId: 'turn-9',
+      content: 'done',
+    }
+
+    const settled = messageReducer(streaming, action)
+    const replayed = messageReducer(settled, action)
+
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0]).toMatchObject({
+      subtaskId: 'turn-9',
+      turnId: 'turn-9',
+      content: 'done',
+      status: 'done',
+    })
+  })
+
   test('preserves backend error type on stream error', () => {
     const state = messageReducer([], {
       type: 'assistant_started',
