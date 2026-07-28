@@ -147,31 +147,6 @@ pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_h
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn copies_cloud_project_id_from_runtime_payload() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(&mut request, &json!({"cloudProjectId": 9001}));
-
-        assert_eq!(cloud_project_id(&request), Some(json!(9001)));
-    }
-
-    #[test]
-    fn restores_cloud_project_id_for_a_follow_up_turn() {
-        let mut request = ExecutionRequest::default();
-
-        restore_cloud_project_id(&mut request, &json!({"cloudProjectId": "local-42"}));
-
-        assert_eq!(cloud_project_id(&request), Some(json!("local-42")));
-    }
-}
-
 pub(crate) fn runtime_task_id(payload: &Value) -> Option<String> {
     id_field(payload, "taskId")
         .or_else(|| id_field(payload, "task_id"))
@@ -722,4 +697,29 @@ fn codex_worktree_fallback_root(path: &str) -> Option<String> {
         return Some(prefix.to_string_lossy().into_owned());
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn copies_cloud_project_id_from_runtime_payload() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(&mut request, &json!({"cloudProjectId": 9001}));
+
+        assert_eq!(cloud_project_id(&request), Some(json!(9001)));
+    }
+
+    #[test]
+    fn restores_cloud_project_id_for_a_follow_up_turn() {
+        let mut request = ExecutionRequest::default();
+
+        restore_cloud_project_id(&mut request, &json!({"cloudProjectId": "local-42"}));
+
+        assert_eq!(cloud_project_id(&request), Some(json!("local-42")));
+    }
 }
