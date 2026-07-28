@@ -366,7 +366,10 @@ export function useChatStreamHandlers({
   }, [currentTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
 
   const notifyStreamingJoinWarning = useCallback(
-    (title: string) => toast({ title, variant: 'warning' }),
+    (title: string) => {
+      const notification = toast({ title, variant: 'warning' })
+      return { dismiss: notification.dismiss }
+    },
     [toast]
   )
 
