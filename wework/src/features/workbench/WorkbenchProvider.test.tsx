@@ -1974,6 +1974,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
+      {
+        id: 'client-guidance-1',
+        role: 'user',
+        content: '继续检查后台任务',
+        runtimeGuidance: true,
+      },
+    ])
   })
 
   test('starts a fresh blank chat with a requested loaded skill selected', async () => {
@@ -9489,6 +9497,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('send follow-up'))
     await userEvent.click(screen.getByText('guide first queued'))
     await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
+    const interruptedGuidanceId = screen.getByTestId('queued-message-ids').textContent ?? ''
 
     await userEvent.click(screen.getByTestId('queued-interrupt-and-send-first'))
     await waitFor(() => expect(interruptAndSendRuntimeMessage).toHaveBeenCalledTimes(1))
@@ -9514,6 +9523,45 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
 
+    cacheRuntimeConversationMessages(
+      {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      },
+      [
+        {
+          id: 'runtime-a:assistant:1',
+          role: 'assistant',
+          content: 'working',
+          status: 'streaming',
+          createdAt: '2026-07-27T00:00:00.000Z',
+        },
+      ]
+    )
+    await act(async () => {
+      streamHandlers.onGuidanceApplied?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        guidanceId: 'raw-guidance-item',
+        message: '继续修',
+        appliedAtMs: Date.now(),
+      })
+    })
+    expect(
+      getRuntimeConversationMessages({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      })
+    ).not.toContainEqual(
+      expect.objectContaining({
+        id: interruptedGuidanceId,
+        runtimeGuidance: true,
+      })
+    )
+
     await act(async () => {
       interruptResult.resolve({ accepted: true, taskId: 'runtime-a' })
     })
@@ -9521,11 +9569,10 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       guidanceResult.resolve({
-        accepted: false,
-        success: false,
+        accepted: true,
+        success: true,
         taskId: 'runtime-a',
-        error: 'no active turn to guide',
-        code: 'no_active_turn',
+        guidanceId: 'raw-guidance-item',
       })
     })
 
