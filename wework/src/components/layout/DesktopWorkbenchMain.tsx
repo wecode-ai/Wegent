@@ -683,7 +683,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
       .catch(cause => {
         if (!active) return
-        setTodoBindingError(cause instanceof Error ? cause.message : '关联项目空间失败')
+        setTodoBindingError(
+          cause instanceof Error
+            ? cause.message
+            : t('workbench.cloud_project_bind_failed', '关联项目空间失败')
+        )
       })
     return () => {
       active = false
@@ -695,6 +699,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     runtimeTaskTitle,
     services?.deliveryApi,
     setPendingCloudContext,
+    t,
   ])
 
   useEffect(() => {
@@ -2466,7 +2471,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             codeComments={paneSession.codeCommentContexts}
                             cloudMentionCandidates={visibleCloudMentionCandidates}
                             cloudProjectCandidates={cloudProjectMentionCandidates}
-                            cloudSpaceEnabled={Boolean(services?.deliveryApi)}
+                            cloudSpaceEnabled={
+                              experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
+                            }
                             onSelectCloudProject={handleSelectCloudProject}
                             isStreaming={paneIsBusy}
                             onPause={pauseCurrentResponse}
@@ -2600,7 +2607,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     codeComments={paneSession.codeCommentContexts}
                     cloudMentionCandidates={visibleCloudMentionCandidates}
                     cloudProjectCandidates={cloudProjectMentionCandidates}
-                    cloudSpaceEnabled={Boolean(services?.deliveryApi)}
+                    cloudSpaceEnabled={
+                      experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
+                    }
                     onSelectCloudProject={handleSelectCloudProject}
                     isStreaming={paneIsBusy}
                     onPause={pauseCurrentResponse}

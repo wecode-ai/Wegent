@@ -13,10 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.provider_credentials import (
-    decrypt_provider_token,
-    store_provider_config,
-)
+from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject, CloudProjectLocalBinding
 from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -75,6 +72,7 @@ class CloudProjectService:
                 "project_store": "backend",
                 "task_provider": values.task_provider,
                 "provider_config": provider_config,
+                "visibility": values.visibility,
                 "tags": [],
             },
         )
@@ -114,6 +112,7 @@ class CloudProjectService:
                 or_(
                     CloudProject.created_by_user_id == user_id,
                     CloudProject.id.in_(member_project_ids),
+                    CloudProject.metadata_json["visibility"].as_string() == "public",
                 ),
             )
             .order_by(CloudProject.updated_at.desc())
@@ -121,28 +120,14 @@ class CloudProjectService:
         )
 
     def get(self, db: Session, project_id: int, user_id: int) -> CloudProject:
-        return require_cloud_project_role(db, project_id, user_id).project
-
-    def get_provider_credential(
-        self, db: Session, project_id: int, user_id: int
-    ) -> str:
-        project = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.Developer
+        return require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
         ).project
-        metadata = (
-            project.metadata_json if isinstance(project.metadata_json, dict) else {}
+
+    def access(self, db: Session, project_id: int, user_id: int):
+        return require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
         )
-        try:
-            token = decrypt_provider_token(
-                project.task_provider, metadata.get("provider_config")
-            )
-        except ValueError as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-        if not token:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Provider credential is not configured"
-            )
-        return token
 
     def update(
         self,
@@ -158,6 +143,7 @@ class CloudProjectService:
         if (
             "tags" in values.model_fields_set
             or "provider_config" in values.model_fields_set
+            or "visibility" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
             if "tags" in values.model_fields_set and values.tags is not None:
@@ -189,6 +175,12 @@ class CloudProjectService:
                         status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
                     ) from exc
                 updates.pop("provider_config", None)
+            if (
+                "visibility" in values.model_fields_set
+                and values.visibility is not None
+            ):
+                metadata["visibility"] = values.visibility
+                updates.pop("visibility", None)
             updates["metadata_json"] = metadata
         updated = (
             db.query(CloudProject)

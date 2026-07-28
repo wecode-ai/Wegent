@@ -243,6 +243,44 @@ class RemoteHistoryStore(HistoryStoreInterface):
         response.raise_for_status()
         return response.json()
 
+    async def list_history_subtasks(
+        self, session_id: str, limit: int | None = None, offset: int = 0
+    ) -> dict:
+        """Fetch a page of the session's subtask summaries (AI backtracking).
+
+        Returns the backend ``SubtaskListResponse`` payload
+        (``subtasks[]`` / ``total`` / ``has_more``).
+        """
+        params: dict[str, Any] = {"offset": offset}
+        if limit is not None:
+            params["limit"] = limit
+        client = await self._get_client()
+        response = await client.get(
+            f"/chat/history/{session_id}/subtasks", params=params
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def get_history_subtask(
+        self,
+        session_id: str,
+        subtask_id: int,
+        cursor: str = "0:0",
+        max_chars: int = 0,
+    ) -> dict:
+        """Fetch one page of a subtask's rendered transcript (un-compaction-scoped).
+
+        Returns the backend ``SubtaskRecordResponse`` payload
+        (``content`` / ``cursor`` / ``next_cursor`` / ``has_more``).
+        """
+        client = await self._get_client()
+        response = await client.get(
+            f"/chat/history/{session_id}/subtasks/{subtask_id}",
+            params={"cursor": cursor, "max_chars": max_chars},
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def append_message(
         self,
         session_id: str,

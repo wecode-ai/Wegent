@@ -38,6 +38,7 @@ use super::{codex_responses_proxy_transform, HttpError};
 pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
+const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
 
 pub(crate) fn route<S>() -> MethodRouter<S>
 where
@@ -57,6 +58,7 @@ pub(crate) struct LocalModelProxyUpstream {
     pub proxy_url: Option<String>,
     pub model_id: Option<String>,
     pub routing_model_id: Option<String>,
+    pub max_output_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -279,6 +281,7 @@ async fn handle_for_token(
     let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
         upstream.convert_custom_tools,
+        upstream.max_output_tokens,
         &request_body,
         history.as_ref(),
     )
@@ -781,6 +784,7 @@ where
 async fn prepare_request_with_history(
     api_format: &str,
     convert_custom_tools: bool,
+    max_output_tokens: Option<u64>,
     body: &[u8],
     history: &history::CodexToolHistory,
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
@@ -806,7 +810,7 @@ async fn prepare_request_with_history(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize enriched Codex request: {error}"),
         })?;
-        return prepare_request(api_format, convert_custom_tools, &body);
+        return prepare_request(api_format, convert_custom_tools, max_output_tokens, &body);
     }
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -826,13 +830,19 @@ async fn prepare_request_with_history(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to serialize enriched Codex request: {error}"),
     })?;
-    prepare_request(api_format, convert_custom_tools, &enriched)
+    prepare_request(
+        api_format,
+        convert_custom_tools,
+        max_output_tokens,
+        &enriched,
+    )
 }
 
 #[allow(clippy::type_complexity)]
 fn prepare_request(
     api_format: &str,
     convert_custom_tools: bool,
+    max_output_tokens: Option<u64>,
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
@@ -840,6 +850,7 @@ fn prepare_request(
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
     normalize_responses_request_ids(&mut responses_body);
+    apply_default_max_output_tokens(&mut responses_body, max_output_tokens);
 
     if api_format == "openai-responses" {
         let conversion = if convert_custom_tools {
@@ -879,6 +890,26 @@ fn prepare_request(
         detail: format!("Failed to serialize local model request: {error}"),
     })?;
     Ok((body, Some(context), HashSet::new()))
+}
+
+fn apply_default_max_output_tokens(body: &mut Value, max_output_tokens: Option<u64>) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if ["max_output_tokens", "max_completion_tokens", "max_tokens"]
+        .iter()
+        .any(|field| object.contains_key(*field))
+    {
+        return;
+    }
+    object.insert(
+        "max_output_tokens".to_owned(),
+        Value::Number(
+            max_output_tokens
+                .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
+                .into(),
+        ),
+    );
 }
 
 fn normalize_responses_request_ids(body: &mut Value) -> usize {
@@ -999,6 +1030,7 @@ fn safe_url(value: &str) -> String {
 struct ResponsesStreamState<S> {
     stream: Pin<Box<S>>,
     pending: String,
+    pending_utf8: Vec<u8>,
     output: VecDeque<Result<Bytes, std::io::Error>>,
     source_done: bool,
     terminal_seen: bool,
@@ -1016,6 +1048,7 @@ where
     let state = ResponsesStreamState {
         stream: Box::pin(stream),
         pending: String::new(),
+        pending_utf8: Vec::new(),
         output: VecDeque::new(),
         source_done: false,
         terminal_seen: false,
@@ -1040,7 +1073,13 @@ where
             }
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
-                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    if let Err(error) =
+                        append_stream_utf8(&mut state.pending, &mut state.pending_utf8, &bytes)
+                    {
+                        state.source_done = true;
+                        state.terminal_seen = true;
+                        return Some((Ok(responses_failed_event(&error.to_string())), state));
+                    }
                     while let Some(event) = take_sse_block(&mut state.pending) {
                         state.terminal_seen |= is_responses_terminal_event(&event);
                         let normalized = if state.expanded_browser_tools.is_empty() {
@@ -1063,6 +1102,10 @@ where
                 }
                 None => {
                     state.source_done = true;
+                    if let Err(error) = finish_stream_utf8(&state.pending_utf8) {
+                        state.terminal_seen = true;
+                        return Some((Ok(responses_failed_event(&error.to_string())), state));
+                    }
                     if !state.pending.trim().is_empty() {
                         let trailing = std::mem::take(&mut state.pending);
                         let trailing = trailing.trim_end();
@@ -1275,6 +1318,48 @@ pub(super) fn take_sse_block(buffer: &mut String) -> Option<String> {
     Some(block)
 }
 
+pub(super) fn append_stream_utf8(
+    buffer: &mut String,
+    pending_utf8: &mut Vec<u8>,
+    chunk: &[u8],
+) -> Result<(), std::io::Error> {
+    pending_utf8.extend_from_slice(chunk);
+    match std::str::from_utf8(pending_utf8) {
+        Ok(text) => {
+            buffer.push_str(text);
+            pending_utf8.clear();
+            Ok(())
+        }
+        Err(error) => {
+            let valid_up_to = error.valid_up_to();
+            let error_len = error.error_len();
+            if valid_up_to > 0 {
+                let valid = std::str::from_utf8(&pending_utf8[..valid_up_to])
+                    .expect("UTF-8 validator should identify a valid prefix");
+                buffer.push_str(valid);
+                pending_utf8.drain(..valid_up_to);
+            }
+            if error_len.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Upstream stream contains invalid UTF-8",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+pub(super) fn finish_stream_utf8(pending_utf8: &[u8]) -> Result<(), std::io::Error> {
+    if pending_utf8.is_empty() {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::UnexpectedEof,
+        "Upstream stream ended with an incomplete UTF-8 sequence",
+    ))
+}
+
 fn normalize_responses_event(event: &str) -> String {
     if !event.contains("response.completed") {
         return event.to_owned();
@@ -1455,6 +1540,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-luna".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -1508,6 +1594,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -1538,6 +1625,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -1568,7 +1656,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_chat_request() {
-        let error = prepare_request("openai-chat-completions", false, b"not-json")
+        let error = prepare_request("openai-chat-completions", false, None, b"not-json")
             .expect_err("invalid JSON should fail");
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
     }
@@ -1587,7 +1675,7 @@ mod tests {
         .expect("request body");
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", false, &body).expect("native request");
+            prepare_request("openai-responses", false, None, &body).expect("native request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["tools"][0]["type"], "custom");
@@ -1599,7 +1687,7 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", false, &body).expect("native request");
+            prepare_request("openai-responses", false, None, &body).expect("native request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["input"][0];
         let output = &prepared["input"][1];
@@ -1619,7 +1707,7 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("openai-chat-completions", false, &body).expect("chat request");
+            prepare_request("openai-chat-completions", false, None, &body).expect("chat request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["messages"][0]["tool_calls"][0];
         let output = &prepared["messages"][1];
@@ -1636,7 +1724,7 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("anthropic-messages", false, &body).expect("Anthropic request");
+            prepare_request("anthropic-messages", false, None, &body).expect("Anthropic request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["messages"][0]["content"][0];
         let output = &prepared["messages"][1]["content"][0];
@@ -1646,6 +1734,52 @@ mod tests {
         assert_ne!(call_id, "functions.exec_command:0");
         assert_eq!(output["tool_use_id"], call["id"]);
         assert!(matches!(conversion, Some(Conversion::Anthropic(_))));
+    }
+
+    #[test]
+    fn defaults_anthropic_max_output_tokens_to_96000() {
+        let body = serde_json::to_vec(&json!({
+            "model": "kimi-k3",
+            "input": "finish the task"
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) =
+            prepare_request("anthropic-messages", false, None, &body).expect("Anthropic request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["max_tokens"], 96_000);
+    }
+
+    #[test]
+    fn configured_max_output_tokens_override_the_default() {
+        let body = serde_json::to_vec(&json!({
+            "model": "kimi-k3",
+            "input": "finish the task"
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) = prepare_request("anthropic-messages", false, Some(12_345), &body)
+            .expect("Anthropic request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["max_tokens"], 12_345);
+    }
+
+    #[test]
+    fn explicit_request_max_output_tokens_override_model_configuration() {
+        let body = serde_json::to_vec(&json!({
+            "model": "kimi-k3",
+            "input": "finish the task",
+            "max_output_tokens": 2_048
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) = prepare_request("anthropic-messages", false, Some(96_000), &body)
+            .expect("Anthropic request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["max_tokens"], 2_048);
     }
 
     fn cross_protocol_history_with_invalid_ids() -> Vec<u8> {
@@ -1689,7 +1823,7 @@ mod tests {
         .expect("request body");
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", true, &body).expect("converted request");
+            prepare_request("openai-responses", true, None, &body).expect("converted request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["tools"][0]["type"], "function");
@@ -1705,6 +1839,33 @@ mod tests {
     fn leaves_non_completed_events_unchanged() {
         let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
         assert_eq!(normalize_responses_event(event), event);
+    }
+
+    #[test]
+    fn buffers_incomplete_utf8_until_the_next_stream_chunk() {
+        let mut buffer = String::new();
+        let mut pending_utf8 = Vec::new();
+
+        for byte in "在".as_bytes() {
+            append_stream_utf8(&mut buffer, &mut pending_utf8, &[*byte])
+                .expect("split UTF-8 should remain valid");
+        }
+
+        finish_stream_utf8(&pending_utf8).expect("all UTF-8 bytes should be consumed");
+        assert_eq!(buffer, "在");
+    }
+
+    #[test]
+    fn rejects_an_incomplete_utf8_sequence_at_stream_end() {
+        let mut buffer = String::new();
+        let mut pending_utf8 = Vec::new();
+        append_stream_utf8(&mut buffer, &mut pending_utf8, &["在".as_bytes()[0]])
+            .expect("an incomplete trailing sequence should be buffered");
+
+        let error = finish_stream_utf8(&pending_utf8).expect_err("stream should be incomplete");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(buffer.is_empty());
     }
 
     async fn collect_responses_stream<S, E>(stream: S) -> String
@@ -1781,6 +1942,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-luna".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
+            max_output_tokens: None,
         };
         let token = register("stable-task-route", initial);
         let original_history = registry()
@@ -1801,6 +1963,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let repeated_token = register("stable-task-route", updated.clone());
 
@@ -1852,6 +2015,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let task_a = register("stable-random-token-task-a", upstream.clone());
         let repeated_task_a = register("stable-random-token-task-a", upstream.clone());
@@ -1891,6 +2055,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-luna".to_owned()),
                 routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
+                max_output_tokens: None,
             },
         );
         {
@@ -1922,6 +2087,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-sol".to_owned()),
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                max_output_tokens: None,
             },
         );
         assert_eq!(repeated_token, token);
@@ -1962,6 +2128,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("upstream-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
 
         assert_eq!(
@@ -1982,6 +2149,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("upstream-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
 
         assert_eq!(
@@ -2004,6 +2172,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                max_output_tokens: None,
             },
         );
         bind_thread(&token, "thread-root").expect("root thread should bind");
@@ -2044,6 +2213,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                max_output_tokens: None,
             },
         );
         bind_thread(&token, "thread-root").expect("root thread should bind");
@@ -2107,6 +2277,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -2165,6 +2336,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-luna".to_owned()),
                 routing_model_id: Some("gpt-5.6-luna".to_owned()),
+                max_output_tokens: None,
             },
         );
         {
@@ -2187,6 +2359,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-sol".to_owned()),
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                max_output_tokens: None,
             },
         );
         assert_eq!(repeated_token, token);
@@ -2261,6 +2434,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -2347,6 +2521,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let response = handle(
@@ -2455,6 +2630,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let response = handle(
@@ -2579,6 +2755,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -2638,6 +2815,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some(model_id.clone()),
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

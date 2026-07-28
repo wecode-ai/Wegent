@@ -328,7 +328,11 @@ async fn app_ipc_stores_project_files_attachments_and_deliveries_locally() {
     let attachment_access = server
         .dispatch(
             "attachments.access",
-            json!({"attachment_id": attachment_id}),
+            json!({
+                "project_id": project_id,
+                "item_id": task_id,
+                "attachment_id": attachment_id
+            }),
         )
         .await
         .unwrap();

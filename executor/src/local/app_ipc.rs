@@ -381,6 +381,7 @@ impl AppIpcServer {
             || method.starts_with("external_projects.")
             || method.starts_with("todos.")
             || method.starts_with("external_todos.")
+            || method.starts_with("external_attachments.")
             || method.starts_with("runtime_tasks.")
             || method.starts_with("files.")
             || method.starts_with("attachments.")
@@ -701,6 +702,30 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "external_projects.remove" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            runtime
+                .remove_external_project(project_id)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "external_projects.retain" => {
+            let project_ids = params
+                .get("project_ids")
+                .and_then(Value::as_array)
+                .ok_or_else(|| AppIpcError::new("bad_request", "project_ids must be an array"))?
+                .iter()
+                .map(|value| {
+                    value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                        AppIpcError::new("bad_request", "project_ids must contain strings")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            runtime
+                .retain_external_projects(&project_ids)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
         "external_todos.list" => {
             let project = task_input::<ProjectDescriptor>(&params, "project")?;
             serialize_task_value(
@@ -740,6 +765,48 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .await
                     .map_err(task_runtime_error)?,
             )
+        }
+        "external_attachments.list" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .list_external_task_attachments(project, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_attachments.add" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let input = task_input::<BinaryInput>(&params, "file")?;
+            serialize_task_value(
+                runtime
+                    .upload_external_task_attachment(project, task_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_attachments.access" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let attachment_id = required_task_string(&params, "attachment_id")?;
+            Ok(json!({
+                "path": runtime
+                    .download_external_task_attachment(project, task_id, attachment_id)
+                    .await
+                    .map_err(task_runtime_error)?
+            }))
+        }
+        "external_attachments.delete" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let attachment_id = required_task_string(&params, "attachment_id")?;
+            runtime
+                .delete_external_task_attachment(project, task_id, attachment_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({"deleted": true}))
         }
         "todos.list" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -919,10 +986,12 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             Ok(json!({"deleted": true}))
         }
         "attachments.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
             let item_id = required_task_string(&params, "item_id")?;
             serialize_task_value(
                 runtime
-                    .list_task_attachments(item_id)
+                    .list_task_attachments(project_id, item_id)
+                    .await
                     .map_err(task_runtime_error)?,
             )
         }
@@ -938,17 +1007,23 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             )
         }
         "attachments.access" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
             let attachment_id = required_task_string(&params, "attachment_id")?;
             Ok(json!({
                 "path": runtime
-                    .task_attachment_path(attachment_id)
+                    .task_attachment_path(project_id, item_id, attachment_id)
+                    .await
                     .map_err(task_runtime_error)?
             }))
         }
         "attachments.delete" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
             let attachment_id = required_task_string(&params, "attachment_id")?;
             runtime
-                .delete_task_attachment(attachment_id)
+                .delete_task_attachment(project_id, item_id, attachment_id)
+                .await
                 .map_err(task_runtime_error)?;
             Ok(json!({"deleted": true}))
         }
