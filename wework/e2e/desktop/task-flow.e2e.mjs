@@ -802,6 +802,7 @@ async function verifyBackgroundGuidanceNavigation({
     control,
     returnTaskRowTestId: runningTaskRowTestId,
   })
+  return runningTaskRowTestId
 }
 
 async function verifyForegroundGuidanceScroll({ composerSelector, control, returnTaskRowTestId }) {
@@ -8673,7 +8674,7 @@ async function main() {
           console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
           return
         }
-        await verifyBackgroundGuidanceNavigation({
+        taskRowTestId = await verifyBackgroundGuidanceNavigation({
           composerSelector,
           control,
           projectRowSelector,
@@ -8795,14 +8796,16 @@ async function main() {
       )
 
       phase = 'conversation-model-restore'
-      const taskSnapshot = await waitForSnapshot(
-        control,
-        snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
-        'The completed task was not available for model restoration'
-      )
-      taskRowTestId = taskSnapshot.testIds.find(testId =>
-        testId.startsWith('runtime-local-task-row-')
-      )
+      if (!taskRowTestId) {
+        const taskSnapshot = await waitForSnapshot(
+          control,
+          snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+          'The completed task was not available for model restoration'
+        )
+        taskRowTestId = taskSnapshot.testIds.find(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      }
       assert.ok(taskRowTestId, 'The completed task row was not found')
 
       if (SIDE_CHAT_ONLY) {
