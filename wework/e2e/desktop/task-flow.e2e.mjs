@@ -9,7 +9,9 @@ import {
   copyFile,
   mkdir,
   readFile,
+  readdir,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
@@ -346,9 +348,19 @@ const repoDir = resolve(weworkDir, '..')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
 const resultDir = join(weworkDir, 'test-results', 'desktop-e2e', runId)
 
-const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
-const PLUGIN_NAME = 'desktop-e2e-plugin'
-const PLUGIN_DISPLAY_NAME = 'Desktop E2E Plugin'
+const OFFICIAL_PLUGIN_REPOSITORY = 'https://github.com/openai/plugins.git'
+const OFFICIAL_PLUGIN_REPOSITORY_PREFIX = 'https://github.com/openai/plugins'
+const OFFICIAL_PLUGIN_REVISION = '11c74d6ba24d3a6d48f54a194cd00ef3beea18f9'
+const OFFICIAL_PLUGIN_NAME = 'openai-developers'
+const OFFICIAL_PLUGIN_DISPLAY_NAME = 'OpenAI Developers'
+const OFFICIAL_PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-openai-official'
+const OFFICIAL_PLUGIN_SKILL_NAME = 'openai-platform-api-key'
+const OFFICIAL_PLUGIN_SKILL_MARKER = '# OpenAI API Key'
+const OFFICIAL_PLUGIN_MCP_NAMESPACE = 'openai_api_key_local_confirmation'
+const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
+const OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID = 'wework-e2e-official-plugin-mcp-search'
+const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
+const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
 
 function readCommandLineOption(name) {
   const index = process.argv.indexOf(name)
@@ -384,51 +396,64 @@ function shouldStopAfterDesktopCheckpoint(checkpoint) {
   return DESKTOP_SEGMENT === checkpoint
 }
 
-async function createPluginMarketplaceFixture(root) {
-  const marketplaceManifestDir = join(root, '.agents', 'plugins')
-  const pluginRoot = join(root, 'plugins', PLUGIN_NAME)
+async function findFileBySuffix(root, suffix) {
+  const entries = await readdir(root, { withFileTypes: true })
+  for (const entry of entries) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) {
+      const match = await findFileBySuffix(path, suffix)
+      if (match) return match
+    } else if (path.endsWith(suffix)) {
+      return path
+    }
+  }
+  return null
+}
+
+async function createOfficialPluginMarketplaceFixture({ marketplaceRoot, repositoryRoot }) {
+  await mkdir(repositoryRoot, { recursive: true })
+  await runChecked('git', ['init'], { cwd: repositoryRoot })
+  await runChecked('git', ['remote', 'add', 'origin', OFFICIAL_PLUGIN_REPOSITORY], {
+    cwd: repositoryRoot,
+  })
+  await runChecked('git', ['fetch', '--depth', '1', 'origin', OFFICIAL_PLUGIN_REVISION], {
+    cwd: repositoryRoot,
+  })
+  await runChecked('git', ['checkout', '--detach', 'FETCH_HEAD'], { cwd: repositoryRoot })
+  assert.equal(
+    commandOutput('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot }),
+    OFFICIAL_PLUGIN_REVISION,
+    'The official plugin fixture did not resolve to the pinned OpenAI revision'
+  )
+
+  const marketplaceManifestDir = join(marketplaceRoot, '.agents', 'plugins')
+  const marketplacePluginsDir = join(marketplaceRoot, 'plugins')
   await Promise.all([
     mkdir(marketplaceManifestDir, { recursive: true }),
-    mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true }),
-    mkdir(join(pluginRoot, 'skills', 'desktop-e2e-skill'), { recursive: true }),
+    mkdir(marketplacePluginsDir, { recursive: true }),
   ])
-  await Promise.all([
-    writeFile(
-      join(marketplaceManifestDir, 'marketplace.json'),
-      `${JSON.stringify(
-        {
-          name: PLUGIN_MARKETPLACE_NAME,
-          interface: { displayName: 'Desktop E2E Marketplace' },
-          plugins: [
-            {
-              name: PLUGIN_NAME,
-              source: { source: 'local', path: `./plugins/${PLUGIN_NAME}` },
-            },
-          ],
-        },
-        null,
-        2
-      )}\n`
-    ),
-    writeFile(
-      join(pluginRoot, '.codex-plugin', 'plugin.json'),
-      `${JSON.stringify(
-        {
-          name: PLUGIN_NAME,
-          interface: {
-            displayName: PLUGIN_DISPLAY_NAME,
-            shortDescription: 'Exercises the real Wework plugin lifecycle',
+  await symlink(
+    join(repositoryRoot, 'plugins', OFFICIAL_PLUGIN_NAME),
+    join(marketplacePluginsDir, OFFICIAL_PLUGIN_NAME),
+    'dir'
+  )
+  await writeFile(
+    join(marketplaceManifestDir, 'marketplace.json'),
+    `${JSON.stringify(
+      {
+        name: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
+        interface: { displayName: 'OpenAI official E2E' },
+        plugins: [
+          {
+            name: OFFICIAL_PLUGIN_NAME,
+            source: { source: 'local', path: `./plugins/${OFFICIAL_PLUGIN_NAME}` },
           },
-        },
-        null,
-        2
-      )}\n`
-    ),
-    writeFile(
-      join(pluginRoot, 'skills', 'desktop-e2e-skill', 'SKILL.md'),
-      `---\nname: desktop-e2e-skill\ndescription: Verifies the installed plugin can be used in chat.\n---\n\nUse this skill to verify the Wework desktop plugin flow.\n`
-    ),
-  ])
+        ],
+      },
+      null,
+      2
+    )}\n`
+  )
 }
 
 function withTimeout(promise, timeoutMs, message) {
@@ -442,6 +467,15 @@ function withTimeout(promise, timeoutMs, message) {
 async function isExecutable(path) {
   try {
     await access(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function pathExists(path) {
+  try {
+    await access(path, constants.F_OK)
     return true
   } catch {
     return false
@@ -2450,11 +2484,76 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
   return screenshotPath
 }
 
-async function verifyPluginLifecycle(control, marketplacePath) {
+async function initializeBlankCodexHome({ codexHome, control }) {
+  const configPath = join(codexHome, 'config.toml')
+  assert.equal(
+    await pathExists(configPath),
+    false,
+    'The isolated Wework Codex home was not blank before initialization'
+  )
+  await control.command('waitFor', '[data-testid="codex-home-initializer-dialog"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'plugins-00-blank-codex-home.png')
+  await control.command('click', '[data-testid="codex-home-initializer-create-button"]')
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    (await readFile(configPath, 'utf8')).includes('desktop-e2e-native-home-marker'),
+    false,
+    'Creating a blank Codex home unexpectedly migrated native Codex content'
+  )
+}
+
+async function verifyOfficialPluginSource(repositoryRoot) {
+  const officialPluginRoot = join(repositoryRoot, 'plugins', OFFICIAL_PLUGIN_NAME)
+  const officialPluginManifestPath = join(officialPluginRoot, '.codex-plugin', 'plugin.json')
+  const officialPluginMcpPath = join(officialPluginRoot, '.mcp.json')
+  const officialPluginSkillPath = join(
+    officialPluginRoot,
+    'skills',
+    OFFICIAL_PLUGIN_SKILL_NAME,
+    'SKILL.md'
+  )
+  const [pluginManifest, mcpManifest, skill] = await Promise.all([
+    readFile(officialPluginManifestPath, 'utf8').then(JSON.parse),
+    readFile(officialPluginMcpPath, 'utf8').then(JSON.parse),
+    readFile(officialPluginSkillPath, 'utf8'),
+  ])
+
+  assert.equal(
+    commandOutput('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot }),
+    OFFICIAL_PLUGIN_REVISION
+  )
+  assert.equal(pluginManifest.name, OFFICIAL_PLUGIN_NAME)
+  assert.equal(pluginManifest.author?.name, 'OpenAI')
+  assert.ok(
+    pluginManifest.repository?.startsWith(OFFICIAL_PLUGIN_REPOSITORY_PREFIX),
+    'The synced plugin manifest did not point to the official OpenAI plugin repository'
+  )
+  assert.equal(pluginManifest.skills, './skills/')
+  assert.equal(pluginManifest.mcpServers, './.mcp.json')
+  assert.ok(skill.includes(OFFICIAL_PLUGIN_SKILL_MARKER))
+  assert.ok(
+    Object.keys(mcpManifest.mcpServers ?? {}).includes('openai-api-key-local-confirmation'),
+    'The official plugin did not declare its local MCP server'
+  )
+}
+
+async function verifyPluginLifecycle({
+  codexHome,
+  control,
+  marketplacePath,
+  modelServerUrl,
+  repositoryPath,
+  workspacePath,
+}) {
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await verifyOfficialPluginSource(repositoryPath)
 
   const initialSnapshot = await waitForSnapshot(
     control,
@@ -2476,17 +2575,22 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('fill', '[data-testid="plugins-search-input"]', {
+    value: OFFICIAL_PLUGIN_DISPLAY_NAME,
+  })
 
   const marketplaceSnapshot = await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.text.includes(PLUGIN_DISPLAY_NAME) &&
+      snapshot.text.includes(OFFICIAL_PLUGIN_DISPLAY_NAME) &&
       snapshot.testIds.some(testId => testId.startsWith('plugin-marketplace-row-')),
-    'The local plugin marketplace did not expose its plugin'
+    'The pinned OpenAI marketplace did not expose the official plugin'
   )
-  const rowTestId = marketplaceSnapshot.testIds.find(testId =>
+  const rowTestIds = marketplaceSnapshot.testIds.filter(testId =>
     testId.startsWith('plugin-marketplace-row-')
   )
+  assert.equal(rowTestIds.length, 1, 'The official plugin search did not return exactly one plugin')
+  const [rowTestId] = rowTestIds
   assert.ok(rowTestId, 'The plugin marketplace row did not have a stable test id')
   const pluginId = rowTestId.slice('plugin-marketplace-row-'.length)
   const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
@@ -2497,7 +2601,7 @@ async function verifyPluginLifecycle(control, marketplacePath) {
   await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
-    'The plugin was not shown as installed after the real app-server request'
+    'The official plugin was not shown as installed after the real app-server request'
   )
   assert.match(
     await control.command('getText', installSelector),
@@ -2512,12 +2616,66 @@ async function verifyPluginLifecycle(control, marketplacePath) {
   })
   await waitForSnapshot(
     control,
-    snapshot => snapshot.text.includes(PLUGIN_DISPLAY_NAME),
-    'Trying the installed plugin did not place its reference in the composer',
+    snapshot => snapshot.text.includes(OFFICIAL_PLUGIN_DISPLAY_NAME),
+    'Trying the installed official plugin did not place its reference in the composer',
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
   await captureVerificationScreenshot(control, 'plugins-03-used-in-chat.png')
+
+  const skillPath = await findFileBySuffix(
+    join(codexHome, 'plugins', 'cache', OFFICIAL_PLUGIN_MARKETPLACE_NAME),
+    join('skills', OFFICIAL_PLUGIN_SKILL_NAME, 'SKILL.md')
+  )
+  assert.ok(skillPath, 'The official plugin skill was not materialized in the isolated Codex home')
+  assert.ok(
+    skillPath.includes(`${OFFICIAL_PLUGIN_NAME}/`),
+    'The discovered skill did not belong to the installed official plugin'
+  )
+  assert.ok(
+    (await readFile(skillPath, 'utf8')).includes(OFFICIAL_PLUGIN_SKILL_MARKER),
+    'The materialized official skill did not match the pinned OpenAI plugin content'
+  )
+  const codexConfig = await readFile(join(codexHome, 'config.toml'), 'utf8')
+  assert.ok(
+    codexConfig.includes(`model_provider = "${MODEL_PROVIDER_ID}"`) &&
+      codexConfig.includes(`base_url = "${modelServerUrl}/v1"`),
+    'Installing the official plugin discarded the isolated E2E model provider'
+  )
+
+  control.officialPluginSkillPath = skillPath
+  control.setScenario('official_plugin')
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await withTimeout(
+    control.awaitScenarioRequestCount('official_plugin', 2),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The official plugin skill verification turn did not complete'
+  )
+  await sendPrompt(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    'Call the selected official plugin MCP server to validate an out-of-workspace env path.'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await withTimeout(
+    control.awaitScenarioRequestCount('official_plugin', 5),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The official plugin did not complete its skill and MCP tool loop'
+  )
+  assert.equal(
+    control.scenarioRequests.get('official_plugin')?.length,
+    5,
+    'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
+  )
+  await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', actionsSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
@@ -2533,7 +2691,7 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     /Install|安装/,
     'The marketplace did not return to the install state after uninstall'
   )
-  await captureVerificationScreenshot(control, 'plugins-04-uninstalled.png')
+  await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
 function processIsAlive(processId) {
@@ -3815,6 +3973,25 @@ function functionCall(callId, name, argumentsValue) {
   ]
 }
 
+function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
+  return functionCall(callId, name, argumentsValue).map(event => ({
+    ...event,
+    item: { ...event.item, namespace },
+  }))
+}
+
+function toolSearchCall(callId, query) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'tool_search_call',
+      call_id: callId,
+      execution: 'client',
+      arguments: { query },
+    },
+  }
+}
+
 function customToolCall(callId, name, input) {
   return {
     type: 'response.output_item.done',
@@ -4044,8 +4221,46 @@ function selectTool(request, name, argumentsValue) {
   return { name, arguments: argumentsValue }
 }
 
+function selectOfficialPluginMcpTool(request, callId, argumentsValue) {
+  const input = Array.isArray(request.input) ? request.input : []
+  const searchOutput = input.find(
+    item => item?.type === 'tool_search_output' && item?.call_id === callId
+  )
+  assert.ok(searchOutput, `Real Codex did not return tool_search_output for ${callId}`)
+
+  const namespace = searchOutput.tools?.find(
+    candidate => candidate?.type === 'namespace' && candidate.name === OFFICIAL_PLUGIN_MCP_NAMESPACE
+  )
+  assert.ok(namespace, 'Real Codex tool_search did not return the official plugin MCP namespace')
+  const tool = namespace.tools?.find(
+    candidate =>
+      candidate?.type === 'function' &&
+      candidate.description?.includes(OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION)
+  )
+  assert.ok(tool, 'Real Codex tool_search did not return the official plugin MCP tool')
+  assert.ok(
+    tool.description.includes(`plugin \`${OFFICIAL_PLUGIN_DISPLAY_NAME}\``),
+    'The searched MCP tool did not retain official plugin provenance'
+  )
+  return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
+}
+
+function assertToolSearchAdvertised(request) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  assert.ok(
+    tools.some(tool => tool?.type === 'tool_search'),
+    `Real Codex did not advertise tool_search: ${tools
+      .map(tool => tool?.name ?? tool?.type)
+      .filter(Boolean)
+      .join(', ')}`
+  )
+}
+
 function selectShellTool(request, workspacePath) {
-  const command = 'pwd'
+  return selectShellToolCommand(request, 'pwd', workspacePath)
+}
+
+function selectShellToolCommand(request, command, workspacePath) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
@@ -4974,6 +5189,7 @@ class DesktopE2EServer {
         'model_protocol_matrix',
         'provider_switch_retry',
         'view_image',
+        'official_plugin',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -6010,6 +6226,91 @@ class DesktopE2EServer {
         ])
       )
       this.resolveTaskPlanCompletionWritten()
+      return
+    }
+
+    if (this.scenario === 'official_plugin') {
+      this.recordScenarioRequest('official_plugin', modelRequest)
+      const requestNumber = this.scenarioRequests.get('official_plugin').length
+      const requestText = JSON.stringify(body)
+      const skillPath = this.officialPluginSkillPath
+      assert.ok(skillPath, 'The official plugin scenario did not receive the installed skill path')
+
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(OFFICIAL_PLUGIN_NAME) &&
+            requestText.includes(OFFICIAL_PLUGIN_SKILL_NAME) &&
+            requestText.includes(skillPath),
+          'The real Codex request did not inject the selected official plugin skill'
+        )
+        const shell = selectShellToolCommand(
+          body,
+          `sed -n '1,12p' ${JSON.stringify(skillPath)}`,
+          this.workspacePath
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall('wework-e2e-official-plugin-skill', shell.name, shell.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        assert.ok(
+          requestText.includes(OFFICIAL_PLUGIN_SKILL_MARKER),
+          'The official plugin skill file was not read through the real Codex tool loop'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(OFFICIAL_PLUGIN_SKILL_READY_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 3) {
+        assertToolSearchAdvertised(body)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          toolSearchCall(
+            OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID,
+            'confirm OpenAI API key local env destination'
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 4) {
+        const mcpTool = selectOfficialPluginMcpTool(body, OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID, {
+          workspacePath: this.workspacePath,
+          targetPath: '../outside.env',
+          envName: 'OPENAI_API_KEY',
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            'wework-e2e-official-plugin-mcp',
+            mcpTool.namespace,
+            mcpTool.name,
+            mcpTool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 5, `Unexpected official plugin request ${requestNumber}`)
+      assert.ok(
+        requestText.includes('The env file must be inside the selected workspace.'),
+        'The official plugin MCP server did not execute and return its validation result'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(OFFICIAL_PLUGIN_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -7515,6 +7816,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
+        VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: PLUGINS_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: PLUGINS_ONLY || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
@@ -8084,7 +8386,10 @@ async function main() {
   const composerProjectPath = join(resultDir, 'composer-project')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
+  const codexHome = join(executorHome, 'codex')
+  const nativeCodexHome = join(resultDir, 'native-codex')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
+  const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
@@ -8099,7 +8404,17 @@ async function main() {
     join(workspacePath, IMAGE_ARTIFACT_NAME),
     Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
   )
-  await createPluginMarketplaceFixture(pluginMarketplacePath)
+  if (PLUGINS_ONLY) {
+    await createOfficialPluginMarketplaceFixture({
+      marketplaceRoot: pluginMarketplacePath,
+      repositoryRoot: officialPluginRepositoryPath,
+    })
+    await mkdir(nativeCodexHome, { recursive: true })
+    await writeFile(
+      join(nativeCodexHome, 'config.toml'),
+      '# desktop-e2e-native-home-marker\nmodel = "native-model-that-must-not-migrate"\n'
+    )
+  }
   await runChecked('git', ['init'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
@@ -8163,17 +8478,15 @@ async function main() {
     )
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
-    await writeCodexConfig(
-      join(executorHome, 'codex'),
-      control.url,
-      desktopScenario?.codexConfigToml
-    )
+    if (!PLUGINS_ONLY) {
+      await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)
+    }
 
     const appEnvironment = {
       ...process.env,
       CODEX_BIN: codexBinary,
       HOME: homePath,
-      WEGENT_CODEX_HOME: join(executorHome, 'codex'),
+      WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
@@ -8186,6 +8499,7 @@ async function main() {
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
+      ...(PLUGINS_ONLY ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
     }
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin') {
@@ -8206,6 +8520,7 @@ async function main() {
           'WEWORK_E2E_MODEL_API_KEY',
           'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
           'WEWORK_EXECUTOR_SIDECAR',
+          ...(PLUGINS_ONLY ? ['WEWORK_E2E_NATIVE_CODEX_HOME'] : []),
         ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
         const launcher = spawn(
           'open',
@@ -8244,9 +8559,10 @@ async function main() {
       return child
     }
     app = await startDesktopAppProcess()
-    const restartDesktopApp = async () => {
+    const restartDesktopApp = async (beforeStart = null) => {
       const readyCountBeforeRestart = control.readyCount
       await stopDesktopAppProcess(app)
+      await beforeStart?.()
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
@@ -8271,6 +8587,19 @@ async function main() {
         app.pid,
         'The desktop E2E application stole macOS foreground focus'
       )
+    }
+    if (PLUGINS_ONLY) {
+      phase = 'blank-codex-home-initialization'
+      await initializeBlankCodexHome({
+        codexHome,
+        control,
+      })
+      await restartDesktopApp(() =>
+        writeCodexConfig(codexHome, control.url, '[features]\nplugins = true')
+      )
+      await control.command('waitFor', '[data-testid="projects-create-button"]', {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
@@ -8507,7 +8836,14 @@ async function main() {
 
     if (PLUGINS_ONLY) {
       phase = 'plugin-lifecycle'
-      await verifyPluginLifecycle(control, pluginMarketplacePath)
+      await verifyPluginLifecycle({
+        codexHome,
+        control,
+        marketplacePath: pluginMarketplacePath,
+        modelServerUrl: control.url,
+        repositoryPath: officialPluginRepositoryPath,
+        workspacePath,
+      })
       console.log(`Wework desktop plugin E2E passed. Evidence: ${resultDir}`)
       return
     }
