@@ -108,6 +108,7 @@ import {
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
+import { createExternalIssueApi, createLocalDeliveryApi } from './localDelivery'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
@@ -1148,9 +1149,12 @@ function messageWithApplicationContext(
         kind: 'application',
         value: [
           'The user activated the Wegent project-space capability.',
-          'Use the wegent_delivery MCP server for project-space operations.',
-          'wegent_delivery is a server id, not a callable tool.',
-          'Use list_cloud_projects to list projects and create_cloud_project to create one.',
+          'Project storage and task source are independent.',
+          'Use wegent_tasks for local project spaces and for GitHub or GitLab Issues, even when the project space is stored in the Backend.',
+          'Use wegent_delivery for cloud project metadata, files, deliveries, and Backend-native TODOs only.',
+          'wegent_delivery and wegent_tasks are server ids, not callable tools.',
+          'List both sources when resolving a project name.',
+          'Never create or copy a cloud project merely because a local project is not returned by list_cloud_projects.',
           'Use resolve_cloud_reference to resolve cloud:// references.',
           'MCP resources describe addressable data; do not use list_mcp_resources to discover tools.',
         ].join('\n'),
@@ -2377,6 +2381,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       user: deps.user,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
+  const deliveryApi = createLocalDeliveryApi(request)
+  const externalIssueApi = createExternalIssueApi(request)
 
   return {
     teamApi: {
@@ -2429,6 +2435,12 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       revertTurnFileChanges: () => cloudConnectionRequired('revertTurnFileChanges'),
     },
     deviceApi,
+    deliveryApi,
+    externalIssueApi,
+    projectSpaceApis: {
+      local: deliveryApi,
+      defaultLocation: 'local',
+    },
     runtimeWorkApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({

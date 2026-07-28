@@ -61,6 +61,18 @@ def _serialize_collaborator(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _serialize_project(project: Any) -> dict[str, Any]:
+    return {
+        "id": project.id,
+        "key": project.project_key,
+        "name": project.name,
+        "description": project.description,
+        "projectStore": project.project_store,
+        "taskProvider": project.task_provider,
+        "providerConfig": project.provider_config,
+    }
+
+
 @mcp_tool(
     name="list_loop_item_deliveries",
     description="List immutable deliveries available for a TODO or Loop Item.",
@@ -150,24 +162,18 @@ def read_delivery_asset(asset_id: str, token_info: MCPAuthInfo) -> dict[str, Any
 
 @mcp_tool(
     name="list_cloud_projects",
-    description="List shared cloud projects the current user can access.",
+    description=(
+        "List shared cloud project spaces and their independent taskProvider. "
+        "For github or gitlab projects, use the local wegent_tasks MCP tools for "
+        "TODO/Issue operations; never copy the project or create a Backend TODO."
+    ),
     server="delivery",
     exclude_params=["token_info"],
 )
 def list_cloud_projects(token_info: MCPAuthInfo) -> dict[str, Any]:
     with SessionLocal() as db:
         projects = cloud_project_service.list_accessible(db, token_info.user_id)
-        return {
-            "projects": [
-                {
-                    "id": project.id,
-                    "key": project.project_key,
-                    "name": project.name,
-                    "description": project.description,
-                }
-                for project in projects
-            ]
-        }
+        return {"projects": [_serialize_project(project) for project in projects]}
 
 
 @mcp_tool(
@@ -193,12 +199,7 @@ def create_cloud_project(
             name=name, project_key=project_key, description=description
         )
         project = cloud_project_service.create(db, token_info.user_id, values)
-        return {
-            "id": project.id,
-            "key": project.project_key,
-            "name": project.name,
-            "description": project.description,
-        }
+        return _serialize_project(project)
 
 
 @mcp_tool(
@@ -267,7 +268,10 @@ def read_cloud_file(file_id: int, token_info: MCPAuthInfo) -> dict[str, Any]:
 
 @mcp_tool(
     name="list_cloud_todos",
-    description="List TODOs and their current state in an authorized cloud project.",
+    description=(
+        "List Backend-native TODOs only when the cloud project's taskProvider is "
+        "local. GitHub and GitLab Issues are handled by wegent_tasks."
+    ),
     server="delivery",
     exclude_params=["token_info"],
 )
@@ -304,7 +308,9 @@ def get_cloud_todo(item_id: str, token_info: MCPAuthInfo) -> dict[str, Any]:
 @mcp_tool(
     name="create_cloud_todo",
     description=(
-        "Create a TODO in an authorized cloud project. Status must be one of "
+        "Create a Backend-native TODO only when the cloud project's taskProvider "
+        "is local. GitHub and GitLab projects must use wegent_tasks.create_todo. "
+        "Status must be one of "
         "inbox, pending, in_progress, in_review, completed; priority one of "
         "none, low, medium, high, urgent; due_at is an ISO 8601 datetime."
     ),
@@ -528,10 +534,23 @@ def resolve_cloud_reference(reference: str, token_info: MCPAuthInfo) -> dict[str
         return {"error": "Invalid cloud project id"}
 
     if len(parts) == 1:
+        with SessionLocal() as db:
+            project = cloud_project_service.get(db, project_id, token_info.user_id)
+            project_data = _serialize_project(project)
+        todos = (
+            list_cloud_todos(project_id, token_info)
+            if project.task_provider == "local"
+            else {
+                "items": [],
+                "taskProvider": project.task_provider,
+                "todoTool": "wegent_tasks.create_todo",
+            }
+        )
         return {
             "projectId": project_id,
+            "project": project_data,
             "workspace": list_cloud_workspace(project_id, token_info),
-            "todos": list_cloud_todos(project_id, token_info),
+            "todos": todos,
         }
     if len(parts) != 3:
         return {"error": "Unsupported cloud reference path"}

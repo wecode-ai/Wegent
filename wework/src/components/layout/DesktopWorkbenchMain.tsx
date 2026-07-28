@@ -2367,6 +2367,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 hasMoreBefore={paneSession.transcriptHasMoreBefore}
                 loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
                 turnNavigation={paneSession.turnNavigation}
+                loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
                 onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
                 onLoadFullTranscript={paneSession.loadFullTranscript}
                 loadingFullTranscript={paneSession.transcriptLoadingFullContent}

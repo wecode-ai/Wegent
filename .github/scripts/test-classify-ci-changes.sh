@@ -56,6 +56,8 @@ EOF
 assert_case "shared dependencies" "$shared_expected" "shared/utils/example.py"
 
 all_true="${all_false//false/true}"
+assert_case "explicit all modules" "$all_true" --all
+
 assert_case "workflow changes validate all modules" "$all_true" \
   ".github/workflows/test.yml"
 
@@ -83,9 +85,16 @@ fi
 
 for workflow in e2e-tests.yml wework-e2e.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
+  push_config="$(
+    sed -n '/^  push:/,/^  pull_request:/p' "$workflow_path"
+  )"
   pull_request_config="$(
     sed -n '/^  pull_request:/,/^  [a-z_]*:/p' "$workflow_path"
   )"
+  if grep -q "paths:" <<<"$push_config"; then
+    printf '%s must run for every push to main\n' "$workflow" >&2
+    exit 1
+  fi
   if ! grep -q "ready_for_review" <<<"$pull_request_config"; then
     printf '%s must run E2E when a draft PR becomes ready for review\n' \
       "$workflow" >&2
@@ -101,6 +110,14 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
   fi
   if ! grep -q "ci:all" "$workflow_path"; then
     printf '%s must force E2E for the ci:all label\n' "$workflow" >&2
+    exit 1
+  fi
+done
+
+for workflow in test.yml lint.yml; do
+  workflow_path="$script_dir/../workflows/$workflow"
+  if ! grep -q "classify-ci-changes.sh --all" "$workflow_path"; then
+    printf '%s must classify every module for pushes to main\n' "$workflow" >&2
     exit 1
   fi
 done

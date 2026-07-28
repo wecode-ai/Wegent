@@ -468,7 +468,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
     assert!(launch_config.local_proxy_registration.is_some());
     assert!(launch_config.config_overrides.iter().any(|value| {
         value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && value.contains("/v1/codex-router/model-")
+            && value.contains("/v1/codex-router/task-")
     }));
     for params in [
         thread_start_params(&request, &launch_config),
@@ -598,12 +598,58 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
     );
     assert!(launch_config.config_overrides.iter().any(|override_value| {
         override_value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && override_value.contains("/v1/codex-router/model-")
+            && override_value.contains("/v1/codex-router/task-")
     }));
     assert!(!launch_config
         .config_overrides
         .iter()
         .any(|override_value| override_value.contains("experimental_bearer_token")));
+}
+
+#[test]
+fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
+    let task_id = "codex-launch-config-stable-model-switch-task".to_owned();
+    let luna_request = ExecutionRequest {
+        task_id: task_id.clone(),
+        model_config: json!({
+            "model_id": "gpt-5.6-luna",
+            "base_url": "http://luna.local/v1",
+            "api_key": "luna-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+    let sol_request = ExecutionRequest {
+        task_id,
+        model_config: json!({
+            "model_id": "gpt-5.6-sol",
+            "base_url": "http://sol.local/v1",
+            "api_key": "sol-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let luna_config = build_codex_launch_config(&luna_request);
+    let sol_config = build_codex_launch_config(&sol_request);
+    let proxy_url = |config: &CodexLaunchConfig| {
+        config
+            .config_overrides
+            .iter()
+            .find(|value| value.starts_with("model_providers.wework-router.base_url="))
+            .expect("local proxy base URL")
+            .to_owned()
+    };
+
+    assert_eq!(proxy_url(&luna_config), proxy_url(&sol_config));
+    assert!(luna_config
+        .config_overrides
+        .contains(&"model=gpt-5.6-luna".to_owned()));
+    assert!(sol_config
+        .config_overrides
+        .contains(&"model=gpt-5.6-sol".to_owned()));
 }
 
 #[test]
@@ -638,6 +684,19 @@ fn codex_launch_config_forwards_runtime_proxy_env() {
         launch_config.env.get("ALL_PROXY").map(String::as_str),
         Some("http://127.0.0.1:7890")
     );
+}
+
+#[test]
+fn required_loopback_hosts_are_merged_into_no_proxy() {
+    assert_eq!(
+        merge_required_no_proxy(Some("example.com, localhost")),
+        "example.com,localhost,127.0.0.1,::1,host.docker.internal"
+    );
+    assert_eq!(
+        merge_required_no_proxy(Some("LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL")),
+        "LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL"
+    );
+    assert_eq!(merge_required_no_proxy(None), DEFAULT_NO_PROXY);
 }
 
 #[test]
@@ -961,6 +1020,97 @@ fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
 }
 
 #[test]
+fn codex_run_state_uses_latest_completed_agent_message_in_same_turn() {
+    let mut state = CodexRunState::default();
+
+    for (id, text) in [
+        ("msg-before-tool", "I found the failing step."),
+        (
+            "msg-after-tool",
+            "The failure is caused by a stale lockfile.",
+        ),
+    ] {
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": id,
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "text": text
+                    }
+                }
+            }))
+            .is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "The failure is caused by a stale lockfile.".to_owned()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_does_not_duplicate_completed_text_after_matching_delta() {
+    let mut state = CodexRunState::default();
+
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-final",
+                "delta": "Done."
+            }
+        }))
+        .is_none());
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-final",
+                    "type": "agentMessage",
+                    "role": "assistant",
+                    "text": "Done."
+                }
+            }
+        }))
+        .is_none());
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Done.".to_owned()
+        }
+    );
+}
+
+#[test]
 fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
     let mut request = ExecutionRequest {
         prompt: Value::String("plan this".to_owned()),
@@ -1074,6 +1224,30 @@ fn codex_permission_profile_validation_accepts_effective_full_access() {
     });
 
     validate_codex_permission_profile("thread/resume", &response).unwrap();
+}
+
+#[test]
+fn codex_model_provider_validation_rejects_stale_loaded_provider() {
+    let response = json!({
+        "modelProvider": "wework-router",
+        "thread": {"modelProvider": "wework-router"},
+    });
+
+    let error = validate_codex_model_provider("thread/resume", &response, Some("openai"))
+        .expect_err("a stale provider must not start a turn");
+
+    assert!(error.contains("expected=openai"));
+    assert!(error.contains("actual=wework-router"));
+}
+
+#[test]
+fn codex_model_provider_validation_accepts_requested_provider() {
+    let response = json!({
+        "modelProvider": "openai",
+        "thread": {"modelProvider": "openai"},
+    });
+
+    validate_codex_model_provider("thread/resume", &response, Some("openai")).unwrap();
 }
 
 #[test]

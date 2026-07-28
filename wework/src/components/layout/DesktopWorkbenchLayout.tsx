@@ -42,7 +42,6 @@ import {
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { DesktopAppSwitcher, type DesktopAppKey } from './DesktopAppSwitcher'
 import { WindowFrameControls } from './WindowFrameControls'
@@ -67,7 +66,6 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
 export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
   const windowFocused = useWindowFocus()
-  const cloudConnection = useOptionalCloudConnection()
   const { logout: onLogout } = useAuth()
   const {
     state,
@@ -124,7 +122,7 @@ export function DesktopWorkbenchLayout() {
   )
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
-  const todoOpen = currentPath === '/todo' && cloudConnection.isConnected
+  const todoOpen = currentPath === '/todo'
   const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const createPermanentWorktree = useCallback(

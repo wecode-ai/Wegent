@@ -1460,16 +1460,18 @@ impl<S> ChatStreamState<S> {
             }
             _ => String::new(),
         };
-        let (needs_start, call_id, complete_name, complete_namespace, custom) = {
+        let (needs_start, call_id, complete_name, complete_namespace, custom, matched_tool) = {
             let state = self.calls.entry(index).or_default();
             if !id.is_empty() {
                 state.call_id = super::normalized_responses_api_id(id);
             }
+            let mut matched_tool = false;
             if !name.is_empty() {
                 if let Some(identity) = self.context.identity(name) {
                     state.name = identity.name.clone();
                     state.namespace = identity.namespace.clone();
                     state.custom = identity.kind == ToolKind::Custom;
+                    matched_tool = true;
                 } else {
                     state.name = name.to_owned();
                     state.namespace = None;
@@ -1489,6 +1491,7 @@ impl<S> ChatStreamState<S> {
                 state.name.clone(),
                 state.namespace.clone(),
                 state.custom,
+                matched_tool,
             )
         };
         if needs_start {
@@ -1510,13 +1513,30 @@ impl<S> ChatStreamState<S> {
                 "function_call"
             };
             let mut item = if item_type == "custom_tool_call" {
-                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name, "input": ""})
+                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name.clone(), "input": ""})
             } else {
-                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name, "arguments": ""})
+                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name.clone(), "arguments": ""})
             };
             if let Some(namespace) = complete_namespace {
                 item["namespace"] = Value::String(namespace);
             }
+            log_executor_event(
+                "local model proxy tool call started",
+                &[
+                    ("call_index", index.to_string()),
+                    ("upstream_tool_name", name.to_owned()),
+                    ("resolved_tool_name", complete_name),
+                    ("matched_tool", matched_tool.to_string()),
+                    (
+                        "namespace",
+                        item.get("namespace")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ),
+                    ("custom_tool", custom.to_string()),
+                ],
+            );
             self.emit(sse("response.output_item.added", json!({"type": "response.output_item.added", "output_index": output_index, "item": item})));
         }
         if !arguments.is_empty() {
@@ -1544,6 +1564,25 @@ impl<S> ChatStreamState<S> {
         }
         self.ensure_started();
         self.completed = true;
+        let tool_call_count = self.calls.values().filter(|state| state.started).count();
+        log_executor_event(
+            "local model proxy chat completion summary",
+            &[
+                ("model", self.model.clone()),
+                (
+                    "finish_reason",
+                    self.finish_reason.clone().unwrap_or_default(),
+                ),
+                ("text_bytes", self.text.text.len().to_string()),
+                ("reasoning_bytes", self.reasoning.text.len().to_string()),
+                ("tool_calls", tool_call_count.to_string()),
+                (
+                    "empty_output",
+                    (!self.text.started && !self.reasoning.started && tool_call_count == 0)
+                        .to_string(),
+                ),
+            ],
+        );
         let mut output = Vec::new();
         if self.reasoning.started {
             let item = json!({"id": self.reasoning.item_id, "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": self.reasoning.text}]});
@@ -1565,6 +1604,15 @@ impl<S> ChatStreamState<S> {
             if !state.started {
                 continue;
             }
+            log_executor_event(
+                "local model proxy tool call completed",
+                &[
+                    ("tool_name", state.name.clone()),
+                    ("namespace", state.namespace.clone().unwrap_or_default()),
+                    ("custom_tool", state.custom.to_string()),
+                    ("arguments_bytes", state.arguments.len().to_string()),
+                ],
+            );
             let custom = state.custom;
             let arguments = if custom {
                 custom_input(&state.name, &state.arguments)

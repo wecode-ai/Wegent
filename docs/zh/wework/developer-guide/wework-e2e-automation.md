@@ -105,6 +105,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
+主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`。
+
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 
 运行环境需要 Rust、Tauri 构建依赖和真实 Codex 二进制。默认从 `PATH` 查找 `codex`；也可以显式指定已安装或由 `prepare:codex` 准备的真实二进制：
@@ -247,6 +249,17 @@ MCP connector fixture 可以使用：
 ## 自动化接口
 
 测试模式下，Wework 会在 `window.__WEWORK_E2E__` 暴露前端控制接口。该接口只在 `import.meta.env.MODE === "e2e"` 或 `VITE_WEWORK_E2E=true` 时安装，普通开发和生产运行不会默认启用。
+
+隔离真实 Tauri 验证可通过 `ai:verify paste-paths` 或 `ai:verify drop-paths` 向输入框派发文件路径粘贴或拖放事件。`--value` 接收 JSON 数组，每项包含 `uri`、`name`，文件夹项还需设置 `isDirectory: true`：
+
+```bash
+pnpm --filter wework ai:verify paste-paths \
+  --session /absolute/path/to/session.json \
+  --selector '[data-testid="chat-message-input"]' \
+  --value '[{"uri":"file:///tmp/context","name":"context","isDirectory":true}]'
+```
+
+把上例的 `paste-paths` 替换为 `drop-paths`，即可验证 Finder 拖放路径。
 
 可用方法：
 
