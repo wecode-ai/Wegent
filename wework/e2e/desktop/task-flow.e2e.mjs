@@ -646,6 +646,7 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await control.command('waitFor', '[data-testid="add-context-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
