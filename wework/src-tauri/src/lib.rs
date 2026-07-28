@@ -4360,6 +4360,8 @@ pub fn run() {
             feedback::confirm_feedback_bundle,
             #[cfg(desktop)]
             feedback::discard_feedback_bundle,
+            #[cfg(desktop)]
+            feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,

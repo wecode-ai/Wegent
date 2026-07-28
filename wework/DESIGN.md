@@ -683,6 +683,9 @@ semantics for all three.
 - A guidance item remains pending until a matching runtime
   `guidance_applied` event settles it. Match the client identifier first and
   use guidance content only when the runtime replaces that identifier.
+- Returning to a conversation before its guidance is applied must restore the
+  pending guidance item. After it is applied, returning must show exactly one
+  user guidance message and no pending guidance item.
 - UI labels such as “Guiding” are projections of typed delivery state. Do not
   use localized display text as state or transition input.
 - Navigation between tasks must not leak queue state into the newly active

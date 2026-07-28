@@ -10,19 +10,21 @@ describe('cloud project-space API', () => {
       createLoopItem: vi.fn(async () => ({ id: 'CLOUD-1' })),
     } as unknown as DeliveryApi
     const externalIssueApi = {
-      retainProjects: vi.fn(async () => undefined),
+      retainProjects: vi.fn(async () => {
+        throw new Error('local executor unavailable')
+      }),
       configureProject: vi.fn(),
       listLoopItems: vi.fn(),
       createLoopItem: vi.fn(),
     } as unknown as ExternalIssueApi
-    const api = createCloudProjectSpaceApi(storeApi, externalIssueApi)
+    const api = createCloudProjectSpaceApi(storeApi)
 
     await api.listCloudProjects()
     await api.listLoopItems('cloud-1')
     await api.createLoopItem('cloud-1', { title: 'Backend routed' })
 
     expect(storeApi.listCloudProjects).toHaveBeenCalled()
-    expect(externalIssueApi.retainProjects).toHaveBeenCalledWith([])
+    expect(externalIssueApi.retainProjects).not.toHaveBeenCalled()
     expect(storeApi.listLoopItems).toHaveBeenCalledWith('cloud-1')
     expect(storeApi.createLoopItem).toHaveBeenCalledWith('cloud-1', {
       title: 'Backend routed',

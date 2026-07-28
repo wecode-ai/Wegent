@@ -443,6 +443,7 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
@@ -481,6 +482,7 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
@@ -519,6 +521,7 @@ describe('createLocalAppServices', () => {
           user_name: 'hongyu9',
           email: 'hongyu9@example.com',
         },
+        cloudProjectId: 'cloud-project-42',
         task_title: 'Hello',
         subtask_title: 'Hello - Assistant',
         prompt: 'hello',
@@ -1257,7 +1260,7 @@ describe('createLocalAppServices', () => {
       cloudModelGateway: {
         baseUrl: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         apiKey: 'cloud-login-token',
-        mcpUrl: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
+        backendUrl: 'https://cloud.example.com/custom',
       },
     })
 
@@ -1305,14 +1308,13 @@ describe('createLocalAppServices', () => {
         },
       })
     )
-    expect(payload.executionRequest.mcp_servers).toEqual([
-      {
-        name: 'wegent_delivery',
-        type: 'streamable-http',
-        url: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
-        headers: { Authorization: 'Bearer cloud-login-token' },
-      },
-    ])
+    expect(payload.executionRequest.mcp_servers).toEqual([])
+    expect(payload.executionRequest).toEqual(
+      expect.objectContaining({
+        backend_url: 'https://cloud.example.com/custom',
+        auth_token: 'cloud-login-token',
+      })
+    )
     expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
   })
 
@@ -1381,7 +1383,7 @@ describe('createLocalAppServices', () => {
     const additionalContext = {
       cloudCollaboration: {
         kind: 'application' as const,
-        value: 'Current TODO: WEG-1. Use the wegent_delivery MCP tools when needed.',
+        value: 'Current TODO: WEG-1. Use the wework_space MCP tools when needed.',
       },
     }
 
@@ -1436,9 +1438,9 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     const prompt = payload.executionRequest.prompt as string
     expect(prompt).toContain('[projectSpaceCapability]')
-    expect(prompt).toContain('wegent_delivery and wegent_tasks are server ids')
-    expect(prompt).toContain('Never create or copy a cloud project')
-    expect(prompt).toContain('do not use list_mcp_resources to discover tools')
+    expect(prompt).toContain('Use wework_space as the only interface')
+    expect(prompt).toContain('Do not use git commands')
+    expect(prompt).toContain('read_item_attachment')
   })
 
   test('adds configured local proxy to local runtime execution requests', async () => {

@@ -64,11 +64,13 @@ import {
   cacheRuntimeConversationMessages,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
+  discardRuntimeConversationGuidance,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
   reduceRuntimeConversationQueue,
   runtimeConversationKey,
+  settleRuntimeConversationGuidance,
 } from '@/features/workbench/runtimeConversationCache'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { getRuntimeMessageIndex, mergeRuntimeTranscriptMessages } from './runtimeTranscriptMessages'
@@ -86,6 +88,7 @@ interface RuntimePaneSendOptions {
   guideWhenBusy?: boolean
   interruptWhenBusy?: boolean
   additionalContext?: RuntimeAdditionalContext
+  cloudProjectId?: string
   onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
 }
 
@@ -366,6 +369,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   useEffect(() => {
     currentRuntimeTaskRef.current = currentRuntimeTask
   }, [currentRuntimeTask])
+
+  useEffect(() => {
+    setQueuedMessagesState(
+      queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
+    )
+    setQueuedMessagesPausedState(
+      queuedMessageScopeKey ? getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey) : false
+    )
+  }, [queuedMessageScopeKey])
 
   useEffect(() => {
     if (currentRuntimeTaskLoadTarget) {
@@ -815,14 +827,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         setTaskPlan(payload.plan.length > 0 ? payload : null)
       },
       onGuidanceApplied: payload => {
+        const guidanceMessage = settleRuntimeConversationGuidance(address, payload)
         const pendingEntry = [...pendingAppliedGuidancesRef.current.entries()].find(
           ([, message]) => !payload.message || message.content === payload.message
         )
-        if (!pendingEntry) return
-        const [guidanceId, guidanceMessage] = pendingEntry
-        pendingAppliedGuidancesRef.current.delete(guidanceId)
-        if (interruptedGuidanceIdsRef.current.delete(guidanceId)) {
-          setQueuedMessages(messages => messages.filter(message => message.id !== guidanceId))
+        if (pendingEntry) {
+          pendingAppliedGuidancesRef.current.delete(pendingEntry[0])
+        }
+        if (!guidanceMessage) return
+        if (interruptedGuidanceIdsRef.current.delete(guidanceMessage.id)) {
+          setQueuedMessages(messages =>
+            messages.filter(message => message.id !== guidanceMessage.id)
+          )
+          discardRuntimeConversationGuidance(address, guidanceMessage.id)
           return
         }
         appendGuidanceLocalUserMessage(guidanceMessage.content, guidanceMessage.attachments, {
@@ -1699,6 +1716,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             clientMessageId: optimisticMessage.id,
             initialGoal,
             additionalContext: options.additionalContext,
+            cloudProjectId: options.cloudProjectId,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
               setPendingGoalState(current =>
@@ -1778,6 +1796,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           void sendCurrentInput('', {
             codeCommentContexts,
             additionalContext: options.additionalContext,
+            cloudProjectId: options.cloudProjectId,
           })
           return
         }
@@ -1815,6 +1834,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             codeCommentContexts,
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
+            cloudProjectId: options.cloudProjectId,
             onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)

@@ -16,6 +16,7 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    feedback,
     groups,
     health,
     im_sessions,
@@ -136,6 +137,7 @@ api_router.include_router(
     cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
 )
 api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
+api_router.include_router(feedback.router, prefix="/v1/feedback", tags=["feedback"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
 api_router.include_router(

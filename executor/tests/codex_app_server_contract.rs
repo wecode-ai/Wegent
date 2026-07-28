@@ -486,16 +486,30 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
                     "command": "uvx",
                     "args": ["bot-tool"],
                     "env": {"BOT_ENV": "1"}
+                },
+                "sensitive-shell": {
+                    "type": "stdio",
+                    "command": "node",
+                    "args": ["sensitive-tool"],
+                    "default_tools_approval_mode": "prompt"
                 }
             }
         }]),
-        mcp_servers: vec![json!({
-            "name": "request-docs",
-            "type": "streamable-http",
-            "url": "https://mcp.example.com/request-docs",
-            "bearer_token_env_var": "REQUEST_DOCS_TOKEN",
-            "headers": {"Authorization": "Bearer task-token"}
-        })],
+        mcp_servers: vec![
+            json!({
+                "name": "request-docs",
+                "type": "streamable-http",
+                "url": "https://mcp.example.com/request-docs",
+                "bearer_token_env_var": "REQUEST_DOCS_TOKEN",
+                "headers": {"Authorization": "Bearer task-token"}
+            }),
+            json!({
+                "name": "request-sensitive",
+                "type": "streamable-http",
+                "url": "https://mcp.example.com/request-sensitive",
+                "defaultToolsApprovalMode": "prompt"
+            }),
+        ],
         model_config: json!({
             "model": "openai",
             "model_id": "gpt-5.5",
@@ -532,6 +546,23 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
     assert_config_arg(args, "mcp_servers.bot-shell.command=\"uvx\"");
     assert_config_arg(args, "mcp_servers.bot-shell.args=[\"bot-tool\"]");
     assert_config_arg(args, "mcp_servers.bot-shell.env.BOT_ENV=\"1\"");
+    assert_config_arg(
+        args,
+        "mcp_servers.bot-shell.default_tools_approval_mode=\"approve\"",
+    );
+    assert_config_arg(args, "mcp_servers.sensitive-shell.command=\"node\"");
+    assert_config_arg(
+        args,
+        "mcp_servers.sensitive-shell.default_tools_approval_mode=\"prompt\"",
+    );
+    assert_config_arg(
+        args,
+        "mcp_servers.request-docs.default_tools_approval_mode=\"approve\"",
+    );
+    assert_config_arg(
+        args,
+        "mcp_servers.request-sensitive.default_tools_approval_mode=\"prompt\"",
+    );
 }
 
 #[tokio::test]
