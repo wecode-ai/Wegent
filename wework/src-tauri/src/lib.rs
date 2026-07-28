@@ -6,6 +6,8 @@ mod feedback;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
+#[cfg(desktop)]
+mod storage_maintenance;
 mod system_drag;
 mod system_sleep;
 mod todo_store;
@@ -4370,6 +4372,8 @@ pub fn run() {
             {
                 log::warn!("Failed to start embedded browser bridge: {error}");
             }
+            #[cfg(desktop)]
+            storage_maintenance::schedule(app.handle().clone());
             #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {

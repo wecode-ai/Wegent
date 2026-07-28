@@ -113,7 +113,7 @@ impl RuntimeWorkRpcHandler {
             .worktrees
             .update_settings(patch)
             .map_err(|error| AppIpcError::new("worktree_settings_failed", error))?;
-        let _ = self.worktrees.prune(&self.store.list_task_summaries(true));
+        self.schedule_worktree_prune();
         let mut value = serde_json::to_value(settings)
             .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
         value["deviceId"] = Value::String(self.device_id.clone());
@@ -159,22 +159,40 @@ impl RuntimeWorkRpcHandler {
         let worktrees = self.worktrees.clone();
         let store = self.store.clone();
         tokio::spawn(async move {
+            sleep(WORKTREE_AUTO_CLEANUP_IDLE_DELAY).await;
             loop {
-                sleep(WORKTREE_AUTO_CLEANUP_IDLE_DELAY).await;
                 if cleanup_generation.load(Ordering::SeqCst) != generation {
                     return;
                 }
 
                 let tasks = store.list_task_summaries(true);
-                if tasks.iter().any(|task| task.running) {
-                    continue;
-                }
-
-                let result = tokio::task::spawn_blocking(move || worktrees.prune(&tasks)).await;
+                let has_running_tasks = tasks.iter().any(|task| task.running);
+                let worktrees = worktrees.clone();
+                let result =
+                    tokio::task::spawn_blocking(move || worktrees.prune_auto_batch(&tasks)).await;
                 match result {
-                    Ok(Err(_)) | Err(_) | Ok(Ok(_)) => {}
+                    Ok(Ok(removed)) if !removed.is_empty() => {
+                        sleep(WORKTREE_AUTO_CLEANUP_BATCH_DELAY).await;
+                    }
+                    Ok(Ok(_)) if has_running_tasks => {
+                        sleep(WORKTREE_AUTO_CLEANUP_BATCH_DELAY).await;
+                    }
+                    Ok(Ok(_)) => return,
+                    Ok(Err(error)) => {
+                        log_executor_event(
+                            "automatic worktree cleanup failed",
+                            &[("error", error)],
+                        );
+                        return;
+                    }
+                    Err(error) => {
+                        log_executor_event(
+                            "automatic worktree cleanup worker failed",
+                            &[("error", error.to_string())],
+                        );
+                        return;
+                    }
                 }
-                return;
             }
         });
     }
