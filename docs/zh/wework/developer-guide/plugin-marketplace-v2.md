@@ -162,22 +162,22 @@ Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本
 
 ### 精选 Codex 镜像
 
-管理员录入 `marketplace_name + remote_plugin_id + upstream_url + license_info`。定时任务只检查 `sync_enabled=true` 的记录；发现 SemVer 新版本后下载、扫描、写入对象存储并切换 `latest_release_id`。上游返回旧版本时只更新检查信息，不回退 `latest_release_id`；扫描失败或上游删除时保留旧 Release，不影响现有用户。
+管理员录入 `marketplace_name + remote_plugin_id + upstream_url + license_info`。定时任务只检查 `sync_enabled=true` 的记录；发现 SemVer 新版本后下载、扫描并写入对象存储。`auto_after_scan` 在扫描通过后单调提升 `latest_release_id`；`review_required` 只生成待审核 Release，管理员批准后才提升 latest。上游返回旧版本时只更新检查信息，不回退 `latest_release_id`；扫描失败或上游删除时保留旧 Release，不影响现有用户。
 
-### Wegent 官方插件发布
+### WeWork 官方插件发布
 
-官方插件源码可以位于独立仓库，或当前仓库的 `official-plugins/<slug>/`。每个目录必须包含 `.codex-plugin/plugin.json`、能力文件和测试；该源码目录只用于开发与 CI，Backend 和 Wework 运行时不得直接读取它。
+官方插件源码可以位于独立仓库，或当前仓库的 `curated-plugins/wework/<slug>/`。每个目录必须包含 `.codex-plugin/plugin.json`、能力文件和测试；该源码目录只用于开发与 CI，Backend 和 Wework 运行时不得直接读取它。
 
-发布脚本会按路径排序、固定 ZIP 时间戳和权限，先执行统一安全扫描，再写入 `source_type=native`、`source_provider=wegent`、`owner_user_id=NULL` 的 Plugin 和不可变 Release：
+发布脚本会按路径排序、固定 ZIP 时间戳和权限，先执行统一安全扫描，再写入 `source_type=native`、`source_provider=wework`、`owner_user_id=NULL` 的 Plugin 和不可变 Release：
 
 ```bash
 # 本地只构建、扫描并输出 SHA256，不连接 MySQL/S3
 uv run python scripts/publish_official_plugin.py \
-  ../official-plugins/gitlab-engineering --dry-run
+  ../curated-plugins/wework/gitlab-engineering --dry-run
 
 # 由受保护的 CI 环境发布
 uv run python scripts/publish_official_plugin.py \
-  ../official-plugins/gitlab-engineering \
+  ../curated-plugins/wework/gitlab-engineering \
   --visibility public \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \

@@ -333,20 +333,13 @@ class PluginMarketplaceService:
         featured_rank: int | None = None,
         created_by_user_id: int | None = None,
         provenance: dict[str, Any] | None = None,
-        source_type: str = "native",
-        source_provider: str = "wework",
     ) -> PublishedRelease:
-        """Publish a controlled native or curated release."""
+        """Publish a WeWork-owned official release."""
         self._validate_slug(slug)
         if listing_type not in {"plugin", "skill"}:
             raise HTTPException(status_code=422, detail="Invalid plugin listing type")
         if visibility not in {"workspace", "public"}:
             raise HTTPException(status_code=422, detail="Invalid plugin visibility")
-        if (source_type, source_provider) not in {
-            ("native", "wework"),
-            ("mirror", "codex"),
-        }:
-            raise HTTPException(status_code=422, detail="Invalid controlled source")
         parsed, security_report = self._analyze_package(package)
         if parsed.name != slug:
             raise HTTPException(
@@ -355,8 +348,8 @@ class PluginMarketplaceService:
             )
         plugin = db.query(Plugin).filter(Plugin.slug == slug).with_for_update().first()
         if plugin and (
-            plugin.source_type != source_type
-            or plugin.source_provider != source_provider
+            plugin.source_type != "native"
+            or plugin.source_provider != "wework"
             or plugin.owner_user_id is not None
         ):
             raise HTTPException(
@@ -373,8 +366,8 @@ class PluginMarketplaceService:
                 name=parsed.name,
                 display_name=parsed.displayName,
                 listing_type=listing_type,
-                source_type=source_type,
-                source_provider=source_provider,
+                source_type="native",
+                source_provider="wework",
                 owner_user_id=None,
                 keywords_json=[],
                 interface_json={},
@@ -406,7 +399,7 @@ class PluginMarketplaceService:
                 security_report=security_report,
                 created_by_user_id=created_by_user_id,
                 provenance={
-                    "kind": "curated" if source_type == "mirror" else "official",
+                    "kind": "official",
                     **(provenance or {}),
                 },
             )
@@ -856,34 +849,68 @@ class PluginMarketplaceService:
         db.refresh(upstream)
         return self._upstream_item(upstream)
 
-    def configure_existing_upstream(
+    def configure_controlled_upstream(
         self,
         db: Session,
         *,
         slug: str,
+        display_name: str,
         marketplace_name: str,
         remote_plugin_id: str,
         upstream_url: str,
         license_info: str,
+        listing_type: str = "plugin",
+        visibility: str = "workspace",
         sync_policy: str = "auto_after_scan",
     ) -> PluginUpstreamItem:
-        """Attach a reviewed mirror to an existing controlled catalog plugin."""
+        """Create or update a controlled mirror without a repository snapshot."""
+        self._validate_slug(slug)
         validate_upstream_url(upstream_url)
+        if listing_type not in {"plugin", "skill"}:
+            raise HTTPException(status_code=422, detail="Invalid plugin listing type")
+        if visibility not in {"workspace", "public"}:
+            raise HTTPException(status_code=422, detail="Invalid plugin visibility")
+        if sync_policy not in {"auto_after_scan", "review_required"}:
+            raise HTTPException(status_code=422, detail="Invalid upstream sync policy")
         plugin = db.query(Plugin).filter(Plugin.slug == slug).with_for_update().first()
         if not plugin:
-            raise HTTPException(status_code=404, detail="Plugin not found")
-        controlled_sources = {("native", "wework"), ("mirror", "codex")}
-        if (
-            plugin.owner_user_id is not None
-            or (plugin.source_type, plugin.source_provider) not in controlled_sources
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail="Plugin slug is owned by a different publisher",
+            plugin = Plugin(
+                slug=slug,
+                name=remote_plugin_id,
+                display_name=display_name,
+                listing_type=listing_type,
+                source_type="mirror",
+                source_provider="codex",
+                owner_user_id=None,
+                keywords_json=[],
+                interface_json={},
+                visibility=visibility,
+                status="draft",
             )
+            db.add(plugin)
+            db.flush()
+        else:
+            controlled_sources = {("native", "wework"), ("mirror", "codex")}
+            if (
+                plugin.owner_user_id is not None
+                or (plugin.source_type, plugin.source_provider)
+                not in controlled_sources
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Plugin slug is owned by a different publisher",
+                )
+            if plugin.listing_type != listing_type:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Plugin listing type cannot be changed",
+                )
 
         plugin.source_type = "mirror"
         plugin.source_provider = "codex"
+        plugin.name = remote_plugin_id
+        plugin.display_name = display_name
+        plugin.visibility = visibility
         upstream = (
             db.query(PluginUpstream)
             .filter(PluginUpstream.plugin_id == plugin.id)

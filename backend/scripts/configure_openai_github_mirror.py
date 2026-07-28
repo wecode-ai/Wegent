@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure the curated OpenAI GitHub plugin as a synchronized mirror."""
+"""Bootstrap the OpenAI GitHub plugin as a reviewed cloud mirror."""
 
 from __future__ import annotations
 
@@ -30,15 +30,18 @@ def main() -> int:
     args = parser.parse_args()
 
     with SessionLocal() as db:
-        upstream = plugin_marketplace_service.configure_existing_upstream(
+        upstream = plugin_marketplace_service.configure_controlled_upstream(
             db,
             slug=OPENAI_GITHUB_REMOTE_PLUGIN_ID,
+            display_name="GitHub",
             marketplace_name=OPENAI_GITHUB_MARKETPLACE,
             remote_plugin_id=OPENAI_GITHUB_REMOTE_PLUGIN_ID,
             upstream_url=args.upstream_url,
             license_info=args.license_info,
+            visibility="public",
             sync_policy="review_required",
         )
+        upstream = plugin_marketplace_service.sync_upstream(db, upstream_id=upstream.id)
     print(
         json.dumps(
             {
@@ -47,6 +50,8 @@ def main() -> int:
                 "sourceType": "mirror",
                 "sourceProvider": "codex",
                 "syncEnabled": upstream.syncEnabled,
+                "syncPolicy": upstream.syncPolicy,
+                "lastSeenVersion": upstream.lastSeenVersion,
             },
             sort_keys=True,
         )

@@ -1,19 +1,51 @@
-from pathlib import Path
+import io
+import json
+import zipfile
 from types import SimpleNamespace
 
 from app.services.claude_plugin_parser import claude_plugin_parser
-from app.services.official_plugin_publisher import OfficialPluginPublisher
 from app.services.plugin_marketplace_service import PluginMarketplaceService
 from app.services.plugin_package_storage import plugin_package_storage
+from app.services.plugin_upstream_adapter import adapt_upstream_package
 
 
-def test_curated_github_plugin_uses_wegent_connector_contract() -> None:
-    source = (
-        Path(__file__).resolve().parents[3] / "curated-plugins" / "openai" / "github"
-    )
+def _adapted_github_package() -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            json.dumps(
+                {
+                    "name": "github",
+                    "version": "0.1.6",
+                    "description": "GitHub workflows",
+                    "author": {
+                        "name": "OpenAI",
+                        "email": "support@openai.com",
+                    },
+                    "apps": ["app_123"],
+                    "mcpServers": {"github": {"command": "legacy"}},
+                    "interface": {"displayName": "GitHub"},
+                }
+            ),
+        )
+        archive.writestr(".app.json", "{}")
+        archive.writestr(".mcp.json", "{}")
+        archive.writestr("assets/logo.png", b"png")
+        archive.writestr("skills/github/SKILL.md", "# GitHub")
+        archive.writestr("skills/gh-address-comments/LICENSE.txt", "MIT")
+        archive.writestr("skills/gh-fix-ci/LICENSE.txt", "MIT")
+        archive.writestr("skills/yeet/LICENSE.txt", "MIT")
+    return adapt_upstream_package(
+        provider="codex",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        package=output.getvalue(),
+    ).package
 
-    built = OfficialPluginPublisher().build_package(source)
-    parsed = claude_plugin_parser.parse_package(built.package)
+
+def test_mirrored_github_plugin_uses_wework_connector_contract() -> None:
+    parsed = claude_plugin_parser.parse_package(_adapted_github_package())
 
     assert parsed.name == "github"
     assert parsed.version == "0.1.6+wegent.2"
@@ -28,10 +60,7 @@ def test_curated_github_plugin_uses_wegent_connector_contract() -> None:
 
 
 def test_marketplace_icon_resolution_preserves_localized_interface(monkeypatch) -> None:
-    source = (
-        Path(__file__).resolve().parents[3] / "curated-plugins" / "openai" / "github"
-    )
-    package = OfficialPluginPublisher().build_package(source).package
+    package = _adapted_github_package()
     monkeypatch.setattr(plugin_package_storage, "get", lambda _key: package)
     release = SimpleNamespace(
         interface_json={

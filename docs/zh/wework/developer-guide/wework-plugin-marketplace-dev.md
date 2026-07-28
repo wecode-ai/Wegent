@@ -111,7 +111,7 @@ description: Review a merge request and summarize risks
 推荐目录：
 
 ```text
-official-plugins/<slug>/
+curated-plugins/wework/<slug>/
 ```
 
 或放在独立插件仓库。该目录只服务开发、评审、CI；Backend / Wework **不会**在启动时扫描它。
@@ -121,7 +121,7 @@ official-plugins/<slug>/
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../official-plugins/gitlab-engineering --dry-run
+  ../curated-plugins/wework/gitlab-engineering --dry-run
 ```
 
 成功时输出 `name`、`version`、`sha256`。失败时先修扫描错误，再进入发布。
@@ -159,18 +159,18 @@ pnpm --filter wework dev:mac -- --executor-isolation
    - `POST /plugins/submissions/{id}/complete`
 4. 扫描通过后进入待审；管理员审核通过后才可被搜索安装。
 
-### Wegent 官方插件
+### WeWork 官方插件
 
 适合公司维护的内置能力。统一字段：
 
 - `source_type=native`
-- `source_provider=wegent`
+- `source_provider=wework`
 - `owner_user_id=NULL`
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../official-plugins/gitlab-engineering \
+  ../curated-plugins/wework/<plugin-slug> \
   --visibility public \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
@@ -192,7 +192,9 @@ uv run python scripts/publish_official_plugin.py \
 - `upstream_url`（HTTPS）
 - `license_info`
 
-系统定时同步：下载 → 扫描 → 写入 S3 → 单调提升 `latest_release_id`。上游回退版本不会拉低 latest。
+系统定时同步：下载 → 扫描 → 适配 → 写入 S3。`auto_after_scan` 会在扫描
+通过后单调提升 `latest_release_id`；`review_required` 只生成待审核 Release，
+管理员批准后才提升 latest。上游回退版本不会拉低 latest。
 
 ## 5. 迁移开源插件 checklist
 
@@ -247,15 +249,16 @@ uv run python scripts/publish_official_plugin.py /path/to/plugin --dry-run
 - 安装后设备状态为 `installed`，且 `actual_release_id` 等于期望 Release。
 - 对话 mention 能正确触发能力；失败路径有明确错误，不静默回退。
 
-## 6. GitHub 官方精选插件
+## 6. GitHub 开源镜像插件
 
-GitHub 插件直接复用 OpenAI `openai/plugins` 的 `plugins/github`，Wegent 只维护可审计的薄适配层：
+GitHub 插件直接复用 OpenAI `openai/plugins` 的 `plugins/github`。仓库不保存
+第三方源码快照，Backend 只维护可审计的确定性适配层：
 
-- 源码快照：`curated-plugins/openai/github`
-- 上游锁定：`upstream.lock.json`
-- 同步检查：`uv run python scripts/sync_openai_github_plugin.py --check`
+- 上游地址：`https://github.com/openai/plugins/archive/refs/heads/main.zip`
+- 目标插件：Manifest `name=github`
+- 同步策略：`review_required`
 - 发布身份：`source_type=mirror`、`source_provider=codex`、开发者 OpenAI
-- 适配版本：上游 `0.1.6` 对应 `0.1.6+wegent.2`
+- 适配版本：`<上游版本>+wegent.<适配版本>`
 
 包内不保存 OAuth token，也不使用 OpenAI connector ID 或 `.mcp.json`。Manifest 只声明：
 
@@ -277,30 +280,23 @@ export CONNECTOR_OAUTH_STATE_SECRET=...
 # 2. 幂等创建 GitHub 远程 MCP Connector
 uv run python scripts/configure_github_connector.py --admin-user-id 1
 
-# 3. 检查并发布精选镜像
-uv run python scripts/sync_openai_github_plugin.py --check
-uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/openai/github \
-  --source-type mirror \
-  --source-provider codex \
-  --visibility public \
-  --upstream-repository https://github.com/openai/plugins \
-  --upstream-commit 11c74d6ba24d3a6d48f54a194cd00ef3beea18f9 \
-  --upstream-version 0.1.6 \
-  --adapter-version 2
-
-# 4. 幂等纠正历史来源身份，并登记定时同步的精选上游
+# 3. 幂等创建或迁移 GitHub 镜像，并立即同步一次生成待审核 Release
 uv run python scripts/configure_openai_github_mirror.py
 ```
 
-GitHub 仍以不可变快照存入 `plugin_releases`；`plugins` 保存
+该脚本可在空数据库直接创建 `plugins` 和 `plugin_upstreams` 记录，也可迁移
+已有的 GitHub 官方记录。首次同步和后续新版本都会生成待审核 Submission；
+管理员批准后插件才会首次上架或更新 `latest_release_id`。
+
+GitHub 的适配后 ZIP 以不可变快照存入 `plugin_releases`；`plugins` 保存
 `mirror/codex` 来源身份，`plugin_upstreams` 保存 OpenAI 上游地址和同步状态。
 Celery Beat 每 6 小时只检查已启用的精选上游。GitHub 包在解析版本前会执行
 同一套确定性适配并再次扫描：移除 OpenAI App/MCP 配置、声明 Wegent
 Connector、生成 `<上游版本>+wegent.<适配版本>`。同版本内容发生变化时同步
 会失败，不会覆盖已有 Release；新版本只有在原包和适配后包都通过扫描后才会
 生成待审核 Release。管理员通过现有 Submission 审核后才会更新
-`latest_release_id`，审核前用户仍安装当前已发布版本。
+`latest_release_id`，审核前用户仍安装当前已发布版本。OpenAI 在相同版本下
+修改内容会导致同步失败，不会覆盖已存储的 Release。
 
 Wework 安装该插件时会先打开 GitHub OAuth 授权窗口；成功后，Backend 按用户加密保存凭据，并由 Connector Runtime 代理 `https://api.githubcopilot.com/mcp/`。Executor 只获取短期 Connector JWT，不接触 GitHub 长期 token。用户可在“设置 → 云端连接 → 第三方应用”断开授权。
 

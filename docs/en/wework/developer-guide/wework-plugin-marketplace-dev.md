@@ -111,7 +111,7 @@ Local creations **do not** upload automatically. Only an explicit “Publish to 
 Recommended layout:
 
 ```text
-official-plugins/<slug>/
+curated-plugins/wework/<slug>/
 ```
 
 You can also use a separate plugin repository. That directory is for development, review, and CI only. Backend and Wework **do not** scan it at startup.
@@ -121,7 +121,7 @@ Build and scan locally:
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../official-plugins/gitlab-engineering --dry-run
+  ../curated-plugins/wework/gitlab-engineering --dry-run
 ```
 
 Success prints `name`, `version`, and `sha256`. Fix scan failures before publishing.
@@ -159,18 +159,18 @@ Best for personal or team-owned plugins.
    - `POST /plugins/submissions/{id}/complete`
 4. After scanning passes, the release waits for human review before it becomes searchable.
 
-### Wegent official plugins
+### WeWork official plugins
 
 Best for company-maintained built-in capabilities. Identity fields:
 
 - `source_type=native`
-- `source_provider=wegent`
+- `source_provider=wework`
 - `owner_user_id=NULL`
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../official-plugins/gitlab-engineering \
+  ../curated-plugins/wework/<plugin-slug> \
   --visibility public \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
@@ -192,7 +192,10 @@ Best when an upstream plugin is already official or license-cleared and only nee
 - `upstream_url` (HTTPS)
 - `license_info`
 
-Scheduled sync downloads, scans, stores the ZIP, and monotonically advances `latest_release_id`. Upstream downgrades do not move latest backwards.
+Scheduled sync downloads, scans, adapts, and stores the ZIP. `auto_after_scan`
+monotonically advances `latest_release_id` after scanning; `review_required`
+creates a pending Release and advances latest only after administrator approval.
+Upstream downgrades do not move latest backwards.
 
 ## 5. Migrating an open-source plugin
 
@@ -247,16 +250,17 @@ Acceptance criteria:
 - Device state becomes `installed` with `actual_release_id` equal to the desired release.
 - Chat mentions activate the expected capability; failures are explicit rather than silent fallbacks.
 
-## 6. Curated GitHub plugin
+## 6. Open-source GitHub mirror
 
 The GitHub plugin reuses `plugins/github` from OpenAI's `openai/plugins`
-repository. Wegent maintains only a reviewed adapter:
+repository. The repository does not retain a third-party source snapshot;
+Backend maintains only a deterministic reviewed adapter:
 
-- snapshot: `curated-plugins/openai/github`
-- upstream pin: `upstream.lock.json`
-- sync check: `uv run python scripts/sync_openai_github_plugin.py --check`
+- upstream URL: `https://github.com/openai/plugins/archive/refs/heads/main.zip`
+- selected plugin: Manifest `name=github`
+- sync policy: `review_required`
 - release identity: `source_type=mirror`, `source_provider=codex`, developer OpenAI
-- adapter version: upstream `0.1.6` becomes `0.1.6+wegent.2`
+- adapted version: `<upstream version>+wegent.<adapter version>`
 
 The package contains no OAuth token, OpenAI connector ID, or package-local
 `.mcp.json`. Its manifest only declares:
@@ -275,22 +279,17 @@ export GITHUB_OAUTH_REDIRECT_URI=https://backend.example.com/api/connector-apps/
 export CONNECTOR_OAUTH_STATE_SECRET=...
 
 uv run python scripts/configure_github_connector.py --admin-user-id 1
-uv run python scripts/sync_openai_github_plugin.py --check
-uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/openai/github \
-  --source-type mirror \
-  --source-provider codex \
-  --visibility public \
-  --upstream-repository https://github.com/openai/plugins \
-  --upstream-commit 11c74d6ba24d3a6d48f54a194cd00ef3beea18f9 \
-  --upstream-version 0.1.6 \
-  --adapter-version 2
 
-# Idempotently repair legacy source identity and register scheduled sync
+# Create or migrate the mirror and immediately stage the first reviewed release
 uv run python scripts/configure_openai_github_mirror.py
 ```
 
-GitHub remains an immutable snapshot in `plugin_releases`; `plugins` stores the
+The script bootstraps `plugins` and `plugin_upstreams` in an empty database and
+also migrates an existing controlled GitHub record. The initial sync and every
+new upstream version create a pending Submission. GitHub becomes visible, or
+`latest_release_id` advances, only after administrator approval.
+
+The adapted GitHub ZIP remains an immutable snapshot in `plugin_releases`; `plugins` stores the
 `mirror/codex` source identity and `plugin_upstreams` stores the selected OpenAI
 source and synchronization state. Celery Beat checks only enabled selected
 upstreams every six hours. Before parsing a GitHub version, Backend applies the
@@ -301,7 +300,9 @@ version fails synchronization instead of overwriting a Release. A newer version
 creates a pending-review Release only after both the original and adapted
 packages pass scans. The existing Submission review promotes
 `latest_release_id`; users continue installing the current published version
-until an administrator approves the candidate.
+until an administrator approves the candidate. Content changes under an
+unchanged OpenAI version fail synchronization instead of overwriting a stored
+Release.
 
 Wework opens GitHub OAuth before installation. Backend encrypts the user token
 and Connector Runtime proxies `https://api.githubcopilot.com/mcp/`. Executor

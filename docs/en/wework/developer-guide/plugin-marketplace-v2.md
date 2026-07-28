@@ -43,20 +43,20 @@ Use `uv run python scripts/migrate_plugin_marketplace_v2.py` for a restartable l
 
 The first curated set should prioritize GitLab Engineering, GitHub, Gitee, and Chrome DevTools, followed by high-value Chinese collaboration plugins. Every candidate requires a product-value, license, ownership, authentication, and security review; the Codex marketplace is never mirrored wholesale.
 
-## Publishing Wegent official plugins
+## Publishing WeWork official plugins
 
-Official plugin sources may live in a separate repository or under `official-plugins/<slug>/` in this repository. Each directory must contain `.codex-plugin/plugin.json`, capability files, and tests. It is a development and CI input only; Backend and Wework must never read it as a runtime package source.
+Official plugin sources may live in a separate repository or under `curated-plugins/wework/<slug>/` in this repository. Each directory must contain `.codex-plugin/plugin.json`, capability files, and tests. It is a development and CI input only; Backend and Wework must never read it as a runtime package source.
 
-The publisher sorts paths and normalizes ZIP timestamps and permissions, runs the shared package scanner, and then creates a `source_type=native`, `source_provider=wegent`, `owner_user_id=NULL` Plugin and immutable Release:
+The publisher sorts paths and normalizes ZIP timestamps and permissions, runs the shared package scanner, and then creates a `source_type=native`, `source_provider=wework`, `owner_user_id=NULL` Plugin and immutable Release:
 
 ```bash
 # Build, scan, and print the SHA256 without MySQL or S3 writes.
 uv run python scripts/publish_official_plugin.py \
-  ../official-plugins/gitlab-engineering --dry-run
+  ../curated-plugins/wework/gitlab-engineering --dry-run
 
 # Run only in an approved CI release environment.
 uv run python scripts/publish_official_plugin.py \
-  ../official-plugins/gitlab-engineering \
+  ../curated-plugins/wework/gitlab-engineering \
   --visibility public \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \

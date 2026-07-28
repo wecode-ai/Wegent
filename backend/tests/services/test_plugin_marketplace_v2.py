@@ -458,29 +458,6 @@ def test_official_package_build_is_deterministic_and_publish_is_idempotent(
     }
 
 
-def test_curated_publish_preserves_mirror_source_identity(
-    test_db, monkeypatch, tmp_path
-):
-    source = _write_official_source(tmp_path / "official-review")
-    stored_packages: dict[str, bytes] = {}
-    _mock_package_storage(monkeypatch, stored_packages)
-
-    OfficialPluginPublisher().publish_directory(
-        test_db,
-        source_directory=source,
-        source_type="mirror",
-        source_provider="codex",
-        provenance={"upstreamCommit": "abc123"},
-    )
-
-    plugin = test_db.query(Plugin).filter(Plugin.slug == "official-review").one()
-    assert plugin.source_type == "mirror"
-    assert plugin.source_provider == "codex"
-    release = test_db.query(PluginRelease).filter_by(plugin_id=plugin.id).one()
-    assert release.scan_report_json["provenance"]["kind"] == "curated"
-    assert release.scan_report_json["provenance"]["upstreamCommit"] == "abc123"
-
-
 def test_official_publish_rejects_same_version_with_different_package(
     test_db, monkeypatch, tmp_path
 ):
@@ -1157,15 +1134,61 @@ def test_upstream_content_digest_ignores_python_formatting_only_changes():
     ) == service._package_tree_digest(wrapped, ignored_paths=set())
 
 
-def test_configure_existing_github_plugin_as_a_mirror(test_db, monkeypatch):
+def test_configure_controlled_upstream_creates_missing_plugin(test_db, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+    service = PluginMarketplaceService()
+
+    first = service.configure_controlled_upstream(
+        test_db,
+        slug="github",
+        display_name="GitHub",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        visibility="public",
+        sync_policy="review_required",
+    )
+    second = service.configure_controlled_upstream(
+        test_db,
+        slug="github",
+        display_name="GitHub",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        visibility="public",
+        sync_policy="review_required",
+    )
+
+    plugin = test_db.get(Plugin, first.pluginId)
+    assert plugin is not None
+    assert plugin.status == "draft"
+    assert plugin.visibility == "public"
+    assert plugin.source_type == "mirror"
+    assert plugin.source_provider == "codex"
+    assert first.id == second.id
+    assert first.syncEnabled is True
+    assert first.syncPolicy == "review_required"
+    assert test_db.query(Plugin).count() == 1
+    assert test_db.query(PluginUpstream).count() == 1
+
+
+def test_configure_controlled_upstream_converts_existing_official_plugin(
+    test_db, monkeypatch
+):
     plugin = Plugin(
         slug="github",
         name="github",
-        display_name="GitHub",
+        display_name="Legacy GitHub",
         source_type="native",
         source_provider="wework",
         keywords_json=[],
         interface_json={},
+        visibility="workspace",
         status="published",
     )
     test_db.add(plugin)
@@ -1176,33 +1199,122 @@ def test_configure_existing_github_plugin_as_a_mirror(test_db, monkeypatch):
     )
     service = PluginMarketplaceService()
 
-    first = service.configure_existing_upstream(
+    first = service.configure_controlled_upstream(
         test_db,
         slug="github",
+        display_name="GitHub",
         marketplace_name="openai/plugins",
         remote_plugin_id="github",
         upstream_url="https://github.com/openai/plugins/archive/main.zip",
         license_info="Bundled licenses",
+        visibility="public",
         sync_policy="review_required",
     )
-    second = service.configure_existing_upstream(
+    second = service.configure_controlled_upstream(
         test_db,
         slug="github",
+        display_name="GitHub",
         marketplace_name="openai/plugins",
         remote_plugin_id="github",
         upstream_url="https://github.com/openai/plugins/archive/main.zip",
         license_info="Bundled licenses",
+        visibility="public",
         sync_policy="review_required",
     )
 
     test_db.refresh(plugin)
     assert plugin.source_type == "mirror"
     assert plugin.source_provider == "codex"
+    assert plugin.display_name == "GitHub"
+    assert plugin.visibility == "public"
     assert first.id == second.id
     assert first.syncEnabled is True
     assert first.syncPolicy == "review_required"
     assert test_db.query(PluginUpstream).count() == 1
     assert test_db.get(PluginUpstream, first.id).sync_policy == "review_required"
+
+
+@pytest.mark.parametrize(
+    ("owner_user_id", "source_type", "source_provider"),
+    [
+        (7, "submission", "user"),
+        (None, "native", "other"),
+    ],
+)
+def test_configure_controlled_upstream_rejects_uncontrolled_slug(
+    test_db, monkeypatch, owner_user_id, source_type, source_provider
+):
+    plugin = Plugin(
+        slug="github",
+        name="github",
+        display_name="GitHub",
+        source_type=source_type,
+        source_provider=source_provider,
+        owner_user_id=owner_user_id,
+        keywords_json=[],
+        interface_json={},
+        status="published",
+    )
+    test_db.add(plugin)
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+
+    with pytest.raises(HTTPException, match="different publisher") as exc_info:
+        PluginMarketplaceService().configure_controlled_upstream(
+            test_db,
+            slug="github",
+            display_name="GitHub",
+            marketplace_name="openai/plugins",
+            remote_plugin_id="github",
+            upstream_url="https://github.com/openai/plugins/archive/main.zip",
+            license_info="Bundled licenses",
+            sync_policy="review_required",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert test_db.query(PluginUpstream).count() == 0
+
+
+def test_configure_controlled_upstream_rejects_listing_type_change(
+    test_db, monkeypatch
+):
+    plugin = Plugin(
+        slug="github",
+        name="github",
+        display_name="GitHub",
+        listing_type="skill",
+        source_type="mirror",
+        source_provider="codex",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+    )
+    test_db.add(plugin)
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+
+    with pytest.raises(
+        HTTPException, match="listing type cannot be changed"
+    ) as exc_info:
+        PluginMarketplaceService().configure_controlled_upstream(
+            test_db,
+            slug="github",
+            display_name="GitHub",
+            marketplace_name="openai/plugins",
+            remote_plugin_id="github",
+            upstream_url="https://github.com/openai/plugins/archive/main.zip",
+            license_info="Bundled licenses",
+            sync_policy="review_required",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert test_db.query(PluginUpstream).count() == 0
 
 
 def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monkeypatch):
@@ -1212,19 +1324,17 @@ def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monke
         "app.services.plugin_marketplace_service.validate_upstream_url",
         lambda url: None,
     )
-    upstream = service.create_upstream(
+    upstream = service.configure_controlled_upstream(
         test_db,
-        request=PluginUpstreamCreateRequest(
-            slug="github",
-            displayName="GitHub",
-            marketplaceName="openai/plugins",
-            remotePluginId="github",
-            upstreamUrl="https://github.com/openai/plugins/archive/main.zip",
-        ),
+        slug="github",
+        display_name="GitHub",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        visibility="public",
+        sync_policy="review_required",
     )
-    upstream_row = test_db.get(PluginUpstream, upstream.id)
-    upstream_row.sync_policy = "review_required"
-    test_db.commit()
     monkeypatch.setattr(
         "app.services.plugin_marketplace_service.fetch_upstream_package",
         lambda url: _github_upstream_zip(),
