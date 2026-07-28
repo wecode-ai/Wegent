@@ -410,7 +410,7 @@ async fn call_backend_tool(
         "upload_todo_attachment" => {
             let file_path =
                 string_argument(arguments, "file_path").map_err(|error| error.to_string())?;
-            let bytes = fs::read(&file_path).map_err(|error| error.to_string())?;
+            let bytes = fs::read(file_path).map_err(|error| error.to_string())?;
             let display_name = arguments
                 .get("display_name")
                 .and_then(Value::as_str)
@@ -440,13 +440,13 @@ async fn call_backend_tool(
         "download_todo_attachment" => {
             let attachment_id =
                 string_argument(arguments, "attachment_id").map_err(|error| error.to_string())?;
-            let output_path = attachment_output_path(arguments, &attachment_id)
+            let output_path = attachment_output_path(arguments, attachment_id)
                 .map_err(|error| error.to_string())?;
             let access = backend_json(
                 client
                     .get(format!(
                         "{base}/loop-item-attachments/{}/access",
-                        encode_segment(&attachment_id)
+                        encode_segment(attachment_id)
                     ))
                     .bearer_auth(auth_token)
                     .send()
@@ -477,7 +477,7 @@ async fn call_backend_tool(
             let response = client
                 .delete(format!(
                     "{base}/loop-item-attachments/{}",
-                    encode_segment(&attachment_id)
+                    encode_segment(attachment_id)
                 ))
                 .bearer_auth(auth_token)
                 .send()
@@ -557,7 +557,7 @@ fn filter_backend_tasks(response: Value, arguments: &Value) -> Value {
                     && arguments
                         .get("tag")
                         .and_then(Value::as_str)
-                        .is_none_or(|tag| {
+                        .map_or(true, |tag| {
                             task["tags"]
                                 .as_array()
                                 .is_some_and(|tags| tags.iter().any(|value| value == tag))
@@ -565,7 +565,7 @@ fn filter_backend_tasks(response: Value, arguments: &Value) -> Value {
                     && arguments
                         .get("creator_user_id")
                         .and_then(Value::as_i64)
-                        .is_none_or(|id| task["created_by_user_id"] == id)
+                        .map_or(true, |id| task["created_by_user_id"] == id)
             })
             .take(limit)
             .collect(),
@@ -576,7 +576,7 @@ fn matches_filter(task: &Value, arguments: &Value, key: &str) -> bool {
     arguments
         .get(key)
         .and_then(Value::as_str)
-        .is_none_or(|value| task[key] == value)
+        .map_or(true, |value| task[key] == value)
 }
 
 fn encode_segment(value: &str) -> String {

@@ -38,6 +38,25 @@ pub(crate) mod test_env {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    // The desktop app exports WEGENT_* variables (for example
+    // WEGENT_BUNDLED_HOOKS_DIR) into every process it spawns, including
+    // `cargo test`. Unit tests must observe a hermetic environment, so scrub
+    // these variables before any test runs. Constructors execute
+    // single-threaded ahead of main, which makes the mutation safe.
+    #[used]
+    #[link_section = "__DATA,__mod_init_func"]
+    static SCRUB_WEGENT_ENV: extern "C" fn() = {
+        extern "C" fn scrub() {
+            for (key, _) in std::env::vars_os() {
+                if key.to_string_lossy().starts_with("WEGENT_") {
+                    // SAFETY: constructors run single-threaded before main.
+                    unsafe { std::env::remove_var(&key) };
+                }
+            }
+        }
+        scrub
+    };
+
     pub(crate) fn lock() -> MutexGuard<'static, ()> {
         // Recover from poisoning so a single panicking test does not cascade
         // into unrelated PoisonError failures across the shared test binary.
