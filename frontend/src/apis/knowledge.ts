@@ -12,6 +12,7 @@ import type {
   ChunkListResponse,
   ChunkResponse,
   DocumentDetailResponse,
+  DocumentContentReadResponse,
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseListResponse,
@@ -488,6 +489,19 @@ export async function getDocumentChunk(
  */
 export async function getDocumentDetail(documentId: number): Promise<DocumentDetailResponse> {
   return apiClient.get<DocumentDetailResponse>(`/knowledge-documents/${documentId}/detail`)
+}
+
+/**
+ * Read a small page of document content and its stable identity metadata.
+ */
+export async function getDocumentContent(
+  documentId: number,
+  offset: number = 0,
+  limit: number = 1
+): Promise<DocumentContentReadResponse> {
+  return apiClient.get<DocumentContentReadResponse>(
+    `/knowledge/documents/${documentId}/content?offset=${offset}&limit=${limit}`
+  )
 }
 
 // ============== Knowledge Folder APIs ==============

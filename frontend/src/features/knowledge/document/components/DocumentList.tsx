@@ -25,6 +25,7 @@ import {
   FolderInput,
   ArrowRightLeft,
   ChevronRight,
+  Plus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -49,11 +50,9 @@ import {
   shouldDisableDocumentBatchActions,
 } from '../hooks/useKnowledgeResourceSelection'
 import { Pagination } from '@/components/ui/pagination'
-import { listDocuments } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import { useDocumentIndexPolling } from '@/features/knowledge/multimodal/hooks/useDocumentIndexPolling'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
-import { resolvePerFilePrompt } from '@/features/knowledge/multimodal/utils/resolvePerFilePrompt'
 import type {
   KnowledgeBase,
   KnowledgeDocument,
@@ -78,31 +77,12 @@ import {
   deletedFolderAffectsActiveFolder,
   folderTreeContainsId,
 } from '../utils/resource-tree'
+import { findDocumentByName } from '../utils/document-lookup'
+import { findDocumentForDeepLink } from '../utils/document-lookup'
+import { createDocumentsFromAttachments } from '../utils/document-creation'
 
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
-
-/**
- * Find a document by name across all pages of a knowledge base.
- * Uses iterative pagination (while has_more) to scan beyond the first 200 items.
- * Returns undefined if not found or if the signal is aborted.
- */
-async function findDocumentByName(
-  knowledgeBaseId: number,
-  documentName: string,
-  signal?: AbortSignal
-): Promise<KnowledgeDocument | undefined> {
-  let offset = 0
-  const batchSize = 200
-  while (!signal?.aborted) {
-    const response = await listDocuments(knowledgeBaseId, { limit: batchSize, offset })
-    if (signal?.aborted) return undefined
-    const found = response.items.find(doc => doc.name === documentName)
-    if (found || !response.has_more) return found
-    offset += response.items.length
-  }
-  return undefined
-}
 
 /**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
@@ -192,6 +172,9 @@ function DocAutoOpener({
 // Re-export KbGroupInfo from types for backwards compatibility
 export type { KbGroupInfo } from '@/types/knowledge'
 
+const canUseAsKnowledgeSource = (document: KnowledgeDocument) =>
+  document.is_active && document.index_status === 'success'
+
 interface DocumentListProps {
   knowledgeBase: KnowledgeBase
   onBack?: () => void
@@ -201,6 +184,18 @@ interface DocumentListProps {
   compact?: boolean
   /** Callback when document selection changes (for notebook mode context injection) */
   onSelectionChange?: (documentIds: number[]) => void
+  /** Controlled selection used when another panel can also change the source scope. */
+  selectedDocumentIds?: number[]
+  /** Number of active, indexed documents available to the workspace. */
+  availableDocumentCount?: number | null
+  /** Refresh the browser without remounting it. */
+  refreshToken?: number
+  /** Continue polling while documents outside the visible page are processing. */
+  processingDocumentCount?: number
+  /** Notify the workspace after document mutations. */
+  onDocumentsChanged?: () => void
+  /** Adapt document browsing controls for the workspace source panel. */
+  sourceWorkspace?: boolean
   /** Callback to refresh knowledge base details (used after summary retry) */
   onRefreshKnowledgeBase?: () => void
   /** Optional header actions to display next to the title (e.g., tabs) */
@@ -211,6 +206,8 @@ interface DocumentListProps {
   onGroupClick?: (groupId: string, groupType?: string) => void
   /** Initial document path to auto-open (from virtual URL path segments) */
   initialDocPath?: string
+  /** Stable document identity for deep links. */
+  initialDocumentId?: number
   /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
   isOrganization?: boolean
   /** Whether server-side pagination is enabled */
@@ -237,11 +234,18 @@ export function DocumentList({
   canManageAllDocuments = false,
   compact = false,
   onSelectionChange,
+  selectedDocumentIds: controlledSelectedDocumentIds,
+  availableDocumentCount = null,
+  refreshToken = 0,
+  processingDocumentCount = 0,
+  onDocumentsChanged,
+  sourceWorkspace = false,
   onRefreshKnowledgeBase,
   headerActions,
   groupInfo,
   onGroupClick,
   initialDocPath,
+  initialDocumentId,
   isOrganization = false,
   paginationEnabled = true,
 }: DocumentListProps) {
@@ -251,6 +255,7 @@ export function DocumentList({
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   // 0 = root level, positive number = subfolder id
   const [currentFolderId, setCurrentFolderId] = useState<number>(0)
+  const previousRefreshTokenRef = useRef(refreshToken)
   // Expand-all view: show full folder+document tree when KB document_count < 200
   const [isExpandAllView, setIsExpandAllView] = useState(false)
 
@@ -373,7 +378,7 @@ export function DocumentList({
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
   const {
-    selectedDocumentIds,
+    selectedDocumentIds: internalSelectedDocumentIds,
     selectedFolderIds,
     summary: selectionSummary,
     resetSelection,
@@ -387,15 +392,24 @@ export function DocumentList({
     documents,
     treeIndex: fullTree.index,
   })
+  const selectionIsControlled = controlledSelectedDocumentIds !== undefined
+  const selectedDocumentIds = useMemo(
+    () =>
+      selectionIsControlled ? new Set(controlledSelectedDocumentIds) : internalSelectedDocumentIds,
+    [controlledSelectedDocumentIds, internalSelectedDocumentIds, selectionIsControlled]
+  )
+  const resetSelectionForNavigation = useCallback(() => {
+    if (!selectionIsControlled) resetSelection()
+  }, [resetSelection, selectionIsControlled])
 
   // Navigate into a subfolder (layered navigation)
   const handleNavigateIntoFolder = useCallback(
     (folderId: number) => {
       setCurrentFolderId(folderId)
       setSearchQuery('')
-      resetSelection()
+      resetSelectionForNavigation()
     },
-    [resetSelection]
+    [resetSelectionForNavigation]
   )
 
   // Toggle expand-all view
@@ -403,9 +417,9 @@ export function DocumentList({
     if (!isExpandAllView) {
       setCurrentFolderId(0)
     }
-    resetSelection()
+    resetSelectionForNavigation()
     setIsExpandAllView(prev => !prev)
-  }, [isExpandAllView, resetSelection])
+  }, [isExpandAllView, resetSelectionForNavigation])
   const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initialDocPath has been handled
@@ -479,8 +493,14 @@ export function DocumentList({
   // Auto-open document from initialDocPath prop (from virtual URL path segments)
   // This runs once when documents are loaded, without modifying the URL
   useEffect(() => {
+    setInitialDocPathHandled(false)
+  }, [initialDocPath, initialDocumentId, knowledgeBase.id])
+
+  useEffect(() => {
     if (!initialDocPath || initialDocPathHandled || loading || documents.length === 0) return
-    const targetDoc = documents.find(doc => doc.name === initialDocPath)
+    const targetDoc = documents.find(doc =>
+      initialDocumentId !== undefined ? doc.id === initialDocumentId : doc.name === initialDocPath
+    )
     if (targetDoc) {
       setViewingDoc(targetDoc)
       setInitialDocPathHandled(true)
@@ -493,9 +513,10 @@ export function DocumentList({
       const controller = new AbortController()
       ;(async () => {
         try {
-          const found = await findDocumentByName(
+          const found = await findDocumentForDeepLink(
             knowledgeBase.id,
             initialDocPath,
+            initialDocumentId,
             controller.signal
           )
           if (!controller.signal.aborted && found) {
@@ -515,6 +536,7 @@ export function DocumentList({
     setInitialDocPathHandled(true)
   }, [
     initialDocPath,
+    initialDocumentId,
     initialDocPathHandled,
     loading,
     documents,
@@ -526,51 +548,79 @@ export function DocumentList({
   // documents to narrow the chat context; otherwise the whole KB is available
   // through retrieval without injecting every document into context.
   useEffect(() => {
-    if (onSelectionChange) {
+    if (onSelectionChange && !selectionIsControlled) {
       skipNextSelectionNotifyRef.current = true
       resetSelection()
       onSelectionChange([])
     }
-  }, [knowledgeBase.id, onSelectionChange, resetSelection])
+  }, [knowledgeBase.id, onSelectionChange, resetSelection, selectionIsControlled])
 
   // Notify parent when selection changes.
   useEffect(() => {
-    if (onSelectionChange) {
+    if (onSelectionChange && !selectionIsControlled) {
       if (skipNextSelectionNotifyRef.current) {
         skipNextSelectionNotifyRef.current = false
         return
       }
       onSelectionChange(Array.from(selectedDocumentIds))
     }
-  }, [selectedDocumentIds, onSelectionChange])
+  }, [selectedDocumentIds, onSelectionChange, selectionIsControlled])
 
   useEffect(() => {
-    resetSelection()
-  }, [currentFolderId, isExpandAllView, searchQuery, sortField, sortOrder, resetSelection])
+    resetSelectionForNavigation()
+  }, [
+    currentFolderId,
+    isExpandAllView,
+    searchQuery,
+    sortField,
+    sortOrder,
+    resetSelectionForNavigation,
+  ])
 
   useEffect(() => {
     if (currentFolderId !== 0 && !folderTreeContainsId(folders, currentFolderId)) {
       setCurrentFolderId(0)
-      resetSelection()
+      resetSelectionForNavigation()
     }
-  }, [folders, currentFolderId, resetSelection])
+  }, [folders, currentFolderId, resetSelectionForNavigation])
 
   // Auto-exit expand-all view if KB document count exceeds the threshold
   useEffect(() => {
     if (isExpandAllView && (knowledgeBase.document_count ?? 0) >= 200) {
       setIsExpandAllView(false)
-      resetSelection()
+      resetSelectionForNavigation()
     }
-  }, [isExpandAllView, knowledgeBase.document_count, resetSelection])
+  }, [isExpandAllView, knowledgeBase.document_count, resetSelectionForNavigation])
+
+  useEffect(() => {
+    if (previousRefreshTokenRef.current === refreshToken) return
+    previousRefreshTokenRef.current = refreshToken
+    void refresh()
+    void fetchFolders()
+  }, [fetchFolders, refresh, refreshToken])
+
+  useEffect(() => {
+    if (processingDocumentCount <= 0) return
+    const timer = window.setInterval(() => void refresh(), 5000)
+    return () => window.clearInterval(timer)
+  }, [processingDocumentCount, refresh])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
   const canManageDocumentArea = canManageAnyDocuments
-  const canManageFolderStructure = canManageDocumentArea
+  const canManageFolderStructure = canManageDocumentArea && !sourceWorkspace
 
   const canManageDocument = (_document: KnowledgeDocument) => canManageDocumentArea
 
   const canSelectDocument = (document: KnowledgeDocument) =>
     Boolean(onSelectionChange) || canManageDocument(document)
+  const isDocumentSelectionDisabled = (document: KnowledgeDocument) =>
+    Boolean(onSelectionChange) && !canUseAsKnowledgeSource(document)
+  const getDocumentSelectionDisabledHint = (document: KnowledgeDocument) =>
+    t(
+      document.index_status === 'not_indexed'
+        ? 'document.document.indexStatus.notIndexedHint'
+        : 'document.document.indexStatus.unavailableHint'
+    )
 
   const folderSelectionBlocksDocumentBatchActions = selectionSummary.hasFolderScopeSelection
   const documentBatchActionsDisabled = shouldDisableDocumentBatchActions({
@@ -585,70 +635,38 @@ export function DocumentList({
 
   const handleGoToPage = useCallback(
     (targetPage: number) => {
-      resetSelection()
+      resetSelectionForNavigation()
       goToPage(targetPage)
     },
-    [resetSelection, goToPage]
+    [resetSelectionForNavigation, goToPage]
   )
 
   const handlePageSizeChange = useCallback(
     (targetPageSize: number) => {
-      resetSelection()
+      resetSelectionForNavigation()
       changePageSize(targetPageSize)
     },
-    [changePageSize, resetSelection]
+    [changePageSize, resetSelectionForNavigation]
   )
 
   const handleUploadComplete = async (
-    attachments: { attachment: { id: number; filename: string }; file: File }[],
+    attachments: Parameters<typeof createDocumentsFromAttachments>[0]['attachments'],
     splitterConfig?: Partial<SplitterConfig>,
     multimodalAnalysisPrompts?: {
       video?: string | null
       image?: string | null
     }
   ) => {
-    // Track newly created document IDs for auto-selection
-    const newDocumentIds: number[] = []
-
-    // Create documents sequentially to ensure all are created
-    for (const { attachment, file } of attachments) {
-      // Use attachment.filename (which may have been renamed) instead of file.name
-      const documentName = attachment.filename || file.name
-      const extension = documentName.split('.').pop() || ''
-      // Apply the per-media-type prompt override: video files get the video
-      // prompt, image files get the image prompt, non-media files get none.
-      // undefined → the document inherits the KB default for its type.
-      const perFilePrompt = resolvePerFilePrompt(documentName, extension, multimodalAnalysisPrompts)
-      try {
-        const created = await create({
-          attachment_id: attachment.id,
-          name: documentName,
-          file_extension: extension,
-          file_size: file.size,
-          splitter_config: splitterConfig,
-          source_type: 'file',
-          folder_id: selectedUploadFolderId || 0,
-          // Forward the per-upload multimodal prompt override (undefined when
-          // not customized or when the file is not multimodal → inherits KB default).
-          multimodal_analysis_prompt: perFilePrompt,
-        })
-        // Collect newly created document ID
-        if (created?.id) {
-          newDocumentIds.push(created.id)
-        }
-      } catch {
-        // Continue with next file even if one fails
-      }
-    }
-
-    // Auto-select newly uploaded documents (for notebook mode context injection)
-    if (onSelectionChange && newDocumentIds.length > 0) {
-      const nextSelectedIds = new Set(selectedDocumentIds)
-      newDocumentIds.forEach(id => nextSelectedIds.add(id))
-      setDocumentSelection(nextSelectedIds)
-    }
-
-    setShowUpload(false)
+    const results = await createDocumentsFromAttachments({
+      attachments,
+      folderId: selectedUploadFolderId || 0,
+      splitterConfig,
+      multimodalAnalysisPrompts,
+      createDocument: create,
+      fallbackError: t('document.document.createFailed'),
+    })
+    if (results.some(result => result.documentId !== undefined)) onDocumentsChanged?.()
+    return results
   }
 
   const handleTableAdd = async (data: TableDocument) => {
@@ -661,6 +679,7 @@ export function DocumentList({
       folder_id: selectedUploadFolderId || 0,
     })
     setShowUpload(false)
+    onDocumentsChanged?.()
   }
 
   const handleWebAdd = async (url: string, name?: string) => {
@@ -679,13 +698,14 @@ export function DocumentList({
     await refresh()
 
     // Auto-select newly created document (for notebook mode context injection)
-    if (onSelectionChange && result.document?.id) {
+    if (onSelectionChange && !selectionIsControlled && result.document?.id) {
       const nextSelectedIds = new Set(selectedDocumentIds)
       nextSelectedIds.add(result.document.id)
       setDocumentSelection(nextSelectedIds)
     }
 
     setShowUpload(false)
+    onDocumentsChanged?.()
   }
 
   const handleDelete = async () => {
@@ -693,13 +713,21 @@ export function DocumentList({
     try {
       await remove(deletingDoc.id)
       setDeletingDoc(null)
+      onDocumentsChanged?.()
     } catch {
       // Error handled by hook
     }
   }
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
-    selectDocument(doc, selected)
+    if (!selectionIsControlled) {
+      selectDocument(doc, selected)
+      return
+    }
+    const next = new Set(selectedDocumentIds)
+    if (selected) next.add(doc.id)
+    else next.delete(doc.id)
+    onSelectionChange?.(Array.from(next))
   }
 
   // Folder selection handler: folder checkbox represents a backend-resolved scope.
@@ -711,13 +739,28 @@ export function DocumentList({
   )
 
   const handleSelectAll = (checked: boolean) => {
-    selectVisibleDocuments(checked)
+    if (!selectionIsControlled) {
+      selectVisibleDocuments(checked)
+      return
+    }
+    const next = new Set(selectedDocumentIds)
+    documents.filter(canUseAsKnowledgeSource).forEach(document => {
+      if (checked) next.add(document.id)
+      else next.delete(document.id)
+    })
+    onSelectionChange?.(Array.from(next))
   }
 
+  const selectableDocuments = onSelectionChange
+    ? documents.filter(canUseAsKnowledgeSource)
+    : documents
   const isAllSelected =
-    documents.length > 0 && documents.every(doc => selectedDocumentIds.has(doc.id))
+    selectableDocuments.length > 0 &&
+    selectableDocuments.every(doc => selectedDocumentIds.has(doc.id))
 
-  const isPartialSelected = documents.some(doc => selectedDocumentIds.has(doc.id)) && !isAllSelected
+  const isPartialSelected =
+    selectableDocuments.some(doc => selectedDocumentIds.has(doc.id)) && !isAllSelected
+  const usesAllAvailableDocuments = selectionIsControlled && selectedDocumentIds.size === 0
 
   // Batch operations using batch API
   const handleBatchDelete = async () => {
@@ -727,6 +770,7 @@ export function DocumentList({
     try {
       await batchDelete(payload.documentIds)
       resetSelection()
+      onDocumentsChanged?.()
     } catch {
       // Error handled by hook
     } finally {
@@ -749,6 +793,7 @@ export function DocumentList({
 
       // Refresh document list to show updated data
       await refresh()
+      onDocumentsChanged?.()
     } catch {
       // Error will be shown via toast in the API layer
     } finally {
@@ -778,6 +823,7 @@ export function DocumentList({
       // refresh is guaranteed to see it. Mirrors how newly-uploaded docs (which
       // enter the list already in an active status) get live progress updates.
       await refresh()
+      onDocumentsChanged?.()
     } catch (err) {
       // Use ApiError.errorCode for structured error handling
       let errorMessage = t('document.document.reindexFailed')
@@ -924,12 +970,13 @@ export function DocumentList({
           refresh()
           fetchFolders()
           setShowTransfer(false)
+          onDocumentsChanged?.()
         }
       } finally {
         setIsTransferring(false)
       }
     },
-    [getSelectionPayload, transfer, resetSelection, refresh, fetchFolders]
+    [getSelectionPayload, transfer, resetSelection, refresh, fetchFolders, onDocumentsChanged]
   )
   // Knowledge base type info
   const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
@@ -938,11 +985,12 @@ export function DocumentList({
     knowledgeBase.retrieval_config?.retriever_name &&
     knowledgeBase.retrieval_config?.embedding_config?.model_name
   )
+  const canToggleExpandAll = folders.length > 0 && (knowledgeBase.document_count ?? 0) < 200
 
   return (
-    <div className="space-y-4">
+    <div className={sourceWorkspace ? 'space-y-3' : 'space-y-4'}>
       {/* Header - Wegent style */}
-      <div className="flex items-center gap-3">
+      <div className={`flex items-center gap-3 ${sourceWorkspace ? 'lg:pr-10' : ''}`}>
         {onBack && (
           <button
             onClick={onBack}
@@ -976,7 +1024,7 @@ export function DocumentList({
               {knowledgeBase.name}
             </h2>
             {/* Summary tooltip - keep visible when manual summary exists after AI failure */}
-            {(hasVisibleSummary || canManageAllDocuments) && (
+            {!sourceWorkspace && (hasVisibleSummary || canManageAllDocuments) && (
               <>
                 <TooltipProvider>
                   <Tooltip delayDuration={200}>
@@ -1055,7 +1103,7 @@ export function DocumentList({
           )}
         </div>
         {/* Header actions (e.g., tabs) + expand-all toggle */}
-        {folders.length > 0 && (knowledgeBase.document_count ?? 0) < 200 && (
+        {!sourceWorkspace && canToggleExpandAll && (
           <Button
             variant="outline"
             size="sm"
@@ -1067,47 +1115,91 @@ export function DocumentList({
         )}
         {headerActions}
       </div>
-      {canManageAllDocuments && <EditKnowledgeBaseSummaryDialog {...editorDialogProps} />}
+      {canManageAllDocuments && !sourceWorkspace && (
+        <EditKnowledgeBaseSummaryDialog {...editorDialogProps} />
+      )}
+
+      {canUpload && sourceWorkspace && (
+        <Button
+          variant="outline"
+          className="h-11 w-full"
+          onClick={handleOpenUpload}
+          data-testid="document-add-source-full-width"
+        >
+          <Plus className="mr-1.5 h-4 w-4" />
+          {t('artifact.addMaterials')}
+        </Button>
+      )}
 
       {/* Folder breadcrumb navigation (layered nav only) */}
-      {!isExpandAllView && (
-        <div className="flex items-center gap-1 text-sm text-text-muted flex-wrap">
-          <button
-            onClick={() => {
-              setCurrentFolderId(0)
-              resetSelection()
-            }}
-            className={`hover:text-text-primary transition-colors ${currentFolderId === 0 ? 'text-text-primary font-medium' : ''}`}
-            data-testid="breadcrumb-root"
-          >
-            {t('document.breadcrumb.root')}
-          </button>
-          {folderBreadcrumb.map((folder, i) => (
-            <span key={folder.id} className="flex items-center gap-1">
-              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
-              {i < folderBreadcrumb.length - 1 ? (
-                <button
-                  onClick={() => {
-                    setCurrentFolderId(folder.id)
-                    resetSelection()
-                  }}
-                  className="hover:text-text-primary transition-colors"
-                  data-testid={`breadcrumb-folder-${folder.id}`}
-                >
-                  {folder.name}
-                </button>
-              ) : (
-                <span className="text-text-primary font-medium">{folder.name}</span>
-              )}
-            </span>
-          ))}
+      {(!isExpandAllView || sourceWorkspace) && (
+        <div
+          className="flex items-center justify-between gap-2"
+          data-testid={sourceWorkspace ? 'document-source-breadcrumb-row' : undefined}
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm text-text-muted">
+            <button
+              onClick={() => {
+                setCurrentFolderId(0)
+                resetSelectionForNavigation()
+              }}
+              className={`shrink-0 hover:text-text-primary transition-colors ${currentFolderId === 0 ? 'text-text-primary font-medium' : ''}`}
+              data-testid="breadcrumb-root"
+            >
+              {t('document.breadcrumb.root')}
+            </button>
+            {!isExpandAllView &&
+              folderBreadcrumb.map((folder, i) => (
+                <span key={folder.id} className="flex min-w-0 items-center gap-1">
+                  <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
+                  {i < folderBreadcrumb.length - 1 ? (
+                    <button
+                      onClick={() => {
+                        setCurrentFolderId(folder.id)
+                        resetSelectionForNavigation()
+                      }}
+                      className="truncate hover:text-text-primary transition-colors"
+                      data-testid={`breadcrumb-folder-${folder.id}`}
+                    >
+                      {folder.name}
+                    </button>
+                  ) : (
+                    <span className="truncate text-text-primary font-medium">{folder.name}</span>
+                  )}
+                </span>
+              ))}
+          </div>
+          {sourceWorkspace && canToggleExpandAll && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={handleToggleExpandAll}
+              data-testid="expand-all-toggle"
+            >
+              {isExpandAllView ? t('document.tree.layeredNav') : t('document.tree.expandAll')}
+            </Button>
+          )}
         </div>
       )}
 
       {/* Search bar and action buttons */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Search - inline for normal mode, popover for compact mode */}
-        {compact ? (
+        {/* Search - always visible in the source workspace, inline for normal mode,
+            and in a popover for other compact layouts. */}
+        {sourceWorkspace ? (
+          <div className="relative w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+            <input
+              type="text"
+              className="h-11 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder={searchPlaceholder}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              data-testid="document-source-search-input"
+            />
+          </div>
+        ) : compact ? (
           <div className="relative">
             <Button
               variant="outline"
@@ -1158,57 +1250,100 @@ export function DocumentList({
             />
           </div>
         )}
-        {/* Spacer to push buttons to the right */}
-        <div className="flex-1" />
+        {!sourceWorkspace && (
+          <>
+            {/* Spacer to push buttons to the right */}
+            <div className="flex-1" />
 
-        {/* Refresh list button */}
-        <TooltipProvider>
-          <Tooltip delayDuration={200}>
-            <TooltipTrigger asChild>
-              <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            {/* Refresh list button */}
+            <TooltipProvider>
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
+                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('common:actions.refresh')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+
+            {/* Retrieval test button */}
+            <TooltipProvider>
+              <Tooltip delayDuration={200}>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
+                    <Target className="w-4 h-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('document.retrievalTest.button')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+
+            {/* Create folder button */}
+            {canManageFolderStructure && (
+              <Button
+                variant="outline"
+                className="h-11 min-w-[44px]"
+                onClick={() => handleCreateFolder(currentFolderId)}
+              >
+                <FolderPlus className="w-4 h-4 mr-1" />
+                {t('document.folder.create')}
               </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('common:actions.refresh')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+            )}
 
-        {/* Retrieval test button */}
-        <TooltipProvider>
-          <Tooltip delayDuration={200}>
-            <TooltipTrigger asChild>
-              <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
-                <Target className="w-4 h-4" />
+            {/* Upload button */}
+            {canUpload && (
+              <Button variant="primary" size="sm" onClick={handleOpenUpload}>
+                <Upload className="w-4 h-4 mr-1" />
+                {t('document.document.upload')}
               </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('document.retrievalTest.button')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-
-        {/* Create folder button */}
-        {canManageFolderStructure && (
-          <Button
-            variant="outline"
-            className="h-11 min-w-[44px]"
-            onClick={() => handleCreateFolder(currentFolderId)}
-          >
-            <FolderPlus className="w-4 h-4 mr-1" />
-            {t('document.folder.create')}
-          </Button>
-        )}
-
-        {/* Upload button */}
-        {canUpload && (
-          <Button variant="primary" size="sm" onClick={handleOpenUpload}>
-            <Upload className="w-4 h-4 mr-1" />
-            {t('document.document.upload')}
-          </Button>
+            )}
+          </>
         )}
       </div>
+
+      {sourceWorkspace && onSelectionChange && (
+        <div
+          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 text-xs text-text-secondary"
+          data-testid="document-source-scope-summary"
+        >
+          {documents.length > 0 && (
+            <button
+              type="button"
+              onClick={() => handleSelectAll(!isAllSelected)}
+              className="flex min-h-11 shrink-0 items-center gap-1.5 text-text-muted transition-colors hover:text-text-primary md:min-h-0"
+              aria-pressed={isAllSelected}
+              data-testid="document-select-current-page"
+            >
+              {isAllSelected ? (
+                <CheckSquare className="h-3.5 w-3.5 text-primary" />
+              ) : (
+                <Square className="h-3.5 w-3.5" />
+              )}
+              <span>{t('document.document.batch.selectCurrentPage')}</span>
+              <span>
+                ({selectableDocuments.filter(doc => selectedDocumentIds.has(doc.id)).length}/
+                {selectableDocuments.length})
+              </span>
+            </button>
+          )}
+          <span>
+            {usesAllAvailableDocuments
+              ? availableDocumentCount === null
+                ? t('artifact.sourceDialog.all')
+                : t('artifact.sourceDialog.defaultAllHint', {
+                    count: availableDocumentCount,
+                  })
+              : t('artifact.sourceDialog.selectedHint', {
+                  count: selectedDocumentIds.size,
+                })}
+          </span>
+        </div>
+      )}
 
       {/* Document List */}
       {loading && documents.length === 0 ? (
@@ -1307,7 +1442,7 @@ export function DocumentList({
           {compact ? (
             <div className="space-y-2">
               {/* Select all control bar for notebook mode */}
-              {onSelectionChange && documents.length > 0 && (
+              {!sourceWorkspace && onSelectionChange && documents.length > 0 && (
                 <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
                   <button
                     onClick={() => handleSelectAll(!isAllSelected)}
@@ -1325,8 +1460,8 @@ export function DocumentList({
                     </span>
                   </button>
                   <span className="text-text-muted">
-                    ({documents.filter(doc => selectedDocumentIds.has(doc.id)).length}/
-                    {documents.length})
+                    ({selectableDocuments.filter(doc => selectedDocumentIds.has(doc.id)).length}/
+                    {selectableDocuments.length})
                   </span>
                 </div>
               )}
@@ -1345,6 +1480,8 @@ export function DocumentList({
                 reindexingDocId={reindexingDocId}
                 canManage={canManageDocument}
                 canSelect={canSelectDocument}
+                isSelectionDisabled={isDocumentSelectionDisabled}
+                getSelectionDisabledHint={getDocumentSelectionDisabledHint}
                 selectedIds={selectedDocumentIds}
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}

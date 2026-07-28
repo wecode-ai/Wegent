@@ -467,6 +467,18 @@ export interface KnowledgeDocumentListResponse {
   items: KnowledgeDocument[]
 }
 
+export interface DocumentContentReadResponse {
+  document_id: number
+  name: string
+  content: string
+  total_length: number
+  offset: number
+  returned_length: number
+  has_more: boolean
+  kb_id: number
+  index_status: DocumentIndexStatus
+}
+
 // Accessible Knowledge types (for AI integration)
 export interface AccessibleKnowledgeBase {
   id: number

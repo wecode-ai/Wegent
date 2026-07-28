@@ -47,6 +47,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeView } from '@/types/knowledge'
 import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
+import { useWorkspaceTaskSidebar } from '@/features/knowledge/document/hooks/useWorkspaceTaskSidebar'
 
 const AddRepoModal = dynamic(() => import('@/features/knowledge/AddRepoModal'), {
   ssr: false,
@@ -163,13 +164,22 @@ function KnowledgeVirtualPageContent() {
     saveLastTab('wiki')
   }, [])
 
-  const handleToggleCollapsed = () => {
-    setIsCollapsed(prev => {
-      const newValue = !prev
-      localStorage.setItem('task-sidebar-collapsed', String(newValue))
-      return newValue
+  const isWorkspaceView =
+    knowledgeViewState.visible && knowledgeViewState.currentView === 'notebook'
+  const toggleUserSidebar = useCallback(() => {
+    setIsCollapsed(previous => {
+      const next = !previous
+      localStorage.setItem('task-sidebar-collapsed', String(next))
+      return next
     })
-  }
+  }, [])
+  const { isCollapsed: isTaskSidebarCollapsed, toggle: handleToggleCollapsed } =
+    useWorkspaceTaskSidebar({
+      isMobile,
+      isWorkspaceView,
+      userCollapsed: isCollapsed,
+      onToggleUserCollapsed: toggleUserSidebar,
+    })
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
@@ -214,17 +224,20 @@ function KnowledgeVirtualPageContent() {
       </Suspense>
 
       {/* Collapsed sidebar floating buttons */}
-      {isCollapsed && !isMobile && (
+      {isTaskSidebarCollapsed && !isMobile && (
         <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
       )}
 
       {/* Responsive resizable sidebar */}
-      <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
+      <ResizableSidebar
+        isCollapsed={isTaskSidebarCollapsed}
+        onToggleCollapsed={handleToggleCollapsed}
+      >
         <TaskSidebar
           isMobileSidebarOpen={isMobileSidebarOpen}
           setIsMobileSidebarOpen={setIsMobileSidebarOpen}
           pageType="knowledge"
-          isCollapsed={isCollapsed}
+          isCollapsed={isTaskSidebarCollapsed}
           onToggleCollapsed={handleToggleCollapsed}
         />
       </ResizableSidebar>
@@ -248,7 +261,7 @@ function KnowledgeVirtualPageContent() {
             />
           }
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
-          isSidebarCollapsed={isCollapsed}
+          isSidebarCollapsed={isTaskSidebarCollapsed}
         >
           {knowledgeViewSwitcher}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}

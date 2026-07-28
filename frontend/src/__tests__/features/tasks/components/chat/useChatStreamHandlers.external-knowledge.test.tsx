@@ -5,7 +5,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { useChatStreamHandlers } from '@/features/tasks/components/chat/useChatStreamHandlers'
 import type { ContextItem } from '@/types/context'
-import type { TaskDetail } from '@/types/api'
+import type { TaskDetail, TaskType } from '@/types/api'
 
 const mockContextSendMessage = jest.fn()
 
@@ -89,8 +89,21 @@ jest.mock('@/hooks/useTraceAction', () => ({
   }),
 }))
 
-function renderSendHook(selectedContexts: ContextItem[]) {
-  return renderHook(() =>
+function renderSendHook(
+  selectedContexts: ContextItem[],
+  options: {
+    taskType?: TaskType
+    knowledgeBaseId?: number
+    selectedDocumentIds?: number[]
+    attachments?: unknown[]
+    isAttachmentReadyToSend?: boolean
+    externalApiParams?: Record<string, string>
+  } = {}
+) {
+  const setTaskInputMessage = jest.fn()
+  const resetAttachment = jest.fn()
+  const resetContexts = jest.fn()
+  const hook = renderHook(() =>
     useChatStreamHandlers({
       selectedTeam: { id: 5, name: 'Team', agent_type: 'chat' } as never,
       selectedModel: null,
@@ -102,21 +115,24 @@ function renderSendHook(selectedContexts: ContextItem[]) {
       showRepositorySelector: false,
       effectiveRequiresWorkspace: false,
       taskInputMessage: 'find the spec',
-      setTaskInputMessage: jest.fn(),
+      setTaskInputMessage,
       enableDeepThinking: false,
       enableClarification: false,
-      externalApiParams: {},
-      attachments: [] as never,
-      resetAttachment: jest.fn(),
-      isAttachmentReadyToSend: true,
-      taskType: 'chat',
+      externalApiParams: options.externalApiParams ?? {},
+      attachments: (options.attachments ?? []) as never,
+      resetAttachment,
+      isAttachmentReadyToSend: options.isAttachmentReadyToSend ?? true,
+      taskType: options.taskType ?? 'chat',
+      knowledgeBaseId: options.knowledgeBaseId,
       shouldHideChatInput: false,
       scrollToBottom: jest.fn(),
       selectedContexts,
-      resetContexts: jest.fn(),
+      selectedDocumentIds: options.selectedDocumentIds,
+      resetContexts,
       additionalSkills: [],
     })
   )
+  return { ...hook, setTaskInputMessage, resetAttachment, resetContexts }
 }
 
 describe('useChatStreamHandlers external knowledge contexts', () => {
@@ -192,5 +208,111 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
     const request = mockContextSendMessage.mock.calls[0][0]
     expect(request).not.toHaveProperty('externalKnowledgeRefs')
     expect(request).not.toHaveProperty('externalKnowledgeRefsReplace')
+  })
+
+  it('sends a strict current-KB scope with selected notebook documents', async () => {
+    const { result } = renderSendHook([], {
+      taskType: 'knowledge',
+      knowledgeBaseId: 12,
+      selectedDocumentIds: [101, 102],
+    })
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage.mock.calls[0][0].contexts).toEqual([
+      {
+        type: 'knowledge_base',
+        data: {
+          knowledge_id: 12,
+          document_ids: [101, 102],
+          scope_restricted: true,
+        },
+      },
+      {
+        type: 'selected_documents',
+        data: {
+          knowledge_base_id: 12,
+          document_ids: [101, 102],
+        },
+      },
+    ])
+  })
+
+  it('sends Artifact node identity without trusting the current document selection', async () => {
+    const currentContext: ContextItem = {
+      type: 'knowledge_base',
+      id: 99,
+      name: 'Unrelated KB',
+      document_count: 1,
+    } as ContextItem
+    const attachment = {
+      id: 88,
+      filename: 'draft.pdf',
+      status: 'uploading',
+    }
+    const { result, setTaskInputMessage, resetAttachment, resetContexts } = renderSendHook(
+      [currentContext],
+      {
+        taskType: 'knowledge',
+        knowledgeBaseId: 12,
+        selectedDocumentIds: [999],
+        attachments: [attachment],
+        isAttachmentReadyToSend: false,
+        externalApiParams: { token: 'draft-value' },
+      }
+    )
+
+    await act(async () => {
+      await result.current.handleSendMessage('解释这个节点', {
+        artifactContext: {
+          artifact_id: 'artifact-1',
+          node_id: 'node-2',
+        },
+      })
+    })
+
+    const request = mockContextSendMessage.mock.calls[0][0]
+    expect(request.artifact_context).toEqual({
+      artifact_id: 'artifact-1',
+      node_id: 'node-2',
+    })
+    expect(request.message).toBe('解释这个节点')
+    expect(request.attachment_ids).toEqual([])
+    expect(request.contexts).toBeUndefined()
+    expect(setTaskInputMessage).not.toHaveBeenCalled()
+    expect(resetAttachment).not.toHaveBeenCalled()
+    expect(resetContexts).not.toHaveBeenCalled()
+  })
+
+  it('replaces the current-KB context with an explicit whole-KB scope', async () => {
+    const existingContext: ContextItem = {
+      type: 'knowledge_base',
+      id: 12,
+      name: 'Current KB',
+      document_ids: [101],
+      scope_restricted: true,
+    }
+    const { result } = renderSendHook([existingContext], {
+      taskType: 'knowledge',
+      knowledgeBaseId: 12,
+      selectedDocumentIds: [],
+    })
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage.mock.calls[0][0].contexts).toEqual([
+      {
+        type: 'knowledge_base',
+        data: {
+          knowledge_id: 12,
+          document_ids: [],
+          scope_restricted: false,
+        },
+      },
+    ])
   })
 })
