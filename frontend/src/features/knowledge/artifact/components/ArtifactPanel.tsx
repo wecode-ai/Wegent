@@ -177,6 +177,16 @@ export function ArtifactPanel({
       <div className="mb-5">
         <TooltipProvider delayDuration={300}>
           <div className="grid grid-cols-2 gap-3">
+            {canManage && (
+              <CapabilityCard
+                icon={Network}
+                label={t('artifact.action.mind_map')}
+                description={t('artifact.type.mindMapHint')}
+                disabled={effectiveAvailableDocumentCount === 0}
+                onClick={() => openCreate('mind_map')}
+                testId="artifact-type-mind-map"
+              />
+            )}
             <CapabilityCard
               icon={Presentation}
               label={t('artifact.action.presentation')}
@@ -194,14 +204,6 @@ export function ArtifactPanel({
                   disabled={effectiveAvailableDocumentCount === 0}
                   onClick={() => openCreate('briefing')}
                   testId="artifact-type-briefing"
-                />
-                <CapabilityCard
-                  icon={Network}
-                  label={t('artifact.action.mind_map')}
-                  description={t('artifact.type.mindMapHint')}
-                  disabled={effectiveAvailableDocumentCount === 0}
-                  onClick={() => openCreate('mind_map')}
-                  testId="artifact-type-mind-map"
                 />
               </>
             )}

@@ -123,6 +123,9 @@ describe('ArtifactPanel AI Workshop', () => {
     expect(screen.getByText('artifact.action.briefing')).toBeInTheDocument()
     expect(screen.getByText('artifact.action.mind_map')).toBeInTheDocument()
     expect(screen.getByText('artifact.action.presentation')).toBeInTheDocument()
+    expect(
+      screen.getAllByTestId(/^artifact-type-/).map(element => element.getAttribute('data-testid'))
+    ).toEqual(['artifact-type-mind-map', 'artifact-type-presentation', 'artifact-type-briefing'])
 
     fireEvent.click(screen.getByTestId('artifact-type-briefing'))
     fireEvent.click(screen.getByTestId('mock-create-submit'))
