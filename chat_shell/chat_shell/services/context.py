@@ -293,6 +293,7 @@ class ChatContext:
                 mcp_result,
                 has_attachments=has_attachments,
                 in_context_ids=in_context_ids,
+                had_compaction=had_compaction,
             )
 
             # Process KB tools result for system prompt
@@ -865,6 +866,7 @@ class ChatContext:
         mcp_result: tuple[list, list],
         has_attachments: bool = False,
         in_context_ids: frozenset[int] = frozenset(),
+        had_compaction: bool = False,
     ) -> list:
         """Build the complete list of extra tools from all sources.
 
@@ -978,10 +980,11 @@ class ChatContext:
                 self._request.task_id,
             )
 
-        # Add history-backtracking tools when context governance (summary
-        # compaction) is on, so the model can page back into detail that
-        # compaction summarized away. Task-scoped and read-only.
-        if self._backtrack_tools_enabled():
+        # Add history-backtracking tools only once compaction has actually
+        # summarized detail out of context (had_compaction). Most tasks never
+        # compact, so gating here keeps the tools — and their prompt hint — out of
+        # those turns entirely. Task-scoped and read-only.
+        if self._backtrack_tools_enabled() and had_compaction:
             from chat_shell.tools.builtin import ListHistoryTool, ReadSubtaskTool
 
             extra_tools.append(
