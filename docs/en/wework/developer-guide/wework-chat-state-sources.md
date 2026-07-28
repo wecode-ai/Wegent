@@ -228,6 +228,8 @@ Running Codex LocalTasks can send a queued message as native guidance. Guidance 
 
 Do not append the user message to the bottom after guidance succeeds, and do not wait for `runtime.tasks.guidance` to return before splitting the assistant. Assistant text generated while the guidance request is waiting would otherwise appear before the user guidance message, making live streaming order differ from refreshed transcript order.
 
+After inserting guidance, the message area must scroll to the bottom and briefly maintain stable bottom-following even if the user had previously scrolled upward, so the new user message and assistant continuation remain visible. This forced scroll applies only to newly applied guidance in the current conversation; loading a historical page that contains older guidance must preserve the user's current viewport anchor.
+
 ## Right-Side Temporary Chats
 
 The right workspace **Temporary chat** feature starts a short side conversation next to the current local Codex thread. It is not a fork and it is not a normal runtime task shown in the left task list:

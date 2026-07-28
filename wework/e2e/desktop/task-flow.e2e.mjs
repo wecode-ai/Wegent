@@ -57,6 +57,20 @@ const TASK_PLAN_STEP = 'Verify the background task plan remains visible'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const QUEUED_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_QUEUED_FOLLOW_UP'
 const BACKGROUND_GUIDANCE = 'WEWORK_DESKTOP_E2E_BACKGROUND_GUIDANCE'
+const GUIDANCE_SCROLL_PROMPT =
+  'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL: create a long completed conversation.'
+const GUIDANCE_SCROLL_ACTIVE_PROMPT =
+  'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_ACTIVE: keep this turn active for guidance.'
+const GUIDANCE_SCROLL_RESPONSE = [
+  'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
+  ...Array.from(
+    { length: 32 },
+    (_, index) =>
+      `Guidance scroll setup paragraph ${String(index + 1).padStart(2, '0')}. ${'Scrollable setup content '.repeat(8)}`
+  ),
+].join('\n\n')
+const GUIDANCE_SCROLL_MESSAGE = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_MESSAGE'
+const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMPLETE'
 const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
 const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
 const QUEUE_DIRECT_SECOND = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_SECOND'
@@ -309,6 +323,7 @@ const MEMORY_ONLY = process.argv.includes('--memory-only')
 const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
+const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
@@ -902,6 +917,105 @@ async function verifyBackgroundGuidanceNavigation({
     'Reopening the source conversation duplicated the applied user message'
   )
   await captureVerificationScreenshot(control, 'guidance-background-07-restored.png')
+
+  await verifyForegroundGuidanceScroll({
+    composerSelector,
+    control,
+    returnTaskRowTestId: runningTaskRowTestId,
+  })
+  return runningTaskRowTestId
+}
+
+async function verifyForegroundGuidanceScroll({ composerSelector, control, returnTaskRowTestId }) {
+  control.setScenario('guidance_scroll')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await sendPrompt(control, composerSelector, GUIDANCE_SCROLL_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequestCount('guidance_scroll', 1),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The guidance scroll scenario did not receive its setup prompt'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+  await waitForOverflowMetrics(
+    control,
+    scrollerSelector,
+    'The guidance scroll fixture did not overflow before sending guidance'
+  )
+
+  await sendPrompt(control, composerSelector, GUIDANCE_SCROLL_ACTIVE_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequestCount('guidance_scroll', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The guidance scroll scenario did not receive its active prompt'
+  )
+  await control.command('waitFor', '[data-testid="pause-response-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.2' })
+
+  await control.command('fill', composerSelector, { value: GUIDANCE_SCROLL_MESSAGE })
+  await control.command('click', '[data-testid="send-mode-menu-button"]')
+  await control.command('click', '[data-testid="guide-current-turn-option"]')
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: GUIDANCE_SCROLL_MESSAGE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  control.releaseGuidanceScrollToolExecution()
+  await withTimeout(
+    control.awaitScenarioRequestCount('guidance_scroll', 3),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The guided turn did not continue after its tool completed'
+  )
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: GUIDANCE_SCROLL_MESSAGE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const { element: guidanceMessage, scroller } = await waitForElementInsideScroller(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+    scrollerSelector,
+    'The newly applied guidance message did not become visible'
+  )
+  assert.ok(
+    guidanceMessage.top >= scroller.top - 2 && guidanceMessage.bottom <= scroller.bottom + 2,
+    `The newly applied guidance message was outside the viewport: ${JSON.stringify({
+      guidanceMessage,
+      scroller,
+    })}`
+  )
+  await captureVerificationScreenshot(control, 'guidance-scroll-01-message-visible.png')
+
+  control.releaseGuidanceScrollCompletion()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  if (returnTaskRowTestId) {
+    await ensureTaskRowVisible(control, returnTaskRowTestId)
+    await control.command('clickWhenEnabled', `[data-testid="${returnTaskRowTestId}"]`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="message-user"]', {
+      text: BACKGROUND_GUIDANCE,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
 }
 
 async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
@@ -1338,6 +1452,38 @@ async function waitForBottomMetrics(control, selector, description, timeoutMs = 
   throw new Error(
     `${description} remained ${distanceFromBottom(metrics)}px from the bottom after ${timeoutMs}ms`
   )
+}
+
+async function waitForOverflowMetrics(control, selector, description, timeoutMs = 3_000) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (metrics.scrollHeight > metrics.clientHeight) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description} after ${timeoutMs}ms: ${JSON.stringify(metrics)}`)
+}
+
+async function waitForElementInsideScroller(
+  control,
+  elementSelector,
+  scrollerSelector,
+  description,
+  timeoutMs = 3_000
+) {
+  const startedAt = Date.now()
+  let element
+  let scroller
+  while (Date.now() - startedAt < timeoutMs) {
+    scroller = await getSingleElementMetrics(control, scrollerSelector, description)
+    element = (await getElementMetrics(control, elementSelector)).at(-1)
+    if (element && element.top >= scroller.top - 2 && element.bottom <= scroller.bottom + 2) {
+      return { element, scroller }
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description} after ${timeoutMs}ms: ${JSON.stringify({ element, scroller })}`)
 }
 
 async function waitForTopMetrics(control, selector, description, timeoutMs = 3_000) {
@@ -4603,6 +4749,13 @@ class DesktopE2EServer {
     this.initialToolRelease = new Promise(resolvePromise => {
       this.releaseInitialTool = resolvePromise
     })
+    this.guidanceScrollStage = 'setup'
+    this.guidanceScrollToolRelease = new Promise(resolvePromise => {
+      this.releaseGuidanceScrollTool = resolvePromise
+    })
+    this.guidanceScrollCompletionRelease = new Promise(resolvePromise => {
+      this.releaseGuidanceScrollResponse = resolvePromise
+    })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
     })
@@ -4802,6 +4955,7 @@ class DesktopE2EServer {
         'goal_restart',
         'turn_navigation',
         'cancellation',
+        'guidance_scroll',
         'queue_management',
         'retry',
         'rate_limit',
@@ -4872,6 +5026,14 @@ class DesktopE2EServer {
 
   releaseInitialToolExecution() {
     this.releaseInitialTool()
+  }
+
+  releaseGuidanceScrollToolExecution() {
+    this.releaseGuidanceScrollTool()
+  }
+
+  releaseGuidanceScrollCompletion() {
+    this.releaseGuidanceScrollResponse()
   }
 
   releaseRetryResponse() {
@@ -5320,6 +5482,58 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'guidance_scroll') {
+      this.recordScenarioRequest('guidance_scroll', modelRequest)
+      if (this.guidanceScrollStage === 'setup') {
+        assert.ok(
+          JSON.stringify(body).includes(GUIDANCE_SCROLL_PROMPT),
+          'The guidance scroll setup prompt was lost'
+        )
+        this.guidanceScrollStage = 'active'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(GUIDANCE_SCROLL_RESPONSE),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (this.guidanceScrollStage === 'active') {
+        assert.ok(
+          JSON.stringify(body).includes(GUIDANCE_SCROLL_ACTIVE_PROMPT),
+          'The guidance scroll active prompt was lost'
+        )
+        const tool = selectShellTool(body, this.workspacePath)
+        this.guidanceScrollStage = 'awaiting_tool_output'
+        await this.guidanceScrollToolRelease
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall('wework-e2e-guidance-scroll-tool', tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(
+        this.guidanceScrollStage,
+        'awaiting_tool_output',
+        `Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`
+      )
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The guided turn did not return its tool output'
+      )
+      this.guidanceScrollStage = 'complete'
+      await this.guidanceScrollCompletionRelease
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(GUIDANCE_SCROLL_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -8311,8 +8525,10 @@ async function main() {
     }
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
-      phase = 'system-drag-panel-layout'
-      await verifySystemDragPanelLayout(control)
+      if (!GUIDANCE_SCROLL_ONLY) {
+        phase = 'system-drag-panel-layout'
+        await verifySystemDragPanelLayout(control)
+      }
 
       phase = 'remote-project-dialog'
       await control.command('click', '[data-testid="projects-create-button"]')
@@ -8549,6 +8765,18 @@ async function main() {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
 
+    if (GUIDANCE_SCROLL_ONLY) {
+      phase = 'guidance-scroll'
+      await verifyForegroundGuidanceScroll({ composerSelector, control })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework guidance scroll desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (MIXED_TOOL_TURNS_ONLY) {
       phase = 'mixed-assistant-tool-turns'
       await verifyModelProtocolMatrix({
@@ -8667,7 +8895,7 @@ async function main() {
           console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
           return
         }
-        await verifyBackgroundGuidanceNavigation({
+        taskRowTestId = await verifyBackgroundGuidanceNavigation({
           composerSelector,
           control,
           projectRowSelector,
@@ -8789,14 +9017,16 @@ async function main() {
       )
 
       phase = 'conversation-model-restore'
-      const taskSnapshot = await waitForSnapshot(
-        control,
-        snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
-        'The completed task was not available for model restoration'
-      )
-      taskRowTestId = taskSnapshot.testIds.find(testId =>
-        testId.startsWith('runtime-local-task-row-')
-      )
+      if (!taskRowTestId) {
+        const taskSnapshot = await waitForSnapshot(
+          control,
+          snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+          'The completed task was not available for model restoration'
+        )
+        taskRowTestId = taskSnapshot.testIds.find(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      }
       assert.ok(taskRowTestId, 'The completed task row was not found')
 
       if (SIDE_CHAT_ONLY) {
