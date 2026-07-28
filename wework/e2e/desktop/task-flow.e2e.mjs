@@ -2,7 +2,16 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, appendFile, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  appendFile,
+  chmod,
+  copyFile,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -42,6 +51,9 @@ const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
+const TASK_PLAN_PROMPT =
+  'WEWORK_DESKTOP_E2E_TASK_PLAN: publish a task plan and finish after the task is backgrounded.'
+const TASK_PLAN_STEP = 'Verify the background task plan remains visible'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const QUEUED_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_QUEUED_FOLLOW_UP'
 const BACKGROUND_GUIDANCE = 'WEWORK_DESKTOP_E2E_BACKGROUND_GUIDANCE'
@@ -313,6 +325,7 @@ const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
+const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
 const DESKTOP_CHECKPOINTS = [
@@ -447,6 +460,59 @@ function commandOutput(command, args, options = {}) {
     )
   }
   return result.stdout.trim()
+}
+
+function macosFrontmostProcessId() {
+  const output = commandOutput('osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    'ObjC.import("AppKit"); Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier)',
+  ])
+  const processId = Number(output)
+  assert.ok(Number.isInteger(processId), `Invalid macOS frontmost process ID: ${output}`)
+  return processId
+}
+
+function macosApplicationProcessId(appIdentifier) {
+  const output = commandOutput('osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    `ObjC.import("AppKit"); const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(${JSON.stringify(appIdentifier)}); apps.count > 0 ? Number(apps.objectAtIndex(0).processIdentifier) : 0`,
+  ])
+  const processId = Number(output)
+  assert.ok(Number.isInteger(processId), `Invalid macOS application process ID: ${output}`)
+  return processId
+}
+
+async function waitForMacosApplicationProcessId(appIdentifier, launcher) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DESKTOP_READY_TIMEOUT_MS) {
+    const processId = macosApplicationProcessId(appIdentifier)
+    if (processId > 0) return processId
+    if (launcher.exitCode !== null || launcher.signalCode !== null) {
+      throw new Error(`macOS failed to launch ${appIdentifier}`)
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Timed out waiting for macOS application ${appIdentifier}`)
+}
+
+async function stopDesktopAppProcess(app) {
+  if (!app) return
+  if (!app.launcher) {
+    await stopProcessGroup(app)
+    return
+  }
+
+  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGTERM')
+  const startedAt = Date.now()
+  while (processIsAlive(app.pid) && Date.now() - startedAt < 10_000) {
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+  }
+  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGKILL')
+  await stopProcess(app.launcher)
 }
 
 async function runChecked(command, args, options = {}) {
@@ -619,6 +685,61 @@ async function verifyQueuedFollowUpNavigation({ composerSelector, control, proje
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
     'The queued follow-up could not be cleared after restoration'
   )
+}
+
+async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }) {
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    initialSnapshot.testIds.includes('add-context-button') &&
+      initialSnapshot.testIds.includes('new-chat-button'),
+    'The task-plan verification did not start from a ready workbench'
+  )
+  control.setScenario('task_plan')
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-plan-mode-button"]')
+  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(control, composerSelector, TASK_PLAN_PROMPT, 'task_plan')
+  const taskPlanDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const taskPlanTaskId = taskPlanDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(taskPlanTaskId, 'The task-plan scenario did not expose its runtime task ID')
+  const taskPlanTaskRowTestId = `runtime-local-task-row-${taskPlanTaskId}`
+  await control.command('waitFor', `[data-testid="${taskPlanTaskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await withTimeout(
+    control.releaseTaskPlanResponse(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Timed out waiting for the background task-plan response'
+  )
+  await control.command('click', `[data-testid="${taskPlanTaskRowTestId}"]`)
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskPlanTaskId &&
+      snapshot.pane?.transcript?.loading === false,
+    'The background task-plan transcript did not finish loading'
+  )
+  await control.command('waitFor', '[data-testid="assistant-plan-card"]', {
+    text: TASK_PLAN_STEP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, '01-background-task-plan-restored.png')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await control.command('waitFor', '[data-testid="add-context-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifyBackgroundGuidanceNavigation({
@@ -2480,7 +2601,7 @@ async function waitForLogPattern(
 }
 
 async function reactivateMacApplication(appIdentifier) {
-  await runChecked('open', ['-b', appIdentifier])
+  await runChecked('open', ['-g', '-b', appIdentifier])
 }
 
 async function triggerModelReloadUntilCloudFailure(control) {
@@ -4644,6 +4765,12 @@ class DesktopE2EServer {
     this.requestUserInputResponseWritten = new Promise(resolvePromise => {
       this.resolveRequestUserInputResponseWritten = resolvePromise
     })
+    this.taskPlanCompletionRelease = new Promise(resolvePromise => {
+      this.releaseTaskPlanCompletion = resolvePromise
+    })
+    this.taskPlanCompletionWritten = new Promise(resolvePromise => {
+      this.resolveTaskPlanCompletionWritten = resolvePromise
+    })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
     })
@@ -4821,6 +4948,7 @@ class DesktopE2EServer {
         'follow_up',
         'running_fork_follow_up',
         'fork_follow_up',
+        'task_plan',
         'request_user_input',
         'window_lifecycle',
         'goal_idle',
@@ -4915,6 +5043,11 @@ class DesktopE2EServer {
   releaseRequestUserInputResponse() {
     this.releaseRequestUserInput()
     return this.guard(this.requestUserInputResponseWritten)
+  }
+
+  releaseTaskPlanResponse() {
+    this.releaseTaskPlanCompletion()
+    return this.guard(this.taskPlanCompletionWritten)
   }
 
   awaitReconnectResponseStarted() {
@@ -5846,6 +5979,37 @@ class DesktopE2EServer {
         responseCompleted(responseId),
       ])
       this.resolveRequestUserInputResponseWritten()
+      return
+    }
+
+    if (this.scenario === 'task_plan') {
+      this.recordScenarioRequest('task_plan', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(TASK_PLAN_PROMPT),
+        'The real Codex request did not contain the task-plan prompt'
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.taskPlanCompletionRelease
+      response.end(
+        createSse([
+          assistantMessage(
+            [
+              '<proposed_plan>',
+              '# Background plan',
+              `- ${TASK_PLAN_STEP}`,
+              '</proposed_plan>',
+            ].join('\n')
+          ),
+          responseCompleted(responseId),
+        ])
+      )
+      this.resolveTaskPlanCompletionWritten()
       return
     }
 
@@ -7269,7 +7433,8 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
   const contentsPath = join(appBundlePath, 'Contents')
   const bundledBinaryPath = join(contentsPath, 'MacOS', binaryName)
   await mkdir(join(contentsPath, 'MacOS'), { recursive: true })
-  await symlink(binaryPath, bundledBinaryPath)
+  await copyFile(binaryPath, bundledBinaryPath)
+  await chmod(bundledBinaryPath, 0o755)
   await writeFile(
     join(contentsPath, 'Info.plist'),
     `<?xml version="1.0" encoding="UTF-8"?>
@@ -7284,6 +7449,7 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
   <key>CFBundleVersion</key><string>1</string>
+  <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
@@ -7307,7 +7473,11 @@ async function buildDesktopApp(
     return wrapMacDesktopApp(binaryPath, binaryPath.split('/').at(-1), appIdentifier)
   }
 
-  const windows = await readTauriE2EWindowConfig()
+  const windows = (await readTauriE2EWindowConfig()).map(window => ({
+    ...window,
+    backgroundThrottling: 'disabled',
+    focus: false,
+  }))
   await runChecked(
     'pnpm',
     [
@@ -7325,14 +7495,10 @@ async function buildDesktopApp(
             capabilities: [
               'default',
               {
-                identifier: 'desktop-e2e-focus',
-                description: 'Allows the desktop E2E runner to keep WebKit timers unthrottled',
+                identifier: 'desktop-e2e-window',
+                description: 'Allows the desktop E2E runner to manage test window visibility',
                 windows: ['main'],
-                permissions: [
-                  'core:window:allow-set-focus',
-                  'core:window:allow-show',
-                  'core:window:allow-unminimize',
-                ],
+                permissions: ['core:window:allow-show', 'core:window:allow-unminimize'],
               },
             ],
           },
@@ -8016,11 +8182,55 @@ async function main() {
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
+      WEWORK_E2E_BACKGROUND_WINDOW: '1',
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
     }
     const startDesktopAppProcess = async () => {
+      if (process.platform === 'darwin') {
+        assert.ok(appBundlePath, 'The macOS desktop E2E application bundle is missing')
+        const environmentArgs = [
+          'CODEX_BIN',
+          'HOME',
+          'WEGENT_CODEX_HOME',
+          'WEGENT_EXECUTOR_HOME',
+          'WEWORK_EXECUTOR_ISOLATION_OVERRIDE',
+          'WEGENT_EXECUTOR_LOG_DIR',
+          'WEGENT_EXECUTOR_LOG_FILE',
+          'DEVICE_ID',
+          'DEVICE_SESSION_GATEWAY_HOST',
+          'DEVICE_SESSION_GATEWAY_PORT',
+          'VITE_WEWORK_E2E',
+          'WEWORK_E2E_BACKGROUND_WINDOW',
+          'WEWORK_E2E_MODEL_API_KEY',
+          'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
+          'WEWORK_EXECUTOR_SIDECAR',
+        ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
+        const launcher = spawn(
+          'open',
+          [
+            '-W',
+            '-n',
+            '-g',
+            ...environmentArgs,
+            '--stdout',
+            appLogPath,
+            '--stderr',
+            appLogPath,
+            appBundlePath,
+          ],
+          {
+            cwd: weworkDir,
+            env: appEnvironment,
+            stdio: 'ignore',
+            detached: true,
+          }
+        )
+        const pid = await waitForMacosApplicationProcessId(appIdentifier, launcher)
+        return { launcher, pid }
+      }
+
       const child = spawn(appBinary, [], {
         cwd: weworkDir,
         env: appEnvironment,
@@ -8036,14 +8246,13 @@ async function main() {
     app = await startDesktopAppProcess()
     const restartDesktopApp = async () => {
       const readyCountBeforeRestart = control.readyCount
-      await stopProcessGroup(app)
+      await stopDesktopAppProcess(app)
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
-      await control.command('focusMainWindow', 'body')
     }
 
     const ready = await withTimeout(
@@ -8056,8 +8265,13 @@ async function main() {
       /^(tauri|http):/,
       'The desktop controller did not connect from a webview'
     )
-    await control.command('focusMainWindow', 'body')
-
+    if (process.platform === 'darwin') {
+      assert.notEqual(
+        macosFrontmostProcessId(),
+        app.pid,
+        'The desktop E2E application stole macOS foreground focus'
+      )
+    }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
       await verifySystemDragPanelLayout(control)
@@ -8594,6 +8808,13 @@ async function main() {
       return
     }
 
+    if (TASK_PLAN_ONLY) {
+      phase = 'background-task-plan'
+      await verifyBackgroundTaskPlanRestoration({ composerSelector, control })
+      console.log(`Wework background task-plan E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (MEMORY_ONLY) {
       phase = 'memory-growth'
       await selectE2EModel(control)
@@ -9068,6 +9289,9 @@ async function main() {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
       }
+
+      phase = 'background-task-plan'
+      await verifyBackgroundTaskPlanRestoration({ composerSelector, control })
 
       phase = 'background-request-user-input'
       control.setScenario('request_user_input')
@@ -9632,7 +9856,7 @@ async function main() {
     throw error
   } finally {
     await cloudEnvironment?.stop()
-    await stopProcessGroup(app)
+    await stopDesktopAppProcess(app)
     await control.close()
     if (appBundlePath) {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
