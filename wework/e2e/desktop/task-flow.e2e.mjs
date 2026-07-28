@@ -2651,11 +2651,7 @@ async function verifyPluginLifecycle({
     text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await withTimeout(
-    control.awaitScenarioRequestCount('official_plugin', 2),
-    WORKBENCH_READY_TIMEOUT_MS,
-    'The official plugin skill verification turn did not complete'
-  )
+  await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
   await sendPrompt(
     control,
     ACTIVE_COMPOSER_SELECTOR,
@@ -2665,11 +2661,7 @@ async function verifyPluginLifecycle({
     text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await withTimeout(
-    control.awaitScenarioRequestCount('official_plugin', 5),
-    WORKBENCH_READY_TIMEOUT_MS,
-    'The official plugin did not complete its skill and MCP tool loop'
-  )
+  await control.awaitScenarioRequestCount('official_plugin', 5, WORKBENCH_READY_TIMEOUT_MS)
   assert.equal(
     control.scenarioRequests.get('official_plugin')?.length,
     5,
@@ -4960,6 +4952,7 @@ class DesktopE2EServer {
     this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
+    this.officialPluginToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
       this.releaseInitialTool = resolvePromise
@@ -5226,7 +5219,7 @@ class DesktopE2EServer {
     )
   }
 
-  async awaitScenarioRequestCount(scenario, count) {
+  async awaitScenarioRequestCount(scenario, count, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
     const waitForCount = (async () => {
       while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
         await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
@@ -5235,7 +5228,7 @@ class DesktopE2EServer {
     })()
     return withTimeout(
       this.guard(waitForCount),
-      DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs,
       `Timed out waiting for ${count} ${scenario} scenario requests`
     )
   }
@@ -5652,6 +5645,16 @@ class DesktopE2EServer {
       !requestAdvertisesShellTool(body)
     ) {
       this.memoryToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
+      this.scenario === 'official_plugin' &&
+      !this.officialPluginToolLessPrewarmHandled &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.officialPluginToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
       return
     }
