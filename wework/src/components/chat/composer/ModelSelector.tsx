@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Search, X } from 'lucide-react'
+import { Check, ChevronRight, Cloud, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -59,19 +59,35 @@ const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 type DesktopSubmenuTarget = { type: 'models' } | { type: 'control'; id: string } | { type: 'none' }
 
+function getDesktopViewportRightBoundary(): number {
+  const shell = document.getElementById('right-workspace-panel-shell')
+  if (shell && shell.getAttribute('aria-hidden') !== 'true') {
+    const rect = shell.getBoundingClientRect()
+    if (rect.width > 0) return Math.round(rect.left)
+  }
+  return window.innerWidth
+}
+
+function isCloudModel(model: UnifiedModel): boolean {
+  return model.provider !== 'local'
+}
+
 export function ModelSelector({
   models,
   selectedModel,
   selectedModelOptions,
+  nextTurn = false,
   disabled,
   onSelectModel,
   onSelectModelAndOptions,
   onSelectModelOption,
   onBlockedModelSelect,
+  onOpenChange,
   openSignal,
   menuPlacement = 'above',
   buttonClassName = '',
   menuClassName = '',
+  maxClosedWidth,
 }: ModelSelectorProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -100,6 +116,13 @@ export function ModelSelector({
   const [advancedOpen, setAdvancedOpen] = useState(readModelSelectorPowerViewPreference)
   const [powerSliderInteracting, setPowerSliderInteracting] = useState(false)
   const modelSelectorShortcut = useConfiguredKeybinding(TOGGLE_MODEL_SELECTOR_COMMAND)
+  const reportedOpenRef = useRef(open)
+
+  useEffect(() => {
+    if (reportedOpenRef.current === open) return
+    reportedOpenRef.current = open
+    onOpenChange?.(open)
+  }, [onOpenChange, open])
   const familyGroups = useMemo(() => groupModelsByFamily(models), [models])
   const selectedFamily = selectedModel
     ? inferModelFamily(selectedModel)
@@ -161,7 +184,8 @@ export function ModelSelector({
     const maxTop = viewportBottom - menuHeight
     const clampedTop = Math.round(Math.max(viewportTop, Math.min(preferredTop, maxTop)))
     const menuWidth = menuPanel.getBoundingClientRect().width || MAIN_MENU_WIDTH
-    const maxLeft = window.innerWidth - VIEWPORT_MARGIN - menuWidth
+    const viewportRight = getDesktopViewportRightBoundary()
+    const maxLeft = viewportRight - VIEWPORT_MARGIN - menuWidth
     const preferredLeft = buttonRect.right - menuWidth
     const clampedLeft = Math.round(Math.max(VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft)))
 
@@ -206,7 +230,7 @@ export function ModelSelector({
     const measuredMenuWidth = menuRect.width || MAIN_MENU_WIDTH
     const measuredSubmenuWidth = submenuRect?.width || SUBMENU_WIDTH
     const rightSideLeft = measuredMenuWidth + SUBMENU_GAP
-    const viewportWidth = window.innerWidth
+    const viewportWidth = getDesktopViewportRightBoundary()
     const availableRight = viewportWidth - VIEWPORT_MARGIN - menuRect.left - rightSideLeft
     const availableLeft = menuRect.left - VIEWPORT_MARGIN - SUBMENU_GAP
     const rightSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableRight))
@@ -254,6 +278,9 @@ export function ModelSelector({
     },
     [setActiveDesktopSubmenu]
   )
+  const activateModels = useCallback(() => {
+    setActiveDesktopSubmenu({ type: 'models' })
+  }, [setActiveDesktopSubmenu])
   const clearDesktopSubmenu = useCallback(() => {
     setActiveDesktopSubmenu({ type: 'none' })
   }, [setActiveDesktopSubmenu])
@@ -300,11 +327,11 @@ export function ModelSelector({
       return
     }
     if (activeDesktopSubmenu?.type === 'control') {
-      updateSubmenuLayout(
+      const buttonRef =
         activeDesktopSubmenu.id === 'reasoning'
           ? reasoningButtonRef.current
           : speedButtonRef.current
-      )
+      updateSubmenuLayout(buttonRef)
       return
     }
     updateSubmenuLayout(null)
@@ -323,10 +350,13 @@ export function ModelSelector({
 
   useMobileModelSelectorFocus(open, isMobile, mobileCloseButtonRef)
 
-  const buttonLabel =
+  const selectedButtonLabel =
     getSelectedModelDisplayLabel(selectedModel, selectedModelOptions, (key, fallback) =>
       t(key, fallback)
     ) || t('workbench.default_model', 'Default')
+  const buttonLabel = nextTurn
+    ? t('workbench.next_turn_model', 'Next · {{model}}', { model: selectedButtonLabel })
+    : selectedButtonLabel
 
   const controlsAboveFamilies = useMemo(() => {
     const controls = selectedModel
@@ -453,7 +483,7 @@ export function ModelSelector({
                   className="flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm text-text-primary hover:bg-muted"
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block font-medium">
+                    <span className="block font-normal">
                       {option.labelKey ? t(option.labelKey, option.label) : option.label}
                     </span>
                     {option.description && (
@@ -494,19 +524,80 @@ export function ModelSelector({
         onFocus={() => activateControl(control.id)}
         onClick={() => activateControl(control.id)}
         className={[
-          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
+          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal leading-[18px]',
           active
             ? 'bg-muted text-text-primary'
             : 'text-text-secondary hover:bg-muted hover:text-text-primary',
         ].join(' ')}
       >
-        <span className="min-w-0 flex-1 truncate text-text-primary">
+        <span className="min-w-0 flex-1 truncate">
           {control.labelKey ? t(control.labelKey, control.label) : control.label}
         </span>
         <span className="max-w-24 truncate text-text-muted">{selectedLabel}</span>
         <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
       </button>
     )
+  }
+
+  function renderDesktopModelOptions(modelsToRender: UnifiedModel[]) {
+    if (modelsToRender.length === 0) {
+      return (
+        <div className="rounded-lg px-3 py-6 text-center text-sm text-text-muted">
+          {t('workbench.no_models', 'No models available')}
+        </div>
+      )
+    }
+
+    return modelsToRender.map(model => {
+      const selected = model.name === selectedModel?.name && model.type === selectedModel?.type
+      const modelDisabled = Boolean(model.compatibilityDisabled)
+      const disabledMessage = modelDisabled
+        ? modelCompatibilityDisabledMessage(model.compatibilityDisabledReason, resolveControlLabel)
+        : undefined
+      return (
+        <button
+          key={`${model.type}:${model.name}`}
+          type="button"
+          data-testid={`model-option-${model.name}`}
+          aria-disabled={modelDisabled}
+          title={disabledMessage}
+          onClick={() => {
+            if (modelDisabled) {
+              onBlockedModelSelect?.(model, disabledMessage)
+              return
+            }
+            handleSelectModel(model)
+          }}
+          className={[
+            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm leading-[18px]',
+            modelDisabled
+              ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
+              : 'text-text-primary hover:bg-muted',
+          ].join(' ')}
+        >
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-normal">
+            {disabledMessage ? (
+              <span className="min-w-0 flex-1 truncate">
+                {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
+              </span>
+            ) : isCloudModel(model) ? (
+              <span className="min-w-0 flex-1 truncate">
+                {getModelDisplayLabel(model, {}, resolveControlLabel)}
+              </span>
+            ) : (
+              getModelDisplayLabel(model, {}, resolveControlLabel)
+            )}
+            {isCloudModel(model) && (
+              <Cloud
+                aria-label={t('workbench.environment_cloud', '云端')}
+                className="h-3.5 w-3.5 shrink-0 text-text-muted"
+              />
+            )}
+          </span>
+          {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
+        </button>
+      )
+    })
   }
 
   function renderMobileControlSection(control: ModelControlConfig) {
@@ -672,11 +763,23 @@ export function ModelSelector({
                         <span className="min-w-0 flex-1">
                           <span
                             className={[
-                              'block truncate text-sm font-semibold',
+                              'flex items-center gap-1.5 truncate text-sm font-semibold',
                               modelDisabled ? 'text-text-muted' : 'text-text-primary',
                             ].join(' ')}
                           >
-                            {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
+                            <span className="truncate">
+                              {getModelDisplayLabel(
+                                model,
+                                selectedModelOptions,
+                                resolveControlLabel
+                              )}
+                            </span>
+                            {isCloudModel(model) && (
+                              <Cloud
+                                aria-label={t('workbench.environment_cloud', '云端')}
+                                className="h-3.5 w-3.5 shrink-0 text-text-muted"
+                              />
+                            )}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-text-muted">
                             {disabledMessage || model.displayName || model.modelId || model.name}
@@ -731,7 +834,7 @@ export function ModelSelector({
   const modelRowActive = activeDesktopSubmenu?.type === 'models'
 
   return (
-    <div ref={containerRef} className="group/model-selector relative">
+    <div ref={containerRef} className="group/model-selector relative min-w-0">
       {open && isMobile && renderMobileSheet()}
       {open &&
         !isMobile &&
@@ -758,18 +861,18 @@ export function ModelSelector({
                       ref={modelButtonRef}
                       type="button"
                       data-testid="model-control-menu-model"
-                      onMouseEnter={() => setActiveDesktopSubmenu({ type: 'models' })}
-                      onPointerEnter={() => setActiveDesktopSubmenu({ type: 'models' })}
-                      onFocus={() => setActiveDesktopSubmenu({ type: 'models' })}
-                      onClick={() => setActiveDesktopSubmenu({ type: 'models' })}
+                      onMouseEnter={activateModels}
+                      onPointerEnter={activateModels}
+                      onFocus={activateModels}
+                      onClick={activateModels}
                       className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
+                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal leading-[18px]',
                         modelRowActive
                           ? 'bg-muted text-text-primary'
                           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                       )}
                     >
-                      <span className="min-w-0 flex-1 truncate text-text-primary">
+                      <span className="min-w-0 flex-1 truncate">
                         {t('workbench.model_version', '模型')}
                       </span>
                       <span className="max-w-24 truncate text-text-muted">{desktopModelLabel}</span>
@@ -782,7 +885,7 @@ export function ModelSelector({
                         type="button"
                         data-testid="model-control-menu-reasoning"
                         disabled
-                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-muted opacity-60"
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
                       >
                         <span className="min-w-0 flex-1 truncate">
                           {t('workbench.reasoning_level', '推理强度')}
@@ -797,7 +900,7 @@ export function ModelSelector({
                         type="button"
                         data-testid="model-control-menu-speed"
                         disabled
-                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-muted opacity-60"
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
                       >
                         <span className="min-w-0 flex-1 truncate">
                           {t('workbench.speed', '速度')}
@@ -897,69 +1000,20 @@ export function ModelSelector({
                   styles.submenu
                 )}
               >
-                <div className="px-3 pb-1.5 pt-0.5 text-[13px] font-semibold leading-[18px] text-text-muted">
+                <div className="px-3 pb-1.5 pt-0.5 text-sm font-semibold leading-[18px] text-text-muted">
                   {t('workbench.model_version', '模型')}
                 </div>
                 <div className="space-y-0.5">
-                  {desktopModels.length === 0 ? (
-                    <div className="rounded-lg px-3 py-6 text-center text-sm text-text-muted">
-                      {t('workbench.no_models', 'No models available')}
-                    </div>
-                  ) : (
-                    desktopModels.map(model => {
-                      const selected =
-                        model.name === selectedModel?.name && model.type === selectedModel?.type
-                      const modelDisabled = Boolean(model.compatibilityDisabled)
-                      const disabledMessage = modelDisabled
-                        ? modelCompatibilityDisabledMessage(
-                            model.compatibilityDisabledReason,
-                            resolveControlLabel
-                          )
-                        : undefined
-                      return (
-                        <button
-                          key={`${model.type}:${model.name}`}
-                          type="button"
-                          data-testid={`model-option-${model.name}`}
-                          aria-disabled={modelDisabled}
-                          title={disabledMessage}
-                          onClick={() => {
-                            if (modelDisabled) {
-                              onBlockedModelSelect?.(model, disabledMessage)
-                              return
-                            }
-                            handleSelectModel(model)
-                          }}
-                          className={[
-                            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px]',
-                            modelDisabled
-                              ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
-                              : 'text-text-primary hover:bg-muted',
-                          ].join(' ')}
-                        >
-                          <span className="min-w-0 flex-1 truncate font-medium">
-                            {disabledMessage ? (
-                              <>
-                                <span className="block truncate">
-                                  {getModelDisplayLabel(
-                                    model,
-                                    selectedModelOptions,
-                                    resolveControlLabel
-                                  )}
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
-                                  {disabledMessage}
-                                </span>
-                              </>
-                            ) : (
-                              getModelDisplayLabel(model, {}, resolveControlLabel)
-                            )}
-                          </span>
-                          {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
-                        </button>
-                      )
-                    })
-                  )}
+                  {familyGroups.length <= 1
+                    ? renderDesktopModelOptions(desktopModels)
+                    : familyGroups.map(group => (
+                        <div key={group.config.id} className="pb-1 last:pb-0">
+                          <div className="px-3 pb-1 pt-2 text-xs font-medium text-text-muted first:pt-0">
+                            {group.config.label}
+                          </div>
+                          {renderDesktopModelOptions(group.models)}
+                        </div>
+                      ))}
                 </div>
               </div>
             ) : null}
@@ -977,6 +1031,7 @@ export function ModelSelector({
         ariaLabel={t('workbench.model_selector')}
         tooltipLabel={t('workbench.model_picker_title', '选择模型')}
         buttonClassName={buttonClassName}
+        maxClosedWidth={maxClosedWidth}
         onToggle={() => {
           if (disabled) return
           setOpen(current => {

@@ -13,6 +13,76 @@ describe('workbenchReducer', () => {
     expect(state.currentRuntimeTask).toBeNull()
   })
 
+  test('removes a deleted cloud project from the visible project state', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        projects: [
+          { id: 7, name: 'Deleted project', tasks: [] },
+          { id: 8, name: 'Retained project', tasks: [] },
+        ],
+        currentProject: { id: 7, name: 'Deleted project', tasks: [] },
+      },
+      { type: 'project_removed', projectId: 7 }
+    )
+
+    expect(state.projects.map(project => project.id)).toEqual([8])
+    expect(state.currentProject).toBeNull()
+  })
+
+  test('removes a runtime project even while its optimistic task is fresh', () => {
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 7, name: 'Repo' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              available: true,
+              workspacePath: '/workspace/repo',
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/repo',
+                  title: 'Creating task',
+                  runtime: 'codex',
+                  status: 'creating',
+                  optimistic: true,
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        runtimeWork,
+        currentProject: { id: 7, name: 'Repo', tasks: [] },
+        selectedDeviceWorkspaceId: 22,
+        pendingProjectWorkspaceProjectId: 7,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/repo',
+          taskId: 'runtime-a',
+        },
+      },
+      { type: 'runtime_project_removed', projectId: 7 }
+    )
+
+    expect(state.runtimeWork?.projects).toEqual([])
+    expect(state.runtimeWork?.totalTasks).toBe(0)
+    expect(state.currentProject).toBeNull()
+    expect(state.selectedDeviceWorkspaceId).toBeNull()
+    expect(state.pendingProjectWorkspaceProjectId).toBeNull()
+    expect(state.currentRuntimeTask).toBeNull()
+  })
+
   test('preserves the current blank chat draft when clearing the runtime task', () => {
     const state = workbenchReducer(
       {
@@ -247,6 +317,25 @@ describe('workbenchReducer', () => {
     expect(opened.selectedDeviceWorkspaceId).toBeNull()
     expect(opened.pendingProjectWorkspaceProjectId).toBeNull()
     expect(opened.currentRuntimeTask).toBeNull()
+    expect(opened.standaloneDeviceId).toBe('device-1')
+    expect(opened.standaloneWorkspacePath).toBe('/workspace/direct-codex')
+    expect(opened.standaloneChatKey).toBe(state.standaloneChatKey + 1)
+  })
+
+  test('starts a fresh blank pane when creating a new project conversation', () => {
+    const selected = workbenchReducer(
+      { ...initialWorkbenchState, standaloneChatKey: 4 },
+      {
+        type: 'project_workspace_selected',
+        project: { id: 7, name: 'Repo', tasks: [] },
+        deviceWorkspaceId: 22,
+        startFreshChat: true,
+      }
+    )
+
+    expect(selected.currentProject?.id).toBe(7)
+    expect(selected.selectedDeviceWorkspaceId).toBe(22)
+    expect(selected.standaloneChatKey).toBe(5)
   })
 
   test('clears selected project when opening a standalone runtime task', () => {
@@ -601,61 +690,66 @@ describe('workbenchReducer', () => {
     expect(refreshed.devices).toEqual([device])
   })
 
-  test('reconciles legacy local-device current task to the refreshed ready task address', () => {
-    const state = {
-      ...initialWorkbenchState,
-      currentRuntimeTask: {
-        deviceId: 'local-device',
-        taskId: 'task-1',
-      },
-    }
-
-    const refreshed = workbenchReducer(state, {
-      type: 'lists_refreshed',
-      projects: [],
-      devices: [
-        {
-          id: 1,
-          device_id: 'device-uuid',
-          name: 'Local Executor',
-          status: 'online' as const,
-          is_default: true,
+  test.each(['local-device', 'device-uuid'])(
+    'reconciles %s current task to the hydrated ready task address',
+    currentDeviceId => {
+      const state = {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: currentDeviceId,
+          taskId: 'task-1',
         },
-      ],
-      runtimeWork: {
+      }
+
+      const refreshed = workbenchReducer(state, {
+        type: 'lists_refreshed',
         projects: [],
-        chats: [
+        devices: [
           {
-            deviceId: 'device-uuid',
-            workspacePath: '/Users/me/chat',
-            available: true,
-            mapped: true,
-            tasks: [
-              {
-                taskId: 'task-1',
-                workspacePath: '/Users/me/chat',
-                title: 'Chat',
-                runtime: 'codex',
-                runtimeHandle: {
-                  threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
-                },
-              },
-            ],
+            id: 1,
+            device_id: 'device-uuid',
+            name: 'Local Executor',
+            status: 'online' as const,
+            is_default: true,
           },
         ],
-        totalTasks: 1,
-      },
-    })
+        runtimeWork: {
+          projects: [],
+          chats: [
+            {
+              deviceId: 'device-uuid',
+              workspacePath: '/Users/me/chat',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: 'task-1',
+                  threadId: 'direct-thread-id',
+                  workspacePath: '/Users/me/chat',
+                  title: 'Chat',
+                  runtime: 'codex',
+                  runtimeHandle: {
+                    threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                  },
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      })
 
-    expect(refreshed.currentRuntimeTask).toEqual({
-      deviceId: 'device-uuid',
-      taskId: 'task-1',
-      workspacePath: '/Users/me/chat',
-      runtimeHandle: {
-        threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
-      },
-    })
-  })
+      expect(refreshed.currentRuntimeTask).toEqual({
+        deviceId: 'device-uuid',
+        taskId: 'task-1',
+        threadId: 'direct-thread-id',
+        ...(currentDeviceId === 'local-device' ? { workspacePath: '/Users/me/chat' } : {}),
+        runtimeHandle: {
+          threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+        },
+      })
+    }
+  )
 
   test('updates cached device and runtime workspace status from websocket events', () => {
     const state = workbenchReducer(initialWorkbenchState, {
@@ -704,6 +798,49 @@ describe('workbenchReducer', () => {
 
     expect(updated.devices[0].status).toBe('online')
     expect(updated.runtimeWork?.projects[0].deviceWorkspaces[0]).toMatchObject({
+      deviceStatus: 'online',
+      available: true,
+    })
+  })
+
+  test('updates the logical device when a websocket event uses its socket id', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [],
+      devices: [
+        {
+          id: 1,
+          device_id: 'logical-device',
+          socket_device_id: 'socket-device',
+          name: 'Remote Device',
+          status: 'offline',
+          is_default: false,
+        },
+      ],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'logical-device',
+            deviceStatus: 'offline',
+            available: false,
+            workspacePath: '/workspace/repo',
+            mapped: true,
+            tasks: [],
+          },
+        ],
+        totalTasks: 0,
+      },
+    })
+
+    const updated = workbenchReducer(state, {
+      type: 'device_status_changed',
+      deviceId: 'socket-device',
+      status: 'online',
+    })
+
+    expect(updated.devices[0].status).toBe('online')
+    expect(updated.runtimeWork?.chats[0]).toMatchObject({
       deviceStatus: 'online',
       available: true,
     })
@@ -950,6 +1087,65 @@ describe('workbenchReducer', () => {
       }),
     ])
     expect(refreshed.runtimeWork?.totalTasks).toBe(1)
+  })
+
+  test('preserves a fresh optimistic task when another task has the same title', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_task_optimistic_upserted',
+      project: { id: 7, name: 'Repo', tasks: [] },
+      workspace: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/repo',
+        projectId: 7,
+        available: true,
+        mapped: true,
+        tasks: [],
+      },
+      task: {
+        taskId: 'attachment-only-new',
+        workspacePath: '/workspace/repo',
+        title: '新对话',
+        runtime: 'codex',
+        status: 'creating',
+        updatedAt: new Date().toISOString(),
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'attachment-only-existing',
+                    workspacePath: '/workspace/repo',
+                    title: '新对话',
+                    runtime: 'codex',
+                    status: 'done',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(
+      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)
+    ).toEqual(['attachment-only-new', 'attachment-only-existing'])
+    expect(refreshed.runtimeWork?.totalTasks).toBe(2)
   })
 
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {

@@ -56,7 +56,7 @@ function DocumentAttachmentCard({
     >
       <span
         data-testid="attachment-document-icon"
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-[9px] font-semibold leading-none text-red-600"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-xs font-semibold leading-none text-red-600"
       >
         {typeLabel}
       </span>
@@ -99,7 +99,7 @@ function TextAttachmentCard({
       <span className="flex min-w-0 flex-1 flex-col">
         <span
           data-testid="attachment-text-preview"
-          className="truncate text-[13px] font-semibold leading-5 text-text-primary"
+          className="truncate text-sm font-semibold leading-5 text-text-primary"
           title={preview}
         >
           {preview}
@@ -108,14 +108,14 @@ function TextAttachmentCard({
           <button
             type="button"
             data-testid="show-text-attachment-button"
-            className="inline-flex w-fit max-w-full items-center gap-1 truncate text-[13px] leading-5 text-text-secondary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            className="inline-flex w-fit max-w-full items-center gap-1 truncate text-sm leading-5 text-text-secondary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             onClick={() => onShowTextAttachment?.(attachment)}
           >
             <span className="truncate">{t('workbench.show_text_attachment_in_composer')}</span>
             <ChevronRight className="h-3.5 w-3.5 shrink-0" />
           </button>
         ) : (
-          <span className="truncate text-[13px] leading-5 text-text-secondary">
+          <span className="truncate text-sm leading-5 text-text-secondary">
             {getAttachmentTypeLabel(attachment)}
           </span>
         )}
@@ -162,7 +162,11 @@ export function AttachmentBadges({
   onShowTextAttachment,
   onClearCodeComments,
 }: AttachmentBadgesProps) {
+  const { t } = useTranslation('common')
   const codeCommentCount = codeComments?.length ?? 0
+  const visibleAttachments = attachments.filter(
+    attachment => attachment.ui_group_role !== 'companion'
+  )
   if (
     attachments.length === 0 &&
     uploadingFiles.size === 0 &&
@@ -177,7 +181,7 @@ export function AttachmentBadges({
       {codeCommentCount > 0 && (
         <CodeCommentBadge count={codeCommentCount} onRemove={onClearCodeComments} />
       )}
-      {attachments.map(attachment =>
+      {visibleAttachments.map(attachment =>
         isImageAttachment(attachment) ? (
           <div
             key={attachment.id}
@@ -194,6 +198,14 @@ export function AttachmentBadges({
               placeholderClassName="flex h-full w-full items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
               buttonClassName="block h-full w-full cursor-zoom-in p-0 text-left"
             />
+            {attachment.ui_kind === 'appshot' && (
+              <span
+                data-testid="attachment-appshot-label"
+                className="pointer-events-none absolute bottom-1 left-1 rounded-md bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white"
+              >
+                {t('workbench.appshot_attachment_label', '应用快照')}
+              </span>
+            )}
             <RemoveAttachmentButton
               attachmentId={attachment.id}
               onRemoveAttachment={onRemoveAttachment}

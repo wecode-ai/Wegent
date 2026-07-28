@@ -77,6 +77,7 @@ interface FolderTreeProps {
   onSelectFolder?: (folderId: number, selected: boolean) => void
   activeFolderId?: number
   onActivateFolder?: (folderId: number) => void
+  expandAllFolders?: boolean
 }
 
 export type SortField = 'name' | 'size' | 'createdAt' | 'updatedAt'
@@ -206,6 +207,8 @@ function FolderRow({
 }: FolderRowProps) {
   const { t } = useTranslation('knowledge')
   const indent = depth * (compact ? 12 : 16)
+  const hasChildren = node.children.length > 0
+  const effectiveExpanded = expanded && hasChildren
 
   const folderActions = canManageFolders ? (
     <span
@@ -287,24 +290,26 @@ function FolderRow({
         title={node.name}
       >
         {folderCheckbox}
-        {expanded ? (
-          <ChevronDown
-            className="w-3 h-3 text-text-muted flex-shrink-0"
-            onClick={e => {
-              e.stopPropagation()
-              onToggle(node.path)
-            }}
-          />
-        ) : (
-          <ChevronRight
-            className="w-3 h-3 text-text-muted flex-shrink-0"
-            onClick={e => {
-              e.stopPropagation()
-              onToggle(node.path)
-            }}
-          />
-        )}
-        {expanded ? (
+        {hasChildren ? (
+          effectiveExpanded ? (
+            <ChevronDown
+              className="w-3 h-3 text-text-muted flex-shrink-0"
+              onClick={e => {
+                e.stopPropagation()
+                onToggle(node.path)
+              }}
+            />
+          ) : (
+            <ChevronRight
+              className="w-3 h-3 text-text-muted flex-shrink-0"
+              onClick={e => {
+                e.stopPropagation()
+                onToggle(node.path)
+              }}
+            />
+          )
+        ) : null}
+        {effectiveExpanded ? (
           <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
         ) : (
           <Folder className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
@@ -343,24 +348,28 @@ function FolderRow({
       }
     >
       {folderCheckbox}
-      {expanded ? (
-        <ChevronDown
-          className="w-4 h-4 text-text-muted flex-shrink-0"
-          onClick={e => {
-            e.stopPropagation()
-            onToggle(node.path)
-          }}
-        />
+      {hasChildren ? (
+        effectiveExpanded ? (
+          <ChevronDown
+            className="w-4 h-4 text-text-muted flex-shrink-0"
+            onClick={e => {
+              e.stopPropagation()
+              onToggle(node.path)
+            }}
+          />
+        ) : (
+          <ChevronRight
+            className="w-4 h-4 text-text-muted flex-shrink-0"
+            onClick={e => {
+              e.stopPropagation()
+              onToggle(node.path)
+            }}
+          />
+        )
       ) : (
-        <ChevronRight
-          className="w-4 h-4 text-text-muted flex-shrink-0"
-          onClick={e => {
-            e.stopPropagation()
-            onToggle(node.path)
-          }}
-        />
+        <div className="w-4 h-4 flex-shrink-0" />
       )}
-      {expanded ? (
+      {effectiveExpanded ? (
         <FolderOpen className="w-4 h-4 text-amber-500 flex-shrink-0" />
       ) : (
         <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
@@ -621,6 +630,7 @@ export function FolderTree({
   onSelectFolder,
   activeFolderId,
   onActivateFolder,
+  expandAllFolders = false,
 }: FolderTreeProps) {
   const tree = useMemo(() => buildMergedTree(folders, documents), [folders, documents])
 
@@ -641,6 +651,19 @@ export function FolderTree({
     }
     return Array.from(paths)
   }, [folders, documents])
+
+  const allFolderPaths = useMemo(() => {
+    if (!expandAllFolders) return []
+    const paths: string[] = []
+    function walk(list: KnowledgeFolder[]) {
+      for (const f of list) {
+        paths.push(`folder:${f.id}`)
+        if (f.children?.length) walk(f.children)
+      }
+    }
+    walk(folders)
+    return paths
+  }, [folders, expandAllFolders])
 
   // Default: expand root-level folders only; active/result paths are expanded separately.
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
@@ -676,6 +699,17 @@ export function FolderTree({
       return next
     })
   }, [resultDocumentFolderPaths])
+
+  useEffect(() => {
+    if (allFolderPaths.length === 0) return
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      for (const path of allFolderPaths) {
+        next.add(path)
+      }
+      return next
+    })
+  }, [allFolderPaths])
 
   const handleToggleFolder = (path: string) => {
     setExpandedFolders(prev => {

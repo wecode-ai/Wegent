@@ -5,17 +5,18 @@ import engineeringRenderers from '@file-viewer/preset-engineering'
 import officeRenderers from '@file-viewer/preset-office'
 import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
+import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
-    --diffs-font-size: 12px;
-    --diffs-line-height: 20px;
-    --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    --diffs-header-font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    --diffs-font-size: var(--text-code);
+    --diffs-line-height: calc(var(--text-code) * 1.8);
+    --diffs-font-family: var(--font-code);
+    --diffs-header-font-family: var(--font-ui);
     --diffs-light-bg: rgb(255 255 255);
     --diffs-light: rgb(26 26 26);
     --diffs-fg-number-override: rgb(140 140 140);
@@ -31,7 +32,7 @@ const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
     min-height: 36px;
     padding-inline: 12px;
     border-bottom: 1px solid rgb(224 224 224);
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
   [data-file],
   pre,
@@ -90,6 +91,10 @@ interface WorkspaceFilePreviewProps {
   targetLineStart?: number
   targetLineEnd?: number
   onAddCodeComment: (context: CodeCommentContext) => void
+  editing?: boolean
+  editedContent?: string
+  onEditedContentChange?: (content: string) => void
+  onSave?: () => void
 }
 
 const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
@@ -120,7 +125,13 @@ function fileViewerTypeFromMime(mimeType: string): string | undefined {
   return FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
 }
 
-function WorkspaceBinaryFilePreview({
+const WORKSPACE_FILE_VIEWER_OPTIONS = {
+  preset: [officeRenderers, liteRenderers, engineeringRenderers],
+  spreadsheet: { worker: false },
+  theme: 'light' as const,
+}
+
+const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   file,
 }: {
   file: NonNullable<WorkspaceFilePreviewProps['binaryFile']>
@@ -143,15 +154,11 @@ function WorkspaceBinaryFilePreview({
         type={fileViewerTypeFromMime(file.file.type)}
         size={file.size}
         className="h-full w-full"
-        options={{
-          preset: [officeRenderers, liteRenderers, engineeringRenderers],
-          spreadsheet: { worker: false },
-          theme: 'light',
-        }}
+        options={WORKSPACE_FILE_VIEWER_OPTIONS}
       />
     </section>
   )
-}
+})
 
 interface SelectionState {
   filePath: string
@@ -413,6 +420,10 @@ export function WorkspaceFilePreview({
   targetLineStart,
   targetLineEnd,
   onAddCodeComment,
+  editing = false,
+  editedContent = '',
+  onEditedContentChange,
+  onSave,
 }: WorkspaceFilePreviewProps) {
   const { t } = useTranslation('common')
 
@@ -469,6 +480,20 @@ export function WorkspaceFilePreview({
     return (
       <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-muted">
         {t('workbench.workspace_file_preview_empty', '选择文件查看内容')}
+      </section>
+    )
+  }
+
+  if (editing && onEditedContentChange && onSave) {
+    return (
+      <section className="flex min-w-0 flex-1 overflow-hidden bg-background">
+        <WorkspaceTextFileEditor
+          key={file.path}
+          path={file.path}
+          value={editedContent}
+          onChange={onEditedContentChange}
+          onSave={onSave}
+        />
       </section>
     )
   }

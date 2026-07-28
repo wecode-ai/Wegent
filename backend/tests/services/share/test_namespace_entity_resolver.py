@@ -14,7 +14,7 @@ from app.models.resource_member import MemberStatus, ResourceMember, ResourceRol
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.namespace import GroupRole
-from app.services.share.external_entity_resolver import (
+from app.services.external_entity_resolver import (
     _external_entity_resolvers,
     register_entity_resolver,
 )

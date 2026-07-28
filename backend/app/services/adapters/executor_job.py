@@ -199,6 +199,7 @@ class JobService(BaseService[Kind, None, None]):
         *,
         task_id: int,
         inactive_hours: int = 24,
+        max_inactive_hours: int = 24 * 7,
         dry_run: bool = False,
     ) -> Dict[str, object]:
         """Clean up executor resources for a single task after the stale window.
@@ -207,7 +208,18 @@ class JobService(BaseService[Kind, None, None]):
         intentionally not checked here — a pod stuck in RUNNING with no activity for
         24h is just as stale as a COMPLETED one, and the admin explicitly requested
         cleanup with the inactivity threshold.
+
+        The max_inactive_hours parameter (default 7 days) is an upper bound on
+        retries: once an executor has been idle longer than it, the executor is
+        deleted even if workspace archiving keeps failing, so a broken archive
+        cannot pin pods forever.
         """
+        if max_inactive_hours < inactive_hours * 3:
+            # Once idle past max_inactive_hours, the executor is force-cleaned even
+            # if archiving fails; keep it at least 3x inactive_hours (or 7 days) so
+            # that force cleanup only kicks in well after the normal stale window.
+            max_inactive_hours = max(24 * 7, inactive_hours * 3)
+
         task = await self._get_task_resource_any_state(db, task_id)
 
         subtasks = await self._get_cleanup_subtasks_for_task(db, task_id)
@@ -250,8 +262,10 @@ class JobService(BaseService[Kind, None, None]):
             task_id=task_id,
             task=task,
             subtasks=subtasks,
+            max_inactive_hours=max_inactive_hours,
         )
         result["inactive_hours"] = inactive_hours
+        result["max_inactive_hours"] = max_inactive_hours
         result["dry_run"] = dry_run
         return result
 
@@ -818,10 +832,12 @@ class JobService(BaseService[Kind, None, None]):
         task_id: int,
         task: TaskResource,
         subtasks: List[Subtask],
+        max_inactive_hours: int = 24 * 7,
     ) -> Dict[str, object]:
         """Delete deduplicated executors and mark the related subtasks as deleted."""
         executor_subtask_ids: Dict[Tuple[str, str], List[int]] = {}
         executor_subtasks: Dict[Tuple[str, str], Subtask] = {}
+        subtasks_executor_updated_at: Dict[Tuple[str, str], datetime | None] = {}
 
         for subtask in subtasks:
             if not subtask.executor_name:
@@ -829,14 +845,28 @@ class JobService(BaseService[Kind, None, None]):
             key = (subtask.executor_namespace, subtask.executor_name)
             executor_subtask_ids.setdefault(key, []).append(subtask.id)
             executor_subtasks.setdefault(key, subtask)
+            subtasks_executor_updated_at[key] = self._latest_datetime(
+                subtasks_executor_updated_at.get(key), subtask.updated_at
+            )
 
         if not executor_subtasks:
             return self._build_cleanup_result(task_id, "executor_not_found")
 
+        task_updated_at = task.updated_at
         task_crd = Task.model_validate(task.json)
         task_type = self._get_task_type(task_crd)
         self._detach_loaded_instance(db, task)
         await self._release_cleanup_read_transaction(db)
+
+        # Groups idle past max_inactive_hours are force-deleted even when archiving
+        # fails, so a persistently broken archive cannot pin the pods forever.
+        force_cutoff = datetime.now() - timedelta(hours=max_inactive_hours)
+        force_delete_groups: Dict[Tuple[str, str], bool] = {}
+        for key, subtask_updated_at in subtasks_executor_updated_at.items():
+            last_active_at = self._latest_datetime(subtask_updated_at, task_updated_at)
+            force_delete_groups[key] = (
+                last_active_at is not None and last_active_at <= force_cutoff
+            )
 
         deleted_executors: List[Dict[str, str]] = []
         archive_failed_executors: List[Dict[str, str]] = []
@@ -854,14 +884,21 @@ class JobService(BaseService[Kind, None, None]):
                 executor_name=name,
                 executor_namespace=namespace,
             ):
+                if not force_delete_groups[(namespace, name)]:
+                    logger.warning(
+                        f"[executor_job] Skipping executor deletion after archive "
+                        f"failure task_id={task.id} ns={namespace} name={name}"
+                    )
+                    archive_failed_executors.append(
+                        {"executor_name": name, "executor_namespace": namespace}
+                    )
+                    continue
+
                 logger.warning(
-                    f"[executor_job] Skipping executor deletion after archive "
-                    f"failure task_id={task.id} ns={namespace} name={name}"
+                    f"[executor_job] Archive failed but executor idle over "
+                    f"{max_inactive_hours}h, force deleting task_id={task.id} "
+                    f"ns={namespace} name={name}"
                 )
-                archive_failed_executors.append(
-                    {"executor_name": name, "executor_namespace": namespace}
-                )
-                continue
 
             logger.info(
                 f"[executor_job] Scheduled deleting executor task "

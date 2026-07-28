@@ -8,8 +8,6 @@ on:
   pull_request_target:
     branches:
       - main
-      - master
-      - develop
     types:
       - opened
       - synchronize
@@ -18,6 +16,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   repository-policy:
@@ -40,6 +42,7 @@ jobs:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
           path: policy-target
           persist-credentials: false
+          allow-unsafe-pr-checkout: true
 
       - name: Run repository policy check
         env:

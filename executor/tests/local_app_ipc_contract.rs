@@ -6,16 +6,12 @@ use std::{
     fs,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
 use serde_json::{json, Value};
-use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use wegent_executor::local::{
-    app_ipc::{
-        app_ipc_listening_log_line, app_ipc_socket_path, AppIpcError, AppIpcServer,
-        RuntimeWorkHandler,
-    },
+    app_ipc::{app_ipc_stdio_ready_log_line, AppIpcError, AppIpcServer, RuntimeWorkHandler},
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
 
@@ -37,9 +33,18 @@ const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_COMMON_DIR",
 ];
 
-async fn env_lock() -> AsyncMutexGuard<'static, ()> {
-    static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| AsyncMutex::new(())).lock().await
+struct EnvLockGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+async fn env_lock() -> EnvLockGuard {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    EnvLockGuard {
+        _guard: LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("environment lock should be available"),
+    }
 }
 
 struct EnvGuard {
@@ -122,6 +127,362 @@ async fn app_ipc_routes_codex_app_server_request() {
             "result": {"marketplaces": []}
         })
     );
+}
+
+#[tokio::test]
+async fn app_ipc_manages_local_projects_and_nested_todos() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Local Work",
+                "project_key": "LOCAL",
+                "description": "Stored by Executor",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let project_id = project["id"].as_str().unwrap();
+    let updated_project = server
+        .dispatch(
+            "projects.update",
+            json!({
+                "project_id": project_id,
+                "project": {
+                    "version": project["version"],
+                    "name": "Renamed Local Work",
+                    "tags": ["desktop"]
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated_project["name"], "Renamed Local Work");
+    assert_eq!(updated_project["metadata"]["tags"], json!(["desktop"]));
+
+    let parent = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project_id,
+                "todo": {
+                    "title": "Parent",
+                    "status": "inbox",
+                    "priority": "high"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let parent_id = parent["id"].as_str().unwrap();
+
+    let child = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project_id,
+                "todo": {
+                    "title": "Child",
+                    "parent_id": parent_id
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    let todos = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert_eq!(todos.as_array().unwrap().len(), 2);
+    assert_eq!(child["parent_id"], parent["id"]);
+
+    let updated = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": parent_id,
+                "todo": {
+                    "version": parent["version"],
+                    "status": "completed"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated["status"], "completed");
+    assert!(updated["completed_at"].is_string());
+
+    let conflict = server
+        .dispatch(
+            "todos.update",
+            json!({
+                "project_id": project_id,
+                "task_id": parent_id,
+                "todo": {
+                    "version": parent["version"],
+                    "title": "Stale update"
+                }
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(conflict.code, "version_conflict");
+    assert!(executor_home.path().join("data/tasks.sqlite").is_file());
+}
+
+#[tokio::test]
+async fn app_ipc_stores_project_files_attachments_and_deliveries_locally() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Content",
+                "project_key": "LOCAL",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let project_id = project["id"].as_str().unwrap();
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({"project_id": project_id, "todo": {"title": "Write report"}}),
+        )
+        .await
+        .unwrap();
+    let task_id = task["id"].as_str().unwrap();
+
+    let uploaded = server
+        .dispatch(
+            "files.upload",
+            json!({
+                "project_id": project_id,
+                "path": "docs/readme.txt",
+                "file": {
+                    "display_name": "readme.txt",
+                    "content_type": "text/plain",
+                    "base64": "aGVsbG8="
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let file_id = uploaded["id"].as_str().unwrap();
+    let access = server
+        .dispatch("files.access", json!({"file_id": file_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(access["path"].as_str().unwrap()).unwrap(),
+        "hello"
+    );
+
+    let moved = server
+        .dispatch(
+            "files.move",
+            json!({
+                "file_id": file_id,
+                "path": "docs/guides/readme.txt",
+                "version": uploaded["version"]
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved["path"], "docs/guides/readme.txt");
+
+    let attachment = server
+        .dispatch(
+            "attachments.add",
+            json!({
+                "project_id": project_id,
+                "item_id": task_id,
+                "file": {
+                    "display_name": "notes.txt",
+                    "base64": "bm90ZXM="
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let attachment_id = attachment["id"].as_str().unwrap();
+    let attachment_access = server
+        .dispatch(
+            "attachments.access",
+            json!({"attachment_id": attachment_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(attachment_access["path"].as_str().unwrap()).unwrap(),
+        "notes"
+    );
+
+    let delivery = server
+        .dispatch(
+            "deliveries.create",
+            json!({
+                "project_id": project_id,
+                "item_id": task_id,
+                "delivery": {
+                    "markdown": "# Result",
+                    "chat": {"messages": []}
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let delivery_id = delivery["id"].as_str().unwrap();
+    let asset = server
+        .dispatch(
+            "deliveries.add_asset",
+            json!({
+                "delivery_id": delivery_id,
+                "relative_path": "assets/result.txt",
+                "file": {
+                    "display_name": "result.txt",
+                    "base64": "ZG9uZQ=="
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let asset_id = asset["id"].as_str().unwrap();
+    let finalized = server
+        .dispatch(
+            "deliveries.finalize",
+            json!({"item_id": task_id, "delivery_id": delivery_id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(finalized["status"], "delivered");
+
+    let detail = server
+        .dispatch("deliveries.get", json!({"delivery_id": delivery_id}))
+        .await
+        .unwrap();
+    assert_eq!(detail["markdown"], "# Result");
+    assert_eq!(detail["chat"]["messages"].as_array().unwrap().len(), 0);
+
+    let asset_access = server
+        .dispatch("deliveries.access_asset", json!({"asset_id": asset_id}))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(asset_access["path"].as_str().unwrap()).unwrap(),
+        "done"
+    );
+    assert!(executor_home.path().join("data/objects").is_dir());
+}
+
+#[tokio::test]
+async fn app_ipc_encrypts_provider_credentials_and_masks_project_responses() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "GitHub board",
+                "project_key": "GH",
+                "task_provider": "github",
+                "provider_config": {
+                    "repository": "acme/repo",
+                    "domain": "github.com",
+                    "token": "github-secret"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        project["metadata"]["provider_config"]["credential_configured"],
+        true
+    );
+    assert!(project["metadata"]["provider_config"]
+        .get("credential")
+        .is_none());
+    assert!(!project.to_string().contains("github-secret"));
+
+    let connection =
+        rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();
+    let metadata: String = connection
+        .query_row(
+            "SELECT metadata FROM loop_items WHERE id = ?1",
+            [project["id"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!metadata.contains("github-secret"));
+    let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(
+        metadata["provider_config"]["credential"]["algorithm"],
+        "aes-256-gcm"
+    );
+    assert!(metadata["provider_config"]["credential"]["ciphertext"].is_string());
+    assert!(executor_home
+        .path()
+        .join("credentials/provider-master-key-v1")
+        .is_file());
+
+    let project = server
+        .dispatch(
+            "projects.update",
+            json!({
+                "project_id": project["id"],
+                "project": {
+                    "version": project["version"],
+                    "provider_config": {
+                        "repository": "acme/repo",
+                        "domain": "github.com",
+                        "token": "rotated-secret"
+                    }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        project["metadata"]["provider_config"]["credential_configured"],
+        true
+    );
+    assert!(!project.to_string().contains("rotated-secret"));
+
+    let metadata: String = connection
+        .query_row(
+            "SELECT metadata FROM loop_items WHERE id = ?1",
+            [project["id"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!metadata.contains("github-secret"));
+    assert!(!metadata.contains("rotated-secret"));
 }
 
 #[tokio::test]
@@ -805,6 +1166,76 @@ async fn app_ipc_accepts_gitdir_with_configured_worktree_as_worktree_source() {
 }
 
 #[tokio::test]
+async fn app_ipc_routes_external_project_configuration() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-external-project",
+                "method": "external_projects.configure",
+                "params": {
+                    "project": {
+                        "id": "cloud-1",
+                        "public_id": "public-1",
+                        "project_key": "CLOUD",
+                        "name": "Cloud GitLab board",
+                        "project_store": "backend",
+                        "task_provider": "gitlab",
+                        "provider_config": {
+                            "repository": "acme/repo",
+                            "domain": "gitlab.example.com",
+                            "api_base": "https://gitlab.example.com/api/v4",
+                            "token": "gitlab-secret"
+                        },
+                        "version": 1
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["id"], "cloud-1");
+    assert_eq!(response["result"]["metadata"]["task_provider"], "gitlab");
+    assert_eq!(
+        response["result"]["metadata"]["provider_config"]["credential_configured"],
+        true
+    );
+    assert!(!response.to_string().contains("gitlab-secret"));
+}
+
+#[tokio::test]
+async fn app_ipc_health_check_confirms_bidirectional_transport() {
+    let server = AppIpcServer::new();
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-health",
+                "method": "executor.health",
+                "params": {}
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["status"], "healthy");
+}
+
+#[tokio::test]
 async fn app_ipc_unknown_method_returns_protocol_error() {
     let server = AppIpcServer::new();
 
@@ -825,26 +1256,13 @@ async fn app_ipc_unknown_method_returns_protocol_error() {
     assert_eq!(response["error"]["code"], "unsupported_method");
 }
 
-#[tokio::test]
-async fn app_ipc_socket_path_can_be_overridden() {
-    let _lock = env_lock().await;
-    let socket_path = std::env::temp_dir().join("wegent-executor-local-app.sock");
-    let _socket = EnvGuard::set(
-        "WEGENT_EXECUTOR_APP_IPC_SOCKET",
-        &socket_path.display().to_string(),
-    );
-
-    assert_eq!(app_ipc_socket_path(), socket_path);
-}
-
 #[test]
-fn app_ipc_listening_log_line_includes_device_and_socket_path() {
-    let line = app_ipc_listening_log_line("device-1", "/tmp/wegent executor/app-ipc.sock");
+fn app_ipc_stdio_ready_log_line_includes_device_and_transport() {
+    let line = app_ipc_stdio_ready_log_line("device-1");
 
     assert_log_timestamp(&line);
-    assert!(line.ends_with(
-        " app IPC listening device_id=device-1 socket_path=\"/tmp/wegent executor/app-ipc.sock\""
-    ));
+    assert!(line.contains(" app IPC stdio ready device_id=device-1 transport=stdio"));
+    assert!(line.contains(" process_id="));
 }
 
 fn assert_log_timestamp(line: &str) {
@@ -856,32 +1274,18 @@ fn assert_log_timestamp(line: &str) {
     assert_eq!(timestamp.as_bytes()[16], b':');
 }
 
-#[cfg(unix)]
 #[tokio::test]
-async fn app_ipc_socket_serves_ready_event_and_responses() {
+async fn app_ipc_stdio_serves_ready_event_and_responses_until_input_closes() {
     use tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::UnixStream,
-        time::{sleep, Duration},
+        time::{timeout, Duration},
     };
 
-    let socket_path = std::env::temp_dir().join(format!(
-        "wegent-executor-local-app-ipc-{}.sock",
-        std::process::id()
-    ));
     let server = AppIpcServer::new().with_device_id("device-1");
-    let server_socket_path = socket_path.clone();
-    let task = tokio::spawn(async move { server.serve_forever(server_socket_path).await });
-
-    for _ in 0..50 {
-        if socket_path.exists() {
-            break;
-        }
-        sleep(Duration::from_millis(10)).await;
-    }
-
-    let stream = UnixStream::connect(&socket_path).await.unwrap();
-    let (reader, mut writer) = stream.into_split();
+    let (client, executor) = tokio::io::duplex(4096);
+    let (executor_reader, executor_writer) = tokio::io::split(executor);
+    let task = tokio::spawn(async move { server.serve_io(executor_reader, executor_writer).await });
+    let (reader, mut writer) = tokio::io::split(client);
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
@@ -913,8 +1317,13 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
     assert_eq!(response["ok"], false);
     assert_eq!(response["error"]["code"], "unsupported_method");
 
-    task.abort();
-    let _ = std::fs::remove_file(socket_path);
+    writer.shutdown().await.unwrap();
+    drop(writer);
+    assert!(timeout(Duration::from_secs(1), task)
+        .await
+        .expect("stdio server should stop after stdin closes")
+        .expect("stdio server task should join")
+        .is_ok());
 }
 
 fn unique_dir(label: &str) -> std::path::PathBuf {

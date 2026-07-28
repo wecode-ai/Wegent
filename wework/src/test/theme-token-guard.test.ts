@@ -47,8 +47,12 @@ describe('theme token guard', () => {
   test('tailwind exposes semantic surface colors', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
     const source = readFileSync(tailwindConfigPath, 'utf8')
+    const colorsBlock = source.slice(source.indexOf('colors: {'), source.indexOf('borderRadius:'))
 
-    expect(source).toContain("base: 'rgb(var(--color-bg-base) / <alpha-value>)'")
+    expect(source).toContain(
+      "backgroundColor: {\n        base: 'rgb(var(--color-bg-base) / <alpha-value>)'"
+    )
+    expect(colorsBlock).not.toContain("base: 'rgb(var(--color-bg-base) / <alpha-value>)'")
     expect(source).toContain("background: 'rgb(var(--color-bg-base) / <alpha-value>)'")
     expect(source).toContain("surface: 'rgb(var(--color-bg-surface) / <alpha-value>)'")
     expect(source).toContain("popover: 'rgb(var(--color-popover) / <alpha-value>)'")

@@ -676,6 +676,29 @@ export function SubscriptionForm({
     }
   }, [subscription, open, initialData])
 
+  useEffect(() => {
+    const userIds = subscription?.market_whitelist_user_ids || []
+    if (!open || userIds.length === 0) return
+
+    let cancelled = false
+    userApis
+      .getUsersByIds(userIds)
+      .then(response => {
+        if (cancelled) return
+        const usersById = new Map(response.users.map(user => [user.id, user]))
+        setMarketWhitelistUsers(currentUsers =>
+          currentUsers.map(user => usersById.get(user.id) || user)
+        )
+      })
+      .catch(error => {
+        console.error('Failed to resolve market whitelist users:', error)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, subscription])
+
   // Update selected model display name when models load
   useEffect(() => {
     if (selectedModel && models.length > 0) {

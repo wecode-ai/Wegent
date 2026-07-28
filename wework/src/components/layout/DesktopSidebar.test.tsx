@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
@@ -15,6 +15,16 @@ import {
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
 import { openLocalWorkspace } from '@/lib/local-terminal'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
+
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
 
 vi.mock('@/lib/local-terminal', () => ({
   openLocalWorkspace: vi.fn(),
@@ -72,6 +82,7 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
     projects: [project()],
     devices: [localDevice()],
     onNewChat: vi.fn(),
+    onStartStandaloneChat: vi.fn(),
     onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
@@ -93,8 +104,14 @@ function renderSidebar(
   appUpdate?: Partial<AppUpdateContextValue>
 ) {
   const props: Parameters<typeof DesktopSidebar>[0] = createSidebarProps(overrides)
+  const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-test')
+  lifecycleStore.syncRuntimeWork(props.runtimeWork)
 
-  let tree = <DesktopSidebar {...props} />
+  let tree = (
+    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+      <DesktopSidebar {...props} />
+    </RuntimeTaskLifecycleProvider>
+  )
   if (appUpdate) {
     const value: AppUpdateContextValue = {
       availableUpdate: null,
@@ -134,6 +151,7 @@ function enableTauri() {
 
 describe('DesktopSidebar', () => {
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     localStorage.clear()
     enableTauri()
     Element.prototype.scrollIntoView = vi.fn()
@@ -142,6 +160,7 @@ describe('DesktopSidebar', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllEnvs()
   })
 
   test('keeps section header actions out of the flex layout while hidden', () => {
@@ -159,6 +178,295 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
+  test('switches sidebar focus tokens with browser focus events', () => {
+    Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
+    renderSidebar()
+    const sidebar = screen.getByTestId('desktop-sidebar')
+
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(sidebar).toHaveAttribute('data-window-focused', 'true')
+    expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar))]')
+
+    act(() => window.dispatchEvent(new Event('blur')))
+    expect(sidebar).toHaveAttribute('data-window-focused', 'false')
+    expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
+  })
+
+  test('uses the project action model for right click and global-state pinning', async () => {
+    const onSetRuntimeProjectPinned = vi.fn().mockResolvedValue(undefined)
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: 'project-7',
+              name: 'Wegent',
+              stateDeviceId: 'local-device',
+              pinned: false,
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      onSetRuntimeProjectPinned,
+    })
+
+    fireEvent.contextMenu(screen.getByTestId('project-row-7'), {
+      clientX: 120,
+      clientY: 80,
+    })
+
+    expect(await screen.findByTestId('project-menu-7-menu')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('pin-project-7'))
+    expect(onSetRuntimeProjectPinned).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      projectKey: 'project-7',
+      pinned: true,
+    })
+  })
+
+  test('exposes a remote project as sortable through its local Codex state identity', () => {
+    const onReorderRuntimeProjects = vi.fn().mockResolvedValue(undefined)
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          is_default: false,
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: '/repo/local',
+              name: 'Local',
+              stateDeviceId: 'local-device',
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                workspacePath: '/repo/local',
+                available: true,
+                tasks: [],
+              },
+            ],
+          },
+          {
+            project: {
+              id: 8,
+              key: '/srv/remote',
+              sidebarStateKey: 'remote-project-id',
+              name: 'Remote',
+              kind: 'remote',
+              source: 'remote_project',
+              stateDeviceId: 'local-device',
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                deviceId: 'remote-device',
+                remoteHostId: 'remote-device',
+                workspacePath: '/srv/remote',
+                workspaceSource: 'remote',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'remote-task',
+                    workspacePath: '/srv/remote',
+                    title: 'Remote task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      onReorderRuntimeProjects,
+    })
+
+    const remoteSortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:remote-project-id"]'
+    ) as HTMLElement
+    expect(remoteSortable).toHaveAttribute('tabindex', '0')
+    expect(remoteSortable).toHaveAttribute('role', 'button')
+    expect(remoteSortable).toHaveClass('touch-none')
+  })
+
+  test('shows an interactive Codex-style project hover card', async () => {
+    vi.useFakeTimers()
+    const onSetRuntimeProjectPinned = vi.fn().mockResolvedValue(undefined)
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: 'project-7',
+              name: 'Wegent',
+              stateDeviceId: 'local-device',
+              roots: [{ kind: 'local', path: '/Users/alice/repo/Wegent' }],
+            },
+            totalTasks: 3,
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                available: true,
+                workspacePath: '/Users/alice/repo/Wegent',
+                repoUrl: 'git@github.com:wecode-ai/Wegent.git',
+                tasks: [
+                  {
+                    taskId: 'running-task',
+                    workspacePath: '/Users/alice/repo/Wegent',
+                    title: 'Running task',
+                    runtime: 'codex',
+                    running: true,
+                  },
+                  {
+                    taskId: 'waiting-task',
+                    workspacePath: '/Users/alice/repo/Wegent',
+                    title: 'Waiting task',
+                    runtime: 'codex',
+                    status: 'waiting_for_user_input',
+                  },
+                  {
+                    taskId: 'unread-task',
+                    workspacePath: '/Users/alice/repo/Wegent',
+                    title: 'Unread task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 3,
+      },
+      unreadRuntimeTaskKeys: new Set(['local-device\0unread-task']),
+      onSetRuntimeProjectPinned,
+    })
+
+    const projectRow = screen.getByTestId('project-row-7')
+    expect(screen.getByTestId('project-title-7')).not.toHaveAttribute('title')
+    fireEvent.mouseEnter(projectRow)
+    await act(async () => vi.advanceTimersByTime(450))
+
+    const hoverCard = screen.getByTestId('project-hover-card-7')
+    expect(hoverCard).toHaveAttribute('role', 'dialog')
+    expect(hoverCard).toHaveClass('pointer-events-auto')
+    expect(hoverCard).toHaveTextContent('Wegent')
+    expect(hoverCard).toHaveTextContent('3 个任务')
+    expect(hoverCard).toHaveTextContent('1 个等待中')
+    expect(hoverCard).toHaveTextContent('1 个未读')
+    expect(hoverCard).toHaveTextContent('1 个运行中')
+    expect(hoverCard).not.toHaveTextContent('wecode-ai/Wegent')
+    expect(screen.queryByTestId('project-hover-source-7-repository')).not.toBeInTheDocument()
+    expect(hoverCard).toHaveTextContent('~/repo/Wegent')
+
+    fireEvent.mouseLeave(projectRow)
+    fireEvent.mouseEnter(hoverCard)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(screen.getByTestId('project-hover-card-7')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-hover-pin-7'))
+    expect(onSetRuntimeProjectPinned).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      projectKey: 'project-7',
+      pinned: true,
+    })
+    fireEvent.click(screen.getByTestId('project-hover-rename-7'))
+    expect(screen.getByTestId('rename-project-input')).toHaveValue('Wegent')
+    fireEvent.click(screen.getByTestId('rename-project-input-close-button'))
+
+    const menuTrigger = screen.getByTestId('project-menu-7')
+    fireEvent.pointerDown(menuTrigger)
+    fireEvent.click(menuTrigger)
+
+    expect(screen.queryByTestId('project-hover-card-7')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-menu-7-menu')).toBeInTheDocument()
+  })
+
+  test('shows project, repository, path, timestamps, and status in task hover cards', async () => {
+    vi.useFakeTimers()
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project-7', name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                available: true,
+                workspacePath: '/Users/alice/repo/Wegent',
+                repoUrl: 'https://github.com/wecode-ai/Wegent.git',
+                tasks: [
+                  {
+                    taskId: 'hover-task',
+                    workspacePath: '/Users/alice/repo/Wegent',
+                    title: 'Hover details',
+                    runtime: 'codex',
+                    createdAt: '2026-07-12T00:00:00Z',
+                    updatedAt: '2026-07-12T00:30:00Z',
+                    status: 'waiting_for_user_input',
+                    gitInfo: {
+                      branch: 'codex/hover-details',
+                      currentBranch: 'main',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    fireEvent.click(screen.getByTestId('project-item-button'))
+    const taskRow = screen.getByTestId('runtime-local-task-row-hover-task')
+    expect(taskRow.querySelector('span')).not.toHaveAttribute('title')
+    fireEvent.mouseEnter(taskRow)
+    await act(async () => vi.advanceTimersByTime(450))
+
+    const content = screen.getByTestId('runtime-local-task-hover-content-hover-task')
+    expect(content).toHaveTextContent('Hover details')
+    expect(content).toHaveTextContent('Wegent')
+    expect(content).toHaveTextContent('wecode-ai/Wegent')
+    expect(content).toHaveTextContent('codex/hover-details')
+    expect(content).toHaveTextContent('任务分支会反映上次使用时的活动分支；发送消息会更新任务分支')
+    expect(content).not.toHaveTextContent('~/repo/Wegent')
+    expect(content).not.toHaveTextContent('创建时间')
+    expect(content).not.toHaveTextContent('done')
+    expect(content).not.toHaveTextContent('local-device /Users/alice/repo/Wegent')
+
+    fireEvent.mouseLeave(taskRow)
+    fireEvent.pointerMove(content)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(content).toBeInTheDocument()
+
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(60))
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(60))
+    expect(
+      screen.queryByTestId('runtime-local-task-hover-content-hover-task')
+    ).not.toBeInTheDocument()
+  })
+
   test('keeps the account settings trigger and notification bell inside the sidebar width', () => {
     renderSidebar()
 
@@ -167,11 +475,71 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice@example.com')
+    expect(screen.getByTestId('sidebar-account-avatar').querySelector('svg')).toHaveClass(
+      'lucide-user-round'
+    )
+    expect(screen.getByTestId('sidebar-account-avatar')).not.toHaveTextContent('AL')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass(
       'h-8',
       'w-8',
       'shrink-0'
     )
+  })
+
+  test('keeps the account menu available before cloud login', async () => {
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'http://localhost:8000')
+    renderSidebar({}, { status: 'disconnected', isConnected: false, user: null })
+
+    const accountButton = screen.getByTestId('settings-button')
+    expect(accountButton).toHaveAccessibleName('账户与设置')
+    expect(accountButton).toHaveTextContent('Wegent 账户')
+    expect(accountButton).toHaveTextContent('未登录')
+    expect(accountButton).not.toHaveTextContent('http://localhost:8000')
+    expect(accountButton).not.toHaveTextContent('alice@example.com')
+
+    await userEvent.click(accountButton)
+
+    expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
+    expect(screen.getByTestId('login-menu-button')).toHaveTextContent('登录 Wegent')
+    expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('login-menu-button'))
+
+    expect(screen.getByTestId('cloud-connection-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('http://localhost:8000')
+    expect(screen.queryByTestId('settings-menu')).not.toBeInTheDocument()
+  })
+
+  test('shows the cloud username and email after login', async () => {
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'http://localhost:8000')
+    const disconnect = vi.fn()
+    renderSidebar(
+      {},
+      {
+        status: 'connected',
+        isConnected: true,
+        backendUrl: 'http://localhost:8000',
+        user: { id: 7, user_name: 'cloud-user', email: 'cloud@example.com' },
+        disconnect,
+      }
+    )
+
+    const accountButton = screen.getByTestId('settings-button')
+    expect(accountButton).toHaveTextContent('cloud-user')
+    expect(accountButton).toHaveTextContent('cloud@example.com')
+    expect(accountButton).not.toHaveTextContent('alice@example.com')
+
+    await userEvent.click(accountButton)
+
+    expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('logout-menu-button')).toHaveTextContent('退出登录')
+    expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('logout-menu-button'))
+
+    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('settings-menu')).not.toBeInTheDocument()
   })
 
   test('shows an exposed update button in the account row when an app update is available', async () => {
@@ -262,7 +630,7 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('non-chat-runtime-section')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-workspace-row-/tmp/spike')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-row-claude-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('对话')
+    expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('任务')
     expect(screen.getByTestId('runtime-chat-section-toggle')).toHaveAttribute(
       'aria-expanded',
       'true'
@@ -279,7 +647,7 @@ describe('DesktopSidebar', () => {
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()
   })
 
-  test('opens runtime search from the sidebar', async () => {
+  test('opens runtime search from the product header', async () => {
     const onOpenSearch = vi.fn()
     renderSidebar({ onOpenSearch })
 
@@ -288,7 +656,7 @@ describe('DesktopSidebar', () => {
     expect(onOpenSearch).toHaveBeenCalledTimes(1)
   })
 
-  test('places plugins as the third primary sidebar action', () => {
+  test('keeps search in the product header and orders primary sidebar actions', () => {
     renderSidebar()
 
     const newChatButton = screen.getByTestId('new-chat-button')
@@ -297,18 +665,55 @@ describe('DesktopSidebar', () => {
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const projectsHeader = screen.getByTestId('projects-section-toggle')
 
-    expect(newChatButton.compareDocumentPosition(searchButton)).toBe(
+    expect(searchButton.compareDocumentPosition(newChatButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
-    expect(searchButton.compareDocumentPosition(pluginsButton)).toBe(
+    expect(newChatButton.compareDocumentPosition(pluginsButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
     expect(pluginsButton.compareDocumentPosition(cloudButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
-    expect(searchButton.compareDocumentPosition(cloudButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(cloudButton.compareDocumentPosition(projectsHeader)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
+    )
+
+    const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
+    expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
+    expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
+    expect(searchButton.parentElement).toHaveClass('h-9', 'justify-between')
+    expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
+    expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
+  })
+
+  test('matches Codex sidebar text emphasis levels', () => {
+    renderSidebar({}, { status: 'disconnected', isConnected: false })
+
+    const newTaskButton = screen.getByTestId('new-chat-button')
+    const searchButton = screen.getByTestId('runtime-search-button')
+    const pluginsButton = screen.getByTestId('plugins-button')
+    const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
+    const newTaskIcon = newTaskButton.querySelector('svg')
+    const cloudIcon = cloudButton.parentElement?.querySelector('svg')
+    const projectsToggle = screen.getByTestId('projects-section-toggle')
+    const projectsTitle = projectsToggle.querySelector('span')
+
+    for (const button of [newTaskButton, pluginsButton, cloudButton]) {
+      expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
+    }
+    expect(searchButton).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
+    expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(cloudButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(newTaskIcon).toHaveClass('text-current')
+    expect(cloudIcon).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
+    expect(projectsTitle).toHaveClass(
+      'font-medium',
+      'text-[rgb(var(--color-sidebar-text-muted))]',
+      'opacity-75'
+    )
+    expect(screen.getByTestId('project-row-7')).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-primary))]'
     )
   })
 
@@ -334,7 +739,8 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
   })
 
-  test('shows cloud work availability on the sidebar entry', () => {
+  test('shows cloud work availability and opens connection settings from the sidebar entry', async () => {
+    const onOpenSettings = vi.fn()
     renderSidebar({
       devices: [
         localDevice(),
@@ -346,6 +752,7 @@ describe('DesktopSidebar', () => {
         }),
       ],
       cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+      onOpenSettings,
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
@@ -368,6 +775,10 @@ describe('DesktopSidebar', () => {
       'group-focus-within/cloud:pointer-events-auto',
       'group-focus-within/cloud:opacity-100'
     )
+
+    await userEvent.click(cloudButton)
+
+    expect(onOpenSettings).toHaveBeenCalledWith({ settingsPage: 'connections' })
   })
 
   test('opens cloud connection settings from the sidebar cloud management button', async () => {
@@ -413,12 +824,68 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
 
     const detail = screen.getByTestId('sidebar-cloud-error-popover')
+    expect(detail.parentElement).toBe(document.body)
+    expect(detail).toHaveClass('fixed', 'z-system-popover', 'rounded-xl')
     expect(detail).toHaveTextContent('云端工作不可用')
     expect(detail).toHaveTextContent('云端设备: request timed out')
     expect(detail).toHaveTextContent('云端设备')
     expect(detail).toHaveTextContent('不可用')
     expect(detail).toHaveTextContent('云端任务列表')
     expect(detail).toHaveTextContent('可用')
+
+    await userEvent.click(document.body)
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
+  })
+
+  test('closes cloud work error details with Escape', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
+  })
+
+  test('closes cloud work error details when clicking outside', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable', runtimeWork: 'available' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
+
+    await userEvent.click(document.body)
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
+  })
+
+  test('does not close cloud work error details when clicking inside', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable', runtimeWork: 'available' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    const detail = screen.getByTestId('sidebar-cloud-error-popover')
+
+    await userEvent.click(detail)
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
   })
 
   test('does not open add-device guidance while cloud work checks are failing', async () => {
@@ -536,6 +1003,29 @@ describe('DesktopSidebar', () => {
     expect(onOpenPlugins).toHaveBeenCalledTimes(1)
   })
 
+  test('opens Sites navigation from the desktop sidebar', async () => {
+    const onOpenSites = vi.fn()
+    renderSidebar({ onOpenSites, activeItem: 'sites' })
+
+    expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
+    await userEvent.click(screen.getByTestId('sites-button'))
+
+    expect(onOpenSites).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows Sites only while experimental features are enabled', async () => {
+    experimentalFeatures.enabled = false
+    const { unmount } = renderSidebar()
+
+    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
+
+    unmount()
+    experimentalFeatures.enabled = true
+    renderSidebar()
+
+    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
+  })
+
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
     const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
@@ -583,7 +1073,7 @@ describe('DesktopSidebar', () => {
       onOpenRuntimeTask,
     })
 
-    expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('对话')
+    expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('任务')
     expect(screen.getByTestId('runtime-chat-section-toggle')).toHaveAttribute(
       'aria-expanded',
       'true'
@@ -607,6 +1097,182 @@ describe('DesktopSidebar', () => {
       workspacePath: chatPath,
       taskId: 'chat-1',
     })
+  })
+
+  test('removes pinned chat tasks from the task section without highlighted styling', () => {
+    const chatPath = '/Users/alice/Documents/Codex/2026-07-12/pinned'
+    renderSidebar({
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: chatPath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'pinned-chat',
+                threadId: 'pinned-thread',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Pinned chat task',
+                runtime: 'codex',
+                pinned: true,
+                pinnedOrder: 0,
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+
+    const pinnedRow = screen.getByTestId('runtime-local-task-row-pinned-chat')
+    expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(pinnedRow)
+    expect(screen.getByTestId('runtime-chat-section')).not.toContainElement(pinnedRow)
+    expect(screen.getByTestId('runtime-chat-empty')).toBeInTheDocument()
+    expect(pinnedRow.className).not.toContain('color-sidebar-marked')
+  })
+
+  test('moves a chat task to the pinned section before the pin request finishes', async () => {
+    let resolvePinRequest: (() => void) | undefined
+    const onSetRuntimeTaskPinned = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolvePinRequest = resolve
+        })
+    )
+    const chatPath = '/Users/alice/Documents/Codex/2026-07-12/optimistic-pin'
+    renderSidebar({
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: chatPath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'optimistic-chat',
+                threadId: 'optimistic-thread',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Optimistic pinned task',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+      onSetRuntimeTaskPinned,
+    })
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-optimistic-chat'))
+
+    await waitFor(() => {
+      const pinnedRow = screen.getByTestId('runtime-local-task-row-optimistic-chat')
+      expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(pinnedRow)
+      expect(screen.getByTestId('runtime-chat-section')).not.toContainElement(pinnedRow)
+      expect(pinnedRow.className).not.toContain('color-sidebar-marked')
+    })
+    expect(onSetRuntimeTaskPinned).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      threadId: 'optimistic-thread',
+      pinned: true,
+    })
+
+    await act(async () => resolvePinRequest?.())
+  })
+
+  test('returns a chat task to the task section when pinning fails', async () => {
+    const onSetRuntimeTaskPinned = vi.fn().mockRejectedValue(new Error('pin failed'))
+    const chatPath = '/Users/alice/Documents/Codex/2026-07-12/pin-failure'
+    renderSidebar({
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: chatPath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'failed-pin-chat',
+                threadId: 'failed-pin-thread',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Failed pinned task',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+      onSetRuntimeTaskPinned,
+    })
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-mark-failed-pin-chat'))
+
+    await waitFor(() => {
+      const taskRow = screen.getByTestId('runtime-local-task-row-failed-pin-chat')
+      expect(screen.getByTestId('runtime-chat-section')).toContainElement(taskRow)
+      expect(screen.queryByTestId('sidebar-pinned-section')).not.toBeInTheDocument()
+    })
+  })
+
+  test('exposes pointer and keyboard sorting affordances in the task section', () => {
+    const onReorderRuntimeProjectTasks = vi.fn().mockResolvedValue(undefined)
+    const chatPath = '/Users/alice/Documents/Codex/2026-07-12/manual'
+    renderSidebar({
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: chatPath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'chat-1',
+                threadId: 'thread-1',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'First chat',
+                runtime: 'codex',
+              },
+              {
+                taskId: 'chat-2',
+                threadId: 'thread-2',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Second chat',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 2,
+      },
+      onReorderRuntimeProjectTasks,
+    })
+
+    const firstSortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:thread-1"]'
+    ) as HTMLElement
+    const secondSortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:thread-2"]'
+    ) as HTMLElement
+    expect(screen.getByTestId('runtime-chat-task-sortable-list')).toContainElement(firstSortable)
+    expect(firstSortable).toHaveAttribute('tabindex', '0')
+    expect(firstSortable).toHaveAttribute('role', 'button')
+    expect(firstSortable).toHaveClass('touch-none')
+    expect(secondSortable).toHaveAttribute('tabindex', '0')
   })
 
   test('refreshes relative runtime task time while the sidebar stays mounted', () => {
@@ -762,7 +1428,7 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('selects a project when expanding it from the desktop sidebar', async () => {
+  test('expands a project without changing the center selection', async () => {
     const onSelectProject = vi.fn()
 
     renderSidebar({
@@ -800,12 +1466,13 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(onSelectProject).toHaveBeenCalledWith(7)
+    expect(onSelectProject).not.toHaveBeenCalled()
     expect(screen.getByTestId('runtime-local-task-row-codex-1')).toBeInTheDocument()
   })
 
-  test('hides remote-only runtime projects from the project list', () => {
+  test('keeps an unavailable remote-only project visible with its IP and gray status', () => {
     renderSidebar({
+      devices: [localDevice()],
       runtimeWork: {
         projects: [
           {
@@ -815,8 +1482,8 @@ describe('DesktopSidebar', () => {
                 id: 91,
                 deviceId: 'remote-device',
                 deviceName: '10.201.3.200',
-                deviceStatus: 'online',
-                available: true,
+                deviceStatus: 'offline',
+                available: false,
                 workspacePath: '/home/ubuntu/workspace/Wegent',
                 workspaceSource: 'remote',
                 remoteHostId: 'remote-ssh-discovered:10.201.3.200',
@@ -845,11 +1512,132 @@ describe('DesktopSidebar', () => {
       },
     })
 
-    expect(screen.queryByText('Remote Wegent')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('project-remote-folder-icon-7')).not.toBeInTheDocument()
+    expect(screen.getByText('Remote Wegent')).toBeInTheDocument()
+    expect(screen.getByTestId('project-remote-folder-icon-7')).toBeInTheDocument()
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7-dot')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-text-muted))]',
+      'opacity-55'
+    )
+    expect(screen.getByTestId('project-device-status-7-dot')).not.toHaveAttribute('style')
     expect(screen.getByText('Local Wegent')).toBeInTheDocument()
     expect(screen.getByTestId('project-folder-icon-8')).toBeInTheDocument()
-    expect(screen.getAllByTestId('project-item')).toHaveLength(1)
+    expect(screen.getAllByTestId('project-item')).toHaveLength(2)
+  })
+
+  test('shows cached tasks for an offline remote project without allowing them to open', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    const onSetRuntimeTaskPinned = vi.fn()
+    const onRenameRuntimeTask = vi.fn()
+    const onArchiveRuntimeTask = vi.fn()
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          status: 'offline',
+          is_default: false,
+          device_type: 'remote',
+          client_ip: '10.201.3.200',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'remote-project-id', name: 'Remote Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'remote-device',
+                deviceName: '10.201.3.200',
+                deviceStatus: 'offline',
+                available: false,
+                workspacePath: '/home/ubuntu/workspace/Wegent',
+                workspaceSource: 'remote',
+                remoteHostId: 'remote-ssh-discovered:10.201.3.200',
+                tasks: [
+                  {
+                    taskId: 'cached-remote-task',
+                    workspacePath: '/home/ubuntu/workspace/Wegent',
+                    title: 'Cached remote task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+      onOpenRuntimeTask,
+      onSetRuntimeTaskPinned,
+      onRenameRuntimeTask,
+      onArchiveRuntimeTask,
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    const taskRow = screen.getByTestId('runtime-local-task-row-cached-remote-task')
+    expect(taskRow).toHaveAttribute('aria-disabled', 'true')
+    expect(taskRow).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByTestId('runtime-local-task-mark-cached-remote-task')).toBeDisabled()
+    expect(screen.getByTestId('runtime-local-task-archive-cached-remote-task')).toBeDisabled()
+    fireEvent.click(taskRow)
+    fireEvent.click(screen.getByTestId('runtime-local-task-mark-cached-remote-task'))
+    fireEvent.doubleClick(taskRow)
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(onSetRuntimeTaskPinned).not.toHaveBeenCalled()
+    expect(onRenameRuntimeTask).not.toHaveBeenCalled()
+    expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  test('shows an available remote project IP with green status', () => {
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          is_default: false,
+          device_type: 'remote',
+          client_ip: '10.201.3.200',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'remote-project-id', name: 'Remote Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'remote-device',
+                deviceName: '10.201.3.200',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/home/ubuntu/workspace/Wegent',
+                workspaceSource: 'remote',
+                remoteHostId: 'remote-ssh-discovered:10.201.3.200',
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7-dot')).toHaveStyle({
+      backgroundColor: '#1FD660',
+    })
+    expect(screen.getByTestId('project-device-status-7-dot')).not.toHaveClass(
+      'bg-[rgb(var(--color-sidebar-text-muted))]'
+    )
   })
 
   test('shows running status on running runtime tasks only', async () => {
@@ -1257,15 +2045,16 @@ describe('DesktopSidebar', () => {
     }
   })
 
-  test('marks and unmarks runtime tasks without opening the task', async () => {
+  test('pins and unpins runtime tasks without opening the task', async () => {
     const user = userEvent.setup()
     const onOpenRuntimeTask = vi.fn()
+    const onSetRuntimeTaskPinned = vi.fn().mockResolvedValue(undefined)
 
     renderSidebar({
       runtimeWork: {
         projects: [
           {
-            project: { id: 7, name: 'Wegent' },
+            project: { id: 7, key: 'project-7', name: 'Wegent', stateDeviceId: 'local-device' },
             totalTasks: 1,
             deviceWorkspaces: [
               {
@@ -1278,6 +2067,7 @@ describe('DesktopSidebar', () => {
                 tasks: [
                   {
                     taskId: 'codex-1',
+                    threadId: 'thread-1',
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
@@ -1292,6 +2082,7 @@ describe('DesktopSidebar', () => {
         totalTasks: 1,
       },
       onOpenRuntimeTask,
+      onSetRuntimeTaskPinned,
     })
 
     await user.click(screen.getByTestId('project-item-button'))
@@ -1306,17 +2097,72 @@ describe('DesktopSidebar', () => {
     await user.click(markButton)
 
     expect(taskRow).toHaveAttribute('data-marked', 'true')
-    expect(taskRow.className).toContain('color-sidebar-marked')
+    expect(taskRow.className).not.toContain('color-sidebar-marked')
     expect(pinIcon).toHaveClass('fill-current')
-    expect(markButton).toHaveAttribute('aria-label', '取消标记')
+    expect(markButton).toHaveAttribute('aria-label', '取消置顶')
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(onSetRuntimeTaskPinned).toHaveBeenLastCalledWith({
+      deviceId: 'local-device',
+      threadId: 'thread-1',
+      pinned: true,
+    })
 
     await user.click(markButton)
 
     expect(taskRow).not.toHaveAttribute('data-marked')
     expect(taskRow.className).not.toContain('color-sidebar-marked')
     expect(pinIcon).not.toHaveClass('fill-current')
-    expect(markButton).toHaveAttribute('aria-label', '标记任务')
+    expect(markButton).toHaveAttribute('aria-label', '置顶任务')
+    expect(onSetRuntimeTaskPinned).toHaveBeenLastCalledWith({
+      deviceId: 'local-device',
+      threadId: 'thread-1',
+      pinned: false,
+    })
+  })
+
+  test('pins Codex tasks that only expose the thread id as taskId', async () => {
+    const onSetRuntimeTaskPinned = vi.fn().mockResolvedValue(undefined)
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project-7', name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'legacy-thread-id',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Legacy Codex task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+      onSetRuntimeTaskPinned,
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    const pinButton = screen.getByTestId('runtime-local-task-mark-legacy-thread-id')
+    expect(pinButton).not.toBeDisabled()
+
+    await userEvent.click(pinButton)
+
+    expect(onSetRuntimeTaskPinned).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      threadId: 'legacy-thread-id',
+      pinned: true,
+    })
+    expect(pinButton).toHaveAttribute('aria-label', '取消置顶')
   })
 
   test('reserves runtime task hover actions without padding the truncated title', async () => {
@@ -1363,11 +2209,11 @@ describe('DesktopSidebar', () => {
 
     expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[72px]')
+    expect(trailing).toHaveClass('min-w-[30px]', 'group-hover/task:w-[68px]')
     expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[72px]')
   })
 
-  test('moves pinned runtime tasks to the top of the project task list', async () => {
+  test('renders Codex-pinned runtime tasks in the pinned section', async () => {
     const user = userEvent.setup()
 
     renderSidebar({
@@ -1401,6 +2247,8 @@ describe('DesktopSidebar', () => {
                   },
                   {
                     taskId: 'old-task',
+                    threadId: 'old-thread',
+                    pinned: true,
                     workspacePath: '/repo/Wegent',
                     title: 'Old task',
                     runtime: 'codex',
@@ -1422,26 +2270,13 @@ describe('DesktopSidebar', () => {
       screen.getAllByTestId(/^runtime-local-task-row-/).map(row => row.getAttribute('data-testid'))
 
     expect(rowTestIds()).toEqual([
-      'runtime-local-task-row-new-task',
-      'runtime-local-task-row-middle-task',
-      'runtime-local-task-row-old-task',
-    ])
-
-    await user.click(screen.getByTestId('runtime-local-task-mark-old-task'))
-
-    expect(rowTestIds()).toEqual([
       'runtime-local-task-row-old-task',
       'runtime-local-task-row-new-task',
       'runtime-local-task-row-middle-task',
     ])
-
-    await user.click(screen.getByTestId('runtime-local-task-mark-old-task'))
-
-    expect(rowTestIds()).toEqual([
-      'runtime-local-task-row-new-task',
-      'runtime-local-task-row-middle-task',
-      'runtime-local-task-row-old-task',
-    ])
+    expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
+      screen.getByTestId('runtime-local-task-row-old-task')
+    )
   })
 
   test('excludes pinned runtime tasks from the collapsed project task count', async () => {
@@ -1463,6 +2298,8 @@ describe('DesktopSidebar', () => {
                 workspacePath: '/repo/Wegent',
                 tasks: Array.from({ length: 6 }, (_, index) => ({
                   taskId: `task-${index + 1}`,
+                  threadId: `thread-${index + 1}`,
+                  pinned: index === 0,
                   workspacePath: '/repo/Wegent',
                   title: `Task ${index + 1}`,
                   runtime: 'codex',
@@ -1479,18 +2316,14 @@ describe('DesktopSidebar', () => {
 
     await user.click(screen.getByTestId('project-item-button'))
 
-    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
-    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
-
-    await user.click(screen.getByTestId('runtime-local-task-mark-task-1'))
-
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)
     expect(screen.queryByTestId('project-runtime-tasks-expand-7')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
   })
 
-  test('restores pinned runtime task ordering after remount', async () => {
+  test('stores runtime task pinning in Codex global state instead of localStorage', async () => {
     const user = userEvent.setup()
+    const onSetRuntimeTaskPinned = vi.fn().mockResolvedValue(undefined)
     const runtimeWork = {
       projects: [
         {
@@ -1507,6 +2340,7 @@ describe('DesktopSidebar', () => {
               tasks: [
                 {
                   taskId: 'old-task',
+                  threadId: 'old-thread',
                   workspacePath: '/repo/Wegent',
                   title: 'Old task',
                   runtime: 'codex',
@@ -1534,37 +2368,17 @@ describe('DesktopSidebar', () => {
       chats: [],
       totalTasks: 3,
     }
-    const rowTestIds = () =>
-      screen.getAllByTestId(/^runtime-local-task-row-/).map(row => row.getAttribute('data-testid'))
-
-    const view = renderSidebar({ runtimeWork })
+    renderSidebar({ runtimeWork, onSetRuntimeTaskPinned })
 
     await user.click(screen.getByTestId('project-item-button'))
     await user.click(screen.getByTestId('runtime-local-task-mark-old-task'))
 
-    await waitFor(() => {
-      expect(localStorage.getItem('wework.desktop.sidebar.pinnedRuntimeTaskKeys.7.1')).toContain(
-        'old-task'
-      )
+    expect(onSetRuntimeTaskPinned).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      threadId: 'old-thread',
+      pinned: true,
     })
-
-    view.unmount()
-
-    renderSidebar({ runtimeWork })
-
-    if (!screen.queryByTestId('runtime-local-task-row-old-task')) {
-      await user.click(screen.getByTestId('project-item-button'))
-    }
-
-    expect(rowTestIds()).toEqual([
-      'runtime-local-task-row-old-task',
-      'runtime-local-task-row-new-task',
-      'runtime-local-task-row-middle-task',
-    ])
-    expect(screen.getByTestId('runtime-local-task-mark-old-task')).toHaveAttribute(
-      'aria-label',
-      '取消标记'
-    )
+    expect(localStorage.getItem('wework.desktop.sidebar.pinnedRuntimeTaskKeys.7.1')).toBeNull()
   })
 
   test('opens centered archive confirmation dialog for project archive', async () => {
@@ -1757,6 +2571,55 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('creates a permanent worktree from a runtime project', async () => {
+    const user = userEvent.setup()
+    const onCreatePermanentWorktree = vi.fn().mockResolvedValue(undefined)
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/Users/alice/dev/Wegent',
+                workspaceKind: 'workspace',
+                workspaceSource: 'local',
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      onCreatePermanentWorktree,
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('create-permanent-worktree-7'))
+
+    expect(screen.getByTestId('permanent-worktree-name-7')).toHaveValue('Wegent_2')
+    await user.clear(screen.getByTestId('permanent-worktree-name-7'))
+    await user.type(screen.getByTestId('permanent-worktree-name-7'), 'Wegent docs')
+    await user.click(screen.getByTestId('confirm-create-permanent-worktree-7'))
+
+    await waitFor(() => {
+      expect(onCreatePermanentWorktree).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        sourcePath: '/Users/alice/dev/Wegent',
+        name: 'Wegent docs',
+      })
+    })
+  })
+
   test('hides the Finder action for remote runtime project folders', async () => {
     const user = userEvent.setup()
 
@@ -1848,6 +2711,62 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('sidebar-global-im-notification-primary-button'))
 
     expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides global IM notifications while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+
+    renderSidebar({ onToggleGlobalImNotification: vi.fn() })
+
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
+  })
+
+  test('anchors the away reminder menu to the full-width account area', async () => {
+    // Regression guard (POPOVER-CONTAINING-BLOCK-MISMATCH): the menu must portal
+    // into the full-width account/settings container (group/account), not remain
+    // a child of the narrow 32px icon-action group, otherwise `left-4 right-4`
+    // resolves against the icon group and the panel collapses to a sliver.
+    const user = userEvent.setup()
+
+    renderSidebar({
+      imNotificationSettings: {
+        global: {
+          enabled: false,
+          sessionKey: 'session-telegram',
+          session: {
+            sessionKey: 'session-telegram',
+            channelType: 'telegram',
+            channelLabel: 'Telegram',
+            channelId: 9,
+            conversationId: 'telegram-1',
+            senderId: '100200300',
+            displayName: 'Alice',
+          },
+        },
+        runtimeTaskSubscriptions: [],
+      },
+      onToggleGlobalImNotification: vi.fn(),
+    })
+
+    await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
+
+    const menu = screen.getByTestId('sidebar-global-im-notification-menu')
+
+    // The menu DOM owner must be the account area, reachable through the
+    // group/account container — never the icon-action group wrapper.
+    const accountArea = menu.closest('.group\\/account')
+    expect(accountArea, 'menu must be portalled into the account area').not.toBeNull()
+
+    const iconGroup = screen.getByTestId('sidebar-global-im-notification-button').parentElement
+    expect(
+      iconGroup?.contains(menu),
+      'menu must NOT stay inside the narrow icon-action group'
+    ).toBe(false)
+
+    // jsdom does not compute CSS layout, so a numeric width floor is not
+    // enforceable here; the DOM-ownership assertions above are the durable
+    // guard against the containing-block regression.
+    expect(menu).toBeInTheDocument()
   })
 
   test('opens away reminder channel settings from the bell menu', async () => {
@@ -1992,9 +2911,11 @@ describe('DesktopSidebar', () => {
     const onArchiveProjectsConversations = vi.fn().mockResolvedValue(undefined)
     const onArchiveChatConversations = vi.fn().mockResolvedValue(undefined)
     const onNewChat = vi.fn()
+    const onStartStandaloneChat = vi.fn()
 
     renderSidebar({
       onNewChat,
+      onStartStandaloneChat,
       onArchiveProjectsConversations,
       onArchiveChatConversations,
       runtimeWork: {
@@ -2066,7 +2987,8 @@ describe('DesktopSidebar', () => {
     })
 
     await user.click(screen.getByTestId('runtime-chat-section-new-chat-button'))
-    expect(onNewChat).toHaveBeenCalledTimes(1)
+    expect(onStartStandaloneChat).toHaveBeenCalledTimes(1)
+    expect(onNewChat).not.toHaveBeenCalled()
 
     await user.click(screen.getByTestId('runtime-chat-section-menu'))
     expect(screen.getByTestId('runtime-chat-section-archive-all-chats')).toHaveTextContent(
@@ -2456,7 +3378,14 @@ describe('DesktopSidebar', () => {
       totalTasks: count,
     })
 
-    const view = renderSidebar({ runtimeWork: runtimeWorkWithTaskCount(6) })
+    const initialProps = createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(6) })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-growing-list-test')
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
 
     await userEvent.click(screen.getByTestId('project-item-button'))
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
@@ -2465,8 +3394,12 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('project-runtime-tasks-expand-7')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
 
+    const nextProps = createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(16) })
+    act(() => lifecycleStore.syncRuntimeWork(nextProps.runtimeWork))
     view.rerender(
-      <DesktopSidebar {...createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(16) })} />
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...nextProps} />
+      </RuntimeTaskLifecycleProvider>
     )
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)

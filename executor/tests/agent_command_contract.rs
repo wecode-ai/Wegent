@@ -150,15 +150,20 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
 }
 
 #[test]
-fn claude_command_uses_model_config_default_haiku_model_when_set() {
+fn claude_command_uses_explicit_default_models_when_set() {
     let _lock = env_lock();
     let _default_haiku = EnvGuard::set("ANTHROPIC_DEFAULT_HAIKU_MODEL", "process-haiku");
+    let _default_sonnet = EnvGuard::set("ANTHROPIC_DEFAULT_SONNET_MODEL", "process-sonnet");
+    let _default_opus = EnvGuard::set("ANTHROPIC_DEFAULT_OPUS_MODEL", "process-opus");
     let request = ExecutionRequest {
         prompt: json!("run locally"),
         model_config: json!({
             "model": "anthropic",
             "model_id": "claude-sonnet-4",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-custom"
+            "CLAUDE_CODE_SUBAGENT_MODEL": "claude-subagent-custom",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-custom",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-custom",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-custom"
         }),
         ..ExecutionRequest::default()
     };
@@ -166,15 +171,29 @@ fn claude_command_uses_model_config_default_haiku_model_when_set() {
     let spec = build_claude_command(&request, "claude");
 
     assert_eq!(
+        spec.envs().get("CLAUDE_CODE_SUBAGENT_MODEL").unwrap(),
+        "claude-subagent-custom"
+    );
+    assert_eq!(
         spec.envs().get("ANTHROPIC_DEFAULT_HAIKU_MODEL").unwrap(),
         "claude-haiku-custom"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_SONNET_MODEL").unwrap(),
+        "claude-sonnet-custom"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_OPUS_MODEL").unwrap(),
+        "claude-opus-custom"
     );
 }
 
 #[test]
-fn claude_command_defaults_haiku_model_to_model_id() {
+fn claude_command_defaults_all_model_tiers_to_model_id() {
     let _lock = env_lock();
     let _default_haiku = EnvGuard::remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+    let _default_sonnet = EnvGuard::remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+    let _default_opus = EnvGuard::remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
     let request = ExecutionRequest {
         prompt: json!("run locally"),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -183,8 +202,17 @@ fn claude_command_defaults_haiku_model_to_model_id() {
 
     let spec = build_claude_command(&request, "claude");
 
+    assert!(!spec.envs().contains_key("CLAUDE_CODE_SUBAGENT_MODEL"));
     assert_eq!(
         spec.envs().get("ANTHROPIC_DEFAULT_HAIKU_MODEL").unwrap(),
+        "claude-sonnet-4"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_SONNET_MODEL").unwrap(),
+        "claude-sonnet-4"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_OPUS_MODEL").unwrap(),
         "claude-sonnet-4"
     );
 }

@@ -3,8 +3,11 @@ import type {
   CodexMemoryCitation,
   CodexReference,
   DeviceInfo,
+  ModelOptions,
   ProjectWithTasks,
+  RuntimeAdditionalContext,
   RuntimeContextUsage,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
   RuntimeWorkListResponse,
@@ -68,6 +71,7 @@ export type WorkbenchMessage = Omit<
 > & {
   blocks?: ProcessingBlock[]
   runtimeMessageIndex?: number | null
+  turnId?: string | null
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
@@ -87,9 +91,21 @@ export interface QueuedWorkbenchMessage {
   id: string
   content: string
   status: QueuedMessageStatus
+  deliveryMode?: 'message' | 'guidance'
   createdAt: string
   error?: string
   notice?: string
+}
+
+export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
+  attachments?: Attachment[]
+  displayContent?: string
+  codeComments?: CodeCommentContext[]
+  modelId?: string
+  modelType?: RuntimeSendRequest['modelType']
+  modelOptions?: ModelOptions
+  runtimeGoalRequest?: boolean
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface GuidanceWorkbenchMessage {
@@ -102,6 +118,7 @@ export interface GuidanceWorkbenchMessage {
 
 export interface RuntimePaneTranscript {
   messages: WorkbenchMessage[]
+  running?: boolean
   contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
   fullContent?: boolean

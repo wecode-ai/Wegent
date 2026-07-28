@@ -1,4 +1,4 @@
-import { ChevronDown, Clock, Download, Loader2, LogOut, Settings } from 'lucide-react'
+import { ChevronDown, Clock, Download, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -45,11 +45,18 @@ interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
   onLogout: () => void
+  onLogin?: () => void
+  showLogout?: boolean
 }
 
-export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
+export function DesktopSettingsMenu({
+  onOpenSettings,
+  onLogout,
+  onLogin,
+  showLogout,
+}: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
-  const showLogout = !isLocalFirstAppRuntime()
+  const shouldShowLogout = showLogout ?? !isLocalFirstAppRuntime()
   const [isUsageExpanded, setIsUsageExpanded] = useState(false)
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
   const [isQuotaLoading, setIsQuotaLoading] = useState(false)
@@ -143,6 +150,18 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
       data-testid="settings-menu"
       className="absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-[20px] border border-border/70 bg-popover/95 py-2.5 text-text-primary shadow-[0_24px_60px_rgba(0,0,0,0.36)] ring-1 ring-border/40 backdrop-blur-xl"
     >
+      {onLogin ? (
+        <>
+          <SettingsMenuItem
+            testId="login-menu-button"
+            icon={<LogIn className="h-4 w-4 shrink-0 text-primary" />}
+            label={t('workbench.account_cloud_login', '登录 Wegent')}
+            description={t('workbench.account_cloud_login_description', '连接云端模型、设备和同步')}
+            onClick={onLogin}
+          />
+          <div className="mx-4 my-1.5 border-t border-border/70" />
+        </>
+      ) : null}
       <SettingsMenuItem
         testId="settings-menu-button"
         icon={<Settings className="h-4 w-4 shrink-0 text-text-secondary" />}
@@ -198,7 +217,7 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
       <SettingsMenuItem
         testId="usage-menu-button"
         icon={<Clock className="h-4 w-4 shrink-0 text-text-secondary" />}
-        label={t('workbench.remaining_usage', '剩余用量')}
+        label={t('workbench.remaining_usage', 'Codex 剩余额度')}
         onClick={handleUsageClick}
         ariaExpanded={isUsageExpanded}
         ariaControls="remaining-usage-panel"
@@ -217,12 +236,12 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
           className="px-4 pb-3 pl-[44px] pt-1"
         >
           {isQuotaLoading ? (
-            <div className="py-1 text-[13px] leading-[18px] text-text-secondary">
+            <div className="py-1 text-sm leading-[18px] text-text-secondary">
               {t('common.loading', '加载中...')}
             </div>
           ) : null}
           {quotaError ? (
-            <div className="py-1 text-[13px] leading-[18px] text-text-secondary">{quotaError}</div>
+            <div className="py-1 text-sm leading-[18px] text-text-secondary">{quotaError}</div>
           ) : null}
           {!quotaError ? (
             <div className="space-y-2 text-xs leading-5 text-text-secondary">
@@ -232,7 +251,7 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
           ) : null}
         </div>
       ) : null}
-      {showLogout ? (
+      {shouldShowLogout ? (
         <SettingsMenuItem
           testId="logout-menu-button"
           icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}
@@ -251,7 +270,7 @@ function UsageWindowRow({ window }: { window: CodexUsageWindowDisplay }) {
       <div className="min-w-0">
         <div className="whitespace-nowrap">{window.title}</div>
         {resetTime ? (
-          <div className="mt-0.5 whitespace-nowrap text-[11px] leading-4 text-text-muted">
+          <div className="mt-0.5 whitespace-nowrap text-xs leading-4 text-text-muted">
             {resetTime} 重置
           </div>
         ) : null}
@@ -267,6 +286,7 @@ interface SettingsMenuItemProps {
   testId: string
   icon: ReactNode
   label: string
+  description?: string
   shortcut?: string
   trailing?: ReactNode
   active?: boolean
@@ -280,6 +300,7 @@ function SettingsMenuItem({
   testId,
   icon,
   label,
+  description,
   shortcut,
   trailing,
   active = false,
@@ -296,16 +317,23 @@ function SettingsMenuItem({
       disabled={disabled}
       aria-expanded={ariaExpanded}
       aria-controls={ariaControls}
-      className={`flex h-9 w-full items-center gap-3 px-4 text-left text-[13px] font-semibold leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
-        active ? 'bg-hover' : ''
-      }`}
+      className={`flex w-full items-center gap-3 px-4 text-left text-sm font-normal leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
+        description ? 'min-h-12 py-2' : 'h-9'
+      } ${active ? 'bg-hover' : ''}`}
     >
       {icon}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{label}</span>
+        {description ? (
+          <span className="block truncate text-xs font-normal leading-4 text-text-muted">
+            {description}
+          </span>
+        ) : null}
+      </span>
       {shortcut ? (
         <KeyboardShortcut
           value={shortcut}
-          className="h-6 bg-muted px-2 text-[13px] text-text-secondary"
+          className="h-6 bg-muted px-2 text-sm text-text-secondary"
         />
       ) : null}
       {trailing}

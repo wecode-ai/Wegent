@@ -248,7 +248,7 @@ export interface GeminiAnnotation {
   source: string
 }
 
-export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'error' | 'guidance'
+export type ChatBlockType = 'text' | 'tool' | 'subagent' | 'thinking' | 'error' | 'guidance'
 
 export interface ChatBlock {
   id: string
@@ -258,12 +258,20 @@ export interface ChatBlock {
   tool_name?: string
   tool_input?: Record<string, unknown>
   tool_output?: unknown
+  parent_tool_use_id?: string
+  display_name?: string
+  agent_type?: string
+  title?: string
+  description?: string
+  output?: string
+  summary?: string
+  children?: ChatBlock[]
   render_payload?: unknown
   guidance_id?: string
   loop_index?: number
   applied_at?: string
   argument_status?: 'streaming' | 'done'
-  status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
+  status?: 'generating_arguments' | 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
   timestamp?: number
 }
 
@@ -432,8 +440,12 @@ export interface ChatBlockUpdatedPayload {
   content?: string
   tool_output?: unknown
   tool_input?: Record<string, unknown>
+  parent_tool_use_id?: string
   render_payload?: unknown
   argument_status?: 'streaming' | 'done'
+  output?: string
+  summary?: string
+  children?: ChatBlock[]
   guidance_id?: string
   loop_index?: number
   applied_at?: string

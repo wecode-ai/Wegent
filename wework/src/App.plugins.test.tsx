@@ -2,8 +2,31 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import { updateAppPreferences } from '@/tauri/appPreferences'
+import type { InstalledPlugin, LocalDeviceSkill } from '@/types/api'
 import './i18n'
 import App from './App'
+
+const localCodexPluginMocks = vi.hoisted(() => ({
+  listInstalledPlugins: vi.fn(),
+  listSkills: vi.fn(),
+}))
+
+const localPathMocks = vi.hoisted(() => ({
+  exists: vi.fn(),
+}))
+
+vi.mock('@/lib/local-terminal', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/local-terminal')>()
+  return {
+    ...actual,
+    localPathExists: localPathMocks.exists,
+  }
+})
 
 vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
@@ -40,6 +63,8 @@ vi.mock('@/api/local/codexPlugins', async importOriginal => {
         nativeCodexHomeExists: true,
         shouldPromptMigration: false,
       }),
+      listInstalledPlugins: localCodexPluginMocks.listInstalledPlugins,
+      listSkills: localCodexPluginMocks.listSkills,
     }),
   }
 })
@@ -72,7 +97,6 @@ const workbenchValue: WorkbenchContextValue = {
     listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '/', entries: [] }),
     readWorkspaceTextFile: vi.fn(),
   },
-  currentRuntimeTaskRunning: false,
   isAwaitingAssistantStart: false,
   isRuntimeTranscriptLoading: false,
   runtimeTranscriptHasMoreBefore: false,
@@ -108,6 +132,7 @@ const workbenchValue: WorkbenchContextValue = {
   selectStandaloneDevice: vi.fn(),
   openStandaloneWorkspace: vi.fn(),
   startNewChat: vi.fn(),
+  startNewSkillChat: vi.fn(),
   startStandaloneChat: vi.fn(),
   startNewProjectChat: vi.fn(),
   openRuntimeTask: vi.fn(),
@@ -119,6 +144,8 @@ const workbenchValue: WorkbenchContextValue = {
   archiveProjectsConversations: vi.fn(),
   archiveChatConversations: vi.fn(),
   forkCurrentRuntimeTask: vi.fn(),
+  markRuntimeTaskStarted: vi.fn(),
+  markRuntimeTaskSettled: vi.fn(),
   listImPrivateSessions: vi.fn(),
   bindRuntimeTaskToImSessions: vi.fn(),
   getImNotificationSettings: vi.fn(),
@@ -218,6 +245,51 @@ function createSkillZipFile(name: string, rootSkillMd = false): File {
   })
 }
 
+function installedCodexSitesPlugin(): InstalledPlugin {
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'sites',
+      namespace: 'openai-bundled',
+      labels: { id: 'sites' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'openai-bundled',
+        pluginKey: 'sites',
+      },
+      displayName: 'Sites',
+      description: 'Build and deploy websites with Sites',
+      version: '0.1.27',
+      installState: 'installed',
+      enabled: true,
+      componentStates: {},
+      manifest: { name: 'sites' },
+      components: {
+        skills: [],
+        commands: [],
+        templates: [],
+        apps: [],
+        agents: [],
+        mcps: [],
+        hooks: [],
+        lsps: [],
+        monitors: [],
+        bins: [],
+      },
+      interface: null,
+      packageRef: null,
+      sourcePayload: {
+        pluginName: 'sites',
+        marketplaceName: 'openai-bundled',
+      },
+    },
+    status: { state: 'enabled' },
+  }
+}
+
 vi.mock('@/features/auth/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
@@ -257,6 +329,15 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: () => mockViewport.isMobile,
 }))
+
+function renderApp() {
+  const lifecycleStore = new RuntimeTaskLifecycleStore('app-plugins-test')
+  return render(
+    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+      <App />
+    </RuntimeTaskLifecycleProvider>
+  )
+}
 
 function mockSystemSkillsFetch() {
   const skillsResponse = {
@@ -581,8 +662,16 @@ describe('App plugins route', () => {
   beforeEach(() => {
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
+    sessionStorage.clear()
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
+    workbenchValue.state.runtimeWork = null
+    workbenchValue.state.currentRuntimeTask = null
+    vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)
+    vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
+    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
+    localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
+    localPathMocks.exists.mockReset().mockResolvedValue(false)
     mockSystemSkillsFetch()
   })
 
@@ -593,18 +682,291 @@ describe('App plugins route', () => {
   test('opens the plugins page from the desktop sidebar', async () => {
     window.history.pushState({}, '', '/')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(screen.getByTestId('plugins-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
+  })
+
+  test('shows Sites as unavailable instead of calling a relative API in disconnected local mode', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      runtimeMode: 'local-first',
+    }
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('Internal server error'),
+    } as Response)
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
+      '站点功能尚未推出'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+    expect(screen.queryByText('Internal server error')).not.toBeInTheDocument()
+  })
+
+  test('loads Sites from the authenticated cloud Backend in local mode', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      runtimeMode: 'local-first',
+    }
+    localStorage.setItem(
+      'wework.cloudConnection',
+      JSON.stringify({
+        backendUrl: 'http://127.0.0.1:9100',
+        apiBaseUrl: 'http://127.0.0.1:9100/api',
+        socketBaseUrl: 'http://127.0.0.1:9100',
+        socketPath: '/socket.io',
+        token: 'cloud-secret',
+        tokenExpiresAt: null,
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-15T00:00:00.000Z',
+      })
+    )
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.endsWith('/users/me')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' }),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: [
+                {
+                  siteid: 'site-cloud-1',
+                  name: '云端站点',
+                  internal_url: 'http://sites.internal/cloud',
+                  external_url: null,
+                  publish_status: 'unpublished',
+                  thumbnail_url: null,
+                },
+              ],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    expect(await screen.findByText('云端站点')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:9100/api/sites?offset=0&limit=20',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
+      })
+    )
+  })
+
+  test('renders Sites and starts a chat with the installed Codex Sites plugin', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          items: [
+            {
+              siteid: 'site-1',
+              name: '产品发布页',
+              internal_url: 'http://sites.internal/product',
+              external_url: null,
+              publish_status: 'unpublished',
+              thumbnail_url: null,
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 20,
+        }),
+    } as Response)
+    localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+      items: [installedCodexSitesPlugin()],
+    })
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+
+    expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
+    expect(await screen.findByText('产品发布页')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/sites?offset=0&limit=20',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+      })
+    )
+    expect(await screen.findByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
+
+    await userEvent.click(screen.getByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localCodexPluginMocks.listInstalledPlugins).toHaveBeenCalledTimes(1)
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
+  })
+
+  test('falls back to the Wegent Backend Sites skill when Codex Sites is unavailable', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    vi.mocked(workbenchValue.startNewSkillChat).mockResolvedValue(true)
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    expect(workbenchValue.startNewSkillChat).toHaveBeenCalledWith(['sites:sites-building'], {
+      allowLocalSkills: false,
+    })
+  })
+
+  test('uses the Codex Sites plugin reference when the native bundled Sites skill is available', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    localCodexPluginMocks.listSkills.mockResolvedValue([
+      {
+        name: 'sites:sites-building',
+        description: 'Build websites with Sites',
+        path: '/Users/alice/.codex/plugins/cache/openai-bundled/sites/0.1.27/skills/sites-building/SKILL.md',
+        source: 'codex',
+        origin: 'local',
+        plugin_name: 'sites',
+        plugin_provider: 'openai-bundled',
+      } satisfies LocalDeviceSkill,
+    ])
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localCodexPluginMocks.listSkills).toHaveBeenCalledWith({ forceReload: true })
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
+  })
+
+  test('uses the Codex Sites plugin reference when its native plugin cache exists', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    localPathMocks.exists.mockImplementation(path =>
+      Promise.resolve(path === '/Users/test/.codex/plugins/cache/openai-bundled/sites')
+    )
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localPathMocks.exists).toHaveBeenCalledWith(
+      '/Users/test/.codex/plugins/cache/openai-bundled/sites'
+    )
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
+  })
+
+  test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {
+    const workspacePath = '/Users/alice/Documents/Codex/plugin-task'
+    workbenchValue.state.runtimeWork = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath,
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'plugin-task',
+              workspacePath,
+              workspaceKind: 'chat',
+              title: 'Return to task',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    window.history.pushState({}, '', '/plugins')
+
+    renderApp()
+
+    await userEvent.click(await screen.findByTestId('runtime-local-task-row-plugin-task'))
+
+    await waitFor(() => {
+      expect(workbenchValue.openRuntimeTask).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        workspacePath,
+        taskId: 'plugin-task',
+      })
+      expect(window.location.pathname).toBe('/runtime-tasks')
+    })
+    expect(window.location.search).toBe('?deviceId=local-device&taskId=plugin-task')
+    expect(screen.queryByTestId('plugins-workspace')).not.toBeInTheDocument()
   })
 
   test('preserves the workbench composer while visiting plugins', async () => {
     window.history.pushState({}, '', '/')
 
-    render(<App />)
+    renderApp()
 
     const composer = await screen.findByTestId('chat-message-input')
     fireEvent.input(composer, { target: { textContent: '保留这段草稿' } })
@@ -621,7 +983,7 @@ describe('App plugins route', () => {
   test('renders the plugins page on direct /plugins visit', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     const pluginsDragRegion = within(screen.getByTestId('plugins-topbar-drag-region')).getByTestId(
       'macos-titlebar-drag-region'
@@ -632,7 +994,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-search-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-installed-strip')).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
@@ -642,7 +1004,7 @@ describe('App plugins route', () => {
   test('collapses and expands the desktop sidebar on plugin routes', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
@@ -662,7 +1024,7 @@ describe('App plugins route', () => {
     localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
@@ -674,7 +1036,7 @@ describe('App plugins route', () => {
   test('collapses and expands the desktop sidebar on plugin management route', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
@@ -689,12 +1051,12 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-create-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-marketplace-selector')).not.toBeInTheDocument()
   })
@@ -703,7 +1065,7 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
@@ -719,7 +1081,7 @@ describe('App plugins route', () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
@@ -729,7 +1091,7 @@ describe('App plugins route', () => {
   test('navigates to plugin management from the manage button', async () => {
     window.history.pushState({}, '', '/plugins')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(screen.getByTestId('plugins-manage-button'))
 
@@ -746,7 +1108,7 @@ describe('App plugins route', () => {
   test('renders plugin management on direct /plugins/manage visit', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
@@ -760,7 +1122,7 @@ describe('App plugins route', () => {
   test('keeps installed plugin switch knobs anchored inside the track', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: 'MCP 1' }))
     const switchKnob = (await screen.findByTestId('installed-mcp-toggle-7')).querySelector('span')
@@ -771,7 +1133,7 @@ describe('App plugins route', () => {
   test('toggles installed MCPs from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: 'MCP 1' }))
     expect(await screen.findByText('Custom Docs MCP')).toBeInTheDocument()
@@ -789,7 +1151,7 @@ describe('App plugins route', () => {
   test('creates custom MCPs from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
     await userEvent.click(screen.getByTestId('plugins-create-mcp-option'))
@@ -828,7 +1190,7 @@ describe('App plugins route', () => {
   test('configures provider token and installs provider MCPs', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: '市场 1' }))
     expect(screen.getByText('MCP Router')).toBeInTheDocument()
@@ -861,7 +1223,7 @@ describe('App plugins route', () => {
   test('toggles installed system skills from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
 
@@ -880,7 +1242,7 @@ describe('App plugins route', () => {
   test('uninstalls system skills from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
     expect(await screen.findByText('wehot')).toBeInTheDocument()
@@ -897,7 +1259,7 @@ describe('App plugins route', () => {
   test('shows and uninstalls personal skills from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
     expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
@@ -924,7 +1286,7 @@ describe('App plugins route', () => {
   test('opens the management create menu and uploads a personal skill', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
-    render(<App />)
+    renderApp()
 
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
     expect(screen.getByTestId('plugins-create-skill-option')).toBeInTheDocument()

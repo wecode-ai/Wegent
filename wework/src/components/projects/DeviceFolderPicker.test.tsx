@@ -123,4 +123,48 @@ describe('DeviceFolderPicker', () => {
       'mkdir failed'
     )
   })
+
+  test('shows a home lookup error instead of silently opening the root directory', async () => {
+    const onListDeviceDirectories = vi.fn()
+
+    render(
+      <DeviceFolderPicker
+        device={{ ...device, device_type: 'remote' }}
+        mode="select"
+        variant="remoteDark"
+        onGetDeviceHomeDirectory={vi.fn().mockRejectedValue(new Error('home unavailable'))}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={vi.fn()}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('device-folder-picker-error')).toHaveTextContent(
+      'home unavailable'
+    )
+    expect(screen.getByTestId('device-folder-path-input')).toHaveValue('')
+    expect(onListDeviceDirectories).not.toHaveBeenCalled()
+  })
+
+  test('uses the compact Codex-sized directory list for remote projects', async () => {
+    render(
+      <DeviceFolderPicker
+        device={{ ...device, device_type: 'remote' }}
+        mode="select"
+        variant="remoteDark"
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue(['repo'])}
+        onCreateDeviceDirectory={vi.fn()}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('device-folder-path-input')).toHaveValue('/home/user')
+    )
+    expect(screen.getByTestId('device-folder-directory-list')).toHaveClass('h-[280px]', 'p-2')
+    expect(screen.getByTestId('device-folder-path-input')).toHaveClass('h-10', 'text-sm')
+  })
 })

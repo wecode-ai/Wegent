@@ -19,8 +19,9 @@ from app.services.adapters.task_kinds.task_skills_resolver import resolve_task_s
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.chat.task_default_knowledge_bases import (
     build_initial_task_knowledge_base_refs,
+    resolve_task_default_knowledge_base_ids,
 )
-from app.services.share.external_entity_resolver import register_entity_resolver
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.share.namespace_entity_resolver import NamespaceEntityResolver
 
 
@@ -339,26 +340,64 @@ def test_child_member_can_create_task_with_authorized_parent_team_and_use_skills
     assert "parent-skill" in resolved["skills"]
 
 
-def test_authorized_parent_team_defaults_can_bind_parent_knowledge_base(
+def test_authorized_parent_team_defaults_are_resolved_dynamically(
     test_db: Session,
 ):
-    _owner, child_member, _child, team, kb = _arrange_parent_team_authorized_to_child(
+    owner, child_member, _child, team, kb = _arrange_parent_team_authorized_to_child(
         test_db,
         with_knowledge_base=True,
     )
+    kb_owner = _create_user(test_db, "parent-kb-owner")
+    assert kb is not None
+    kb.user_id = kb_owner.id
+    test_db.commit()
+    parent_namespace = (
+        test_db.query(Namespace).filter(Namespace.name == team.namespace).one()
+    )
+    _add_namespace_member(test_db, parent_namespace, owner, role="Maintainer")
 
-    refs = build_initial_task_knowledge_base_refs(
+    initial_refs = build_initial_task_knowledge_base_refs(
         db=test_db,
         user=child_member,
         team=team,
     )
+    result = task_kinds_service.create_task_or_append(
+        test_db,
+        obj_in=TaskCreate(
+            team_id=team.id,
+            title="Use parent knowledge base",
+            prompt="hello",
+            task_type="task",
+        ),
+        user=child_member,
+    )
+    resolved_ids = resolve_task_default_knowledge_base_ids(
+        test_db,
+        task_id=result["id"],
+        user_id=child_member.id,
+    )
 
-    assert kb is not None
-    assert refs == [
-        {
-            "id": kb.id,
-            "name": "Parent KB",
-            "boundBy": child_member.user_name,
-            "boundAt": refs[0]["boundAt"],
-        }
-    ]
+    assert initial_refs == []
+    assert resolved_ids == [kb.id]
+
+    owner_membership = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == parent_namespace.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(owner.id),
+        )
+        .one()
+    )
+    test_db.delete(owner_membership)
+    test_db.commit()
+
+    assert (
+        resolve_task_default_knowledge_base_ids(
+            test_db,
+            task_id=result["id"],
+            user_id=child_member.id,
+        )
+        == []
+    )

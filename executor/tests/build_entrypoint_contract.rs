@@ -20,7 +20,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "../docker/device/Dockerfile",
         "../.github/workflows/snapshot-image.yml",
         "../.github/workflows/publish-image.yml",
-        "../.github/workflows/test-windows-executor.yml",
         "../.github/workflows/e2e-tests.yml",
         "../docker/standalone/start.sh",
         "../docker/standalone/Dockerfile",
@@ -70,7 +69,8 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(dev_sidecar.contains("--bin wegent-executor-dev"));
     assert!(dev_sidecar.contains("cargo build"));
     assert!(dev_sidecar.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor\""));
-    assert!(dev_sidecar.contains("executor-dev/$(executor_source_cache_key)"));
+    assert!(dev_sidecar.contains("$cache_root/executor-dev"));
+    assert!(!dev_sidecar.contains("executor_source_cache_key"));
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_SOURCE_DIR"));
     assert!(dev_sidecar
         .contains("cargo_target_binary_path \"$EXECUTOR_DIR\" debug wegent-executor-dev"));

@@ -43,6 +43,10 @@ from app.schemas.namespace_member import (
     GroupMemberUpdate,
 )
 from app.services import group_service
+from app.services.external_entity_resolver import (
+    get_all_entity_types,
+    get_entity_resolver,
+)
 from app.services.group_member_helper import (
     MAX_ENTITY_MEMBERS_PER_GROUP,
     create_group_entity_member,
@@ -52,10 +56,6 @@ from app.services.group_member_helper import (
     update_group_entity_member_role,
 )
 from app.services.group_permission import get_view_role_in_group
-from app.services.share.external_entity_resolver import (
-    get_all_entity_types,
-    get_entity_resolver,
-)
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()

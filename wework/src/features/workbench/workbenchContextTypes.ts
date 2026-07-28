@@ -1,4 +1,4 @@
-import type { EnvironmentDiffMode } from '@/api/environment'
+import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
@@ -19,6 +19,7 @@ import type {
   ProjectWithTasks,
   RuntimeGoalClearResponse,
   RuntimeGoalCreateInput,
+  RuntimeAdditionalContext,
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
@@ -29,6 +30,11 @@ import type {
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
+  RuntimeProjectAppearanceRequest,
+  RuntimeProjectPinRequest,
+  RuntimeProjectReorderRequest,
+  RuntimeProjectTaskReorderRequest,
+  RuntimeTaskPinRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeWorkSearchRequest,
@@ -69,6 +75,7 @@ export type ArchiveRuntimeTaskResult = {
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
+  clientMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
   onError?: (error: string) => void
@@ -76,11 +83,24 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {
   project?: ProjectWithTasks | null
   source?: RuntimeTaskAddress | null
+  attachments?: Attachment[]
+  onError?: (error: string) => void
+  onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
+}
+
+export interface CreateProjectRuntimeTaskOptions {
+  project: ProjectWithTasks
+  attachments?: Attachment[]
+  initialGoal?: RuntimeGoalCreateInput | null
+  collaborationMode?: 'default' | 'plan'
+  deliveryId?: string
+  cloudProjectId?: string
   onError?: (error: string) => void
 }
 
@@ -100,13 +120,13 @@ export interface WorkbenchContextValue {
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
-  currentRuntimeTaskRunning: boolean
   runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
+    activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string
@@ -146,9 +166,14 @@ export interface WorkbenchContextValue {
   openStandaloneWorkspace: (
     deviceId: string,
     workspacePath: string,
-    label?: string
+    label?: string,
+    projectRoots?: string[]
   ) => Promise<void>
   startNewChat: () => void
+  startNewSkillChat: (
+    skillNames: string[],
+    options?: { allowLocalSkills?: boolean }
+  ) => Promise<boolean>
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
@@ -175,7 +200,10 @@ export interface WorkbenchContextValue {
     addresses: RuntimeTaskAddress[],
     options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
-  forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
+  forkCurrentRuntimeTask: (
+    target: RuntimeTaskForkTarget,
+    options?: { lastTurnId?: string; title?: string }
+  ) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
@@ -212,14 +240,26 @@ export interface WorkbenchContextValue {
   listGitRepositories: () => Promise<GitRepoInfo[]>
   listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
+  updateLocalRuntimeProject: (data: {
+    deviceId: string
+    projectKey: string
+    name: string
+    roots: string[]
+  }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
+  reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
+  setRuntimeProjectPinned: (data: RuntimeProjectPinRequest) => Promise<void>
+  setRuntimeProjectAppearance: (data: RuntimeProjectAppearanceRequest) => Promise<void>
+  reorderRuntimeProjectTasks: (data: RuntimeProjectTaskReorderRequest) => Promise<void>
+  setRuntimeTaskPinned: (data: RuntimeTaskPinRequest) => Promise<void>
   getDeviceHomeDirectory: (deviceId: string) => Promise<string>
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   loadEnvironmentInfo: (
     project: ProjectWithTasks | null,
-    workspaceTarget?: WorkspaceTarget | null
+    workspaceTarget?: WorkspaceTarget | null,
+    options?: EnvironmentInfoLoadOptions
   ) => Promise<EnvironmentInfo>
   loadEnvironmentDiff: (
     project: ProjectWithTasks | null,
@@ -258,6 +298,10 @@ export interface WorkbenchContextValue {
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
+  interruptAndSendRuntimePaneMessage: (
+    request: RuntimeSendRequest,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
   sendRuntimePaneGuidance: (request: RuntimeGuidanceRequest) => Promise<RuntimePaneGuidanceResult>
   compactRuntimePaneTask: (
     address: RuntimeTaskAddress,
@@ -276,17 +320,27 @@ export interface WorkbenchContextValue {
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
-  retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
+  createProjectRuntimeTask: (
+    input: string,
+    options: CreateProjectRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  retryFailedMessage: (
+    messageId: string,
+    messagesOverride?: WorkbenchMessage[],
+    retryUserMessageOverride?: WorkbenchMessage
+  ) => Promise<boolean>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
     subtaskId: string,
     messagesOverride?: WorkbenchMessage[],
-    fileChangesOverride?: TurnFileChangesSummary
+    fileChangesOverride?: TurnFileChangesSummary,
+    runtimeTaskOverride?: RuntimeTaskAddress | null
   ) => Promise<string>
   revertTurnFileChanges: (
     subtaskId: string,
     messagesOverride?: WorkbenchMessage[],
-    fileChangesOverride?: TurnFileChangesSummary
+    fileChangesOverride?: TurnFileChangesSummary,
+    runtimeTaskOverride?: RuntimeTaskAddress | null
   ) => Promise<TurnFileChangesSummary>
 }
 
@@ -297,16 +351,14 @@ export type WorkbenchPaneState = Pick<
   | 'devices'
   | 'runtimeWork'
   | 'standaloneDeviceId'
+  | 'standaloneWorkspacePath'
   | 'selectedDeviceWorkspaceId'
   | 'pendingProjectWorkspaceProjectId'
   | 'user'
   | 'error'
 >
 
-export type WorkbenchPaneContextValue = Omit<
-  WorkbenchContextValue,
-  'state' | 'currentRuntimeTaskRunning' | 'cloudWorkStatus'
-> & {
+export type WorkbenchPaneContextValue = Omit<WorkbenchContextValue, 'state' | 'cloudWorkStatus'> & {
   state: WorkbenchPaneState
 }
 

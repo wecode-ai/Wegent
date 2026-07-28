@@ -46,6 +46,14 @@ describe('reduceWorkbenchMessages', () => {
       content: 'partial response',
       offset: 20_000
     })
+
+    expect(streamed[0]).toMatchObject({
+      content: 'partial response',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+      contentLoadRef: undefined
+    })
+
     const done = reduceWorkbenchMessages(streamed, {
       type: 'assistant_done',
       subtaskId: 'short-final-content',
@@ -118,7 +126,7 @@ describe('reduceWorkbenchMessages', () => {
     const output =
       state[0].blocks?.[0]?.type === 'tool' ? state[0].blocks[0].toolOutput : ''
     expect(typeof output).toBe('string')
-    expect((output as string).length).toBe(120_000)
+    expect((output as string).length).toBe(64 * 1024)
     expect((output as string).endsWith('tail')).toBe(true)
   })
 
@@ -161,7 +169,7 @@ describe('reduceWorkbenchMessages', () => {
     expect(block?.type).toBe('tool')
     if (block?.type !== 'tool') return
     expect(block.toolOutputOriginalChars).toBe(120_018)
-    expect(String(block.toolOutput).length).toBe(120_000)
+    expect(String(block.toolOutput).length).toBe(64 * 1024)
     expect(String(block.toolOutput).endsWith('tailnext')).toBe(true)
   })
 
@@ -196,6 +204,35 @@ describe('reduceWorkbenchMessages', () => {
       content: 'hi',
       status: 'streaming',
       shellType: 'ClaudeCode'
+    })
+  })
+
+  test('keeps repeated optimistic user message delivery idempotent', () => {
+    const message: WorkbenchMessage = {
+      id: 'runtime-local-pane-1',
+      role: 'user',
+      content: 'inspect the latest screenshot',
+      status: 'done',
+      createdAt: '2026-05-25T00:00:00.000Z'
+    }
+
+    const optimistic = reduceWorkbenchMessages([], {
+      type: 'user_added',
+      message
+    })
+    const reconciled = reduceWorkbenchMessages(optimistic, {
+      type: 'user_added',
+      message: {
+        ...message,
+        subtaskId: 'runtime-worktree-0'
+      }
+    })
+
+    expect(reconciled).toHaveLength(1)
+    expect(reconciled[0]).toMatchObject({
+      id: 'runtime-local-pane-1',
+      content: 'inspect the latest screenshot',
+      subtaskId: 'runtime-worktree-0'
     })
   })
 
@@ -308,6 +345,7 @@ describe('reduceWorkbenchMessages', () => {
     const done = reduceWorkbenchMessages(withChunk, {
       type: 'assistant_done',
       subtaskId: '9',
+      turnId: 'turn-9',
       content: 'Hi'
     })
 
@@ -319,6 +357,7 @@ describe('reduceWorkbenchMessages', () => {
     })
     expect(done[1]).toMatchObject({
       role: 'assistant',
+      turnId: 'turn-9',
       content: 'Hi',
       status: 'done',
       blocks: [{ type: 'tool', toolName: 'bash', status: 'done' }]
@@ -386,6 +425,102 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('orders tool blocks by creation time when create events arrive out of order', () => {
+    const withLaterTool = reduceWorkbenchMessages([], {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call-later',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'second' },
+        status: 'pending',
+        createdAt: 1770000002000
+      }
+    })
+    const withEarlierTool = reduceWorkbenchMessages(withLaterTool, {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call-earlier',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'first' },
+        status: 'pending',
+        createdAt: 1770000001000
+      }
+    })
+
+    expect(withEarlierTool[0].blocks?.map((block) => block.id)).toEqual([
+      'call-earlier',
+      'call-later'
+    ])
+  })
+
+  test('keeps tool arrival order when creation times are equal', () => {
+    const withFirstTool = reduceWorkbenchMessages([], {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call-first',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        status: 'pending',
+        createdAt: 1770000001000
+      }
+    })
+    const withSecondTool = reduceWorkbenchMessages(withFirstTool, {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call-second',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        status: 'pending',
+        createdAt: 1770000001000
+      }
+    })
+
+    expect(withSecondTool[0].blocks?.map((block) => block.id)).toEqual([
+      'call-first',
+      'call-second'
+    ])
+  })
+
+  test('orders completed response blocks by creation time', () => {
+    const done = reduceWorkbenchMessages([], {
+      type: 'assistant_done',
+      subtaskId: '9',
+      blocks: [
+        {
+          id: 'call-later',
+          subtaskId: '9',
+          type: 'tool',
+          toolName: 'bash',
+          status: 'done',
+          createdAt: 1770000002000
+        },
+        {
+          id: 'call-earlier',
+          subtaskId: '9',
+          type: 'tool',
+          toolName: 'bash',
+          status: 'done',
+          createdAt: 1770000001000
+        }
+      ]
+    })
+
+    expect(done[0].blocks?.map((block) => block.id)).toEqual([
+      'call-earlier',
+      'call-later'
+    ])
+  })
+
   test('moves streamed content into a text block before a tool block', () => {
     const state = reduceWorkbenchMessages(
       reduceWorkbenchMessages([], {
@@ -419,6 +554,59 @@ describe('reduceWorkbenchMessages', () => {
       {
         type: 'text',
         content: 'Let me inspect the repository first.',
+        status: 'done'
+      },
+      { type: 'tool', toolName: 'bash', status: 'pending' }
+    ])
+  })
+
+  test('resets the text offset after moving content before a tool block', () => {
+    const firstPreamble = '找到了关键错误。看一下失败前后的上下文：'
+    const secondPreamble =
+      '本地分支落后于 main，CI 跑的提交是 `719f99694 fix(wework)`。'
+    const withFirstPreamble = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: '1',
+        subtaskId: '9'
+      }),
+      {
+        type: 'assistant_chunk',
+        subtaskId: '9',
+        content: firstPreamble,
+        offset: 0
+      }
+    )
+
+    const withTool = reduceWorkbenchMessages(withFirstPreamble, {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call_1',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'grep error' },
+        status: 'pending',
+        createdAt: 1770000000000
+      }
+    })
+    const withSecondPreamble = reduceWorkbenchMessages(withTool, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: secondPreamble,
+      offset: 0
+    })
+
+    expect(withTool[0]).toMatchObject({
+      content: '',
+      streamTextOffset: undefined
+    })
+    expect(withSecondPreamble[0].content).toBe(secondPreamble)
+    expect(withSecondPreamble[0].blocks).toMatchObject([
+      {
+        type: 'text',
+        content: firstPreamble,
         status: 'done'
       },
       { type: 'tool', toolName: 'bash', status: 'pending' }

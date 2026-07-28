@@ -133,14 +133,6 @@ impl RuntimeWorkStore {
         self.update_task_with_persistence(local_task_id, updater, true)
     }
 
-    pub fn update_task_in_memory(
-        &self,
-        local_task_id: &str,
-        updater: impl FnOnce(&mut RuntimeTaskLink),
-    ) -> Option<RuntimeTaskLink> {
-        self.update_task_with_persistence(local_task_id, updater, false)
-    }
-
     fn update_task_with_persistence(
         &self,
         local_task_id: &str,
@@ -342,55 +334,5 @@ fn expand_home(value: impl AsRef<str>) -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    env::var("HOME")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn update_task_in_memory_defers_persistence_until_next_write() {
-        let index_path = temp_index_path("in-memory-update");
-        let store = RuntimeWorkStore::new(index_path.clone());
-        store.upsert_task(RuntimeTaskLink::new_pending(
-            "task-1".to_owned(),
-            "/tmp/workspace".to_owned(),
-            "Task".to_owned(),
-        ));
-
-        store.update_task_in_memory("task-1", |link| {
-            link.title = "Streaming delta".to_owned();
-        });
-        assert_eq!(store.get_task("task-1").unwrap().title, "Streaming delta");
-        let reloaded_before_persist = RuntimeWorkStore::new(index_path.clone());
-        assert_eq!(
-            reloaded_before_persist.get_task("task-1").unwrap().title,
-            "Task"
-        );
-
-        store.update_task("task-1", |link| {
-            link.status = "done".to_owned();
-        });
-        let reloaded_after_persist = RuntimeWorkStore::new(index_path.clone());
-        let task = reloaded_after_persist.get_task("task-1").unwrap();
-        assert_eq!(task.title, "Streaming delta");
-        assert_eq!(task.status, "done");
-
-        let _ = fs::remove_file(index_path);
-    }
-
-    fn temp_index_path(label: &str) -> PathBuf {
-        env::temp_dir().join(format!(
-            "wegent-runtime-work-store-{label}-{}-{}.json",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or_default()
-        ))
-    }
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }

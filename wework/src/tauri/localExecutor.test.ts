@@ -9,7 +9,6 @@ import {
   ensureLocalExecutorStarted,
   getLocalExecutorStatus,
   requestLocalExecutor,
-  restartLocalExecutor,
   subscribeLocalExecutorEvents,
 } from './localExecutor'
 
@@ -50,17 +49,6 @@ describe('localExecutor', () => {
       error: 'missing binary',
     })
     expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.status)
-  })
-
-  test('restarts the local executor through the native app command', async () => {
-    invokeMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
-
-    await expect(restartLocalExecutor()).resolves.toEqual({
-      running: true,
-      ready: true,
-      deviceId: 'local-device',
-    })
-    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.restart)
   })
 
   test('connects the local executor to backend through the native app command', async () => {

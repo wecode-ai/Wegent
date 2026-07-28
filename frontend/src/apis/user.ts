@@ -203,6 +203,10 @@ export const userApis = {
     return apiClient.delete(`/users/me/git-token/${encodeURIComponent(gitDomain)}${params}`)
   },
 
+  async reorderGitTokens(orderedKeys: string[]): Promise<User> {
+    return apiClient.put('/users/me/git-token-order', { ordered_keys: orderedKeys })
+  },
+
   async getQuickAccess(): Promise<QuickAccessResponse> {
     if (quickAccessRequest) {
       return quickAccessRequest
@@ -238,6 +242,12 @@ export const userApis = {
 
   async searchUsers(query: string): Promise<SearchUsersResponse> {
     return apiClient.get(`/users/search?q=${encodeURIComponent(query)}`)
+  },
+
+  async getUsersByIds(userIds: number[]): Promise<SearchUsersResponse> {
+    const params = new URLSearchParams()
+    userIds.forEach(userId => params.append('ids', String(userId)))
+    return apiClient.get(`/users/by-ids?${params.toString()}`)
   },
 
   async getMcpProviderServices(providerId: string): Promise<McpProviderServiceConfig[]> {

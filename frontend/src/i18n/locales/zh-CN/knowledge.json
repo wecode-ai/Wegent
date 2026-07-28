@@ -103,6 +103,8 @@
       "collapse": "收起",
       "collapseTree": "收起列表",
       "expandTree": "列表",
+      "expandAll": "展开全部",
+      "layeredNav": "返回逐层导航",
       "docCount": "{{count}} 篇",
       "loadingKbs": "加载知识库中..."
     },
@@ -210,6 +212,7 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
+      "createDialogDescription": "配置知识库名称、可见范围和检索设置。",
       "createDesc": "创建您的第一个知识库",
       "notebookDesc": "默认进入笔记本视图，可选择文档并开启对话",
       "classicDesc": "默认进入文档视图，适合浏览、上传和管理文档",
@@ -217,6 +220,10 @@
       "typeNotebook": "笔记本视图",
       "typeClassic": "文档视图",
       "edit": "编辑知识库",
+      "editDialogDescription": "更新知识库基本信息、可见范围和检索设置。",
+      "loadingDetails": "正在加载知识库详情...",
+      "loadDetailsFailed": "无法加载最新的知识库详情。为避免覆盖现有配置，暂时无法编辑。",
+      "retryLoadDetails": "重试",
       "delete": "删除知识库",
       "name": "知识库名称",
       "namePlaceholder": "请输入知识库名称",
@@ -224,6 +231,12 @@
       "nameTooLong": "名称不能超过100个字符",
       "description": "描述",
       "descriptionPlaceholder": "请输入描述（可选）",
+      "directAccessRange": "知识库可见范围",
+      "directAccessRangeDescription": "控制哪些成员可以看到并打开此知识库，不影响通过智能体使用。",
+      "directAccessAllMembers": "所有有权限的成员",
+      "directAccessAllMembersDescription": "有查看或编辑权限的成员均可看到并打开此知识库。",
+      "directAccessEditorsOnly": "仅可编辑成员",
+      "directAccessEditorsOnlyDescription": "非编辑成员无法看到或打开此知识库，但仍可通过已绑定的智能体使用。",
       "documentCount": "文档数量",
       "empty": "暂无知识库",
       "confirmDelete": "确定要删除这个知识库吗？删除后无法恢复。",
@@ -240,6 +253,9 @@
       "defaultViewUpdateFailed": "默认打开方式更新失败",
       "targetGroup": "归属",
       "selectGroup": "选择分组"
+    },
+    "breadcrumb": {
+      "root": "全部文档"
     },
     "folder": {
       "folderType": "文件夹",
@@ -387,6 +403,8 @@
         "title": "文档详情",
         "backToList": "返回列表",
         "summary": "文档摘要",
+        "derivedSummary": "AI 摘要（基于解析内容）",
+        "refreshSummary": "刷新 AI 摘要",
         "status": "状态",
         "statusValues": {
           "pending": "待处理",
@@ -397,6 +415,8 @@
         "topics": "主题标签",
         "metaInfo": "元信息",
         "content": "文档内容",
+        "parsedContent": "解析内容",
+        "sourceFile": "原始文件",
         "truncated": "内容已截断",
         "copy": "复制",
         "copied": "已复制",
@@ -429,7 +449,18 @@
         "splitterType": "分段类型",
         "splitterSubtype": "分段子类型",
         "qaPairsDetected": "已识别 {{count}} 个问答对",
-        "contentUpdatedAt": "变更时间"
+        "contentUpdatedAt": "变更时间",
+        "sourcePreview": {
+          "loading": "正在加载原始文件...",
+          "download": "下载原文件",
+          "downloadFailed": "原文件下载失败",
+          "tooLargeTitle": "文件过大，暂不支持在线预览",
+          "tooLargeDescription": "文件大小为 {{size}}，超过当前在线预览上限 {{limit}}，请下载后查看。",
+          "fetchFailedTitle": "无法加载原始文件",
+          "fetchFailedDescription": "原始文件获取失败，请检查网络连接或访问权限后重试。",
+          "renderFailedTitle": "原始文件预览失败",
+          "renderFailedDescription": "文件可能已损坏、加密或包含暂不支持的 Office 特性，可重试预览或下载原文件查看。"
+        }
       },
       "downloadFailed": "下载文件失败",
       "fetchFailed": "获取文档失败",
@@ -596,6 +627,7 @@
     },
     "formSections": {
       "basic": "基础设置",
+      "access": "访问设置",
       "summary": "摘要设置",
       "guidedQuestions": "引导问题"
     },

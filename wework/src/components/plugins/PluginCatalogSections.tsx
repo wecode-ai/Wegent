@@ -1,13 +1,4 @@
-import {
-  Check,
-  Globe,
-  Loader2,
-  Plus,
-  RefreshCw,
-  Search,
-  Server,
-  Sparkles,
-} from 'lucide-react'
+import { Check, Globe, Loader2, Plus, RefreshCw, Search, Server, Sparkles } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { MCPProviderInfo, MCPServer } from '@/types/api'
 import { McpProviderBlock } from './McpManagementSections'
@@ -29,12 +20,7 @@ export interface CatalogItem {
   section: CatalogSectionId
   icon: typeof Sparkles | typeof Search
   iconClassName: string
-  installState:
-    | 'not_installed'
-    | 'installed'
-    | 'update_available'
-    | 'unavailable'
-    | 'failed'
+  installState: 'not_installed' | 'installed' | 'update_available' | 'unavailable' | 'failed'
   enabled: boolean
   sourceType: 'system' | 'personal'
 }
@@ -73,12 +59,10 @@ export function CatalogSection({
   return (
     <section>
       <div className="border-b border-[#ececf0] pb-3">
-        <h2 className="text-lg font-semibold tracking-normal text-[#111114]">
-          {title}
-        </h2>
+        <h2 className="text-lg font-semibold tracking-normal text-[#111114]">{title}</h2>
       </div>
       <div className="grid grid-cols-1 gap-x-16 sm:grid-cols-2">
-        {items.map((item) => (
+        {items.map(item => (
           <CatalogCard
             key={item.id}
             item={item}
@@ -127,9 +111,7 @@ export function InstalledMcpCatalog({
   if (items.length === 0) {
     return (
       <div className="flex min-h-[220px] flex-col items-center justify-center gap-4 text-sm font-semibold">
-        <span>
-          {t('workbench.plugins_no_installed_mcps', '暂无已安装 MCP')}
-        </span>
+        <span>{t('workbench.plugins_no_installed_mcps', '暂无已安装 MCP')}</span>
         <button
           type="button"
           className="h-9 rounded-xl bg-surface px-4 text-sm font-semibold hover:bg-muted"
@@ -143,7 +125,7 @@ export function InstalledMcpCatalog({
 
   return (
     <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-x-14 sm:gap-y-4">
-      {items.map((item) => (
+      {items.map(item => (
         <article
           key={`${item.id ?? item.name}-${item.serverType}`}
           className="group flex min-h-[84px] items-center gap-3 rounded-2xl border border-border/70 bg-background px-3 py-3 shadow-sm hover:bg-surface sm:min-h-[74px] sm:gap-4 sm:rounded-lg sm:border-0 sm:bg-transparent sm:py-2 sm:shadow-none"
@@ -153,7 +135,7 @@ export function InstalledMcpCatalog({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
-              <h3 className="truncate text-base font-semibold leading-5 sm:text-[15px]">
+              <h3 className="truncate text-base font-semibold leading-5 sm:text-base">
                 {item.name}
               </h3>
               <ProtocolDot protocol={item.serverType} />
@@ -233,7 +215,7 @@ export function McpCatalog({
 
   return (
     <section className="space-y-5">
-      {providers.map((provider) => (
+      {providers.map(provider => (
         <McpProviderBlock
           key={provider.key}
           provider={provider}
@@ -242,10 +224,10 @@ export function McpCatalog({
           tokenInput={providerTokenInputs[provider.key] ?? ''}
           isLoading={providerLoadingByKey[provider.key] ?? false}
           isSaving={providerSavingByKey[provider.key] ?? false}
-          onTokenChange={(value) => onTokenChange(provider.key, value)}
+          onTokenChange={value => onTokenChange(provider.key, value)}
           onSaveToken={() => onSaveToken(provider)}
           onSync={() => onSync(provider.key)}
-          onInstall={(server) => onInstall(provider, server)}
+          onInstall={server => onInstall(provider, server)}
         />
       ))}
     </section>
@@ -275,10 +257,10 @@ export function McpMarketplaceCatalog({
 }) {
   const { t } = useTranslation('common')
   const availableProviders = providers.filter(
-    (provider) => !provider.requires_token || provider.has_token,
+    provider => !provider.requires_token || provider.has_token
   )
   const hasServers = availableProviders.some(
-    (provider) => (providerServers[provider.key] ?? []).length > 0,
+    provider => (providerServers[provider.key] ?? []).length > 0
   )
 
   if (isLoading) {
@@ -300,12 +282,7 @@ export function McpMarketplaceCatalog({
   if (availableProviders.length === 0) {
     return (
       <div className="flex min-h-[220px] flex-col items-center justify-center gap-4 text-sm font-semibold">
-        <span>
-          {t(
-            'workbench.plugins_no_configured_mcp_providers',
-            '暂无已配置的 MCP 供应商',
-          )}
-        </span>
+        <span>{t('workbench.plugins_no_configured_mcp_providers', '暂无已配置的 MCP 供应商')}</span>
         <button
           type="button"
           className="h-9 rounded-xl bg-surface px-4 text-sm font-semibold hover:bg-muted"
@@ -317,10 +294,7 @@ export function McpMarketplaceCatalog({
     )
   }
 
-  if (
-    !hasServers &&
-    availableProviders.some((provider) => providerLoadingByKey[provider.key])
-  ) {
+  if (!hasServers && availableProviders.some(provider => providerLoadingByKey[provider.key])) {
     return (
       <div className="flex min-h-[220px] items-center justify-center gap-2 text-sm font-semibold text-text-secondary">
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -335,10 +309,7 @@ export function McpMarketplaceCatalog({
         <span>{t('workbench.plugins_no_mcp_results', '找不到匹配的 MCP')}</span>
         {Object.values(providerErrors).filter(Boolean).length > 0 && (
           <span className="text-xs text-text-muted">
-            {t(
-              'workbench.plugins_provider_partial_error',
-              '部分技能来源暂不可用',
-            )}
+            {t('workbench.plugins_provider_partial_error', '部分技能来源暂不可用')}
           </span>
         )}
       </div>
@@ -347,7 +318,7 @@ export function McpMarketplaceCatalog({
 
   return (
     <section className="space-y-6 sm:space-y-12">
-      {availableProviders.map((provider) => {
+      {availableProviders.map(provider => {
         const servers = providerServers[provider.key] ?? []
         if (servers.length === 0) return null
 
@@ -357,12 +328,10 @@ export function McpMarketplaceCatalog({
               <h2 className="text-base font-semibold sm:text-lg">
                 {providerDisplayName(provider)}
               </h2>
-              <p className="mt-1 text-xs text-text-muted">
-                {provider.description}
-              </p>
+              <p className="mt-1 text-xs text-text-muted">{provider.description}</p>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-x-14 sm:gap-y-4">
-              {servers.map((server) => (
+              {servers.map(server => (
                 <McpMarketplaceCard
                   key={server.id}
                   provider={provider}
@@ -370,9 +339,7 @@ export function McpMarketplaceCatalog({
                   installLabel={t('workbench.plugins_install', '安装')}
                   enabledLabel={t('workbench.plugins_enabled', '已启用')}
                   onInstall={() => onInstall(provider, server)}
-                  onRequestUninstall={() =>
-                    onRequestUninstall(provider, server)
-                  }
+                  onRequestUninstall={() => onRequestUninstall(provider, server)}
                 />
               ))}
             </div>
@@ -406,9 +373,7 @@ function McpMarketplaceCard({
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="truncate text-base font-semibold leading-5 sm:text-[15px]">
-            {server.name}
-          </h3>
+          <h3 className="truncate text-base font-semibold leading-5 sm:text-base">{server.name}</h3>
           <ProtocolDot protocol={server.type} />
         </div>
         <p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-text-secondary sm:truncate">
@@ -469,9 +434,7 @@ function CatalogCard({
   onRequestUninstall: (item: CatalogItem) => void
 }) {
   const Icon = item.icon
-  const isInstalled =
-    item.installState === 'installed' ||
-    item.installState === 'update_available'
+  const isInstalled = item.installState === 'installed' || item.installState === 'update_available'
   const canUpdate = item.installState === 'update_available'
 
   return (
@@ -485,10 +448,8 @@ function CatalogCard({
         <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-sm font-semibold leading-5 text-text-primary">
-          {item.name}
-        </h3>
-        <p className="mt-0.5 truncate text-[13px] leading-[18px] text-text-secondary">
+        <h3 className="truncate text-sm font-semibold leading-5 text-text-primary">{item.name}</h3>
+        <p className="mt-0.5 truncate text-sm leading-[18px] text-text-secondary">
           {item.description}
         </p>
       </div>
@@ -558,10 +519,7 @@ export function ConfirmUninstallDialog({
         aria-labelledby="uninstall-skill-dialog-title"
         className="w-full max-w-[360px] rounded-2xl bg-background p-5 shadow-xl"
       >
-        <h2
-          id="uninstall-skill-dialog-title"
-          className="text-base font-semibold text-text-primary"
-        >
+        <h2 id="uninstall-skill-dialog-title" className="text-base font-semibold text-text-primary">
           {title}
         </h2>
         <p className="mt-2 text-sm leading-6 text-text-secondary">

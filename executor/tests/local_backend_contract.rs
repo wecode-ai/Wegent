@@ -74,9 +74,12 @@ async fn local_backend_accepts_socketio_wrapped_registration_ack() {
 
 #[tokio::test]
 async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_files() {
+    let _lock = ENV_LOCK.lock().await;
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let home = temp_home("auth-report");
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     std::fs::write(home.join(".codex/auth.json"), "{}").unwrap();
+    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
 
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let mut config = local_backend_config();
@@ -101,7 +104,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
     assert_eq!(
         calls[0].payload["runtime_auth_files"]["codex"],
-        json!({"target_path": "~/.codex/auth.json", "exists": true})
+        json!({"target_path": expected_auth_path, "exists": true})
     );
 }
 
@@ -382,7 +385,7 @@ async fn local_backend_task_execute_streams_claude_tool_use_blocks() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn local_backend_task_execute_splits_large_claude_assistant_message_into_deltas() {
+async fn local_backend_task_execute_streams_large_claude_assistant_message() {
     let _lock = ENV_LOCK.lock().await;
     let long_text = "abcdefghijklmnopqrstuvwxyz".repeat(7);
     let claude_event = json!({
@@ -424,15 +427,12 @@ async fn local_backend_task_execute_splits_large_claude_assistant_message_into_d
     .await;
     assert_eq!(ack, None);
 
-    let expected_chunks = long_text.chars().count().div_ceil(20);
-    let emits = transport.wait_for_emits(expected_chunks + 2).await;
+    let emits = transport.wait_for_emit_event("response.completed").await;
     assert_eq!(emits[0].event, "response.created");
-    for emit in &emits[1..=expected_chunks] {
-        assert_eq!(emit.event, "response.output_text.delta");
-    }
-    assert_eq!(emits[expected_chunks + 1].event, "response.completed");
-    let streamed = emits[1..=expected_chunks]
+    assert_eq!(emits.last().unwrap().event, "response.completed");
+    let streamed = emits
         .iter()
+        .filter(|event| event.event == "response.output_text.delta")
         .map(|event| event.payload["data"]["delta"].as_str().unwrap())
         .collect::<String>();
     assert_eq!(streamed, long_text);
@@ -509,12 +509,15 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     assert_eq!(config.configured_capabilities, vec!["claude"]);
 }
 
-#[test]
-fn local_backend_auth_file_report_and_ip_filter_match_python_contract() {
+#[tokio::test]
+async fn local_backend_auth_file_report_and_ip_filter_follow_runtime_paths() {
+    let _lock = ENV_LOCK.lock().await;
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let home = temp_home("missing-auth-report");
+    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
     assert_eq!(
         build_runtime_auth_file_report(&home),
-        json!({"codex": {"target_path": "~/.codex/auth.json", "exists": false}})
+        json!({"codex": {"target_path": expected_auth_path, "exists": false}})
     );
 
     assert!(is_usable_device_ip("192.0.2.10"));
@@ -573,6 +576,20 @@ impl RecordingTransport {
             loop {
                 let emits = self.emits();
                 if emits.len() >= count {
+                    return emits;
+                }
+                self.notify.notified().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let emits = self.emits();
+                if emits.iter().any(|emit| emit.event == event) {
                     return emits;
                 }
                 self.notify.notified().await;
@@ -705,7 +722,6 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
-    #[cfg(unix)]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);

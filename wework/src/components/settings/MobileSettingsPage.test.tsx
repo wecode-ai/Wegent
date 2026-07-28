@@ -29,7 +29,9 @@ describe('MobileSettingsPage', () => {
     expect(screen.queryByTestId('mobile-settings-about-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-plugins-button')).toHaveTextContent('插件')
     expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent('个人')
-    expect(screen.getByTestId('mobile-settings-worktrees-button')).toBeInTheDocument()
+    expect(screen.getAllByTestId('mobile-settings-worktrees-button')).toHaveLength(1)
+    expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveTextContent('工作树')
+    expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveClass('min-h-[56px]')
     expect(screen.getByTestId('mobile-settings-archived-conversations-button')).toHaveTextContent(
       '已归档任务'
     )

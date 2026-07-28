@@ -6,6 +6,42 @@ import {
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
+describe('runtime transcript status', () => {
+  test('does not infer streaming from an active conversation status', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-history',
+        role: 'assistant',
+        content: 'Finished answer',
+        status: 'active',
+        subtaskId: 'turn-1',
+      },
+    ])
+
+    expect(message.status).toBe('done')
+  })
+
+  test('restores Codex failure details from the runtime transcript', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-failed',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'The upstream response ended before a terminal event.',
+        errorType: 'response.failed',
+      },
+    ])
+
+    expect(message).toMatchObject({
+      status: 'failed',
+      error: 'The upstream response ended before a terminal event.',
+      errorType: 'response.failed',
+    })
+  })
+})
+
 describe('createRuntimeTaskStreamHandlers', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -345,6 +381,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
   })
 
   test('strips Codex UI directives from completed assistant content', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
       taskId: 'runtime-task-1',
@@ -360,6 +397,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       deviceId: 'device-1',
       offset: 0,
       result: {
+        turnId: 'turn-9',
         value: [
           '当前分支比 origin/main ahead 1，可以直接 push。',
           '',
@@ -372,8 +410,43 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions[0]).toMatchObject({
       type: 'assistant_done',
       subtaskId: 'subtask-9',
+      turnId: 'turn-9',
       content: '当前分支比 origin/main ahead 1，可以直接 push。',
     })
+    expect(info).toHaveBeenCalledWith(
+      '[Wework] Runtime terminal event accepted',
+      expect.objectContaining({
+        event: 'chat:done',
+        payloadTaskId: 'runtime-task-1',
+        payloadSubtaskId: 'subtask-9',
+      })
+    )
+  })
+
+  test('warns when a terminal event does not match the subscribed runtime task', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-2',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: 'complete' },
+    })
+
+    expect(actions).toHaveLength(0)
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped mismatched runtime terminal event',
+      expect.objectContaining({
+        event: 'chat:done',
+        payloadTaskId: 'runtime-task-2',
+        payloadSubtaskId: 'subtask-9',
+      })
+    )
   })
 
   test('settles runtime streams without forwarding empty final content', () => {
@@ -404,6 +477,158 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(
       (actions[0] as Extract<RuntimePaneMessageAction, { type: 'assistant_done' }>).content
     ).toBeUndefined()
+  })
+
+  test('builds the completed turn file changes summary from streamed blocks', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+    const summary = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'artifact-1',
+      device_id: 'device-1',
+      workspace_path: '/workspace/project',
+      file_count: 1,
+      additions: 2,
+      deletions: 1,
+      files: [
+        {
+          path: 'src/main.ts',
+          change_type: 'modified' as const,
+          additions: 2,
+          deletions: 1,
+          binary: false,
+        },
+      ],
+    }
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: {
+        value: 'Done',
+        blocks: [
+          {
+            id: 'file-changes-1',
+            type: 'file_changes',
+            status: 'done',
+            fileChanges: summary,
+          },
+        ],
+      },
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_done',
+      fileChanges: summary,
+    })
+  })
+
+  test('keeps file change blocks until a later completion event', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+    const fileChanges = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'artifact-1',
+      device_id: 'device-1',
+      workspace_path: '/workspace/project',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'qa.txt',
+          change_type: 'created' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+    }
+
+    handlers.onBlockCreated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      block: {
+        id: 'file-changes-1',
+        type: 'file_changes',
+        status: 'streaming',
+        file_changes: fileChanges,
+      },
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: 'Done' },
+    })
+
+    expect(actions[1]).toMatchObject({
+      type: 'assistant_done',
+      fileChanges,
+    })
+  })
+
+  test('restores historical blocks that use a numeric subtask identity', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-history',
+        role: 'assistant',
+        content: '已完成',
+        subtaskId: 901,
+        blocks: [
+          {
+            id: 'tool-history',
+            type: 'tool',
+            tool_name: 'exec_command',
+            tool_input: { cmd: 'pwd' },
+            status: 'done',
+          },
+          {
+            id: 'file-history',
+            type: 'file_changes',
+            status: 'done',
+            file_changes: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'artifact-history',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [
+                {
+                  path: 'history.txt',
+                  change_type: 'created',
+                  additions: 1,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      subtaskId: '901',
+      blocks: [
+        { type: 'tool', toolName: 'exec_command' },
+        { type: 'file_changes', fileChanges: { files: [{ path: 'history.txt' }] } },
+      ],
+    })
   })
 
   test('treats interrupted runtime errors as cancellation events', () => {
@@ -493,6 +718,161 @@ describe('createRuntimeTaskStreamHandlers', () => {
       },
     })
     expect(warn).not.toHaveBeenCalled()
+  })
+})
+
+describe('runtimeMessagesToWorkbenchMessages', () => {
+  test('uses the client message id to reconcile a persisted user message', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'codex-user-item-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'hello',
+        status: 'done',
+        createdAt: '2026-07-17T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toMatchObject({
+      id: 'runtime-local-pane-1',
+      role: 'user',
+      content: 'hello',
+    })
+  })
+
+  test('replaces a failed attempt when the same user message is retried successfully', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'provider-user-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'fix the failure',
+        status: 'done',
+        createdAt: '2026-07-17T00:00:00.000Z',
+      },
+      {
+        id: 'assistant-failed',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'request failed',
+        createdAt: '2026-07-17T00:00:01.000Z',
+      },
+      {
+        id: 'provider-user-2',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'fix the failure',
+        status: 'done',
+        createdAt: '2026-07-17T00:00:02.000Z',
+      },
+      {
+        id: 'assistant-success',
+        role: 'assistant',
+        content: 'fixed',
+        status: 'done',
+        subtaskId: 'turn-2',
+        createdAt: '2026-07-17T00:00:03.000Z',
+      },
+    ])
+
+    expect(messages.map(message => message.id)).toEqual([
+      'runtime-local-pane-1',
+      'assistant-success',
+    ])
+    expect(messages.some(message => message.status === 'failed')).toBe(false)
+  })
+
+  test('keeps the latest failure when repeated retries continue to fail', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'provider-user-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'fix the failure',
+        status: 'done',
+      },
+      {
+        id: 'assistant-failed-1',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'first failure',
+      },
+      {
+        id: 'provider-user-2',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'fix the failure',
+        status: 'done',
+      },
+      {
+        id: 'assistant-failed-2',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-2',
+        error: 'second failure',
+      },
+    ])
+
+    expect(messages.map(message => message.id)).toEqual([
+      'runtime-local-pane-1',
+      'assistant-failed-2',
+    ])
+    expect(messages[1]).toMatchObject({ error: 'second failure' })
+  })
+
+  test('does not collapse an older failed turn across a newer user message', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'provider-user-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'first request',
+        status: 'done',
+      },
+      {
+        id: 'assistant-failed-1',
+        role: 'assistant',
+        content: '',
+        status: 'failed',
+        subtaskId: 'turn-1',
+        error: 'first failure',
+      },
+      {
+        id: 'provider-user-2',
+        clientMessageId: 'runtime-local-pane-2',
+        role: 'user',
+        content: 'second request',
+        status: 'done',
+      },
+      {
+        id: 'assistant-success-2',
+        role: 'assistant',
+        content: 'second response',
+        status: 'done',
+        subtaskId: 'turn-2',
+      },
+      {
+        id: 'provider-user-1-retry',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'first request',
+        status: 'done',
+      },
+    ])
+
+    expect(messages.map(message => message.id)).toEqual([
+      'runtime-local-pane-1',
+      'assistant-failed-1',
+      'runtime-local-pane-2',
+      'assistant-success-2',
+      'runtime-local-pane-1',
+    ])
   })
 })
 
@@ -627,6 +1007,24 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
 
     expect(messages[0]).toMatchObject({
       content: '这是一段完整的短回复。',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+    })
+  })
+
+  test('ignores a short streamed suffix mislabeled as truncated content', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-k3',
+        role: 'assistant',
+        content: '保持两边同步。',
+        content_truncated: true,
+        content_original_chars: 26,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      content: '保持两边同步。',
       contentTruncated: undefined,
       contentOriginalChars: undefined,
     })

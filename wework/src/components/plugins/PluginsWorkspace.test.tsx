@@ -924,10 +924,39 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugins-add-custom-marketplace-button'))
 
     expect(screen.getByTestId('plugins-marketplace-config-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-marketplace-name-input')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-marketplace-path-input')).toHaveAttribute(
       'placeholder',
       'https://github.com/org/repo'
+    )
+  })
+
+  test('normalizes a local marketplace manifest path to its source directory', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'existing-market',
+          displayName: 'Existing market',
+          path: '/Users/test/existing-market',
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+
+    await userEvent.click(await screen.findByTestId('plugins-add-marketplace-button'))
+    await userEvent.click(screen.getByTestId('plugins-add-custom-marketplace-button'))
+    fireEvent.change(screen.getByTestId('plugins-marketplace-path-input'), {
+      target: { value: '/Users/test/market/.agents/plugins/marketplace.json' },
+    })
+    await userEvent.click(screen.getByTestId('plugins-marketplace-save-button'))
+
+    await waitFor(() =>
+      expectCodexAppServerRequest('marketplace/add', {
+        source: '/Users/test/market',
+      })
     )
   })
 
@@ -1263,7 +1292,8 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('plugins-marketplace-edit-local-openai'))
     expect(screen.getByTestId('plugins-marketplace-config-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-marketplace-name-input')).toHaveValue('OpenAI')
+    expect(screen.getByText('编辑市场')).toBeInTheDocument()
+    expect(screen.getByText('更新 GitHub 仓库或本地市场路径。')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '取消' }))
     await userEvent.click(screen.getByTestId('plugins-manage-marketplaces-button'))

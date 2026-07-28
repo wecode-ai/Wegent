@@ -7,19 +7,28 @@ import { GeneralSettingsPage } from './GeneralSettingsPage'
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  experimentalFeaturesEnabled: false,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  browserExternalLinkTarget: 'system',
+  browserLocalLinkTarget: 'wework',
+  browserDownloadDirectory: null,
+  browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
 const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
 const applyLanguagePreferenceMock = vi.hoisted(() => vi.fn())
 const translateMock = vi.hoisted(() => (key: string, fallback?: string) => fallback ?? key)
+const importExternalContentMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -31,13 +40,21 @@ vi.mock('@/tauri/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
+    systemDragEnabled: true,
+    preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
+    experimentalFeaturesEnabled: false,
     taskCompletionNotificationsEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
+    browserExternalLinkTarget: 'system',
+    browserLocalLinkTarget: 'wework',
+    browserDownloadDirectory: null,
+    browserAskBeforeDownload: false,
+    appshotsPlaySound: true,
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
@@ -67,11 +84,24 @@ vi.mock('@/i18n/languagePreference', () => ({
   ],
 }))
 
+vi.mock('@/api/local/codexPlugins', () => ({
+  createLocalCodexPluginApi: () => ({
+    importExternalContent: importExternalContentMock,
+  }),
+}))
+
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     applyLanguagePreferenceMock.mockReset()
+    importExternalContentMock.mockReset()
+    importExternalContentMock.mockResolvedValue({
+      source: 'codex',
+      sourcePath: '/Users/test/.codex',
+      destinationPath: '/Users/test/.wegent-executor/codex',
+      importedEntries: ['config.toml'],
+    })
     getAppPreferencesMock.mockResolvedValue(defaultPreferences)
     updateAppPreferencesMock.mockImplementation(patch =>
       Promise.resolve({ ...defaultPreferences, ...patch })
@@ -100,6 +130,50 @@ describe('GeneralSettingsPage', () => {
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
   })
 
+  test('keeps experimental features off by default and persists enabling them', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-experimental-features-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ experimentalFeaturesEnabled: true })
+    })
+  })
+
+  test('enables the system drag panel by default and persists disabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-system-drag-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ systemDragEnabled: false })
+    })
+  })
+
+  test('prevents sleep during tasks by default and persists disabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-prevent-sleep-while-tasks-running-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        preventSleepWhileTasksRunning: false,
+      })
+    })
+  })
+
   test('rolls back language selection when saving fails', async () => {
     getAppPreferencesMock.mockResolvedValue({ ...defaultPreferences, language: 'zh-CN' })
     updateAppPreferencesMock.mockRejectedValue(new Error('save failed'))
@@ -125,7 +199,7 @@ describe('GeneralSettingsPage', () => {
     render(<GeneralSettingsPage />)
 
     expect(
-      await screen.findByText('workbench.general_settings_system_tray_title')
+      await screen.findByText('workbench.general_settings_tray_display_content')
     ).toBeInTheDocument()
     const notificationToggle = screen.getByTestId('general-task-completion-notifications-toggle')
     await waitFor(() => expect(notificationToggle).toBeEnabled())
@@ -136,6 +210,7 @@ describe('GeneralSettingsPage', () => {
       'true'
     )
     expect(screen.getByTestId('general-tray-usage-toggle')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('workbench.general_settings_tray_usage')).toBeInTheDocument()
 
     await userEvent.click(notificationToggle)
     await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))
@@ -150,5 +225,42 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayRunningEnabled: false })
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUsageEnabled: false })
     })
+  })
+
+  test('imports compatible content from Codex and Claude Code', async () => {
+    render(<GeneralSettingsPage />)
+
+    await userEvent.click(await screen.findByTestId('general-external-content-import-button'))
+    expect(screen.getByTestId('external-content-import-dialog')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('external-content-source-claude-code'))
+    await userEvent.click(screen.getByTestId('external-content-import-confirm-button'))
+
+    await waitFor(() => {
+      expect(importExternalContentMock).toHaveBeenCalledWith('claude-code')
+    })
+    expect(screen.getByTestId('external-content-import-success')).toBeInTheDocument()
+  })
+
+  test('shows an import error and allows retrying', async () => {
+    importExternalContentMock
+      .mockRejectedValueOnce(new Error('No supported content was found'))
+      .mockResolvedValueOnce({
+        source: 'codex',
+        sourcePath: '/Users/test/.codex',
+        destinationPath: '/Users/test/.wegent-executor/codex',
+        importedEntries: ['config.toml'],
+      })
+    render(<GeneralSettingsPage />)
+
+    await userEvent.click(await screen.findByTestId('general-external-content-import-button'))
+    await userEvent.click(screen.getByTestId('external-content-import-confirm-button'))
+    expect(await screen.findByTestId('external-content-import-error')).toHaveTextContent(
+      'No supported content was found'
+    )
+
+    await userEvent.click(screen.getByTestId('external-content-import-confirm-button'))
+    expect(await screen.findByTestId('external-content-import-success')).toBeInTheDocument()
+    expect(importExternalContentMock).toHaveBeenCalledTimes(2)
   })
 })

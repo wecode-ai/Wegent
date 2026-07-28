@@ -1,18 +1,20 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertCircle, Loader2, PanelBottom, PanelRight } from 'lucide-react'
-import { createHttpClient } from '@/api/http'
-import { createProjectApi } from '@/api/projects'
-import { getRuntimeConfig } from '@/config/runtime'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isCloudDevice, supportsLocalTerminalLaunch } from '@/lib/device-capabilities'
+import {
+  supportsCloudSessions,
+  supportsLocalTerminalLaunch,
+  supportsRemoteSessions,
+} from '@/lib/device-capabilities'
 import {
   DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
   type LocalWorkspaceOpenerId,
 } from '@/lib/local-workspace-openers'
 import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { getProjectDeviceId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
@@ -34,10 +36,13 @@ interface WorkspacePanelActionsProps {
   currentProject?: ProjectWithTasks | null
   devices?: DeviceInfo[]
   workspaceTarget?: WorkspaceTarget | null
+  workspaceSessionApi?: WorkspaceSessionApi
   environmentInfo: EnvironmentInfo
   environmentInfoPopoverContainer: HTMLElement | null
   environmentInfoVisible?: boolean
   environmentInfoDocked?: boolean
+  environmentInfoOpen: boolean
+  onEnvironmentInfoOpenChange: (open: boolean) => void
   environmentInfoFloatingFooter?: ReactNode
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
@@ -47,6 +52,9 @@ interface WorkspacePanelActionsProps {
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
   onOpenEnvironmentChangesReview: () => void
+  onDeliver?: () => void
+  todoLabel?: string
+  onManageTodo?: () => void
   rightPanelOpen: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
@@ -58,10 +66,13 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   currentProject = null,
   devices = [],
   workspaceTarget = null,
+  workspaceSessionApi,
   environmentInfo,
   environmentInfoPopoverContainer,
   environmentInfoVisible = true,
   environmentInfoDocked = true,
+  environmentInfoOpen,
+  onEnvironmentInfoOpenChange,
   environmentInfoFloatingFooter,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -71,6 +82,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
   onOpenEnvironmentChangesReview,
+  onDeliver,
+  todoLabel,
+  onManageTodo,
   rightPanelOpen,
   bottomPanelOpen,
   onToggleRightPanel,
@@ -86,11 +100,25 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const showRightPanelToggle =
     mode === 'all' || mode === 'panel-toggles' || mode === 'right-panel-toggle'
   const codeServerProjectDeviceId = workspaceTarget?.deviceId ?? getProjectDeviceId(currentProject)
-  const canOpenCodeServer = Boolean(currentProject && codeServerProjectDeviceId)
+  const canOpenCodeServer = Boolean(
+    codeServerProjectDeviceId && (currentProject || workspaceTarget)
+  )
   const codeServerDevice = codeServerProjectDeviceId
-    ? devices.find(device => device.device_id === codeServerProjectDeviceId)
+    ? findWorkbenchDevice(devices, codeServerProjectDeviceId)
     : undefined
-  const codeServerEnabled = Boolean(codeServerDevice && isCloudDevice(codeServerDevice))
+  const remoteWorkspaceSession = Boolean(
+    workspaceTarget?.workspaceSource === 'remote' ||
+    (codeServerDevice &&
+      (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
+        supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId)))
+  )
+  const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
+  const codeServerEnabled = Boolean(
+    workspaceSessionApi &&
+    codeServerDevice &&
+    (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
+      supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId))
+  )
   const localWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
   const projectUsesLocalWorkspace = Boolean(
@@ -99,6 +127,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       currentProject.config?.workspace?.source === 'local_path')
   )
   const localWorkspaceEnabled = Boolean(
+    !remoteWorkspaceSession &&
     localWorkspacePath?.trim() &&
     isLocalTerminalAvailable() &&
     (projectUsesLocalWorkspace ||
@@ -113,10 +142,6 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       : t('workbench.project_ide_cloud_only_tooltip')
   const bottomPanelTitle = t('workbench.toggle_bottom_workspace_panel')
   const rightPanelTitle = t('workbench.toggle_right_workspace_panel')
-  const projectApi = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
 
   const getStartFailedMessage = (error: unknown) => {
     if (error instanceof Error && error.message) {
@@ -126,15 +151,31 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   }
 
   const handleOpenCodeServer = async () => {
-    if (!currentProject || ideLoading || !codeServerEnabled) return
+    const workspacePath = localWorkspacePath?.trim()
+    if (
+      !codeServerProjectDeviceId ||
+      !workspaceSessionApi ||
+      ideLoading ||
+      !codeServerEnabled ||
+      (useDeviceCodeServerSession && !workspacePath)
+    ) {
+      return
+    }
     setIdeLoading(true)
     setIdeError(null)
     try {
-      const session = await projectApi.startCodeServerSession(currentProject.id)
+      const session = useDeviceCodeServerSession
+        ? await workspaceSessionApi.startDeviceCodeServer(codeServerProjectDeviceId, workspacePath)
+        : currentProject
+          ? await workspaceSessionApi.startProjectCodeServer(currentProject.id)
+          : null
+      if (!session) {
+        throw new Error('IDE session target is missing')
+      }
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
-      await openExternalUrl(session.url)
+      await openExternalUrl(session.url, { target: 'system' })
     } catch (error) {
       console.error('Failed to start project IDE:', error)
       setIdeError(getStartFailedMessage(error))
@@ -170,7 +211,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           info={environmentInfo}
           popoverContainer={environmentInfoPopoverContainer}
           docked={environmentInfoDocked}
-          defaultOpen={Boolean(currentProject)}
+          open={environmentInfoOpen}
+          onOpenChange={onEnvironmentInfoOpenChange}
           floatingFooter={environmentInfoFloatingFooter}
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
@@ -181,6 +223,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onCheckoutBranch={onCheckoutEnvironmentBranch}
           onCreateBranch={onCreateEnvironmentBranch}
           onOpenChangesReview={onOpenEnvironmentChangesReview}
+          onDeliver={onDeliver}
+          todoLabel={todoLabel}
+          onManageTodo={onManageTodo}
         />
       )}
       {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (
@@ -197,7 +242,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             onClick={() => void handleOpenLocalWorkspace()}
             disabled={ideLoading}
             className={cn(
-              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-[13px] font-medium leading-[18px] text-text-primary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait',
+              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-sm font-medium leading-[18px] text-text-primary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait',
               ideLoading && 'cursor-wait opacity-70'
             )}
             aria-label={t('workbench.open_project_ide_with', {

@@ -594,6 +594,7 @@ class SandboxManager(metaclass=SingletonMeta):
         task_id: int,
         dry_run: bool = False,
         archive_before_delete: bool = True,
+        delete_on_archive_failure: bool = False,
     ) -> Dict[str, Any]:
         """Clean up one sandbox runtime by task ID without an age threshold."""
         sandbox_id = str(task_id)
@@ -604,6 +605,7 @@ class SandboxManager(metaclass=SingletonMeta):
             "sandbox_id": sandbox_id,
             "dry_run": dry_run,
             "archive_before_delete": archive_before_delete,
+            "delete_on_archive_failure": delete_on_archive_failure,
             "sandbox_found": sandbox is not None,
             "deleted": False,
             "redis_cleared": False,
@@ -620,6 +622,13 @@ class SandboxManager(metaclass=SingletonMeta):
 
         if sandbox is not None and archive_before_delete:
             result["archived"] = await self._archive_sandbox_before_cleanup(sandbox)
+            if not result["archived"] and not delete_on_archive_failure:
+                logger.warning(
+                    "[SandboxManager] Skipping sandbox deletion after archive "
+                    "failure: task_id=%s",
+                    task_id,
+                )
+                return {**result, "skipped": True, "reason": "archive_failed"}
 
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)

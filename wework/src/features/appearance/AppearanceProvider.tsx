@@ -8,11 +8,9 @@ import {
   readStoredAppearance,
   writeStoredAppearance,
 } from './storage'
-import type {
-  AppearanceConfig,
-  AppearanceUpdate,
-  ResolvedAppearanceMode,
-} from './types'
+import type { AppearanceConfig, AppearanceUpdate, ResolvedAppearanceMode } from './types'
+import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
+import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
 
 function getInitialState(): {
   appearance: AppearanceConfig
@@ -51,6 +49,41 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [])
 
+  useEffect(() => {
+    const handleResetFontSize = () => {
+      setState(current => {
+        const appearance = mergeAppearance({
+          ...current.appearance,
+          uiFontSize: defaultAppearance.uiFontSize,
+          codeFontSize: defaultAppearance.codeFontSize,
+        })
+        return { ...current, appearance }
+      })
+    }
+
+    window.addEventListener(WEWORK_RESET_FONT_SIZE_EVENT, handleResetFontSize)
+    return () => window.removeEventListener(WEWORK_RESET_FONT_SIZE_EVENT, handleResetFontSize)
+  }, [])
+
+  useEffect(() => {
+    const handleStepFontSize = (event: Event) => {
+      const delta = (event as CustomEvent<{ delta?: number }>).detail?.delta
+      if (delta !== -1 && delta !== 1) return
+
+      setState(current => {
+        const appearance = mergeAppearance({
+          ...current.appearance,
+          uiFontSize: normalizeUiFontSize(current.appearance.uiFontSize + delta),
+          codeFontSize: normalizeCodeFontSize(current.appearance.codeFontSize + delta),
+        })
+        return { ...current, appearance }
+      })
+    }
+
+    window.addEventListener(WEWORK_STEP_FONT_SIZE_EVENT, handleStepFontSize)
+    return () => window.removeEventListener(WEWORK_STEP_FONT_SIZE_EVENT, handleStepFontSize)
+  }, [])
+
   const setAppearance = useCallback((update: AppearanceUpdate) => {
     setState(current => {
       const appearance = mergeAppearance({
@@ -62,6 +95,12 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
         dark: update.dark
           ? { ...current.appearance.dark, ...update.dark }
           : current.appearance.dark,
+        lightBackground: update.lightBackground
+          ? { ...current.appearance.lightBackground, ...update.lightBackground }
+          : current.appearance.lightBackground,
+        darkBackground: update.darkBackground
+          ? { ...current.appearance.darkBackground, ...update.darkBackground }
+          : current.appearance.darkBackground,
       })
 
       return {
@@ -86,7 +125,7 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
       setAppearance,
       resetAppearance,
     }),
-    [state, setAppearance, resetAppearance],
+    [state, setAppearance, resetAppearance]
   )
 
   return <AppearanceContext.Provider value={value}>{children}</AppearanceContext.Provider>

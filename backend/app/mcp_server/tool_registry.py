@@ -130,7 +130,18 @@ def _register_tool(
                 f"[MCP:{server_name}] Tool {tool_name} failed: {e}",
                 exc_info=True,
             )
-            return json.dumps({"error": str(e)})
+            return json.dumps(
+                {
+                    "error": {
+                        "code": "MCP_TOOL_EXECUTION_FAILED",
+                        "message": str(e),
+                        "server": server_name,
+                        "tool": tool_name,
+                        "retryable": False,
+                    }
+                },
+                ensure_ascii=False,
+            )
 
     # Set function metadata for FastMCP
     tool_wrapper.__name__ = tool_name

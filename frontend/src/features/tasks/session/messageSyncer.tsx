@@ -431,8 +431,12 @@ export function useMessageSyncer({
         content,
         tool_output,
         tool_input,
+        parent_tool_use_id,
         render_payload,
         argument_status,
+        output,
+        summary,
+        children,
         status,
       } = data
 
@@ -451,8 +455,12 @@ export function useMessageSyncer({
         ...(content !== undefined && { content }),
         ...(tool_output !== undefined && { tool_output }),
         ...(tool_input !== undefined && { tool_input }),
+        ...(parent_tool_use_id !== undefined && { parent_tool_use_id }),
         ...(render_payload !== undefined && { render_payload }),
         ...(argument_status !== undefined && { argument_status }),
+        ...(output !== undefined && { output }),
+        ...(summary !== undefined && { summary }),
+        ...(children !== undefined && { children }),
         ...(mappedStatus !== undefined && { status: mappedStatus }),
       }
 

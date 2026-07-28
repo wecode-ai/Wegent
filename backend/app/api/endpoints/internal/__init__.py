@@ -6,6 +6,7 @@
 
 from app.core.config import settings
 
+from .api_keys import router as api_keys_internal_router
 from .attachments import router as attachments_router
 from .bots import router as bots_router
 from .callback import router as callback_router
@@ -17,7 +18,6 @@ from .object_storage import router as object_storage_router
 from .rag_content import router as rag_content_router
 from .services import router as services_router
 from .skills import router as skills_router
-from .subscriptions import router as subscriptions_router
 from .tables import router as tables_router
 from .workspace_archives import router as workspace_archives_router
 
@@ -27,6 +27,7 @@ if not settings.STANDALONE_MODE:
     from .rag import router as rag_router
 
 __all__ = [
+    "api_keys_internal_router",
     "attachments_router",
     "bots_router",
     "callback_router",
@@ -38,7 +39,6 @@ __all__ = [
     "rag_content_router",
     "services_router",
     "skills_router",
-    "subscriptions_router",
     "tables_router",
     "workspace_archives_router",
 ]

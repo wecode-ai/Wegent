@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
 from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_api_key
@@ -529,8 +530,13 @@ def _resolve_model_for_bot(
                 f"Model '{model_name}' passed allowed_models whitelist check for bot '{bot.name}'"
             )
 
-    # Find the model Kind object
+    # Find the model Kind object, following any bind_model pointer chain
+    # (e.g. a Bot's private Model that only carries an allowed_models
+    # whitelist and points onward to the model with the real env config).
     model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    model_kind, model_spec = _resolve_bind_model_pointer(
+        db, user_id, model_kind, model_spec
+    )
     return model_kind, model_spec, model_name, raw_agent_config
 
 
@@ -739,6 +745,79 @@ def _find_model_with_namespace(
     return None, None
 
 
+# Maximum number of bind_model pointer hops to follow before giving up.
+# Guards against misconfigured or accidentally-cyclic pointer chains.
+_MAX_BIND_MODEL_POINTER_DEPTH = 5
+
+
+def _resolve_bind_model_pointer(
+    db: Session,
+    user_id: int,
+    model_kind: Optional[Kind],
+    model_spec: Optional[Dict[str, Any]],
+) -> tuple[Optional[Kind], Optional[Dict[str, Any]]]:
+    """
+    Follow a Model's modelConfig.bind_model pointer to the Model it references.
+
+    Some Models (e.g. a Bot's private Model created to carry a restricted
+    allowed_models whitelist) only store {"bind_model": ..., "allowed_models": [...]}
+    without their own "env" section - the actual provider config lives on the
+    Model named by bind_model. Without this resolution, callers would silently
+    fall back to placeholder defaults (gpt-4 / empty api_key) instead of the
+    real credentials.
+
+    Args:
+        db: Database session
+        user_id: User ID for querying user-specific models
+        model_kind: The Model Kind object to start from (may be None for
+            runtime-only models)
+        model_spec: The Model spec dict to start from
+
+    Returns:
+        Tuple of (model_kind, model_spec) once a Model with a real "env"
+        section is reached, or the last unresolved (model_kind, model_spec)
+        if there was no bind_model to follow.
+
+    Raises:
+        ValueError: If a bind_model pointer target cannot be found, or the
+            pointer chain is too deep or cyclic.
+    """
+    visited: set[str] = set()
+    while model_spec:
+        model_config = model_spec.get("modelConfig") or {}
+        if model_config.get("env"):
+            return model_kind, model_spec
+
+        bind_model = model_config.get("bind_model")
+        if not isinstance(bind_model, str) or not bind_model.strip():
+            return model_kind, model_spec
+        bind_model = bind_model.strip()
+
+        if bind_model in visited or len(visited) >= _MAX_BIND_MODEL_POINTER_DEPTH:
+            raise ValueError(
+                f"Model bind_model pointer chain is too deep or cyclic "
+                f"while resolving '{bind_model}'"
+            )
+        visited.add(bind_model)
+
+        current_name = model_kind.name if model_kind else bind_model
+        logger.info(
+            "[model_resolver] Model '%s' has no env, following bind_model "
+            "pointer to '%s'",
+            current_name,
+            bind_model,
+        )
+        next_kind, next_spec = _find_model_with_namespace(db, bind_model, user_id)
+        if not next_spec:
+            raise ValueError(
+                f"Model '{current_name}' binds to model '{bind_model}', "
+                f"which was not found"
+            )
+        model_kind, model_spec = next_kind, next_spec
+
+    return model_kind, model_spec
+
+
 def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract API configuration from model spec.
@@ -748,6 +827,14 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns:
         Dict with api_key, base_url, model_id, model type, and default_headers
+
+    Raises:
+        ValueError: If modelConfig has no usable "env" section. This can happen
+            when a Model is a bind_model pointer wrapper that was never resolved
+            to its target (see _resolve_bind_model_pointer), or when modelConfig
+            is entirely empty. We raise instead of silently falling back to
+            placeholder defaults (gpt-4 / openai / empty api_key), which look
+            like a valid config but produce authentication failures downstream.
     """
     logger.info(
         f"[model_resolver] _extract_model_config: model_spec keys = {list(model_spec.keys())}"
@@ -758,7 +845,15 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         f"[model_resolver] _extract_model_config: modelConfig keys = {list(model_config.keys()) if model_config else 'empty'}"
     )
 
-    env = model_config.get("env", {})
+    env = model_config.get("env")
+    if not env:
+        bind_model = model_config.get("bind_model")
+        if bind_model:
+            raise ValueError(
+                f"Model config has an unresolved bind_model pointer to "
+                f"'{bind_model}' with no env configuration"
+            )
+        raise ValueError("Model config has no env configuration")
     logger.info(
         f"[model_resolver] _extract_model_config: env keys = {list(env.keys()) if env else 'empty'}"
     )
@@ -840,16 +935,39 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             logger.warning(f"Failed to decrypt API key, using as-is: {e}")
 
     # Extract API format (for OpenAI-compatible models)
-    # Priority: 1. apiFormat field, 2. protocol field (openai-responses)
-    # Default to None for backward compatibility (will use chat/completions)
-    api_format = model_spec.get("apiFormat")
-    protocol = model_spec.get("protocol")
+    # Priority: 1. spec field, 2. modelConfig field, 3. protocol/env inference
+    api_format = model_spec.get("apiFormat") or model_config.get("apiFormat")
+    protocol = model_spec.get("protocol") or model_config.get("protocol")
+
+    env_model = (
+        str(env.get("model") or "").strip().lower() if isinstance(env, dict) else ""
+    )
+
+    # Fallback: infer protocol from env.model when the spec/modelConfig does not set it.
+    # This fixes models created by older frontend versions that only stored
+    # env.model (e.g. "openai" or "claude") without spec.protocol/apiFormat.
+    if not protocol and env_model:
+        if env_model == "openai":
+            protocol = "openai"
+        elif env_model == "claude":
+            protocol = "claude"
+        if protocol:
+            logger.info(
+                f"[model_resolver] _extract_model_config: inferred protocol={protocol} from env.model={env_model}"
+            )
 
     # If protocol is "openai-responses", use responses API format
     if not api_format and protocol == "openai-responses":
         api_format = "responses"
         logger.info(
             f"[model_resolver] _extract_model_config: using responses API from protocol={protocol}"
+        )
+
+    # Fallback: infer chat/completions API format for plain OpenAI protocol
+    if not api_format and protocol == "openai":
+        api_format = "chat/completions"
+        logger.info(
+            f"[model_resolver] _extract_model_config: using chat/completions API from protocol={protocol}"
         )
     # Context window and output token limits from modelConfig
     context_window = model_config.get("context_window")
@@ -864,7 +982,10 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
 
     # Video generation config (when modelType='video')
     video_config = model_spec.get("videoConfig")
-    model_capabilities = model_spec.get("modelCapabilities") or None
+    raw_model_capabilities = model_spec.get("modelCapabilities")
+    if raw_model_capabilities is None:
+        raw_model_capabilities = model_config.get("modelCapabilities")
+    model_capabilities = normalize_model_capabilities(raw_model_capabilities)
     if model_capabilities:
         logger.info(
             f"[model_resolver] _extract_model_config: modelCapabilities={model_capabilities}"
@@ -883,6 +1004,15 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     if temperature is not None:
         logger.info(
             f"[model_resolver] _extract_model_config: temperature={temperature}"
+        )
+
+    # Catalog model id override for Codex-compatible models
+    codex_catalog_model_id = env.get("codex_catalog_model_id") or env.get(
+        "codexCatalogModelId"
+    )
+    if codex_catalog_model_id:
+        logger.info(
+            f"[model_resolver] _extract_model_config: codex_catalog_model_id={codex_catalog_model_id}"
         )
 
     result = {
@@ -908,6 +1038,8 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     }
     if model_capabilities:
         result["modelCapabilities"] = model_capabilities
+    if codex_catalog_model_id:
+        result["codex_catalog_model_id"] = codex_catalog_model_id
     return result
 
 

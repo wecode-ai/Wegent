@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -219,9 +219,15 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public Socket.IO origin returned to Wework desktop clients.
+    WEGENT_SOCKET_URL: str = ""
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
+    # Upstream Sites Platform base URL. Wework accesses it through Backend.
+    SITES_API_BASE_URL: str = ""
+    # Optional bearer token for the upstream Sites Platform project API.
+    SITES_API_TOKEN: str = ""
 
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"
@@ -515,6 +521,8 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_ACCESS_KEY: str = ""
     ATTACHMENT_S3_SECRET_KEY: str = ""
     ATTACHMENT_S3_BUCKET: str = "attachments"
+    DELIVERY_S3_BUCKET: str = "wegent-deliveries"
+    DELIVERY_MAX_ASSET_SIZE_MB: int = 2048
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
 
@@ -605,25 +613,6 @@ class Settings(BaseSettings):
     #          chat_shell/knowledge_runtime -> Backend internal API
     # Generate using: openssl rand -hex 32
     INTERNAL_SERVICE_TOKEN: str = ""
-    # Fernet key for encrypting LLM proxy tokens.
-    # Used by WeWork local executors to authenticate to the backend proxy gateway
-    # without receiving the raw provider API key.
-    # If not set, the backend automatically generates and persists a key in the
-    # system_configs table on first use. Set this explicitly when you want to
-    # manage the key yourself (e.g., rotation or multi-region deployments).
-    # Generate with:
-    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    LLM_PROXY_TOKEN_KEY: str = Field(
-        default="",
-        validation_alias=AliasChoices("LLM_PROXY_TOKEN_KEY", "CODEX_PROXY_TOKEN_KEY"),
-    )
-    # Lifetime of LLM proxy tokens in seconds.
-    LLM_PROXY_TOKEN_TTL_SECONDS: int = Field(
-        default=24 * 60 * 60,
-        validation_alias=AliasChoices(
-            "LLM_PROXY_TOKEN_TTL_SECONDS", "CODEX_PROXY_TOKEN_TTL_SECONDS"
-        ),
-    )
     # Knowledge runtime service URL for remote RAG execution
     KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
     # RAG data-plane execution mode

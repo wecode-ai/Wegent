@@ -38,7 +38,7 @@ export function SettingsPageHeader({
       className={`mb-8 flex items-start justify-between gap-4 max-sm:flex-col ${className}`.trim()}
     >
       <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-normal text-text-primary">{title}</h1>
+        <h1 className="heading-base tracking-normal text-text-primary">{title}</h1>
         {description && <p className="mt-1 text-sm text-text-secondary">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
@@ -59,12 +59,14 @@ interface SettingsRowProps extends HTMLAttributes<HTMLDivElement> {
   label: ReactNode
   description?: ReactNode
   control?: ReactNode
+  labelClassName?: string
 }
 
 export function SettingsRow({
   label,
   description,
   control,
+  labelClassName = '',
   className = '',
   ...props
 }: SettingsRowProps) {
@@ -74,7 +76,9 @@ export function SettingsRow({
       {...props}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="min-w-0 text-sm font-medium text-text-primary">{label}</div>
+        <div className={`min-w-0 text-sm font-medium text-text-primary ${labelClassName}`.trim()}>
+          {label}
+        </div>
         {description && (
           <div className="min-w-0 text-xs leading-4 text-text-secondary">{description}</div>
         )}

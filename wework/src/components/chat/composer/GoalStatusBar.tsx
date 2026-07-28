@@ -40,13 +40,13 @@ export function GoalStatusBar({
     [goal, timerKey, timerState]
   )
   const elapsed = formatGoalElapsed(elapsedSeconds)
-  const paused = goal.status === 'paused'
-  const canToggle = goal.status === 'active' || paused
-  const ToggleIcon = paused ? Play : Pause
-  const toggleLabel = paused
+  const resumable = goal.status === 'paused' || goal.status === 'blocked'
+  const canToggle = goal.status === 'active' || resumable
+  const ToggleIcon = resumable ? Play : Pause
+  const toggleLabel = resumable
     ? t('workbench.goal_resume', '继续目标')
     : t('workbench.goal_pause', '暂停目标')
-  const toggleAction = paused ? onResumeGoal : onPauseGoal
+  const toggleAction = resumable ? onResumeGoal : onPauseGoal
 
   useEffect(() => {
     if (goal.status !== 'active') return
@@ -63,7 +63,7 @@ export function GoalStatusBar({
   return (
     <div
       data-testid="goal-status-bar"
-      className="mb-2 flex h-11 w-full items-center gap-2 rounded-2xl border border-border/45 bg-background px-4 text-[13px] leading-[18px] text-text-secondary shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
+      className="mb-2 flex h-11 w-full items-center gap-2 rounded-2xl border border-border/45 bg-background px-4 text-sm leading-[18px] text-text-secondary shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
     >
       <Target className="h-4 w-4 shrink-0 text-text-muted" />
       <div className="min-w-0 flex-1 truncate">
@@ -87,7 +87,7 @@ export function GoalStatusBar({
       {canToggle && (
         <button
           type="button"
-          data-testid={paused ? 'resume-goal-button' : 'pause-goal-button'}
+          data-testid={resumable ? 'resume-goal-button' : 'pause-goal-button'}
           onClick={toggleAction}
           disabled={!toggleAction}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-secondary hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"

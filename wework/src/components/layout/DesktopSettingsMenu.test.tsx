@@ -42,12 +42,18 @@ vi.mock('@/api/local/codexUsage', () => ({
   }),
 }))
 
-function renderMenu() {
+function renderMenu({
+  showLogout,
+  onLogout = vi.fn(),
+  onLogin,
+}: { showLogout?: boolean; onLogout?: () => void; onLogin?: () => void } = {}) {
   render(
     <DesktopSettingsMenu
       user={{ id: 1, email: 'user@example.com', user_name: 'User' }}
       onOpenSettings={vi.fn()}
-      onLogout={vi.fn()}
+      onLogout={onLogout}
+      onLogin={onLogin}
+      showLogout={showLogout}
     />
   )
 }
@@ -76,12 +82,21 @@ describe('DesktopSettingsMenu', () => {
     expect(mockCheckNow).toHaveBeenCalledTimes(1)
   })
 
+  test('uses subdued regular text for normal menu actions', () => {
+    renderMenu()
+
+    expect(screen.getByTestId('settings-menu-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
+  })
+
   test('does not render the old account or quota summary row', () => {
     renderMenu()
 
     expect(screen.queryByTestId('settings-account-group')).not.toBeInTheDocument()
     expect(screen.queryByTestId('account-menu-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('Codex 额度')).not.toBeInTheDocument()
+    expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
   })
 
   test('hides logout in local-first app runtime', () => {
@@ -91,6 +106,32 @@ describe('DesktopSettingsMenu', () => {
 
     expect(screen.queryByTestId('logout-menu-button')).not.toBeInTheDocument()
     expect(screen.queryByText('退出登录')).not.toBeInTheDocument()
+  })
+
+  test('shows logout for a connected cloud account in local-first app runtime', async () => {
+    runtimeModeMock.isLocalFirstAppRuntime.mockReturnValue(true)
+    const onLogout = vi.fn()
+
+    renderMenu({ showLogout: true, onLogout })
+
+    await userEvent.click(screen.getByTestId('logout-menu-button'))
+
+    expect(onLogout).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows a descriptive login action for a disconnected cloud account', async () => {
+    const onLogin = vi.fn()
+
+    renderMenu({ showLogout: false, onLogin })
+
+    const loginButton = screen.getByTestId('login-menu-button')
+    expect(loginButton).toHaveTextContent('登录 Wegent')
+    expect(loginButton).toHaveTextContent('连接云端模型、设备和同步')
+    expect(screen.queryByTestId('logout-menu-button')).not.toBeInTheDocument()
+
+    await userEvent.click(loginButton)
+
+    expect(onLogin).toHaveBeenCalledTimes(1)
   })
 
   test('installs a discovered app update', async () => {

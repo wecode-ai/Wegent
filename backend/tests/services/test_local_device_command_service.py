@@ -397,6 +397,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_diff_definition = resolve_local_device_command(
         "git_diff", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_branch_diff_definition = resolve_local_device_command(
+        "git_branch_diff", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_branch_diff_shortstat_definition = resolve_local_device_command(
         "git_branch_diff_shortstat", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -495,6 +498,13 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "git diff --binary HEAD --" in git_diff_definition.command
     assert "git ls-files --others --exclude-standard" in git_diff_definition.command
     assert git_diff_definition.post_processor is None
+    assert git_branch_diff_definition is not None
+    assert "git merge-base" in git_branch_diff_definition.command
+    assert "git diff --binary" in git_branch_diff_definition.command
+    assert (
+        "git ls-files --others --exclude-standard" in git_branch_diff_definition.command
+    )
+    assert git_branch_diff_definition.post_processor is None
     assert git_branch_diff_shortstat_definition is not None
     assert "git merge-base" in git_branch_diff_shortstat_definition.command
     assert "git diff --shortstat" in git_branch_diff_shortstat_definition.command
@@ -2072,7 +2082,7 @@ async def test_execute_configured_device_command_routes_cloud_directory_command_
 
 
 @pytest.mark.asyncio
-async def test_execute_configured_device_command_routes_remote_directory_command(
+async def test_execute_configured_device_command_routes_remote_home_directory_command(
     monkeypatch,
 ):
     """Remote devices should use their submitted device ID for dispatch."""
@@ -2083,7 +2093,7 @@ async def test_execute_configured_device_command_routes_remote_directory_command
         return_value={
             "success": True,
             "exit_code": 0,
-            "stdout": "/srv/repo\n",
+            "stdout": "/home/ubuntu\n",
             "stderr": "",
             "duration": 0.02,
             "timed_out": False,
@@ -2113,16 +2123,88 @@ async def test_execute_configured_device_command_routes_remote_directory_command
         db=object(),
         user_id=7,
         device_id="remote-device",
-        command_key="pwd",
+        command_key="home_dir",
     )
 
-    assert result["stdout"] == "/srv/repo\n"
+    assert result["stdout"] == "/home/ubuntu\n"
     online_mock.assert_awaited_once_with(
         7,
         "remote-device",
         DeviceType.REMOTE,
     )
     assert execute_mock.await_args.kwargs["device_id"] == "remote-device"
+    assert execute_mock.await_args.kwargs["command"] == "printenv HOME"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("device_type", "submitted_device_id", "dispatch_device_id"),
+    [
+        ("cloud", "cloud-crd", "runtime-cloud"),
+        ("remote", "remote-device", "remote-device"),
+    ],
+)
+async def test_execute_configured_device_command_allows_remote_directory_creation(
+    monkeypatch,
+    device_type,
+    submitted_device_id,
+    dispatch_device_id,
+):
+    """Cloud and remote projects should be able to create workspace directories."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-remote"})
+    device_spec = {"deviceType": device_type}
+    if device_type == "cloud":
+        device_spec["cloudConfig"] = {"deviceId": dispatch_device_id}
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name=submitted_device_id,
+            json={"spec": device_spec},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id=submitted_device_id,
+        command_key="mkdir_p",
+        args=["/workspace/project"],
+    )
+
+    assert result["success"] is True
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id=dispatch_device_id,
+        command="mkdir -p",
+        path=None,
+        args=["/workspace/project"],
+        env={},
+        timeout_seconds=60,
+        max_output_bytes=1024 * 1024,
+    )
 
 
 @pytest.mark.asyncio

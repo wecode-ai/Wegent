@@ -24,16 +24,16 @@ const LARGE_DIFF_FILE_COUNT_THRESHOLD = 12
 const LARGE_DIFF_LINE_COUNT_THRESHOLD = 700
 const PIERRE_DIFF_CSS = `
   :host, pre, code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 12px;
-    line-height: 20px;
+    font-family: var(--font-code);
+    font-size: var(--text-code);
+    line-height: 1.8;
   }
   [data-diffs-file-header], [data-diffs-header] {
     min-height: 36px;
     border-bottom: 1px solid rgb(224 224 224);
     background: rgb(255 255 255);
-    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-    font-size: 13px;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
     font-weight: 500;
   }
   [data-diffs-line-addition], [data-diffs-line-added] {
@@ -89,8 +89,8 @@ const PIERRE_FILE_TREE_CSS = `
     --trees-icon-teal: rgb(140 140 140);
     --trees-icon-vermilion: rgb(140 140 140);
     --trees-icon-yellow: rgb(140 140 140);
-    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-    font-size: 13px;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
     color: rgb(102 102 102);
     background: transparent !important;
   }

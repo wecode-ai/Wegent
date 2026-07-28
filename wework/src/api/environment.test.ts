@@ -22,6 +22,48 @@ describe('parseGitShortStat', () => {
     })
   })
 
+  test('detects a non-git workspace without depending on localized stderr', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: false,
+      stdout: '',
+      error: 'Command failed',
+      stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 4,
+        name: 'plain-cloud-workspace',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'cloud',
+            deviceId: 'device-456',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/plain-cloud-workspace',
+          },
+        },
+      }
+    )
+
+    expect(info).toMatchObject({
+      isGitRepository: false,
+      deviceId: 'device-456',
+      workspacePath: '/workspace/plain-cloud-workspace',
+    })
+    expect(info.error).toBeUndefined()
+    expect(executeCommand).toHaveBeenCalledWith('device-456', {
+      command_key: 'git_is_worktree',
+      path: '/workspace/plain-cloud-workspace',
+      args: ['/workspace/plain-cloud-workspace'],
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+  })
+
   test('defaults missing additions and deletions to zero', () => {
     expect(parseGitShortStat('')).toEqual({ additions: '+0', deletions: '-0' })
   })
@@ -148,9 +190,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/projects/directmessage_single',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -203,6 +244,7 @@ describe('loadProjectEnvironment', () => {
       executionTarget: 'cloud',
       deviceId: 'device-123',
       workspacePath: '/workspace/Wegent',
+      isGitRepository: true,
       branchName: 'human/narwhal-20260528-073440',
       additions: '+8',
       deletions: '-3',
@@ -216,9 +258,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -281,7 +322,7 @@ describe('loadProjectEnvironment', () => {
     })
     for (const commandKey of [
       'git_branch',
-      'git_diff_shortstat',
+      'git_branch_diff_shortstat',
       'git_status_porcelain',
       'git_remote_url',
     ]) {
@@ -373,9 +414,60 @@ describe('loadProjectEnvironment', () => {
       additions: '+0',
       deletions: '-0',
       executionTarget: 'local',
+      isGitRepository: false,
       deviceId: 'device-123',
       workspacePath: '/workspace/plain-workspace',
     })
+  })
+
+  test('preserves git command errors when the workspace is a repository', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'fatal: failed to read git metadata',
+        })
+      }
+      if (data.command_key === 'git_is_worktree') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'true\n',
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 5,
+        name: 'broken-repository',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/broken-repository',
+          },
+        },
+      }
+    )
+
+    expect(info).toMatchObject({
+      deviceId: 'device-123',
+      workspacePath: '/workspace/broken-repository',
+      error: 'fatal: failed to read git metadata',
+    })
+    expect(info.isGitRepository).toBeUndefined()
   })
 
   test('deduplicates repeated environment loads for the same project briefly', async () => {
@@ -389,6 +481,26 @@ describe('loadProjectEnvironment', () => {
       .mockResolvedValueOnce({
         success: true,
         stdout: ' 2 files changed, 8 insertions(+), 3 deletions(-)',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'human/narwhal-20260528-073440\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: ' 3 files changed, 13 insertions(+), 5 deletions(-)',
         stderr: '',
       })
       .mockResolvedValueOnce({
@@ -431,7 +543,7 @@ describe('loadProjectEnvironment', () => {
     const cachedInfo = await loadProjectEnvironment(api, project)
 
     expect(cachedInfo.branchName).toBe('human/narwhal-20260528-073440')
-    // 4 calls: git_branch, git_diff_shortstat, git_status_porcelain, git_remote_url
+    // 4 calls: git_branch, git_branch_diff_shortstat, git_status_porcelain, git_remote_url
     expect(executeCommand).toHaveBeenCalledTimes(4)
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_branch',
@@ -440,9 +552,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -458,6 +569,11 @@ describe('loadProjectEnvironment', () => {
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
+
+    const refreshedInfo = await loadProjectEnvironment(api, project, undefined, { force: true })
+
+    expect(refreshedInfo).toMatchObject({ additions: '+13', deletions: '-5' })
+    expect(executeCommand).toHaveBeenCalledTimes(8)
   })
 
   test('uses git diff against HEAD for tracked uncommitted changes', async () => {
@@ -470,7 +586,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: true,
           stdout: ' 1 file changed, 1 insertion(+), 1 deletion(-)',
@@ -523,9 +639,8 @@ describe('loadProjectEnvironment', () => {
     expect(info.additions).toBe('+1')
     expect(info.deletions).toBe('-1')
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -541,7 +656,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: true,
           stdout: ' 1 file changed, 5 insertions(+), 2 deletions(-)',
@@ -607,7 +722,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: false,
           stdout: '',
@@ -679,7 +794,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: false,
           stdout: '',
@@ -765,7 +880,7 @@ describe('commitProjectChanges', () => {
     ).resolves.toBe('diff --git a/src/env.ts b/src/env.ts\n+new')
 
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff',
+      command_key: 'git_branch_diff',
       path: '/workspace/Wegent',
       timeout_seconds: 30,
       max_output_bytes: 5 * 1024 * 1024,
@@ -805,7 +920,7 @@ describe('commitProjectChanges', () => {
     ).resolves.toBe('')
 
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff',
+      command_key: 'git_branch_diff',
       path: '/workspace/worktrees/1029/Wegent',
       timeout_seconds: 30,
       max_output_bytes: 5 * 1024 * 1024,

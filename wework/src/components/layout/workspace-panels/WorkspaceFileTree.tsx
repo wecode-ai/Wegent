@@ -40,8 +40,8 @@ const PIERRE_WORKSPACE_FILE_TREE_CSS = `
     --trees-icon-teal: rgb(140 140 140);
     --trees-icon-vermilion: rgb(140 140 140);
     --trees-icon-yellow: rgb(140 140 140);
-    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-    font-size: 13px;
+    font-family: var(--font-ui);
+    font-size: var(--text-sm);
     color: rgb(102 102 102);
     background: transparent !important;
   }

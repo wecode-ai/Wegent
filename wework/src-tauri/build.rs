@@ -5,8 +5,10 @@ use std::process::Command;
 
 const SIDECAR_NAME: &str = "wegent-executor";
 const SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
+const EXECUTOR_NAMESPACE_ENV: &str = "WEWORK_EXECUTOR_NAMESPACE";
 
 fn main() {
+    println!("cargo:rerun-if-env-changed={EXECUTOR_NAMESPACE_ENV}");
     prepare_local_executor_sidecar();
     verify_bundled_codex_binary();
     ensure_codex_resource_glob_exists();
@@ -89,6 +91,21 @@ fn verify_bundled_codex_binary() {
         panic!(
             "Missing bundled Codex binary for {target}: {}. Run `pnpm --filter wework run prepare:codex` with WEWORK_CODEX_TARGET={target} before creating a release app bundle.",
             binary_path.display()
+        );
+    }
+    let code_mode_host_path = binary_path
+        .parent()
+        .expect("Codex binary path must have a parent")
+        .join(if target.contains("windows") {
+            "codex-code-mode-host.exe"
+        } else {
+            "codex-code-mode-host"
+        });
+    println!("cargo:rerun-if-changed={}", code_mode_host_path.display());
+    if !code_mode_host_path.is_file() {
+        panic!(
+            "Missing bundled Codex code-mode host for {target}: {}. Run `pnpm --filter wework run prepare:codex` with WEWORK_CODEX_TARGET={target} before creating a release app bundle.",
+            code_mode_host_path.display()
         );
     }
 }

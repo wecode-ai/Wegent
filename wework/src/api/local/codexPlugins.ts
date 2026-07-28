@@ -30,6 +30,15 @@ export interface LocalCodexHomeMigrationStatus {
   shouldPromptMigration: boolean
 }
 
+export type ExternalContentSource = 'codex' | 'claude-code'
+
+export interface ExternalContentImportResult {
+  source: ExternalContentSource
+  sourcePath: string
+  destinationPath: string
+  importedEntries: string[]
+}
+
 export interface LocalCodexLocalConfig {
   codexHome: string
   configPath: string
@@ -46,11 +55,17 @@ export interface LocalCodexMarketplace {
   path: string
 }
 
+function normalizeMarketplaceSource(source: string): string {
+  const normalized = source.trim().replace(/\\\\/g, '/')
+  return normalized.replace(/(?:\/\.agents\/plugins)?\/marketplace\.json$/i, '')
+}
+
 export interface LocalCodexPluginApi {
+  importExternalContent(source: ExternalContentSource): Promise<ExternalContentImportResult>
   codexHomeMigrationStatus(): Promise<LocalCodexHomeMigrationStatus>
   initializeCodexHome(options: {
     migrateNativeHome: boolean
-    remoteAppsEnabled: boolean
+    remoteAppsEnabled?: boolean
   }): Promise<LocalCodexHomeMigrationStatus>
   migrateNativeCodexHome(remoteAppsEnabled?: boolean): Promise<LocalCodexHomeMigrationStatus>
   readCodexLocalConfig(): Promise<LocalCodexLocalConfig>
@@ -72,11 +87,7 @@ export interface LocalCodexPluginApi {
   readInstalledPluginForTrial(id: string | number): Promise<InstalledPlugin>
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
-  upsertMarketplace(data: {
-    id?: string
-    name: string
-    path: string
-  }): Promise<LocalCodexPluginsState>
+  upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
   installAvailablePlugin(pluginId: string | number): Promise<InstalledPlugin>
   updateInstalledPlugin(
     id: string | number,
@@ -519,9 +530,17 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
   const defaultCodexLocalConfig: LocalCodexLocalConfig = {
     codexHome: '',
     configPath: '',
-    remoteAppsEnabled: false,
+    remoteAppsEnabled: true,
   }
   return {
+    importExternalContent(source) {
+      if (!isTauriRuntime()) {
+        return Promise.reject(new Error('External content import requires the Wework desktop app'))
+      }
+      return invoke<ExternalContentImportResult>('local_executor_import_external_content', {
+        options: { source },
+      })
+    },
     codexHomeMigrationStatus() {
       if (!isTauriRuntime()) {
         return Promise.resolve({
@@ -545,10 +564,13 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         })
       }
       return invoke<LocalCodexHomeMigrationStatus>('local_executor_initialize_codex_home', {
-        options,
+        options: {
+          ...options,
+          remoteAppsEnabled: options.remoteAppsEnabled ?? true,
+        },
       })
     },
-    migrateNativeCodexHome(remoteAppsEnabled = false) {
+    migrateNativeCodexHome(remoteAppsEnabled = true) {
       return this.initializeCodexHome({
         migrateNativeHome: true,
         remoteAppsEnabled,
@@ -702,11 +724,21 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return readState()
     },
     async upsertMarketplace(data) {
+      const source = normalizeMarketplaceSource(data.path)
+      if (data.id && data.id !== '') {
+        const currentState = cachedState ?? (await readState())
+        const existing = currentState.marketplaces.find(marketplace => marketplace.id === data.id)
+        if (existing?.path === source) return currentState
+
+        await codexAppServerRequest('marketplace/remove', {
+          marketplaceName: data.id,
+        })
+      }
       const response = await codexAppServerRequest<{
         marketplaceName: string
         installedRoot: string
       }>('marketplace/add', {
-        source: data.path,
+        source,
         refName: null,
         sparsePaths: null,
       })

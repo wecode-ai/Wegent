@@ -150,7 +150,11 @@ class LocalDeviceSessionService:
 
         access_token = payload["access_token"]
         result = _ensure_session_url_token(result, access_token)
-        result = await _rewrite_cloud_localhost_url(result, device_kind)
+        result = await _rewrite_cloud_localhost_url(
+            result,
+            device_kind,
+            online_info.get("runtime_transfer_host"),
+        )
         result.setdefault("transport", "url")
         return result
 
@@ -205,6 +209,7 @@ def _ensure_session_url_token(
 async def _rewrite_cloud_localhost_url(
     result: dict[str, Any],
     device_kind: Any,
+    runtime_transfer_host: Any = None,
 ) -> dict[str, Any]:
     """Rewrite cloud session URLs that point to device-local localhost."""
     url = result.get("url")
@@ -218,22 +223,25 @@ async def _rewrite_cloud_localhost_url(
     if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
         return result
 
-    sandbox_id = (spec.get("cloudConfig") or {}).get("sandboxId")
-    if not sandbox_id:
-        return result
+    host = _extract_cloud_session_host(runtime_transfer_host)
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        host = ""
+    if not host:
+        sandbox_id = (spec.get("cloudConfig") or {}).get("sandboxId")
+        if not sandbox_id:
+            return result
 
-    try:
-        vm_status = await _get_cloud_device_provider().get_vm_status(sandbox_id)
-    except Exception as exc:
-        logger.warning(
-            "[LocalDeviceSessionService] Failed to resolve cloud session host: "
-            "sandbox_id=%s, error=%s",
-            sandbox_id,
-            exc,
-        )
-        return result
-
-    host = _extract_cloud_session_host(vm_status.get("ip_address"))
+        try:
+            vm_status = await _get_cloud_device_provider().get_vm_status(sandbox_id)
+        except Exception as exc:
+            logger.warning(
+                "[LocalDeviceSessionService] Failed to resolve cloud session host: "
+                "sandbox_id=%s, error=%s",
+                sandbox_id,
+                exc,
+            )
+            return result
+        host = _extract_cloud_session_host(vm_status.get("ip_address"))
     if not host:
         return result
 

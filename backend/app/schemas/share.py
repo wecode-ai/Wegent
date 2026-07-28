@@ -443,10 +443,13 @@ class PendingRequestInfo(BaseModel):
 class MyKBPermissionResponse(BaseModel):
     """Schema for current user's permission on a knowledge base."""
 
-    has_access: bool = Field(..., description="Whether user has access to the KB")
+    has_access: bool = Field(
+        ...,
+        description="Whether the user may directly access the KB after ACL and direct-access requirement checks",
+    )
     role: Optional[MemberRole] = Field(
         None,
-        description="User's role (null if no access)",
+        description="Highest underlying ACL role; may be set even when direct access is denied",
     )
     is_creator: bool = Field(..., description="Whether user is the KB creator")
     pending_request: Optional[PendingRequestInfo] = Field(
@@ -475,13 +478,14 @@ class PermissionSourceInfo(BaseModel):
 
 
 class MyPermissionSourcesResponse(BaseModel):
-    """Schema for current user's permission sources on a knowledge base."""
+    """Schema for current user's permission sources on a resource."""
 
-    has_access: bool = Field(..., description="Whether user has access to the KB")
+    has_access: bool = Field(..., description="Whether user may access the resource")
     effective_role: Optional[str] = Field(
-        None, description="Highest role across all sources"
+        None,
+        description="Highest underlying ACL role across all permission sources",
     )
-    is_creator: bool = Field(..., description="Whether user is the KB creator")
+    is_creator: bool = Field(..., description="Whether user is the resource creator")
     sources: List[PermissionSourceInfo] = Field(
         default_factory=list, description="All permission sources"
     )

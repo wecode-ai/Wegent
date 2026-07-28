@@ -57,7 +57,7 @@ export function ComposerModePill({
       }}
       onKeyDown={handleKeyDown}
       className={[
-        'group relative flex h-7 w-fit shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted px-2.5 text-[13px] font-semibold leading-[18px] text-text-secondary transition-[background-color,color] hover:bg-muted/80 hover:text-text-primary',
+        'group relative flex h-7 w-fit shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted px-2.5 text-sm font-semibold leading-[18px] text-text-secondary transition-[background-color,color] hover:bg-muted/80 hover:text-text-primary',
         interactive && !disabled ? 'cursor-pointer' : '',
         disabled ? 'cursor-not-allowed opacity-50' : '',
         className,

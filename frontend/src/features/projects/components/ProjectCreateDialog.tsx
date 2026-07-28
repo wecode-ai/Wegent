@@ -44,7 +44,7 @@ const PROJECT_COLORS = [
   { id: 'gray', value: '#6B7280' },
 ]
 
-const MIN_WORKSPACE_PROJECT_DEVICE_VERSION = 'v1.7.11'
+const MIN_WORKSPACE_PROJECT_DEVICE_VERSION = 'v1.7.13'
 type WorkspaceProjectDeviceType = 'local' | 'cloud' | 'remote'
 const WORKSPACE_PROJECT_DEVICE_TYPES = new Set<WorkspaceProjectDeviceType>([
   'local',

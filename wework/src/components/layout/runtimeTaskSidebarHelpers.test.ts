@@ -23,6 +23,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           title: 'Older running',
           runtime: 'codex',
           running: true,
+          completedAt: '2026-06-01T00:00:00.000Z',
           updatedAt: '2026-06-01T00:00:00.000Z',
         },
         {
@@ -31,6 +32,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           title: 'Newer idle',
           runtime: 'codex',
           running: false,
+          completedAt: '2026-06-02T00:00:00.000Z',
           updatedAt: '2026-06-02T00:00:00.000Z',
         },
       ],
@@ -47,6 +49,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           title: 'New worktree task',
           runtime: 'codex',
           running: true,
+          completedAt: '2026-06-03T00:00:00.000Z',
           updatedAt: '2026-06-03T00:00:00.000Z',
         },
       ],
@@ -55,6 +58,41 @@ describe('runtimeTaskSidebarHelpers', () => {
     expect(
       getRuntimeSidebarTaskItems([oldWorkspace, newWorkspace]).map(item => item.task.taskId)
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
+  })
+
+  test('uses the latest activity when a completed task resumes and updates again', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: [
+        {
+          taskId: 'running',
+          workspacePath: '/workspace/repo',
+          title: 'Running',
+          runtime: 'codex',
+          running: true,
+          createdAt: '2026-06-01T00:00:00.000Z',
+          completedAt: '2026-06-02T00:00:00.000Z',
+          updatedAt: '2026-06-04T00:00:00.000Z',
+        },
+        {
+          taskId: 'completed',
+          workspacePath: '/workspace/repo',
+          title: 'Completed',
+          runtime: 'codex',
+          running: false,
+          createdAt: '2026-06-01T00:00:00.000Z',
+          completedAt: '2026-06-03T00:00:00.000Z',
+          updatedAt: '2026-06-03T00:00:00.000Z',
+        },
+      ],
+    }
+
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
+      'running',
+      'completed',
+    ])
   })
 
   test('carries runtime handle into task addresses when present', () => {
@@ -81,6 +119,28 @@ describe('runtimeTaskSidebarHelpers', () => {
       runtimeHandle: {
         threadId: 'provider-session-1',
       },
+    })
+  })
+
+  test('uses a chat task path when its grouping workspace is a git worktree', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/worktrees/277/repo',
+      available: true,
+      tasks: [],
+    }
+
+    expect(
+      getRuntimeTaskAddress(workspace, {
+        taskId: 'standalone-chat',
+        workspacePath: '/home/user/Documents/Codex/standalone-chat',
+        title: 'Standalone chat',
+        runtime: 'codex',
+      })
+    ).toMatchObject({
+      deviceId: 'device-1',
+      taskId: 'standalone-chat',
+      workspacePath: '/home/user/Documents/Codex/standalone-chat',
     })
   })
 

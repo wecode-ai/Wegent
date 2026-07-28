@@ -14,13 +14,41 @@ vi.mock('@/lib/runtime-environment', () => ({
 const mergedDefaultPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  experimentalFeaturesEnabled: false,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  browserExternalLinkTarget: 'system',
+  browserLocalLinkTarget: 'wework',
+  browserDownloadDirectory: null,
+  browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
+  quickPhrases: [
+    {
+      id: 'default-summary-progress',
+      title: '总结当前进展',
+      content: '总结目前完成的工作和下一步建议',
+      mode: 'normal',
+    },
+    {
+      id: 'default-create-plan',
+      title: '制定实施计划',
+      content: '分析需求并制定详细的实施计划',
+      mode: 'plan',
+    },
+    {
+      id: 'default-pursue-goal',
+      title: '持续完成这个目标',
+      content: '持续推进这个目标，直到真正完成',
+      mode: 'goal',
+    },
+  ],
 }
 
 describe('appPreferences', () => {
@@ -60,6 +88,86 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 
+  test('normalizes stored browser preferences', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      browserExternalLinkTarget: 'wework',
+      browserLocalLinkTarget: 'unsupported',
+      browserDownloadDirectory: '  /tmp/downloads  ',
+      browserAskBeforeDownload: true,
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      browserExternalLinkTarget: 'wework',
+      browserDownloadDirectory: '/tmp/downloads',
+      browserAskBeforeDownload: true,
+    })
+  })
+
+  test('preserves attachment-only stash phrases', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      quickPhrases: [
+        {
+          id: 'stash-file',
+          title: 'image.png',
+          content: '',
+          mode: 'normal',
+          attachmentPaths: ['/tmp/image.png'],
+        },
+      ],
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      quickPhrases: [
+        {
+          id: 'stash-file',
+          title: 'image.png',
+          content: '',
+          mode: 'normal',
+          attachmentPaths: ['/tmp/image.png'],
+        },
+      ],
+    })
+  })
+
+  test('removes stash phrases after seven days and preserves regular phrases', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-21T00:00:00Z'))
+    const now = Date.now()
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      quickPhrases: [
+        {
+          id: `stash-${now - 7 * 24 * 60 * 60 * 1000}`,
+          title: '过期暂存',
+          content: '过期',
+          mode: 'normal',
+        },
+        {
+          id: 'stash-recent',
+          title: '近期暂存',
+          content: '近期',
+          mode: 'normal',
+          createdAt: now - 7 * 24 * 60 * 60 * 1000 + 1,
+        },
+        { id: 'regular', title: '普通短语', content: '保留', mode: 'normal' },
+      ],
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+    const preferences = await getAppPreferences()
+
+    expect(preferences.quickPhrases.map(phrase => phrase.id)).toEqual(['stash-recent', 'regular'])
+    vi.useRealTimers()
+  })
+
   test('updates preferences through the Tauri command', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
     invokeMock.mockResolvedValue({
@@ -97,6 +205,19 @@ describe('appPreferences', () => {
     })
     expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
       patch: { language: 'en' },
+    })
+  })
+
+  test('serializes a cleared browser download directory for the native command', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue(mergedDefaultPreferences)
+
+    const { updateAppPreferences } = await import('./appPreferences')
+
+    await updateAppPreferences({ browserDownloadDirectory: null })
+
+    expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
+      patch: { browserDownloadDirectory: '' },
     })
   })
 })

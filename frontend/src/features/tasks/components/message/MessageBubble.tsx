@@ -351,6 +351,29 @@ function getCopyableContentFromBlocks(blocks: MessageBlock[]): string {
     .trim()
 }
 
+function getBlockRenderHash(blocks: MessageBlock[] | undefined): string {
+  return (
+    blocks
+      ?.map(block => {
+        const contentLength =
+          'content' in block && typeof block.content === 'string' ? block.content.length : 0
+        const outputLength =
+          block.type === 'tool'
+            ? typeof block.tool_output === 'string'
+              ? block.tool_output.length
+              : block.tool_output
+                ? JSON.stringify(block.tool_output).length
+                : 0
+            : block.type === 'subagent'
+              ? `${block.output?.length || 0}:${block.summary?.length || 0}:${getBlockRenderHash(block.children)}`
+              : 0
+
+        return `${block.id}:${block.status}:${block.type}:${contentLength}:${outputLength}`
+      })
+      .join('|') || ''
+  )
+}
+
 const MessageBubble = memo(
   function MessageBubble({
     msg,
@@ -1680,20 +1703,8 @@ const MessageBubble = memo(
 
     // CRITICAL FIX: Compare blocks content hash (id + status + has_output)
     // Comparing only length is not enough - we need to detect when block status/content changes
-    const prevBlocksHash =
-      prevProps.msg.result?.blocks
-        ?.map(
-          b =>
-            `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : (b as { content?: string }).content?.length || 0}`
-        )
-        .join('|') || ''
-    const nextBlocksHash =
-      nextProps.msg.result?.blocks
-        ?.map(
-          b =>
-            `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : (b as { content?: string }).content?.length || 0}`
-        )
-        .join('|') || ''
+    const prevBlocksHash = getBlockRenderHash(prevProps.msg.result?.blocks)
+    const nextBlocksHash = getBlockRenderHash(nextProps.msg.result?.blocks)
 
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&

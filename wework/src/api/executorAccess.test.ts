@@ -138,6 +138,34 @@ describe('executor access layer', () => {
     expect(deviceApi.getHomeDirectory).not.toHaveBeenCalled()
   })
 
+  test('loads a missing executor through the targeted resolver', async () => {
+    const { deviceApi, runtimeWorkApi } = createApis()
+    const resolveDevice = vi.fn().mockResolvedValue(
+      createDevice({
+        id: 2,
+        device_id: 'cloud-device',
+        name: 'Cloud Device',
+      })
+    )
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+      resolveDevice,
+    })
+
+    await client.commands.executeCommand('cloud-device', {
+      command_key: 'git_branch',
+      cwd: '/workspace/cloud',
+    })
+
+    expect(resolveDevice).toHaveBeenCalledWith('cloud-device')
+    expect(deviceApi.executeCommand).toHaveBeenCalledWith('cloud-device', {
+      command_key: 'git_branch',
+      cwd: '/workspace/cloud',
+    })
+  })
+
   test('normalizes offline devices into executor-offline errors', async () => {
     const { deviceApi, runtimeWorkApi } = createApis([createDevice({ status: 'offline' })])
     const client = createExecutorClientFromApis({

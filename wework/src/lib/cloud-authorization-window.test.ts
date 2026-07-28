@@ -108,7 +108,7 @@ describe('openCloudAuthorizationWindow', () => {
     })
 
     await expect(
-      openCloudAuthorizationWindow('https://cloud.example.com/wework/authorize')
+      openCloudAuthorizationWindow('https://cloud.example.com/auth/wework/authorize')
     ).resolves.toEqual({
       closed: expect.any(Promise),
       close: expect.any(Function),
@@ -118,12 +118,15 @@ describe('openCloudAuthorizationWindow', () => {
     expect(webviewWindowMocks.constructorMock).toHaveBeenCalledWith(
       'cloud-authorization',
       expect.objectContaining({
-        url: 'https://cloud.example.com/wework/authorize',
+        url: 'https://cloud.example.com/auth/wework/authorize',
         title: 'Wegent Cloud',
-        width: 520,
-        height: 560,
-        x: 640,
-        y: 284,
+        width: 1000,
+        height: 640,
+        minWidth: 960,
+        minHeight: 620,
+        parent: currentWindowMocks,
+        x: 400,
+        y: 244,
         center: false,
         maximizable: false,
         focus: true,
@@ -138,7 +141,9 @@ describe('openCloudAuthorizationWindow', () => {
   test('closes the authorization window from the returned handle', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
 
-    const handle = await openCloudAuthorizationWindow('https://cloud.example.com/wework/authorize')
+    const handle = await openCloudAuthorizationWindow(
+      'https://cloud.example.com/auth/wework/authorize'
+    )
     await handle?.close?.()
 
     expect(webviewWindowMocks.closeMock).toHaveBeenCalled()
@@ -148,7 +153,9 @@ describe('openCloudAuthorizationWindow', () => {
     isTauriRuntimeMock.mockReturnValue(true)
     webviewWindowMocks.closeMock.mockRejectedValue(new Error('close not allowed'))
 
-    const handle = await openCloudAuthorizationWindow('https://cloud.example.com/wework/authorize')
+    const handle = await openCloudAuthorizationWindow(
+      'https://cloud.example.com/auth/wework/authorize'
+    )
     await handle?.close?.()
 
     expect(webviewWindowMocks.closeMock).toHaveBeenCalled()

@@ -60,6 +60,8 @@ export interface ResponseApiStreamState {
   toolContexts: Map<string, { name?: string; input?: Record<string, unknown> }>
 }
 
+const IMAGE_GENERATION_TOOL_NAME = 'image_generation'
+
 const runtimeTaskPlans = new Map<string, RuntimePlanEventPayload>()
 
 function runtimeTaskPlanKey(
@@ -363,7 +365,9 @@ function responseToolItem(data: Record<string, unknown>): Record<string, unknown
 }
 
 function isToolItem(item: Record<string, unknown>): boolean {
-  return ['function_call', 'mcp_call', 'shell_call'].includes(stringField(item, 'type') ?? '')
+  return ['function_call', 'mcp_call', 'shell_call', 'image_generation_call'].includes(
+    stringField(item, 'type') ?? ''
+  )
 }
 
 function isCommandToolItem(item: Record<string, unknown>): boolean {
@@ -398,7 +402,8 @@ function emitBlockCreated(
   }
 
   const toolInput = toolInputFrom(data, item)
-  const toolName = normalizeToolName(item)
+  const isImageGeneration = item.type === 'image_generation_call'
+  const toolName = isImageGeneration ? IMAGE_GENERATION_TOOL_NAME : normalizeToolName(item)
   state.toolContexts.set(callId, { name: toolName, input: toolInput })
 
   handlers.onBlockCreated?.({
@@ -409,6 +414,9 @@ function emitBlockCreated(
       tool_use_id: callId,
       tool_name: toolName,
       tool_input: toolInput,
+      ...(isImageGeneration && {
+        renderPayload: imageGenerationRenderPayload(item),
+      }),
       status: data.argument_status === 'streaming' ? 'generating_arguments' : 'pending',
       timestamp: Date.now(),
     },
@@ -429,6 +437,7 @@ function emitBlockUpdated(
     toolOutputOriginalBytes?: number
     content?: string
     fileChanges?: ChatBlock['fileChanges']
+    renderPayload?: unknown
   }
 ): void {
   if (!blockId) {
@@ -483,9 +492,44 @@ function emitToolDone(
     status,
     ...(nextInput && { toolInput: nextInput }),
     ...(toolOutput !== undefined && { toolOutput }),
+    ...(item.type === 'image_generation_call' && {
+      renderPayload: imageGenerationRenderPayload(item),
+    }),
   })
 
   state.toolContexts.delete(callId)
+}
+
+function imageGenerationRenderPayload(item: Record<string, unknown>): Record<string, unknown> {
+  const result = stringField(item, 'result')
+  const partialImage = stringField(item, 'partial_image_b64')
+  const imageBase64 = result ?? partialImage
+  const revisedPrompt = stringField(item, 'revised_prompt') ?? stringField(item, 'revisedPrompt')
+  const savedPath = stringField(item, 'saved_path') ?? stringField(item, 'savedPath')
+
+  return {
+    kind: 'image_generation',
+    ...(imageBase64 && { imageBase64 }),
+    ...(revisedPrompt && { revisedPrompt }),
+    ...(savedPath && { savedPath }),
+  }
+}
+
+function emitImageGenerationPartial(
+  handlers: ChatStreamHandlers,
+  base: ReturnType<typeof eventBase>,
+  data: Record<string, unknown>
+): void {
+  const blockId = callIdFromData(data) ?? stringField(data, 'id')
+  const partialImage = stringField(data, 'partial_image_b64')
+  if (!blockId || !partialImage) {
+    warnDroppedResponseBlock('image_generation.partial_image', 'missing_image_data', base, data)
+    return
+  }
+  emitBlockUpdated(handlers, 'image_generation.partial_image', base, blockId, {
+    status: 'streaming',
+    renderPayload: imageGenerationRenderPayload(data),
+  })
 }
 
 function emitResponseBlockCreated(
@@ -511,6 +555,7 @@ function emitResponseBlockUpdated(
 ): void {
   const updates = recordField(data, 'updates')
   const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
+  const renderPayload = updates.renderPayload ?? updates.render_payload
   const fileChanges = parseRecord(updates.fileChanges ?? updates.file_changes)
   const toolOutputDelta = updates.toolOutputDelta ?? updates.tool_output_delta
   const toolOutputTruncated = updates.toolOutputTruncated ?? updates.tool_output_truncated
@@ -536,6 +581,7 @@ function emitResponseBlockUpdated(
         toolOutputOriginalBytes,
       }),
       ...(toolInput && { toolInput }),
+      ...(renderPayload !== undefined && { renderPayload }),
       ...(fileChanges && { fileChanges: fileChanges as unknown as ChatBlock['fileChanges'] }),
       ...(typeof updates.status === 'string' && {
         status: updates.status as ChatBlock['status'],
@@ -769,6 +815,11 @@ export function emitResponseApiEvent(
 
   if (eventName === 'response.output_item.added') {
     emitBlockCreated(handlers, base, data, state)
+    return
+  }
+
+  if (eventName === 'image_generation.partial_image') {
+    emitImageGenerationPartial(handlers, base, data)
     return
   }
 

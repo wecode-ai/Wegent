@@ -54,6 +54,7 @@ pub(crate) struct ManagedWorktree {
     pub path: String,
     pub repository_name: String,
     pub source_path: Option<String>,
+    pub permanent: bool,
     pub created_at: i64,
     pub updated_at: i64,
     pub snapshot_ref: Option<String>,
@@ -72,6 +73,7 @@ impl Default for ManagedWorktree {
             path: String::new(),
             repository_name: String::new(),
             source_path: None,
+            permanent: false,
             created_at: now,
             updated_at: now,
             snapshot_ref: None,
@@ -100,6 +102,14 @@ pub(crate) struct WorktreeManager {
 }
 
 impl WorktreeManager {
+    pub fn source_path_for(&self, workspace_path: &str) -> Option<String> {
+        let normalized_path = normalized_path_key(Path::new(workspace_path));
+        self.load()
+            .records
+            .get(&normalized_path)
+            .and_then(|record| record.source_path.clone())
+    }
+
     pub fn from_env() -> Self {
         Self::new(runtime_work_dir().join("worktrees.json"))
     }
@@ -154,6 +164,7 @@ impl WorktreeManager {
         source_path: &Path,
         worktree_id: &str,
         git_ref: Option<&str>,
+        permanent: bool,
     ) -> Result<ManagedWorktree, String> {
         let _guard = self
             .mutation_lock
@@ -188,6 +199,7 @@ impl WorktreeManager {
         record.path = path.display().to_string();
         record.repository_name = repository_name;
         record.source_path = Some(source_path.display().to_string());
+        record.permanent = permanent;
         record.updated_at = now;
         record.state = "active".to_owned();
         record.last_error = None;
@@ -342,8 +354,8 @@ impl WorktreeManager {
         let mut active = self
             .list(tasks)?
             .into_iter()
+            .filter(|(record, linked_tasks)| is_auto_prune_candidate(record, linked_tasks))
             .map(|(record, _)| record)
-            .filter(|record| record.state == "active")
             .collect::<Vec<_>>();
         active.sort_by_key(|record| std::cmp::Reverse(record.updated_at));
         let mut removed = Vec::new();
@@ -487,7 +499,13 @@ fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), Str
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
     let mut command = Command::new("git");
-    command.arg("-C").arg(path).args(args);
+    command
+        .arg("-c")
+        .arg("core.bare=false")
+        .arg("-C")
+        .arg(path)
+        .args(args);
+    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
     if let Some(envs) = envs {
         command.envs(envs.iter().copied());
     }
@@ -646,14 +664,29 @@ fn resolve_worktree_root(configured: &str) -> PathBuf {
 }
 
 fn default_worktree_root() -> PathBuf {
-    if let Some(projects) = env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR").map(PathBuf::from) {
+    default_worktree_root_from_paths(
+        env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR").map(PathBuf::from),
+        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
+        env::var_os("WECODE_HOME").map(PathBuf::from),
+        home_dir(),
+    )
+}
+
+fn default_worktree_root_from_paths(
+    projects: Option<PathBuf>,
+    executor_home: Option<PathBuf>,
+    wecode_home: Option<PathBuf>,
+    home: PathBuf,
+) -> PathBuf {
+    if let Some(projects) = projects {
         if let Some(parent) = projects.parent() {
             return parent.join("worktrees");
         }
     }
-    let base = env::var_os("WECODE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".wecode"));
+    if let Some(executor_home) = executor_home {
+        return executor_home.join("workspace").join("worktrees");
+    }
+    let base = wecode_home.unwrap_or_else(|| home.join(".wecode"));
     base.join("wegent-executor")
         .join("workspace")
         .join("worktrees")
@@ -670,9 +703,7 @@ fn expand_home(value: &str) -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(env::temp_dir)
+    dirs::home_dir().unwrap_or_else(env::temp_dir)
 }
 
 fn normalized_path_key(path: &Path) -> String {
@@ -681,6 +712,13 @@ fn normalized_path_key(path: &Path) -> String {
 
 fn same_path(left: &str, right: &str) -> bool {
     normalized_path_key(Path::new(left)) == normalized_path_key(Path::new(right))
+}
+
+fn is_auto_prune_candidate(record: &ManagedWorktree, linked_tasks: &[RuntimeTaskLink]) -> bool {
+    record.state == "active"
+        && !record.permanent
+        && !linked_tasks.is_empty()
+        && linked_tasks.iter().all(|task| task.status == "archived")
 }
 
 fn now_ms() -> i64 {
@@ -692,7 +730,12 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
+    use serde_json::Value;
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn default_settings_match_codex() {
@@ -700,6 +743,33 @@ mod tests {
         assert!(settings.auto_cleanup_enabled);
         assert_eq!(settings.keep_count, 15);
         assert!(settings.worktree_root.is_empty());
+    }
+
+    #[test]
+    fn isolated_executor_home_owns_its_default_worktree_root() {
+        let root = default_worktree_root_from_paths(
+            None,
+            Some(PathBuf::from("/tmp/isolated-executor")),
+            Some(PathBuf::from("/tmp/shared-wecode")),
+            PathBuf::from("/tmp/home"),
+        );
+
+        assert_eq!(
+            root,
+            PathBuf::from("/tmp/isolated-executor/workspace/worktrees")
+        );
+    }
+
+    #[test]
+    fn explicit_projects_directory_has_highest_worktree_root_precedence() {
+        let root = default_worktree_root_from_paths(
+            Some(PathBuf::from("/tmp/verification/workspace/projects")),
+            Some(PathBuf::from("/tmp/isolated-executor")),
+            Some(PathBuf::from("/tmp/shared-wecode")),
+            PathBuf::from("/tmp/home"),
+        );
+
+        assert_eq!(root, PathBuf::from("/tmp/verification/workspace/worktrees"));
     }
 
     #[test]
@@ -719,7 +789,7 @@ mod tests {
 
     #[test]
     fn snapshot_delete_and_restore_preserve_uncommitted_files() {
-        let root = env::temp_dir().join(format!("wegent-worktree-test-{}", now_ms()));
+        let root = test_directory("wegent-worktree-test");
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
         run_git(&source, &["init"]);
@@ -736,7 +806,7 @@ mod tests {
                 ..WorktreeSettingsPatch::default()
             })
             .unwrap();
-        let record = manager.prepare(&source, "task-1", None).unwrap();
+        let record = manager.prepare(&source, "task-1", None, false).unwrap();
         let path = PathBuf::from(&record.path);
         fs::write(path.join("tracked.txt"), "changed\n").unwrap();
         fs::write(path.join("untracked.txt"), "new\n").unwrap();
@@ -758,8 +828,28 @@ mod tests {
     }
 
     #[test]
+    fn auto_prune_only_selects_worktrees_linked_exclusively_to_archived_tasks() {
+        let record = ManagedWorktree::default();
+        let mut active_task = task_link("active");
+        active_task.status = "active".to_owned();
+        let mut archived_task = task_link("archived");
+        archived_task.status = "archived".to_owned();
+
+        assert!(!is_auto_prune_candidate(&record, &[active_task]));
+        assert!(is_auto_prune_candidate(&record, &[archived_task.clone()]));
+        assert!(!is_auto_prune_candidate(&record, &[]));
+        assert!(!is_auto_prune_candidate(
+            &ManagedWorktree {
+                permanent: true,
+                ..record
+            },
+            &[archived_task]
+        ));
+    }
+
+    #[test]
     fn discovered_worktree_includes_source_repository_path() {
-        let root = env::temp_dir().join(format!("wegent-worktree-discovery-test-{}", now_ms()));
+        let root = test_directory("wegent-worktree-discovery-test");
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
         run_git(&source, &["init"]);
@@ -805,17 +895,91 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn source_path_lookup_survives_missing_worktree_git_metadata() {
+        let root = test_directory("wegent-worktree-source-lookup-test");
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        let worktree_path = root.join("managed/task-1/project");
+        let source_path = root.join("source/project");
+        let mut records = HashMap::new();
+        records.insert(
+            normalized_path_key(&worktree_path),
+            ManagedWorktree {
+                path: worktree_path.display().to_string(),
+                source_path: Some(source_path.display().to_string()),
+                ..ManagedWorktree::default()
+            },
+        );
+        manager
+            .save(&WorktreeState {
+                version: STATE_VERSION,
+                records,
+                ..WorktreeState::default()
+            })
+            .unwrap();
+
+        assert_eq!(
+            manager.source_path_for(&worktree_path.display().to_string()),
+            Some(source_path.display().to_string())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn test_directory(prefix: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
     fn run_git(path: &Path, args: &[&str]) {
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        command
+            .arg("-c")
+            .arg("core.bare=false")
             .arg("-C")
             .arg(path)
             .args(args)
-            .output()
-            .unwrap();
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE");
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn task_link(id: &str) -> RuntimeTaskLink {
+        RuntimeTaskLink {
+            local_task_id: id.to_owned(),
+            thread_id: None,
+            workspace_path: format!("/tmp/{id}"),
+            title: id.to_owned(),
+            runtime: "codex".to_owned(),
+            status: "active".to_owned(),
+            running: false,
+            continuable: true,
+            thread_status: "notLoaded".to_owned(),
+            turn_status: None,
+            goal_status: None,
+            git_info: None,
+            created_at: 0,
+            updated_at: 0,
+            completed_at: None,
+            runtime_handle: Value::Null,
+            parent: None,
+            ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
+            list_order: None,
+            group_workspace_path: None,
+            group_project_key: None,
+            pinned: false,
+            pinned_order: None,
+        }
     }
 }

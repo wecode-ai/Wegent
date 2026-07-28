@@ -27,7 +27,7 @@ export function ModelResetDefaultRow({
         disabled={disabled}
         onFocus={onClearSubmenu}
         onClick={onReset}
-        className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] font-medium leading-[18px] text-text-muted hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-medium leading-[18px] text-text-muted hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className="min-w-0 flex-1 truncate">
           {t('workbench.reset_default_model_settings', '重置为默认设置')}

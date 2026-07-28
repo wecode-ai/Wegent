@@ -277,6 +277,8 @@ export interface RuntimeMessageSource {
 
 export interface NormalizedRuntimeMessage {
   id: string
+  clientMessageId?: string | null
+  client_message_id?: string | null
   role: 'user' | 'assistant' | 'system' | string
   content: string
   contentTruncated?: boolean | null
@@ -285,8 +287,13 @@ export interface NormalizedRuntimeMessage {
   content_original_chars?: number | null
   messageIndex?: number | null
   message_index?: number | null
-  subtaskId?: string | null
+  subtaskId?: string | number | null
+  turnId?: string | null
+  turn_id?: string | null
   status?: string | null
+  error?: string | null
+  errorType?: string | null
+  error_type?: string | null
   createdAt?: string | null
   completedAt?: string | number | null
   completed_at?: string | number | null
@@ -341,6 +348,7 @@ export interface CodexMemoryCitation {
 
 export interface RuntimeTaskSummary {
   taskId: string
+  threadId?: string | null
   workspacePath: string
   workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
   worktreeId?: string | null
@@ -349,8 +357,16 @@ export interface RuntimeTaskSummary {
   runtime: RuntimeName
   createdAt?: string | number | null
   updatedAt?: string | number | null
+  completedAt?: string | number | null
   running?: boolean
+  continuable?: boolean
+  threadStatus?: 'notLoaded' | 'idle' | 'systemError' | 'active' | string
+  turnStatus?: 'inProgress' | 'completed' | 'interrupted' | 'failed' | null
+  pinned?: boolean
+  pinnedOrder?: number | null
+  sidebarOrder?: number | null
   status?: string | null
+  goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null
@@ -407,10 +423,33 @@ export interface DeviceWorkspacePrepareResponse {
 
 export interface RuntimeProjectRef {
   key: string
+  sidebarStateKey?: string | null
   id?: number
   name: string
   description?: string | null
   color?: string | null
+  kind?: 'local' | 'remote' | string
+  source?: 'legacy_root' | 'local_project' | 'remote_project' | string
+  stateDeviceId?: string | null
+  roots?: RuntimeProjectRoot[]
+  pinned?: boolean
+  pinnedOrder?: number | null
+  active?: boolean
+  appearance?: RuntimeProjectAppearance | null
+}
+
+export interface RuntimeProjectRoot {
+  kind: 'local' | string
+  path: string
+  label?: string | null
+}
+
+export interface RuntimeProjectAppearance {
+  color?: 'black' | 'blue' | 'green' | 'orange' | 'pink' | 'purple' | 'red' | 'yellow' | string
+  marker?:
+    | { kind: 'icon'; icon: string }
+    | { kind: 'emoji'; emoji: string }
+    | Record<string, unknown>
 }
 
 export interface RuntimeDeviceWorkspace {
@@ -450,6 +489,7 @@ export interface RuntimeWorkSearchRequest {
   limit?: number
   includeArchived?: boolean
   projectId?: number
+  source?: 'all' | 'local' | 'cloud'
 }
 
 export interface RuntimeWorkSearchProjectRef {
@@ -477,10 +517,31 @@ export interface RuntimeWorkSearchResponse {
   items: RuntimeWorkSearchItem[]
 }
 
+export interface RuntimeWorkspaceSearchRequest {
+  deviceId: string
+  root: string
+  query: string
+  cancellationToken?: string
+}
+
+export interface RuntimeWorkspaceSearchItem {
+  root: string
+  path: string
+  fileName: string
+  matchType: 'file' | 'directory'
+  score: number
+  indices?: number[] | null
+}
+
+export interface RuntimeWorkspaceSearchResponse {
+  files: RuntimeWorkspaceSearchItem[]
+}
+
 export interface RuntimeTranscriptResponse {
   taskId?: string
   workspacePath: string
   runtime: RuntimeName
+  running?: boolean
   title?: string | null
   messages: NormalizedRuntimeMessage[]
   contextUsage?: RuntimeContextUsage | null
@@ -506,6 +567,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  clientMessageId?: string
   ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null
@@ -519,6 +581,8 @@ export interface RuntimeSendRequest {
   additionalContext?: RuntimeAdditionalContext
   additional_context?: RuntimeAdditionalContext
 }
+
+export type RuntimeInterruptAndSendRequest = RuntimeSendRequest
 
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
   messageId?: string | null
@@ -638,8 +702,27 @@ export interface RuntimeWorkspaceOpenRequest {
   label?: string | null
 }
 
+export interface RuntimeLocalProjectUpsertRequest {
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+}
+
+export interface RuntimeLocalProjectUpsertResponse {
+  accepted: boolean
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+  error?: string | null
+}
+
 export interface RuntimeWorkspaceRenameRequest {
   deviceId: string
+  projectKey?: string | null
   workspacePath: string
   runtime: RuntimeName
   name: string
@@ -647,6 +730,7 @@ export interface RuntimeWorkspaceRenameRequest {
 
 export interface RuntimeWorkspaceRemoveRequest {
   deviceId: string
+  projectKey?: string | null
   workspacePath: string
   runtime: RuntimeName
 }
@@ -658,6 +742,66 @@ export interface RuntimeWorkspaceOpenResponse {
   runtime: RuntimeName
   threadId?: string | null
   error?: string | null
+}
+
+export interface RuntimeSidebarMutationResponse {
+  accepted: boolean
+  deviceId: string
+  error?: string | null
+}
+
+export interface RuntimeProjectReorderRequest {
+  deviceId: string
+  projectKey: string
+  beforeProjectKey?: string | null
+  insertAtEnd?: boolean
+}
+
+export interface RuntimeProjectPinRequest {
+  deviceId: string
+  projectKey: string
+  pinned: boolean
+  beforeProjectKey?: string | null
+}
+
+export interface RuntimeProjectAppearanceRequest {
+  deviceId: string
+  projectKey: string
+  appearance?: RuntimeProjectAppearance | null
+}
+
+export interface RuntimeRemoteProjectRegistration {
+  id: string
+  hostId: string
+  remotePath: string
+  label?: string | null
+}
+
+export interface RuntimeRemoteProjectsSyncRequest {
+  deviceId: string
+  projects: RuntimeRemoteProjectRegistration[]
+}
+
+export interface RuntimeProjectActivateRequest {
+  deviceId: string
+  projectKey: string
+  workspacePath: string
+  remoteHostId?: string | null
+}
+
+export interface RuntimeProjectTaskReorderRequest {
+  deviceId: string
+  projectKey: string
+  threadId: string
+  beforeThreadId?: string | null
+  insertAtEnd?: boolean
+}
+
+export interface RuntimeTaskPinRequest {
+  deviceId: string
+  threadId: string
+  pinned: boolean
+  beforeThreadId?: string | null
 }
 
 export interface BindRuntimeTaskIMSessionsRequest {
@@ -749,6 +893,7 @@ export interface RuntimeManagedWorktree {
   path: string
   repositoryName: string
   sourcePath?: string | null
+  permanent?: boolean
   createdAt?: number | null
   updatedAt?: number | null
   state: 'active' | 'restorable' | 'missing' | 'deleted' | string
@@ -768,6 +913,7 @@ export interface RuntimeWorktreePrepareRequest {
   sourcePath: string
   worktreeId: string
   ref?: string | null
+  permanent?: boolean
 }
 
 export interface RuntimeWorktreeMutationResponse {
@@ -895,14 +1041,19 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  runtimeProjectKey?: string
+  runtimeProjectName?: string
+  runtimeWorkspaceRoots?: string[]
   taskId?: string
   teamId: number
   runtime: RuntimeName
   message: string
+  clientMessageId?: string
   title?: string
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
+  modelSelection?: ModelSelectionConfig | null
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
@@ -910,6 +1061,9 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
+  deliveryId?: string
+  cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface RuntimeTaskCreateResponse {
@@ -930,6 +1084,8 @@ export interface RuntimeTaskForkTarget {
 export interface RuntimeTaskForkRequest {
   source: RuntimeTaskAddress
   target: RuntimeTaskForkTarget
+  lastTurnId?: string
+  title?: string
 }
 
 export interface RuntimeTaskForkResponse {
@@ -1057,6 +1213,7 @@ export interface LocalDeviceApp {
   isEnabled?: boolean
   pluginDisplayNames?: string[]
   source?: 'codex-app' | string
+  skillPath?: string | null
 }
 
 export interface SkillDirectoryMove {
@@ -1808,6 +1965,7 @@ export interface ChatBlockUpdatedPayload {
   tool_output_truncated?: boolean
   tool_output_original_bytes?: number
   toolInput?: Record<string, unknown>
+  renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'
   deviceId?: string
@@ -1904,6 +2062,7 @@ export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
   | 'unavailable'
+  | 'provider_boundary_mismatch'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {
@@ -1918,6 +2077,7 @@ export interface UnifiedModel {
   provider?: string | null
   modelId?: string | null
   namespace?: string
+  resourceUserId?: number
   config?: Record<string, unknown>
   runtime?: ModelRuntime | null
   isActive?: boolean
@@ -1971,6 +2131,9 @@ export interface Attachment {
   created_at: string
   local_preview_url?: string
   local_path?: string
+  ui_group_id?: string
+  ui_group_role?: 'primary' | 'companion'
+  ui_kind?: 'appshot'
 }
 
 export interface AttachmentUploadProgress {

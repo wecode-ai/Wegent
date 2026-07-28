@@ -1,4 +1,5 @@
 import type {
+  DeviceInfo,
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
@@ -11,6 +12,7 @@ import {
   type ProjectWorkspaceRootApi,
 } from '@/lib/project-workspace'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface ResolveWorkspaceTargetOptions {
@@ -30,9 +32,45 @@ interface ResolveProjectRuntimeWorkspaceTargetOptions {
   selectedDeviceWorkspaceId?: number | null
 }
 
+interface ResolveProjectRuntimeWorkspaceTargetsOptions {
+  currentProject: ProjectWithTasks | null
+  runtimeWork: RuntimeWorkListResponse | null
+}
+
 export interface RuntimeWorkspaceContext {
   project: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget
+}
+
+export function createLocalFileWorkspaceTarget(
+  filePath: string,
+  devices: DeviceInfo[]
+): WorkspaceTarget | null {
+  const normalizedPath = filePath.trim().replace(/\\/g, '/')
+  if (!normalizedPath.startsWith('/')) return null
+
+  const separatorIndex = normalizedPath.lastIndexOf('/')
+  const directoryPath = separatorIndex > 0 ? normalizedPath.slice(0, separatorIndex) : '/'
+  const deviceId = resolveLocalWorkbenchDeviceId(devices, LOCAL_WORKBENCH_DEVICE_ALIAS)
+  if (!deviceId) return null
+
+  return {
+    deviceId,
+    path: directoryPath,
+    source: 'runtime',
+    workspaceSource: 'local',
+  }
+}
+
+export function createLocalAttachmentWorkspaceTarget(
+  filePath: string,
+  devices: DeviceInfo[]
+): WorkspaceTarget | null {
+  const normalizedPath = filePath.trim().replace(/\\/g, '/')
+  const isLocalAttachment =
+    normalizedPath.includes('/.wegent-executor/workspace/attachments/') ||
+    normalizedPath.includes('/.wegent/attachments/')
+  return isLocalAttachment ? createLocalFileWorkspaceTarget(normalizedPath, devices) : null
 }
 
 async function projectWorkspaceTarget(
@@ -79,6 +117,11 @@ function selectProjectDeviceWorkspace(
   return workspaces.length === 1 ? workspaces[0] : null
 }
 
+function workspaceTargetDeviceId(workspace: RuntimeDeviceWorkspace): string {
+  const remoteHostId = workspace.remoteHostId?.trim()
+  return workspace.workspaceSource === 'remote' && remoteHostId ? remoteHostId : workspace.deviceId
+}
+
 export function resolveProjectRuntimeWorkspaceTarget({
   currentProject,
   runtimeWork,
@@ -92,13 +135,27 @@ export function resolveProjectRuntimeWorkspaceTarget({
   if (!workspace || !workspacePath) return null
 
   return {
-    deviceId: workspace.deviceId,
+    deviceId: workspaceTargetDeviceId(workspace),
     path: workspacePath,
     source: 'project',
     ...(workspace.workspaceSource !== undefined
       ? { workspaceSource: workspace.workspaceSource }
       : {}),
   }
+}
+
+export function resolveProjectRuntimeWorkspaceTargets({
+  currentProject,
+  runtimeWork,
+}: ResolveProjectRuntimeWorkspaceTargetsOptions): WorkspaceTarget[] {
+  return projectDeviceWorkspaces(runtimeWork, currentProject?.id).map(workspace => ({
+    deviceId: workspaceTargetDeviceId(workspace),
+    path: workspace.workspacePath,
+    source: 'project',
+    ...(workspace.workspaceSource !== undefined
+      ? { workspaceSource: workspace.workspaceSource }
+      : {}),
+  }))
 }
 
 function workspaceTargetFromRuntimeTask(
@@ -111,7 +168,7 @@ function workspaceTargetFromRuntimeTask(
       : task.workspacePath || workspace.workspacePath
 
   return {
-    deviceId: workspace.deviceId,
+    deviceId: workspaceTargetDeviceId(workspace),
     path: workspacePath,
     source: 'runtime',
     taskId: task.taskId,

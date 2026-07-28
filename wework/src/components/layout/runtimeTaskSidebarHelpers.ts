@@ -13,10 +13,17 @@ export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
   return task.updatedAt || task.createdAt || undefined
 }
 
+function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
+  const candidates = [task.completedAt, task.updatedAt, task.createdAt]
+    .map(value => (value ? new Date(value).getTime() : Number.NaN))
+    .filter(value => !Number.isNaN(value))
+  return candidates.length > 0 ? Math.max(...candidates) : undefined
+}
+
 export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {
   return [...tasks].sort((left, right) => {
-    const leftTime = new Date(getRuntimeTaskTime(left) || 0).getTime()
-    const rightTime = new Date(getRuntimeTaskTime(right) || 0).getTime()
+    const leftTime = new Date(getRuntimeTaskSortTime(left) || 0).getTime()
+    const rightTime = new Date(getRuntimeTaskSortTime(right) || 0).getTime()
     const normalizedLeftTime = Number.isNaN(leftTime) ? 0 : leftTime
     const normalizedRightTime = Number.isNaN(rightTime) ? 0 : rightTime
     return normalizedRightTime - normalizedLeftTime
@@ -45,8 +52,8 @@ export function getRuntimeChatSidebarTaskItems(
 
 export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
   return [...items].sort((left, right) => {
-    const leftTime = new Date(getRuntimeTaskTime(left.task) || 0).getTime()
-    const rightTime = new Date(getRuntimeTaskTime(right.task) || 0).getTime()
+    const leftTime = new Date(getRuntimeTaskSortTime(left.task) || 0).getTime()
+    const rightTime = new Date(getRuntimeTaskSortTime(right.task) || 0).getTime()
     const normalizedLeftTime = Number.isNaN(leftTime) ? 0 : leftTime
     const normalizedRightTime = Number.isNaN(rightTime) ? 0 : rightTime
     return normalizedRightTime - normalizedLeftTime
@@ -107,6 +114,7 @@ export function getRuntimeTaskWorkspacePath(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
 ) {
+  if (!isRuntimeWorktreeTask(task) && task.workspacePath) return task.workspacePath
   if (isRuntimeWorktreeWorkspace(workspace)) return workspace.workspacePath
   return task.workspacePath || workspace.workspacePath
 }

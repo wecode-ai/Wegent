@@ -4,6 +4,7 @@ import {
   consumePluginTrial,
   consumePluginTrialInput,
   pluginTrialInput,
+  queuePluginReferenceTrial,
   queuePluginTrial,
 } from './pluginTrial'
 
@@ -106,6 +107,17 @@ describe('plugin trial state', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')
     expect(consumePluginTrialInput()).toBeNull()
+  })
+
+  test('queues a canonical plugin reference without an installed plugin record', () => {
+    expect(
+      queuePluginReferenceTrial({
+        pluginName: 'sites',
+        marketplaceName: 'openai-bundled',
+        displayName: 'Sites',
+      })
+    ).toBe(true)
+    expect(consumePluginTrialInput()).toBe('[$Sites](plugin://sites@openai-bundled) ')
   })
 
   test('queues plugin templates for the trial composer', () => {

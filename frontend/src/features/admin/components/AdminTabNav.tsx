@@ -30,6 +30,7 @@ import {
   MessageSquare,
   Monitor,
   LayoutTemplate,
+  Cable,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -45,6 +46,7 @@ export type AdminTabId =
   | 'api-keys'
   | 'system-config'
   | 'im-channels'
+  | 'connector-apps'
   | 'monitor'
   | 'device-monitor'
 
@@ -81,6 +83,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
     { id: 'im-channels', label: t('admin:tabs.im_channels'), icon: MessageSquare },
+    { id: 'connector-apps', label: t('admin:tabs.connector_apps'), icon: Cable },
     { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
     { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
   ]
@@ -170,6 +173,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
               : 'text-text-secondary hover:text-text-primary hover:bg-muted'
           }`}
           aria-current={activeTab === tab.id ? 'page' : undefined}
+          data-testid={`admin-tab-${tab.id}`}
         >
           <tab.icon className="w-4 h-4" />
           {tab.label}

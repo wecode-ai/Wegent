@@ -32,14 +32,10 @@ def health_check(db: Session = Depends(get_db)):
     """
     try:
         # Check database connection by querying users table
-        result = db.execute(text("SELECT COUNT(*) FROM users"))
-        user_count = result.scalar()
+        db.execute(text("SELECT COUNT(*) FROM users")).scalar()
 
         return {
             "status": "healthy",
-            "database": "connected",
-            "users_initialized": user_count > 0,
-            "user_count": user_count,
             "shutting_down": shutdown_manager.is_shutting_down,
         }
     except Exception as e:
@@ -72,8 +68,6 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
         if user_count > 0:
             return {
                 "status": "ready",
-                "database": "initialized",
-                "user_count": user_count,
             }
         else:
             # Return 503 if database is not initialized yet

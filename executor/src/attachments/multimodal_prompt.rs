@@ -198,10 +198,9 @@ fn default_executor_home() -> PathBuf {
     if let Some(home) = std::env::var_os("WEGENT_EXECUTOR_HOME") {
         return PathBuf::from(home);
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".wegent-executor");
-    }
-    PathBuf::from(".wegent-executor")
+    dirs::home_dir()
+        .map(|home| home.join(".wegent-executor"))
+        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
 }
 
 fn image_extension(media_type: &str) -> &'static str {

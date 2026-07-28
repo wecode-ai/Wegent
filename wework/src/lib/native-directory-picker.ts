@@ -1,6 +1,7 @@
+import { openNativeWorkspacePathPicker } from './native-workspace-path-picker'
 import { isTauriRuntime } from './runtime-environment'
 
-export async function openNativeProjectDirectoryPicker(): Promise<string | null> {
+export async function openNativeDirectoryPicker(defaultPath?: string): Promise<string | null> {
   const tauriRuntime = isTauriRuntime()
   if (!tauriRuntime) return null
 
@@ -9,6 +10,7 @@ export async function openNativeProjectDirectoryPicker(): Promise<string | null>
     directory: true,
     multiple: false,
     canCreateDirectories: true,
+    defaultPath,
   })
 
   if (typeof selected === 'string') {
@@ -17,4 +19,30 @@ export async function openNativeProjectDirectoryPicker(): Promise<string | null>
   }
 
   return null
+}
+
+export async function openNativeProjectDirectoryPicker(
+  initialDirectory?: string
+): Promise<string | null> {
+  const selected = await openNativeWorkspacePathPicker(initialDirectory, {
+    directoriesOnly: true,
+    multiple: false,
+    defaultToHome: true,
+  })
+  const directory = selected.find(item => item.isDirectory)
+  return directory?.path.trim() || null
+}
+
+export async function openNativeProjectDirectoryPickers(
+  initialDirectory?: string
+): Promise<string[]> {
+  const selected = await openNativeWorkspacePathPicker(initialDirectory, {
+    directoriesOnly: true,
+    multiple: true,
+    defaultToHome: true,
+  })
+  return selected
+    .filter(item => item.isDirectory)
+    .map(item => item.path.trim())
+    .filter(Boolean)
 }

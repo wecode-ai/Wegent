@@ -117,16 +117,40 @@ export function canUseForRemoteProjectCreation(device: DeviceLike): boolean {
   )
 }
 
-export function supportsCloudSessions(device: DeviceLike): boolean {
-  return isCloudDevice(device) && isClaudeCodeDevice(device)
+function selectedRuntimeRouteKind(device: DeviceLike, deviceId?: string | null) {
+  const normalizedDeviceId = deviceId?.trim()
+  if (!normalizedDeviceId) return null
+
+  return (
+    device.runtime_routes?.find(
+      route =>
+        route.device_id.trim() === normalizedDeviceId ||
+        route.runtime_device_id.trim() === normalizedDeviceId
+    )?.kind ?? null
+  )
 }
 
-export function supportsRemoteSessions(device: DeviceLike): boolean {
-  return isRemoteDevice(device) && isClaudeCodeDevice(device)
+export function supportsCloudSessions(device: DeviceLike, deviceId?: string | null): boolean {
+  if (!isClaudeCodeDevice(device)) return false
+  const routeKind = selectedRuntimeRouteKind(device, deviceId)
+  return routeKind ? routeKind === 'cloud-relay' : isCloudDevice(device)
 }
 
-export function supportsRemoteTerminalSessions(device: DeviceLike): boolean {
-  return (isCloudDevice(device) || isRemoteDevice(device)) && isClaudeCodeDevice(device)
+export function supportsRemoteSessions(device: DeviceLike, deviceId?: string | null): boolean {
+  if (!isClaudeCodeDevice(device)) return false
+  const routeKind = selectedRuntimeRouteKind(device, deviceId)
+  return routeKind ? routeKind === 'remote-relay' : isRemoteDevice(device)
+}
+
+export function supportsRemoteTerminalSessions(
+  device: DeviceLike,
+  deviceId?: string | null
+): boolean {
+  if (!isClaudeCodeDevice(device)) return false
+  const routeKind = selectedRuntimeRouteKind(device, deviceId)
+  return routeKind
+    ? routeKind === 'cloud-relay' || routeKind === 'remote-relay'
+    : isCloudDevice(device) || isRemoteDevice(device)
 }
 
 export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {

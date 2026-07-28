@@ -4,17 +4,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createUserApi } from '@/api/users'
+import type { WegentInstalledConnectorApp } from '@/api/cloud/connectorApps'
 import type { UserRuntimeConfig, UserProxyConfig } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
 import { appsPageSectionExtensions } from '@extensions/apps'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { DeviceInfo } from '@/types/devices'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import { cn } from '@/lib/utils'
+import { useAppearance } from '@/features/appearance'
+import { resolveUiTypographyVariables } from '@/features/appearance/typography'
 
 interface AppsPageState {
   devices: DeviceInfo[]
   codexConfig: UserRuntimeConfig | null
   proxyConfig: UserProxyConfig | null
+  installedApps: WegentInstalledConnectorApp[]
   isLoading: boolean
   error: string | null
 }
@@ -35,6 +41,7 @@ const initialState: AppsPageState = {
   devices: [],
   codexConfig: null,
   proxyConfig: null,
+  installedApps: [],
   isLoading: true,
   error: null,
 }
@@ -71,6 +78,17 @@ function createAppsPageApis() {
   return {
     deviceApi: createDeviceApi(client),
     userApi: createUserApi(client),
+    connectorAppsApi: {
+      async listInstalled() {
+        const response = await client.get<{ apps?: WegentInstalledConnectorApp[] }>(
+          '/apps/installed',
+          {
+            redirectOnUnauthorized: false,
+          }
+        )
+        return Array.isArray(response.apps) ? response.apps : []
+      },
+    },
   }
 }
 
@@ -172,9 +190,7 @@ function SidebarNav({
         </div>
       </div>
 
-      <div className="mt-1 text-[11px] font-bold uppercase tracking-[0.12em] text-text-muted">
-        管理
-      </div>
+      <div className="mt-1 text-xs font-bold uppercase tracking-[0.12em] text-text-muted">管理</div>
       <div className="mt-2 space-y-1">
         {navItems.map(item => (
           <button
@@ -269,7 +285,7 @@ function HeroSection() {
   return (
     <article className="relative overflow-hidden rounded-3xl border border-border bg-background p-6">
       <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-primary/10 blur-2xl" />
-      <div className="relative max-w-2xl text-2xl font-bold leading-tight tracking-[-0.04em] text-text-primary">
+      <div className="relative max-w-2xl text-heading-lg font-medium leading-tight tracking-[-0.04em] text-text-primary">
         让 WeWork 成为所有 AI 工具的统一入口
       </div>
       <p className="relative mt-3 max-w-3xl text-sm leading-7 text-text-secondary">
@@ -298,10 +314,16 @@ function HeroSection() {
 }
 
 function AppsPageHeader({ collapseProgress }: { collapseProgress: number }) {
+  const { appearance } = useAppearance()
+  const typography = resolveUiTypographyVariables(appearance.uiFontSize)
   const detailOpacity = 1 - collapseProgress
   const headerPadding = interpolate(20, 8, collapseProgress)
-  const titleFontSize = interpolate(24, 20, collapseProgress)
-  const titleLineHeight = interpolate(32, 28, collapseProgress)
+  const titleFontSize = interpolate(
+    Number.parseFloat(typography['--text-heading-lg']),
+    Number.parseFloat(typography['--text-heading-md']),
+    collapseProgress
+  )
+  const titleLineHeight = titleFontSize * 1.33
   const eyebrowHeight = interpolate(18, 0, collapseProgress)
   const descriptionHeight = interpolate(24, 0, collapseProgress)
   const titleMarginTop = interpolate(4, 0, collapseProgress)
@@ -396,7 +418,9 @@ function AppCard({ app }: { app: AppCardData }) {
 function SummaryCard({ value, label }: { value: string; label: string }) {
   return (
     <article className="rounded-2xl border border-border bg-background p-4">
-      <div className="text-2xl font-bold tracking-[-0.04em] text-text-primary">{value}</div>
+      <div className="text-heading-lg font-medium tracking-[-0.04em] text-text-primary">
+        {value}
+      </div>
       <div className="mt-1 text-xs text-text-muted">{label}</div>
     </article>
   )
@@ -422,6 +446,86 @@ function ActivityRow({
       </div>
       <span className="text-xs text-text-muted">{time}</span>
     </div>
+  )
+}
+
+function InstalledAppsSection({ apps }: { apps: WegentInstalledConnectorApp[] }) {
+  if (apps.length === 0) {
+    return (
+      <section
+        data-testid="installed-apps-empty"
+        className="rounded-2xl border border-border bg-background p-8"
+      >
+        <div className="max-w-xl">
+          <h2 className="heading-base text-text-primary">已安装应用</h2>
+          <p className="mt-2 text-sm leading-6 text-text-secondary">
+            连接云端后，管理员发布的 connector app 会显示在这里，并同步到本机 Codex。
+          </p>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section data-testid="installed-apps-section">
+      <div className="mb-4 flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold tracking-[-0.02em] text-text-primary">已安装应用</h2>
+          <p className="mt-1 text-sm text-text-muted">
+            这些 app 已经连接到本机运行时，可在 Codex 任务中通过 connector 工具调用。
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-2">
+        {apps.map(app => (
+          <article
+            key={app.id}
+            data-testid={`installed-app-${app.slug}`}
+            className="rounded-2xl border border-border bg-background p-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-bold text-text-primary">
+                  {app.name || app.runtime_name || app.slug}
+                </h3>
+                <p className="mt-1 line-clamp-2 text-sm leading-6 text-text-secondary">
+                  {app.description || '由 Wegent connector runtime 管理的应用'}
+                </p>
+              </div>
+              <StatusPill
+                label={app.callable ? '可调用' : '不可调用'}
+                tone={app.callable ? 'online' : 'neutral'}
+              />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {(app.tool_summaries ?? []).slice(0, 6).map(tool => (
+                <span
+                  key={tool.name}
+                  className="rounded-full border border-border bg-surface px-2.5 py-1 text-xs text-text-secondary"
+                >
+                  {tool.raw_tool_name || tool.name}
+                </span>
+              ))}
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3">
+              <span className="truncate text-xs text-text-muted">
+                {app.runtime_name || app.slug}
+              </span>
+              {app.slug === 'wegent-sites' && (
+                <button
+                  type="button"
+                  data-testid="installed-app-open-sites"
+                  onClick={() => navigateTo('/sites')}
+                  className="h-8 rounded-lg border border-border px-3 text-sm font-semibold text-text-primary hover:bg-muted"
+                >
+                  打开站点
+                </button>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -457,6 +561,7 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
 
 export function AppsPage() {
   const { t } = useTranslation('common')
+  const { sidebarCollapsed } = useDesktopSidebarCollapsed()
   const [state, setState] = useState<AppsPageState>(initialState)
   const [activeSection, setActiveSection] = useState<AppsSection>(() =>
     getAppsSectionFromLocation()
@@ -466,16 +571,24 @@ export function AppsPage() {
 
   useEffect(() => {
     let cancelled = false
-    const { deviceApi, userApi } = createAppsPageApis()
+    const { deviceApi, userApi, connectorAppsApi } = createAppsPageApis()
 
     Promise.all([
       deviceApi.getAllDevices(),
       userApi.getRuntimeConfig('codex'),
       userApi.getProxyConfig(),
+      connectorAppsApi.listInstalled().catch(() => []),
     ])
-      .then(([devices, codexConfig, proxyConfig]) => {
+      .then(([devices, codexConfig, proxyConfig, installedApps]) => {
         if (cancelled) return
-        setState({ devices, codexConfig, proxyConfig, isLoading: false, error: null })
+        setState({
+          devices,
+          codexConfig,
+          proxyConfig,
+          installedApps,
+          isLoading: false,
+          error: null,
+        })
       })
       .catch(error => {
         if (cancelled) return
@@ -531,9 +644,15 @@ export function AppsPage() {
   return (
     <div
       data-testid="apps-page"
-      className="grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5 md:grid-cols-[220px_minmax(0,1fr)]"
+      data-sidebar-collapsed={sidebarCollapsed}
+      className={cn(
+        'grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5',
+        sidebarCollapsed ? 'md:grid-cols-1' : 'md:grid-cols-[220px_minmax(0,1fr)]'
+      )}
     >
-      <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
+      {!sidebarCollapsed && (
+        <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
+      )}
 
       <section
         data-testid="apps-scroll-container"
@@ -563,10 +682,7 @@ export function AppsPage() {
               detail="这里会集中展示 Claude Code、Codex 和模型代理等编码类应用。"
             />
           ) : activeSection === 'installed-apps' ? (
-            <PlaceholderSection
-              title="已安装应用"
-              detail="这里会展示用户已经安装的小程序、插件和办公工作流入口。"
-            />
+            <InstalledAppsSection apps={state.installedApps} />
           ) : (
             <>
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
@@ -654,7 +770,7 @@ function PlaceholderSection({ title, detail }: { title: string; detail: string }
   return (
     <section className="rounded-2xl border border-border bg-background p-8">
       <div className="max-w-xl">
-        <h2 className="text-xl font-bold text-text-primary">{title}</h2>
+        <h2 className="heading-base text-text-primary">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-text-secondary">{detail}</p>
       </div>
     </section>

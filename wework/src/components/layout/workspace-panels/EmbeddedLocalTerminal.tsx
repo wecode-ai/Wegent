@@ -15,8 +15,10 @@ import {
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
+import { installXtermSelectionGuard } from './xtermSelectionGuard'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -28,6 +30,7 @@ interface EmbeddedLocalTerminalProps {
   onExit?: () => void
   onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
+  showWorkbenchBackground?: boolean
 }
 
 export function EmbeddedLocalTerminal({
@@ -40,7 +43,9 @@ export function EmbeddedLocalTerminal({
   onExit,
   onTitleChange,
   testIdsEnabled = true,
+  showWorkbenchBackground = false,
 }: EmbeddedLocalTerminalProps) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -49,6 +54,24 @@ export function EmbeddedLocalTerminal({
   const onExitRef = useRef(onExit)
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
+  const appearanceRef = useRef(appearance)
+
+  useEffect(() => {
+    appearanceRef.current = appearance
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    if (!terminal) return
+
+    terminal.options.fontFamily = appearance.codeFont
+    terminal.options.fontSize = appearance.codeFontSize
+    requestAnimationFrame(() => {
+      try {
+        fitAddon?.fit()
+      } catch (error) {
+        console.error('Failed to resize local terminal after typography change:', error)
+      }
+    })
+  }, [appearance])
 
   useEffect(() => {
     activeRef.current = active
@@ -70,14 +93,16 @@ export function EmbeddedLocalTerminal({
     const container = containerRef.current
     if (!container) return
 
+    const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
+      allowTransparency: showWorkbenchBackground,
       cursorBlink: true,
       convertEol: true,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      fontSize: 13,
+      fontFamily: terminalAppearance.codeFont,
+      fontSize: terminalAppearance.codeFontSize,
       lineHeight: 1.2,
       scrollback: 2000,
-      theme: getTerminalTheme(),
+      theme: getTerminalTheme(showWorkbenchBackground),
     })
     const fitAddon = new FitAddon()
     const webLinksAddon = createXtermWebLinksAddon()
@@ -98,6 +123,7 @@ export function EmbeddedLocalTerminal({
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(webLinksAddon)
     terminal.open(container)
+    const selectionGuard = installXtermSelectionGuard({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
@@ -107,10 +133,14 @@ export function EmbeddedLocalTerminal({
     })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
-    applyTerminalTheme(terminal, container)
-    const scheduleThemeSync = createTerminalThemeScheduler(terminal, container)
+    applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
+    const scheduleThemeSync = createTerminalThemeScheduler(
+      terminal,
+      container,
+      showWorkbenchBackground
+    )
     const unobserveTheme = observeTerminalTheme(theme => {
-      applyTerminalTheme(terminal, container, theme)
+      applyTerminalTheme(terminal, container, theme, showWorkbenchBackground)
     })
 
     const fitAndResize = () => {
@@ -178,13 +208,14 @@ export function EmbeddedLocalTerminal({
       resizeObserver.disconnect()
       dataDisposable.dispose()
       titleDisposable.dispose()
+      selectionGuard.dispose()
       inputFallback.dispose()
       unlisteners.forEach(unlisten => unlisten())
       terminal.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [sessionId])
+  }, [sessionId, showWorkbenchBackground])
 
   useEffect(() => {
     if (!active) return
@@ -196,7 +227,7 @@ export function EmbeddedLocalTerminal({
       if (!terminal || !fitAddon || !container) return
 
       try {
-        applyTerminalTheme(terminal, container)
+        applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
         fitAddon.fit()
         terminal.focus()
         if (terminal.rows > 0 && terminal.cols > 0) {
@@ -214,12 +245,14 @@ export function EmbeddedLocalTerminal({
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [active, sessionId])
+  }, [active, sessionId, showWorkbenchBackground])
 
   return (
     <div
       data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
-      className="h-full min-h-0 w-full overflow-hidden bg-background px-2 pb-4 pt-2"
+      className={`h-full min-h-0 w-full overflow-hidden px-2 pb-4 pt-2 ${
+        showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+      }`}
       hidden={!active}
     >
       <div ref={containerRef} className="h-full min-h-0 w-full overflow-hidden" />

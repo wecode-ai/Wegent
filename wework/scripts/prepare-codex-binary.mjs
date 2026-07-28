@@ -77,13 +77,13 @@ async function pathExists(path) {
   }
 }
 
-async function sha256File(path) {
-  const hash = createHash('sha256')
+async function integrityFile(path) {
+  const hash = createHash('sha512')
   const input = await import('node:fs').then(fs => fs.createReadStream(path))
   for await (const chunk of input) {
     hash.update(chunk)
   }
-  return hash.digest('hex')
+  return `sha512-${hash.digest('base64')}`
 }
 
 async function download(url, destination) {
@@ -120,17 +120,21 @@ async function prepareTarget(target, entry) {
   const tarballPath = join(cacheRoot, tarballName)
   const targetRoot = join(outputRoot, target)
   const binaryPath = join(targetRoot, entry.binaryPath)
+  const codeModeHostPath = join(
+    dirname(binaryPath),
+    target === 'x86_64-pc-windows-msvc' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
+  )
 
   if (!(await pathExists(tarballPath))) {
     console.log(`Downloading Codex ${entry.version} for ${target}`)
     await download(entry.tarball, tarballPath)
   }
 
-  const actualSha = await sha256File(tarballPath)
-  if (actualSha !== entry.sha256) {
+  const actualIntegrity = await integrityFile(tarballPath)
+  if (actualIntegrity !== entry.integrity) {
     await rm(tarballPath, { force: true })
     throw new Error(
-      `Codex tarball sha256 mismatch for ${target}: expected ${entry.sha256}, got ${actualSha}`
+      `Codex tarball integrity mismatch for ${target}: expected ${entry.integrity}, got ${actualIntegrity}`
     )
   }
 
@@ -138,8 +142,12 @@ async function prepareTarget(target, entry) {
   if (!(await pathExists(binaryPath))) {
     throw new Error(`Codex binary not found after extraction: ${binaryPath}`)
   }
+  if (!(await pathExists(codeModeHostPath))) {
+    throw new Error(`Codex code-mode host not found after extraction: ${codeModeHostPath}`)
+  }
   if (process.platform !== 'win32') {
     await chmod(binaryPath, 0o755)
+    await chmod(codeModeHostPath, 0o755)
   }
   await writeFile(
     join(targetRoot, 'WEGENT_CODEX_BINARY.json'),
@@ -149,7 +157,7 @@ async function prepareTarget(target, entry) {
         codexVersion: entry.version,
         binaryPath: entry.binaryPath,
         tarball: entry.tarball,
-        sha256: entry.sha256,
+        integrity: entry.integrity,
       },
       null,
       2

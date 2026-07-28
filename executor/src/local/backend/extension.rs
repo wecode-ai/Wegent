@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    env,
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -24,11 +25,23 @@ pub trait DeviceExtensionHandler: Send + Sync + 'static {
 #[derive(Clone)]
 pub struct DeviceExtensionRunner {
     workspace_root: PathBuf,
+    global_skills_root: PathBuf,
 }
 
 impl DeviceExtensionRunner {
     pub fn new(workspace_root: PathBuf) -> Self {
-        Self { workspace_root }
+        let runtime_home = env::var("HOME")
+            .or_else(|_| env::var("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
+        Self::with_global_skills_root(workspace_root, runtime_home.join(".claude").join("skills"))
+    }
+
+    pub fn with_global_skills_root(workspace_root: PathBuf, global_skills_root: PathBuf) -> Self {
+        Self {
+            workspace_root,
+            global_skills_root,
+        }
     }
 
     async fn run(&self, payload: Value) -> Value {
@@ -48,6 +61,7 @@ impl DeviceExtensionRunner {
             valid_extension_name,
         )?;
         let action = validate_name("action", payload.get("action"), valid_extension_action)?;
+        let extension_scope = validate_extension_scope(payload.get("extension_scope"))?;
         let task_id = payload
             .get("task_id")
             .and_then(Value::as_i64)
@@ -59,8 +73,14 @@ impl DeviceExtensionRunner {
             return Err("payload must be an object".to_owned());
         }
 
-        let script =
-            resolve_script_path(&self.workspace_root, task_id, &extension_name, &script_path)?;
+        let script = resolve_script_path(
+            &self.workspace_root,
+            &self.global_skills_root,
+            task_id,
+            &extension_scope,
+            &extension_name,
+            &script_path,
+        )?;
         let output = run_script(&script, &action, &extension_name, &extension_payload).await?;
         let response: Value = serde_json::from_str(&output)
             .map_err(|error| format!("Extension returned invalid JSON: {error}"))?;
@@ -138,15 +158,21 @@ async fn run_script(
 
 fn resolve_script_path(
     workspace_root: &Path,
+    global_skills_root: &Path,
     task_id: i64,
+    extension_scope: &str,
     extension_name: &str,
     script_path: &str,
 ) -> Result<PathBuf, String> {
-    let extension_dir = workspace_root
-        .join(task_id.to_string())
-        .join(".claude")
-        .join("skills")
-        .join(extension_name);
+    let extension_dir = if extension_scope == "global" {
+        global_skills_root.join(extension_name)
+    } else {
+        workspace_root
+            .join(task_id.to_string())
+            .join(".claude")
+            .join("skills")
+            .join(extension_name)
+    };
     let resolved_script = extension_dir.join(script_path);
     if !resolved_script.is_file() {
         return Err(format!(
@@ -166,6 +192,17 @@ fn resolve_script_path(
         ));
     }
     Ok(resolved_script)
+}
+
+fn validate_extension_scope(value: Option<&Value>) -> Result<String, String> {
+    let value = value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("task");
+    match value {
+        "global" | "task" => Ok(value.to_owned()),
+        _ => Err(format!("Invalid extension_scope: {value}")),
+    }
 }
 
 fn validate_name(

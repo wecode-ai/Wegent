@@ -50,6 +50,25 @@ GIT_WORKSPACE_DIFF_COMMAND = (
     "done'"
 )
 
+GIT_BRANCH_DIFF_COMMAND = (
+    "bash -lc "
+    '\'base=""; '
+    "for candidate in "
+    '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
+    "origin/main main origin/master master; do "
+    '[ -n "$candidate" ] || continue; '
+    'if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then '
+    'base="$candidate"; break; '
+    "fi; "
+    "done; "
+    'if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; '
+    'if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; '
+    "elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; "
+    "else git diff --binary --; fi; "
+    "git ls-files --others --exclude-standard -z | "
+    'while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done\''
+)
+
 GIT_PUSH_COMMAND = (
     "sh -c 'branch=$(git branch --show-current); "
     '[ -n "$branch" ] || { echo "Cannot push detached HEAD" >&2; exit 64; }; '
@@ -1502,6 +1521,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_checkout_new": LocalDeviceCommandDefinition(command="git checkout -b"),
     "git_diff_shortstat": LocalDeviceCommandDefinition(command="git diff --shortstat"),
     "git_diff": LocalDeviceCommandDefinition(command=GIT_WORKSPACE_DIFF_COMMAND),
+    "git_branch_diff": LocalDeviceCommandDefinition(command=GIT_BRANCH_DIFF_COMMAND),
     "git_diff_unstaged": LocalDeviceCommandDefinition(command="git diff --binary --"),
     "git_diff_staged": LocalDeviceCommandDefinition(
         command="git diff --binary --cached --"

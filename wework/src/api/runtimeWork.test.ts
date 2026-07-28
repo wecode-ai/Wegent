@@ -20,6 +20,21 @@ describe('createRuntimeWorkApi', () => {
     expect(get).toHaveBeenCalledWith('/runtime-work')
   })
 
+  test('searches paths in a device runtime workspace', async () => {
+    const post = vi.fn().mockResolvedValue({ files: [] })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      deviceId: 'device-1',
+      root: '/repo/Wegent',
+      query: 'auth',
+      cancellationToken: 'composer-1',
+    }
+
+    await expect(api.searchRuntimeWorkspace(request)).resolves.toEqual({ files: [] })
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/workspace/search', request)
+  })
+
   test('deletes a device workspace mapping', async () => {
     const del = vi.fn().mockResolvedValue({ deleted: true })
     const api = createRuntimeWorkApi({ delete: del } as unknown as HttpClient)

@@ -362,10 +362,7 @@ fn default_executor_home() -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn default_mode() -> String {

@@ -44,6 +44,10 @@ fn missing_config_creates_stable_local_device_identity() {
     let _lock = lock_env();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _runtime_instance_id = EnvGuard::remove("WEGENT_RUNTIME_INSTANCE_ID");
+    let _device_id = EnvGuard::remove("DEVICE_ID");
+    let _device_name = EnvGuard::remove("DEVICE_NAME");
+    let _device_type = EnvGuard::remove("DEVICE_TYPE");
+    let _bind_shell = EnvGuard::remove("BIND_SHELL");
     let path = temp_path("missing-device-config.json");
     let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
 

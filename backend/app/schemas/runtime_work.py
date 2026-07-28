@@ -533,6 +533,36 @@ class RuntimeWorkspaceOpenResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RuntimeWorkspaceSearchRequest(BaseModel):
+    """Search files and directories in one device-local runtime workspace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    root: str = Field(..., min_length=1)
+    query: str = Field(..., min_length=1)
+    cancellation_token: Optional[str] = Field(default=None, alias="cancellationToken")
+
+
+class RuntimeWorkspaceSearchItem(BaseModel):
+    """One fuzzy workspace path match returned by the owning executor."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    root: str
+    path: str
+    file_name: str = Field(..., alias="fileName")
+    match_type: Literal["file", "directory"] = Field(..., alias="matchType")
+    score: int
+    indices: Optional[list[int]] = None
+
+
+class RuntimeWorkspaceSearchResponse(BaseModel):
+    """Fuzzy workspace path matches."""
+
+    files: list[RuntimeWorkspaceSearchItem] = Field(default_factory=list)
+
+
 class BindRuntimeTaskIMSessionsRequest(BaseModel):
     """Bind private IM sessions to a device-local runtime task."""
 
@@ -687,6 +717,15 @@ class RuntimeTaskCreateRequest(BaseModel):
     )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     execution: Optional[dict[str, Any]] = None
+    delivery_id: Optional[str] = Field(
+        default=None, alias="deliveryId", min_length=36, max_length=36
+    )
+    cloud_project_id: Optional[int] = Field(default=None, alias="cloudProjectId", ge=1)
+    additional_context: Optional[dict[str, dict[str, Any]]] = Field(
+        default=None,
+        alias="additionalContext",
+        validation_alias=AliasChoices("additionalContext", "additional_context"),
+    )
 
 
 class RuntimeTaskCreateResponse(BaseModel):
@@ -700,27 +739,6 @@ class RuntimeTaskCreateResponse(BaseModel):
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     error: Optional[str] = None
-
-
-class RuntimeWorkResolveModelConfigRequest(BaseModel):
-    """Request to resolve a Wegent Model CRD to a Codex-compatible model config."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    model_id: str = Field(..., alias="modelId", min_length=1)
-    model_type: Optional[str] = Field(default=None, alias="modelType")
-    model_options: dict[str, Any] = Field(
-        default_factory=dict,
-        alias="modelOptions",
-    )
-
-
-class RuntimeWorkResolveModelConfigResponse(BaseModel):
-    """Resolved Codex-compatible model config for a Wegent Model CRD."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    resolved_model_config: dict[str, Any] = Field(..., alias="modelConfig")
 
 
 class RuntimeTaskForkTarget(BaseModel):

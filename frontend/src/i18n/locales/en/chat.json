@@ -259,6 +259,22 @@
       "kb_search": "Search Knowledge Base",
       "web_search": "Web Search",
       "load_skill": "Load Skill"
+    },
+    "subagent": {
+      "title": "Subagent",
+      "agent": "Agent",
+      "tool_count": "{{count}} tools",
+      "step_count": "{{count}} steps",
+      "parallel_title": "Run {{count}} subtasks in parallel",
+      "parallel_progress": "{{completed}} / {{total}} complete",
+      "parallel_progress_running": "{{completed}} / {{total}} complete · {{running}} running",
+      "parallel_progress_failed": "{{completed}} / {{total}} complete · {{failed}} failed",
+      "parallel_progress_queued": "{{completed}} / {{total}} complete · {{queued}} waiting",
+      "status_queued": "Waiting",
+      "status_running": "Running",
+      "status_completed": "Completed",
+      "status_failed": "Failed",
+      "remaining": "{{count}} more tasks"
     }
   },
   "send_button": {
@@ -376,7 +392,6 @@
     "select_from_here": "Select from here",
     "select_below": "Select below",
     "attachments": "attachment(s)",
-    "knowledge_bases": "knowledge base(s)",
     "preparing": "Preparing export...",
     "font_load_failed": "Failed to load font, please retry",
     "retry": "Retry"

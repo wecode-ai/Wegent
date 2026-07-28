@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.kind import ObjectMeta, Status
 
@@ -183,7 +183,14 @@ class TokenIssuerListResponse(BaseModel):
 
 
 class TokenIssueRequest(BaseModel):
-    """Public issue request."""
+    """Public issue request.
+
+    Allows unknown fields so downstream deployments can carry extra opt-in
+    options (consumed by ``OutboundTokenService._collect_extra_claims``)
+    without the open-source core needing to know about them.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     expires_in: Optional[int] = Field(default=None, ge=60, le=86400)
 
