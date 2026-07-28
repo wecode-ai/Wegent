@@ -417,6 +417,24 @@ function desktopControlElementVisible(element: HTMLElement): boolean {
   )
 }
 
+async function expandDesktopProcessingSummaries(): Promise<string> {
+  const clickCollapsed = (selector: string) => {
+    const buttons = findDesktopControlElements(selector).filter(desktopControlElementEnabled)
+    buttons.forEach(button => button.click())
+    return buttons.length
+  }
+
+  const finalCount = clickCollapsed(
+    '[data-testid="final-processing-toggle"][aria-expanded="false"]'
+  )
+  await waitForDesktopControlTick()
+  const summaryCount = clickCollapsed(
+    '[data-testid="processing-summary-toggle"][aria-expanded="false"]'
+  )
+  await waitForDesktopControlTick()
+  return JSON.stringify({ finalCount, summaryCount })
+}
+
 async function waitForDesktopControlTick(): Promise<void> {
   const url = desktopControlUrl()
   if (!url) throw new Error('Desktop E2E control URL is not configured')
@@ -761,6 +779,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       return element.textContent?.trim() ?? ''
     }
+    case 'expandProcessingSummaries':
+      return expandDesktopProcessingSummaries()
     case 'scrollIntoViewAsUser': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)

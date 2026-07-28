@@ -7482,7 +7482,7 @@ async function main() {
       await control.command('getElementCount', viewImageBlockSelector)
     )
     if (viewImageBlockCount === 0) {
-      await control.command('click', '[data-testid="processing-summary-toggle"]')
+      await control.command('expandProcessingSummaries', 'body')
     }
     await control.command('waitFor', viewImageBlockSelector, {
       timeoutMs: UI_TIMEOUT_MS,
