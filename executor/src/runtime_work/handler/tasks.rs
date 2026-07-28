@@ -505,10 +505,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<String, String> {
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
-        params.insert(
-            "approvalPolicy".to_owned(),
-            Value::String("never".to_owned()),
-        );
+        params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
         params.insert("excludeTurns".to_owned(), Value::Bool(true));
         if !link.workspace_path.trim().is_empty() {
             params.insert("cwd".to_owned(), Value::String(link.workspace_path.clone()));

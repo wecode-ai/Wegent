@@ -25,6 +25,8 @@ use crate::{
 
 use super::util::{now_ms, string_field};
 
+const WEGENT_CONNECTOR_MCP_TOOL_APPROVAL_MODE: &str = "approve";
+
 #[derive(Clone)]
 pub(super) struct ConnectorRuntime {
     codex_app_server: CodexAppServerClient,
@@ -88,12 +90,18 @@ impl ConnectorRuntime {
         persist_connector_gateway_config(&next_config)
             .map_err(|error| AppIpcError::new("connector_authorization_write_failed", error))?;
         *self.cloud.write().await = Some(next_config);
-        if previous.is_none() {
-            if let Err(error) = self.write_mcp_config(true).await {
-                *self.cloud.write().await = previous;
-                let _ = clear_connector_gateway_config();
-                return Err(error);
+        if let Err(error) = self.write_mcp_config(true).await {
+            match previous {
+                Some(ref previous_config) => {
+                    let _ = persist_connector_gateway_config(previous_config);
+                    *self.cloud.write().await = Some(previous_config.clone());
+                }
+                None => {
+                    *self.cloud.write().await = None;
+                    let _ = clear_connector_gateway_config();
+                }
             }
+            return Err(error);
         }
         Ok(json!({ "configured": true, "expiresAtMs": expires_at_ms }))
     }
@@ -162,6 +170,7 @@ impl ConnectorRuntime {
                 "Connect Wework to Wegent cloud before synchronizing apps",
             ));
         }
+        self.write_mcp_config(true).await?;
         let result = materialize_skills(&skills_root(), apps)?;
         *self.synced_apps.write().await = result
             .get("apps")
@@ -227,6 +236,7 @@ fn connector_mcp_server_config(command: &Path, executor_home: Option<std::ffi::O
         "args": ["connector-mcp-server"],
         "startup_timeout_sec": 15,
         "tool_timeout_sec": 180,
+        "default_tools_approval_mode": WEGENT_CONNECTOR_MCP_TOOL_APPROVAL_MODE,
     });
     if let Some(executor_home) = executor_home {
         config["env"] = json!({
@@ -369,6 +379,10 @@ mod tests {
         assert_eq!(
             config["env"]["WEGENT_EXECUTOR_HOME"],
             "/private/runtime/instance"
+        );
+        assert_eq!(
+            config["default_tools_approval_mode"],
+            WEGENT_CONNECTOR_MCP_TOOL_APPROVAL_MODE
         );
     }
 
