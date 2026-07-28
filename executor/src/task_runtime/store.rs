@@ -137,10 +137,10 @@ impl LocalTaskStore {
         validate_provider(project.project_store, project.task_provider)?;
         if !matches!(
             project.task_provider,
-            TaskProviderKind::Github | TaskProviderKind::Gitlab
+            TaskProviderKind::Github | TaskProviderKind::Gitlab | TaskProviderKind::DingtalkAitable
         ) {
             return Err(TaskRuntimeError::Invalid(
-                "external project requires github or gitlab".to_owned(),
+                "external project requires github, gitlab, or dingtalk_aitable".to_owned(),
             ));
         }
         let connection = self.connection()?;
@@ -906,7 +906,7 @@ pub(crate) fn task_provider(project: &LoopItem) -> Result<TaskProviderKind, Task
     .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
 }
 
-fn validate_provider(
+pub(crate) fn validate_provider(
     store: ProjectStoreKind,
     provider: TaskProviderKind,
 ) -> Result<(), TaskRuntimeError> {
@@ -915,9 +915,11 @@ fn validate_provider(
         (ProjectStoreKind::Local, TaskProviderKind::Local)
             | (ProjectStoreKind::Local, TaskProviderKind::Github)
             | (ProjectStoreKind::Local, TaskProviderKind::Gitlab)
+            | (ProjectStoreKind::Local, TaskProviderKind::DingtalkAitable)
             | (ProjectStoreKind::Backend, TaskProviderKind::Backend)
             | (ProjectStoreKind::Backend, TaskProviderKind::Github)
             | (ProjectStoreKind::Backend, TaskProviderKind::Gitlab)
+            | (ProjectStoreKind::Backend, TaskProviderKind::DingtalkAitable)
     );
     valid
         .then_some(())
@@ -937,6 +939,7 @@ fn task_provider_key(provider: TaskProviderKind) -> &'static str {
         TaskProviderKind::Backend => "backend",
         TaskProviderKind::Github => "github",
         TaskProviderKind::Gitlab => "gitlab",
+        TaskProviderKind::DingtalkAitable => "dingtalk_aitable",
     }
 }
 
@@ -1287,6 +1290,45 @@ mod tests {
 
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].id, local.id);
+    }
+
+    #[test]
+    fn caches_backend_dingtalk_aitable_projects() {
+        let (_directory, store) = store();
+        let configured = store
+            .configure_external_project(ProjectDescriptor {
+                id: "aitable-cloud-1".to_owned(),
+                public_id: Some("aitable-public-1".to_owned()),
+                project_key: "AITABLE".to_owned(),
+                name: "DingTalk AI Table".to_owned(),
+                description: String::new(),
+                project_store: ProjectStoreKind::Backend,
+                task_provider: TaskProviderKind::DingtalkAitable,
+                provider_config: json!({
+                    "base_id": "base-1",
+                    "table_id": "table-1",
+                    "source_url": "https://alidocs.dingtalk.com/i/nodes/base-1",
+                }),
+                version: 1,
+            })
+            .unwrap();
+
+        assert_eq!(
+            configured.metadata["task_provider"],
+            json!(TaskProviderKind::DingtalkAitable)
+        );
+        assert_eq!(
+            configured.metadata["provider_config"]["base_id"],
+            json!("base-1")
+        );
+        assert_eq!(
+            store
+                .get_project("aitable-cloud-1")
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("DingTalk AI Table")
+        );
     }
 
     #[test]

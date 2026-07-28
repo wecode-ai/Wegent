@@ -32,11 +32,13 @@ import type {
   Delivery,
   DeliveryDetail,
 } from '@/api/deliveries'
+import type { AITableApi } from '@/api/aitable'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { cn } from '@/lib/utils'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
+import { AITableTaskFields } from './AITableTaskFields'
 import {
   columnDotClasses,
   columns,
@@ -224,6 +226,7 @@ export interface TodoEditorEditProps {
 
 export type TodoEditorProps = {
   api: DeliveryApi
+  aitableApi?: AITableApi
   allItems: CloudLoopItem[]
   onClose: () => void
 } & (TodoEditorCreateProps | TodoEditorEditProps)
@@ -238,6 +241,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const editProps = props.mode === 'edit' ? props : null
   const isCreate = createProps !== null
   const item = editProps?.item ?? null
+  const isAITableEdit = item !== null && editProps?.project?.task_provider === 'dingtalk_aitable'
 
   const draftKey = createProps
     ? todoDraftKey(createProps.project.id, createProps.initialStatus)
@@ -599,7 +603,12 @@ export function TodoEditor(props: TodoEditorProps) {
         data-testid={isCreate ? 'cloud-todo-create-panel' : 'cloud-todo-detail'}
         className={cn(
           'flex flex-col overflow-hidden rounded-2xl bg-background shadow-2xl',
-          fullScreen ? 'h-full w-full' : 'max-h-[88vh] w-[760px] max-w-[calc(100vw-48px)]'
+          fullScreen
+            ? 'h-full w-full'
+            : cn(
+                'max-h-[88vh] max-w-[calc(100vw-48px)]',
+                isAITableEdit ? 'w-[1080px]' : 'w-[760px]'
+              )
         )}
         onKeyDown={handleKeyDown}
         onDragOver={event => event.preventDefault()}
@@ -791,13 +800,19 @@ export function TodoEditor(props: TodoEditorProps) {
             />
           </div>
 
-          <div className="mt-3 min-h-[240px]">
-            <TaskDescriptionEditor value={description} onChange={setDescription} />
-            <p className="mt-2.5 text-xs text-text-muted">
-              支持 Markdown，可拖拽文件到编辑器添加附件
-            </p>
-          </div>
+          {!isAITableEdit ? (
+            <div className="mt-3 min-h-[240px]">
+              <TaskDescriptionEditor value={description} onChange={setDescription} />
+              <p className="mt-2.5 text-xs text-text-muted">
+                支持 Markdown，可拖拽文件到编辑器添加附件
+              </p>
+            </div>
+          ) : null}
           {saveError && <p className="mt-2 text-xs text-destructive">{saveError}</p>}
+
+          {isAITableEdit && item && editProps?.project && props.aitableApi ? (
+            <AITableTaskFields api={props.aitableApi} project={editProps.project} item={item} />
+          ) : null}
 
           <div className="mt-5">
             <TodoAttachmentSection

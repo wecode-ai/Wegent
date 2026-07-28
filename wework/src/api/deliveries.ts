@@ -59,6 +59,7 @@ export interface CloudLoopItem {
   created_at: string
   updated_at: string
   completed_at: string | null
+  source_status?: string | null
 }
 
 export interface CloudLoopItemAttachment {
@@ -86,6 +87,15 @@ export interface CloudProject {
     domain?: string
     api_base?: string
     credential_configured?: boolean
+    base_id?: string
+    table_id?: string
+    sheet_id?: string
+    source_url?: string
+    view_id?: string
+    board_mapping?: Record<string, string>
+    status_mode?: 'mapped' | 'custom'
+    status_mapping?: Record<string, CloudLoopItem['status']>
+    custom_statuses?: string[]
   }
   created_by_user_id: number
   current_user_id?: number
@@ -193,13 +203,22 @@ export function createDeliveryApi(client: HttpClient) {
       project_key?: string
       name: string
       description?: string
-      task_provider?: 'local' | 'github' | 'gitlab'
+      task_provider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
       visibility?: 'private' | 'public'
       provider_config?: {
         repository?: string
         domain?: string
         api_base?: string
         token?: string
+        base_id?: string
+        table_id?: string
+        sheet_id?: string
+        source_url?: string
+        view_id?: string
+        board_mapping?: Record<string, string>
+        status_mode?: 'mapped' | 'custom'
+        status_mapping?: Record<string, CloudLoopItem['status']>
+        custom_statuses?: string[]
       }
     }): Promise<CloudProject> {
       return client.post('/v1/cloud-projects', data)
@@ -216,6 +235,15 @@ export function createDeliveryApi(client: HttpClient) {
           domain?: string
           api_base?: string
           token?: string
+          base_id?: string
+          table_id?: string
+          sheet_id?: string
+          source_url?: string
+          view_id?: string
+          board_mapping?: Record<string, string>
+          status_mode?: 'mapped' | 'custom'
+          status_mapping?: Record<string, CloudLoopItem['status']>
+          custom_statuses?: string[]
         }
         version: number
       }

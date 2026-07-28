@@ -627,6 +627,44 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
+  it('creates a cloud DingTalk AI Table project from a shared link', async () => {
+    const workbenchServices = services()
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.type(screen.getByTestId('cloud-project-name'), '钉钉需求池')
+    await userEvent.click(screen.getByTestId('cloud-project-task-provider-dingtalk_aitable'))
+    expect(screen.getByTestId('cloud-project-create-confirm')).toBeDisabled()
+    await userEvent.type(
+      screen.getByTestId('cloud-project-aitable-url'),
+      'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2'
+    )
+    expect(screen.queryByTestId('cloud-project-aitable-token')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi?.createCloudProject).toHaveBeenCalledWith({
+        name: '钉钉需求池',
+        description: '',
+        task_provider: 'dingtalk_aitable',
+        provider_config: {
+          base_id: 'pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6',
+          table_id: 'hERWDMS',
+          source_url:
+            'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2',
+          view_id: 'qvGDAH2',
+        },
+        visibility: 'private',
+      })
+    )
+  })
+
   it('routes an explicitly local project to the local project-space API', async () => {
     const cloudServices = services()
     const localServices = services()
@@ -769,6 +807,82 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(await screen.findByText('已保存')).toBeInTheDocument()
+  })
+
+  it('updates DingTalk table connection and board mappings from project management', async () => {
+    const workbenchServices = services()
+    const aitableProject = {
+      ...project,
+      task_provider: 'dingtalk_aitable' as const,
+      provider_config: {
+        base_id: 'base-1',
+        table_id: 'table-1',
+        source_url: 'https://alidocs.dingtalk.com/i/nodes/base-1?iframeQuery=sheetId%3Dtable-1',
+        credential_configured: true,
+        board_mapping: { title_field_id: 'fld-title' },
+      },
+    }
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [aitableProject],
+    }))
+    workbenchServices.deliveryApi!.updateCloudProject = vi.fn(async (_projectId, values) => ({
+      ...aitableProject,
+      provider_config: values.provider_config ?? aitableProject.provider_config,
+      version: values.version + 1,
+    }))
+    workbenchServices.aitableApi = {
+      configureProject: vi.fn(async () => undefined),
+      describe: vi.fn(async () => ({
+        base: {},
+        tables: [],
+        active_table: {},
+        fields: [
+          { id: 'fld-title', name: '需求名称', type: 'text', config: {}, raw: {} },
+          { id: 'fld-status', name: '状态', type: 'singleSelect', config: {}, raw: {} },
+        ],
+      })),
+      listRecords: vi.fn(async () => ({ items: [], cursor: null, has_more: false })),
+      createRecord: vi.fn(),
+      updateRecord: vi.fn(),
+      deleteRecord: vi.fn(),
+      createField: vi.fn(),
+      updateField: vi.fn(),
+      deleteField: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    await userEvent.selectOptions(
+      await screen.findByTestId('aitable-mapping-status_field_id'),
+      'fld-status'
+    )
+    await userEvent.click(screen.getByTestId('aitable-manage-save'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(11, {
+        version: 1,
+        provider_config: {
+          base_id: 'base-1',
+          table_id: 'table-1',
+          source_url: 'https://alidocs.dingtalk.com/i/nodes/base-1?iframeQuery=sheetId%3Dtable-1',
+          board_mapping: {
+            title_field_id: 'fld-title',
+            status_field_id: 'fld-status',
+          },
+          status_mode: 'mapped',
+          status_mapping: {},
+          custom_statuses: [],
+        },
+      })
+    )
   })
 
   it('keeps the project header above the macOS drag region and opens new TODO', async () => {

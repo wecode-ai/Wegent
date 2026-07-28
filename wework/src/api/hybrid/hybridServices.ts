@@ -890,6 +890,8 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    aitableApi: localServices.aitableApi,
+    dwsApi: localServices.dwsApi,
     projectSpaceApis: {
       local: localServices.deliveryApi,
       cloud: cloudProjectSpaceApi,
