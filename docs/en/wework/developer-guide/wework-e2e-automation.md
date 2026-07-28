@@ -105,6 +105,30 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
+The main desktop runner also supports execution through ordered checkpoints.
+The checkpoints are `core-task-flow`, `window-lifecycle`, `goal-lifecycle`,
+`resilience`, `conversation-state`, `workspace-attachments`, and
+`rendering-extensions`. `--segment <checkpoint>` performs common startup and
+project initialization, then runs only the selected checkpoint.
+`--from-segment <checkpoint>` starts there and continues through every later
+checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
+its own minimal fixtures instead of depending on tasks or UI state created only
+by the complete flow. Segment commands are for fast local iteration; run the
+complete `pnpm --filter wework e2e:desktop` flow before pushing:
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment window-lifecycle
+pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
+pnpm --filter wework e2e:desktop -- --segment workspace-attachments
+```
+
+Ordinary desktop-runner UI steps time out after 10 seconds by default, so one
+failed step does not always wait for the former 120-second limit. Control
+commands and wait helpers accept `timeoutMs` for genuinely slower special
+steps; startup, workbench recovery, and the model protocol matrix keep their
+dedicated limits. Set `WEWORK_E2E_STEP_TIMEOUT_MS` to temporarily adjust the
+global default for ordinary steps in a slower diagnostic environment.
+
 The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.

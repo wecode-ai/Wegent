@@ -554,16 +554,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : null
     const scope = composerTodoItem
       ? [
-          `Current project space: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
-          `Current board item: ${composerTodoItem.id} — ${composerTodoItem.title}.`,
-          composerTodoItem.description
-            ? `Board item description: ${composerTodoItem.description}`
-            : null,
-          `Current board item reference: ${todoReference}.`,
+          `Current cloud project: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
+          `Current task: ${composerTodoItem.id} — ${composerTodoItem.title}.`,
+          composerTodoItem.description ? `Task description: ${composerTodoItem.description}` : null,
+          `Current task reference: ${todoReference}.`,
         ]
       : [
-          `Current project space: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
-          'No specific board item is selected.',
+          `Current cloud project: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
+          'No specific task is selected.',
           `Current project reference: ${projectReference}.`,
         ]
     return {
@@ -571,8 +569,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         kind: 'application',
         value: [
           ...scope.filter((line): line is string => Boolean(line)),
-          'When the user refers to “this project space” or “this board item”, use this current project-space context.',
-          'Use the wework_space MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
+          'When the user refers to “this project” or “this task”, use this current cloud context.',
+          'Use the wegent_delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
         ].join('\n'),
       },
     }
@@ -591,13 +589,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       sendPaneInput(value, {
         ...options,
         additionalContext: cloudAdditionalContext,
-        cloudProjectId: composerCloudProject ? String(composerCloudProject.id) : undefined,
         onRuntimeTaskCreated: address => {
           if (!pendingTodoBinding) return
           pendingTodoBinding = { ...pendingTodoBinding, target: address }
         },
       }),
-    [cloudAdditionalContext, composerCloudProject, sendPaneInput]
+    [cloudAdditionalContext, sendPaneInput]
   )
 
   useEffect(() => {
@@ -2022,19 +2019,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageCircle />
     </button>
   ) : undefined
-  const feedbackButton =
-    currentRuntimeTask && isTauri ? (
-      <button
-        type="button"
-        data-testid="task-feedback-button"
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={t('workbench.feedback_button')}
-        title={t('workbench.feedback_button')}
-        onClick={() => setFeedbackDialogOpen(true)}
-      >
-        <MessageSquareWarning />
-      </button>
-    ) : undefined
+  const feedbackButton = isTauri ? (
+    <button
+      type="button"
+      data-testid="task-feedback-button"
+      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      aria-label={t('workbench.feedback_button')}
+      title={t('workbench.feedback_button')}
+      onClick={() => setFeedbackDialogOpen(true)}
+    >
+      <MessageSquareWarning />
+    </button>
+  ) : undefined
   const mainHeaderActions = (
     <>
       {forkTaskButton}
@@ -2647,9 +2643,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         />
         <TaskFeedbackDialog
           open={feedbackDialogOpen}
-          feedbackApi={services?.feedbackApi}
+          hasActiveTask={Boolean(currentRuntimeTask)}
           onClose={() => setFeedbackDialogOpen(false)}
           getTaskContext={async () => {
+            if (!currentRuntimeTask) {
+              return {
+                task: { state: 'new-conversation' },
+                runtime: {
+                  status: paneSession.status,
+                  goal: paneSession.goal,
+                },
+              }
+            }
             const messages = await paneSession.loadFullTranscriptForExport()
             return {
               task: {

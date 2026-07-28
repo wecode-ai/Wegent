@@ -934,13 +934,14 @@ fn push_accumulated_assistant(
 
     apply_turn_completed_at(&mut assistant.blocks, context.completed_at);
     let stopped_notice = context.status == "cancelled" && *segment_index == 0;
-    let synthetic_turn_id = if *segment_index == 0 {
+    let message_id = if *segment_index == 0 {
         context.turn_id.to_owned()
     } else {
         format!("{}-{}", context.turn_id, *segment_index)
     };
     messages.push(synthetic_assistant_message(AssistantMessageDraft {
-        turn_id: &synthetic_turn_id,
+        message_id: &message_id,
+        turn_id: context.turn_id,
         subtask_id: context.subtask_id,
         created_at: context.created_at,
         completed_at: context.completed_at,
@@ -1424,6 +1425,7 @@ fn item_timestamp(item: &Value) -> Option<i64> {
 }
 
 struct AssistantMessageDraft<'a> {
+    message_id: &'a str,
     turn_id: &'a str,
     subtask_id: &'a str,
     created_at: i64,
@@ -1440,7 +1442,7 @@ struct AssistantMessageDraft<'a> {
 
 fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
     let mut message = json!({
-        "id": format!("assistant-{}", draft.turn_id),
+        "id": format!("assistant-{}", draft.message_id),
         "role": "assistant",
         "content": draft.assistant_parts.join("\n\n"),
         "status": draft.status,
@@ -2733,6 +2735,51 @@ mod tests {
         assert_eq!(messages[0]["content"], "Partial answer");
         assert_eq!(messages[0]["status"], "failed");
         assert_eq!(messages[0]["error"], "upstream stream closed");
+    }
+
+    #[test]
+    fn split_assistant_messages_keep_the_canonical_turn_id() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [{
+                "id": "turn-1",
+                "startedAt": 1_780_000_000,
+                "completedAt": 1_780_000_005,
+                "status": "completed",
+                "items": [
+                    {
+                        "id": "assistant-1",
+                        "type": "agentMessage",
+                        "text": "First segment"
+                    },
+                    {
+                        "id": "guidance-1",
+                        "type": "userMessage",
+                        "content": [{
+                            "type": "inputText",
+                            "text": "Additional guidance"
+                        }]
+                    },
+                    {
+                        "id": "assistant-2",
+                        "type": "agentMessage",
+                        "text": "Second segment"
+                    }
+                ]
+            }]
+        });
+
+        let assistant_messages = transcript_messages(&thread, "device-1")
+            .into_iter()
+            .filter(|message| message["role"] == "assistant")
+            .collect::<Vec<_>>();
+
+        assert_eq!(assistant_messages.len(), 2);
+        assert_eq!(assistant_messages[0]["id"], "assistant-turn-1");
+        assert_eq!(assistant_messages[1]["id"], "assistant-turn-1-1");
+        assert_eq!(assistant_messages[0]["turnId"], "turn-1");
+        assert_eq!(assistant_messages[1]["turnId"], "turn-1");
     }
 
     #[test]

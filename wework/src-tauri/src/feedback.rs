@@ -11,11 +11,11 @@ use tauri::Manager;
 use zip::write::SimpleFileOptions;
 
 const MAX_LOG_BYTES: u64 = 200 * 1024 * 1024;
+const MAX_ENTRY_PREVIEW_CHARS: usize = 20_000;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedbackExportRequest {
-    destination: Option<String>,
     include_runtime_logs: bool,
     include_task_info: bool,
     include_screenshot: bool,
@@ -23,8 +23,6 @@ pub struct FeedbackExportRequest {
     note: String,
     task_context: Option<serde_json::Value>,
     screenshot_data_url: Option<String>,
-    #[serde(default = "default_true")]
-    save_to_downloads: bool,
 }
 
 #[derive(Serialize)]
@@ -34,28 +32,32 @@ pub struct FeedbackExportResult {
     path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FeedbackSubmitRequest {
-    api_url: String,
-    access_token: String,
-    report_id: String,
-    title: String,
-    description: String,
-    context: serde_json::Value,
-    bundle_path: String,
-    #[serde(default)]
-    delete_after_submit: bool,
+pub struct FeedbackEntryPreview {
+    category: String,
+    archive_path: String,
+    size_bytes: u64,
+    previewable: bool,
+    content: Option<String>,
+    truncated: bool,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct FeedbackSubmitResult {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackPreviewResult {
+    staging_id: String,
     report_id: String,
-    project_id: String,
-    item_id: String,
-    created_by_user_id: i64,
-    duplicate: bool,
+    entries: Vec<FeedbackEntryPreview>,
+    skipped: Vec<String>,
+    warnings: Vec<String>,
+    final_file_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackBundleDecision {
+    staging_id: String,
 }
 
 #[derive(Serialize)]
@@ -65,6 +67,7 @@ struct Manifest {
     report_id: String,
     created_at_unix_ms: u128,
     included: Vec<&'static str>,
+    skipped: Vec<String>,
     log_files: Vec<LogManifestEntry>,
     warnings: Vec<String>,
 }
@@ -76,84 +79,119 @@ struct LogManifestEntry {
     source_bytes: u64,
 }
 
-#[tauri::command(async)]
-pub fn export_feedback_bundle(
-    app: tauri::AppHandle,
-    request: FeedbackExportRequest,
-) -> Result<FeedbackExportResult, String> {
+struct PendingEntry {
+    archive_path: String,
+    data: Vec<u8>,
+    previewable: bool,
+}
+
+fn categorize_entry(archive_path: &str) -> &'static str {
+    if archive_path == "report.md" || archive_path == "redaction-report.json" {
+        "report"
+    } else if archive_path.starts_with("logs/") {
+        "logs"
+    } else if archive_path == "context/task.json" {
+        "task"
+    } else if archive_path == "environment.json" {
+        "system"
+    } else if archive_path == "screenshot.png" {
+        "screenshot"
+    } else {
+        "other"
+    }
+}
+
+struct PendingBundle {
+    report_id: String,
+    created_at_unix_ms: u128,
+    entries: Vec<PendingEntry>,
+    warnings: Vec<String>,
+    included: Vec<&'static str>,
+    skipped: Vec<String>,
+    log_files: Vec<LogManifestEntry>,
+}
+
+fn empty_task_context(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(fields) => fields.is_empty(),
+        serde_json::Value::Array(values) => values.is_empty(),
+        _ => false,
+    }
+}
+
+fn build_pending_bundle(
+    app: &tauri::AppHandle,
+    request: &FeedbackExportRequest,
+) -> Result<PendingBundle, String> {
     let created_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("Failed to read system time: {error}"))?;
     let report_id = format!("WF-{:X}", created_at.as_millis());
-    let destination = match request.destination.as_deref().map(str::trim) {
-        Some(path) if !path.is_empty() => PathBuf::from(path),
-        _ if request.save_to_downloads => app
-            .path()
-            .download_dir()
-            .map_err(|error| format!("Failed to locate the downloads directory: {error}"))?
-            .join(format!("wework-feedback-{report_id}.zip")),
-        _ => {
-            let directory = app
-                .path()
-                .app_cache_dir()
-                .map_err(|error| format!("Failed to locate the cache directory: {error}"))?
-                .join("feedback");
-            fs::create_dir_all(&directory)
-                .map_err(|error| format!("Failed to prepare feedback cache: {error}"))?;
-            discard_cached_feedback_bundles(&directory);
-            directory.join(format!("wework-feedback-{report_id}.zip"))
-        }
-    };
-
-    let file = File::create(&destination)
-        .map_err(|error| format!("Failed to create feedback bundle: {error}"))?;
-    let mut incomplete_archive = IncompleteArchive::new(destination.clone());
-    let mut zip = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let mut included = Vec::new();
+    let mut skipped = Vec::new();
     let mut log_files = Vec::new();
     let mut warnings = Vec::new();
-
-    write_zip_text(
-        &mut zip,
-        "report.md",
-        &format!(
-            "# Wework feedback\n\n- Report ID: {report_id}\n- Created: {}\n\n## Additional information\n\n{}\n",
-            created_at.as_millis(),
-            request.note.trim()
+    let mut entries = vec![
+        text_entry(
+            "report.md",
+            format!(
+                "# Wework feedback\n\n- Report ID: {report_id}\n- Created: {}\n\n## Additional information\n\n{}\n",
+                created_at.as_millis(),
+                request.note.trim()
+            ),
         ),
-        options,
-    )?;
+        text_entry(
+            "redaction-report.json",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "applied": true,
+                "rules": ["authorization", "credentials", "urlUserInfo"]
+            }))
+            .map_err(|error| format!("Failed to serialize redaction report: {error}"))?,
+        ),
+    ];
 
     if request.include_runtime_logs {
-        included.push("runtimeLogs");
+        let entries_before = entries.len();
         let log_directories = [
-            super::app_log_directory(&app),
+            super::app_log_directory(app),
             super::local_executor::local_executor_log_dir_path(),
         ];
         let mut seen = HashSet::new();
         for directory in log_directories {
             match directory {
-                Ok(directory) => collect_logs(
-                    &mut zip,
+                Ok(directory) => collect_log_entries(
                     &directory,
                     &mut seen,
+                    &mut entries,
                     &mut log_files,
                     &mut warnings,
-                    options,
                 )?,
                 Err(error) => warnings.push(format!("Runtime logs unavailable: {error}")),
             }
         }
+        if entries.len() == entries_before {
+            skipped.push("runtimeLogs".to_string());
+        } else {
+            included.push("runtimeLogs");
+        }
     }
 
     if request.include_task_info {
-        included.push("taskInfo");
-        if let Some(mut context) = request.task_context {
+        if let Some(mut context) = request
+            .task_context
+            .clone()
+            .filter(|context| !empty_task_context(context))
+        {
             redact_json_value(&mut context);
-            let content = serde_json::to_string_pretty(&context)
-                .map_err(|error| format!("Failed to serialize task information: {error}"))?;
-            write_zip_text(&mut zip, "context/task.json", &content, options)?;
+            entries.push(text_entry(
+                "context/task.json",
+                serde_json::to_string_pretty(&context)
+                    .map_err(|error| format!("Failed to serialize task information: {error}"))?,
+            ));
+            included.push("taskInfo");
+        } else {
+            skipped.push("taskInfo".to_string());
         }
     }
 
@@ -165,45 +203,77 @@ pub fn export_feedback_bundle(
             "architecture": std::env::consts::ARCH,
             "debugBuild": cfg!(debug_assertions),
         });
-        write_zip_text(
-            &mut zip,
+        entries.push(text_entry(
             "environment.json",
-            &serde_json::to_string_pretty(&environment)
+            serde_json::to_string_pretty(&environment)
                 .map_err(|error| format!("Failed to serialize environment: {error}"))?,
-            options,
-        )?;
+        ));
     }
 
     if request.include_screenshot {
-        included.push("screenshot");
         match request
             .screenshot_data_url
             .as_deref()
             .and_then(decode_data_url)
         {
-            Some(bytes) => write_zip_bytes(&mut zip, "screenshot.png", &bytes, options)?,
-            None => warnings.push("Screenshot was selected but could not be captured".to_string()),
+            Some(bytes) if !bytes.is_empty() => {
+                entries.push(PendingEntry {
+                    archive_path: "screenshot.png".to_string(),
+                    data: bytes,
+                    previewable: false,
+                });
+                included.push("screenshot");
+            }
+            _ => skipped.push("screenshot".to_string()),
         }
     }
 
-    write_zip_text(
-        &mut zip,
-        "redaction-report.json",
-        &serde_json::to_string_pretty(&serde_json::json!({
-            "applied": true,
-            "rules": ["authorization", "credentials", "urlUserInfo"]
-        }))
-        .map_err(|error| format!("Failed to serialize redaction report: {error}"))?,
-        options,
-    )?;
+    Ok(PendingBundle {
+        report_id,
+        created_at_unix_ms: created_at.as_millis(),
+        entries,
+        warnings,
+        included,
+        skipped,
+        log_files,
+    })
+}
 
+fn text_entry(archive_path: &str, content: String) -> PendingEntry {
+    PendingEntry {
+        archive_path: archive_path.to_string(),
+        data: content.into_bytes(),
+        previewable: true,
+    }
+}
+
+fn write_pending_bundle(
+    bundle: &PendingBundle,
+    destination: &Path,
+) -> Result<(), String> {
+    let file = File::create(destination)
+        .map_err(|error| format!("Failed to create feedback bundle: {error}"))?;
+    let mut incomplete_archive = IncompleteArchive::new(destination.to_path_buf());
+    let mut zip = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for entry in &bundle.entries {
+        write_zip_bytes(&mut zip, &entry.archive_path, &entry.data, options)?;
+    }
     let manifest = Manifest {
         schema_version: 1,
-        report_id: report_id.clone(),
-        created_at_unix_ms: created_at.as_millis(),
-        included,
-        log_files,
-        warnings,
+        report_id: bundle.report_id.clone(),
+        created_at_unix_ms: bundle.created_at_unix_ms,
+        included: bundle.included.clone(),
+        skipped: bundle.skipped.clone(),
+        log_files: bundle
+            .log_files
+            .iter()
+            .map(|entry| LogManifestEntry {
+                archive_path: entry.archive_path.clone(),
+                source_bytes: entry.source_bytes,
+            })
+            .collect(),
+        warnings: bundle.warnings.clone(),
     };
     write_zip_text(
         &mut zip,
@@ -215,116 +285,147 @@ pub fn export_feedback_bundle(
     zip.finish()
         .map_err(|error| format!("Failed to finish feedback bundle: {error}"))?;
     incomplete_archive.complete();
+    Ok(())
+}
 
+fn feedback_staging_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| format!("Failed to locate the cache directory: {error}"))?
+        .join("feedback-staging");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Failed to create the feedback staging directory: {error}"))?;
+    Ok(directory)
+}
+
+#[tauri::command(async)]
+pub fn preview_feedback_bundle(
+    app: tauri::AppHandle,
+    request: FeedbackExportRequest,
+) -> Result<FeedbackPreviewResult, String> {
+    let bundle = build_pending_bundle(&app, &request)?;
+    let staging_id = format!(
+        "{:x}-{:x}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("Failed to read system time: {error}"))?
+            .as_nanos(),
+        std::process::id(),
+        std::thread::current().name().unwrap_or("feedback")
+    );
+    let staging_path = feedback_staging_directory(&app)?.join(format!("{staging_id}.zip"));
+    write_pending_bundle(&bundle, &staging_path)?;
+
+    let entries = bundle
+        .entries
+        .iter()
+        .map(|entry| {
+            let text = entry.previewable.then(|| {
+                let raw = String::from_utf8_lossy(&entry.data).into_owned();
+                if entry.archive_path == "context/task.json" {
+                    redact(&raw)
+                } else {
+                    raw
+                }
+            });
+            let (content, truncated) = match text {
+                Some(text) if text.chars().count() > MAX_ENTRY_PREVIEW_CHARS => (
+                    Some(text.chars().take(MAX_ENTRY_PREVIEW_CHARS).collect()),
+                    true,
+                ),
+                other => (other, false),
+            };
+            FeedbackEntryPreview {
+                category: categorize_entry(&entry.archive_path).to_string(),
+                archive_path: entry.archive_path.clone(),
+                size_bytes: entry.data.len() as u64,
+                previewable: entry.previewable,
+                content,
+                truncated,
+            }
+        })
+        .collect();
+
+    Ok(FeedbackPreviewResult {
+        staging_id,
+        report_id: bundle.report_id.clone(),
+        entries,
+        skipped: bundle.skipped.clone(),
+        warnings: bundle.warnings,
+        final_file_name: format!("wework-feedback-{}.zip", bundle.report_id),
+    })
+}
+
+fn resolve_staging_path(app: &tauri::AppHandle, staging_id: &str) -> Result<PathBuf, String> {
+    if staging_id.is_empty()
+        || !staging_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err("Invalid feedback staging identifier".to_string());
+    }
+    Ok(feedback_staging_directory(app)?.join(format!("{staging_id}.zip")))
+}
+
+#[tauri::command(async)]
+pub fn confirm_feedback_bundle(
+    app: tauri::AppHandle,
+    decision: FeedbackBundleDecision,
+) -> Result<FeedbackExportResult, String> {
+    let staging_path = resolve_staging_path(&app, &decision.staging_id)?;
+    let report_id = report_id_from_staging_archive(&staging_path)?;
+    let destination = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("Failed to locate the downloads directory: {error}"))?
+        .join(format!("wework-feedback-{report_id}.zip"));
+    if let Err(move_error) = fs::rename(&staging_path, &destination) {
+        fs::copy(&staging_path, &destination)
+            .and_then(|_| fs::remove_file(&staging_path))
+            .map_err(|error| {
+                format!("Failed to save the feedback bundle: {move_error}; {error}")
+            })?;
+    }
     Ok(FeedbackExportResult {
         report_id,
         path: destination.to_string_lossy().to_string(),
     })
 }
 
-#[tauri::command(async)]
-pub async fn submit_feedback_bundle(
-    request: FeedbackSubmitRequest,
-) -> Result<FeedbackSubmitResult, String> {
-    tauri::async_runtime::spawn_blocking(move || submit_feedback_bundle_blocking(request))
-        .await
-        .map_err(|error| format!("Failed to join feedback submission: {error}"))?
+fn report_id_from_staging_archive(staging_path: &Path) -> Result<String, String> {
+    let file = File::open(staging_path)
+        .map_err(|_| "The prepared feedback bundle expired; export again".to_string())?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|error| format!("Failed to read the prepared feedback bundle: {error}"))?;
+    let mut manifest_file = archive
+        .by_name("manifest.json")
+        .map_err(|error| format!("The prepared feedback bundle is incomplete: {error}"))?;
+    let mut content = String::new();
+    manifest_file
+        .read_to_string(&mut content)
+        .map_err(|error| format!("Failed to read the feedback manifest: {error}"))?;
+    let manifest: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("Failed to parse the feedback manifest: {error}"))?;
+    manifest
+        .get("reportId")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .ok_or_else(|| "The feedback manifest is missing a report ID".to_string())
 }
 
-#[tauri::command]
-pub fn discard_feedback_bundle(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let cache_directory = app
-        .path()
-        .app_cache_dir()
-        .map_err(|error| format!("Failed to locate the cache directory: {error}"))?
-        .join("feedback");
-    let candidate = PathBuf::from(path);
-    if candidate.parent() != Some(cache_directory.as_path()) {
-        return Err("Feedback bundle is outside the feedback cache".to_string());
-    }
-    match fs::remove_file(candidate) {
+#[tauri::command(async)]
+pub fn discard_feedback_bundle(
+    app: tauri::AppHandle,
+    decision: FeedbackBundleDecision,
+) -> Result<(), String> {
+    let staging_path = resolve_staging_path(&app, &decision.staging_id)?;
+    match fs::remove_file(&staging_path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("Failed to discard feedback bundle: {error}")),
+        Err(error) => Err(format!("Failed to discard the feedback bundle: {error}")),
     }
 }
-
-fn submit_feedback_bundle_blocking(
-    request: FeedbackSubmitRequest,
-) -> Result<FeedbackSubmitResult, String> {
-    let api_url = request.api_url.trim();
-    if !(api_url.starts_with("https://") || api_url.starts_with("http://")) {
-        return Err("Feedback API URL must use HTTP or HTTPS".to_string());
-    }
-    if request.access_token.trim().is_empty() {
-        return Err("Feedback authentication is unavailable".to_string());
-    }
-    let path = PathBuf::from(&request.bundle_path);
-    let filename = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| value.starts_with("wework-feedback-") && value.ends_with(".zip"))
-        .ok_or_else(|| "Invalid feedback bundle path".to_string())?;
-    let bundle = reqwest::blocking::multipart::Part::file(&path)
-        .map_err(|error| format!("Failed to open feedback bundle: {error}"))?
-        .file_name(filename.to_string())
-        .mime_str("application/zip")
-        .map_err(|error| format!("Failed to prepare feedback bundle: {error}"))?;
-    let form = reqwest::blocking::multipart::Form::new()
-        .text("report_id", request.report_id)
-        .text("title", request.title)
-        .text("description", request.description)
-        .text("context", request.context.to_string())
-        .part("bundle", bundle);
-    let response = reqwest::blocking::Client::new()
-        .post(api_url)
-        .bearer_auth(request.access_token)
-        .multipart(form)
-        .send()
-        .map_err(|error| format!("Failed to submit feedback: {error}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let message = response
-            .json::<serde_json::Value>()
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("detail")
-                    .and_then(|detail| detail.as_str())
-                    .map(str::to_owned)
-            })
-            .unwrap_or_else(|| format!("Feedback submission failed with HTTP {status}"));
-        return Err(message);
-    }
-    let result = response
-        .json::<FeedbackSubmitResult>()
-        .map_err(|error| format!("Invalid feedback response: {error}"))?;
-    if request.delete_after_submit {
-        let _ = fs::remove_file(path);
-    }
-    Ok(result)
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn discard_cached_feedback_bundles(directory: &Path) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let is_feedback_bundle = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.starts_with("wework-feedback-") && value.ends_with(".zip"));
-        if is_feedback_bundle {
-            let _ = fs::remove_file(path);
-        }
-    }
-}
-
 struct IncompleteArchive {
     path: PathBuf,
     completed: bool,
@@ -351,22 +452,21 @@ impl Drop for IncompleteArchive {
     }
 }
 
-fn collect_logs(
-    zip: &mut zip::ZipWriter<File>,
+fn collect_log_entries(
     directory: &Path,
     seen: &mut HashSet<PathBuf>,
+    entries: &mut Vec<PendingEntry>,
     manifest: &mut Vec<LogManifestEntry>,
     warnings: &mut Vec<String>,
-    options: SimpleFileOptions,
 ) -> Result<(), String> {
-    let entries = match fs::read_dir(directory) {
-        Ok(entries) => entries,
+    let dir_entries = match fs::read_dir(directory) {
+        Ok(dir_entries) => dir_entries,
         Err(error) => {
             warnings.push(format!("Could not read {}: {error}", directory.display()));
             return Ok(());
         }
     };
-    for entry in entries.flatten() {
+    for entry in dir_entries.flatten() {
         let path = entry.path();
         if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("log") {
             continue;
@@ -404,7 +504,7 @@ fn collect_logs(
                     "app"
                 };
                 let archive_path = format!("logs/{source}/{name}");
-                write_zip_text(zip, &archive_path, &redact(&content), options)?;
+                entries.push(text_entry(&archive_path, redact(&content)));
                 manifest.push(LogManifestEntry {
                     archive_path,
                     source_bytes: metadata.len(),
@@ -511,7 +611,15 @@ fn write_zip_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_data_url, redact, redact_home_path, redact_json_value};
+    use super::{decode_data_url, empty_task_context, redact, redact_home_path, redact_json_value};
+
+    #[test]
+    fn treats_absent_task_context_as_empty() {
+        assert!(empty_task_context(&serde_json::Value::Null));
+        assert!(empty_task_context(&serde_json::json!({})));
+        assert!(empty_task_context(&serde_json::json!([])));
+        assert!(!empty_task_context(&serde_json::json!({"task": {"id": "task-1"}})));
+    }
 
     #[test]
     fn redacts_credentials_without_removing_surrounding_log_context() {

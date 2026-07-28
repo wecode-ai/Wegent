@@ -11,10 +11,54 @@ vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) =>
       ({
+        'workbench.feedback_group_standard': '常规诊断',
+        'workbench.feedback_group_full_task': '完整任务数据（含隐私内容）',
+        'workbench.feedback_task_info': '任务信息',
+        'workbench.feedback_screenshot': '页面截图',
         'workbench.feedback_runtime_logs': '运行日志',
+        'workbench.feedback_preview': '预览导出内容',
+        'workbench.feedback_confirm_export': '确认导出',
+        'workbench.feedback_back': '返回',
+        'workbench.feedback_exported': '已导出',
+        'workbench.feedback_preview_truncated': '（内容过长，仅显示前一部分）',
       })[key] ?? key,
+    i18n: { t: (key: string) => key },
   }),
 }))
+
+const previewResult = {
+  stagingId: 'staging-1',
+  reportId: 'WF-1',
+  finalFileName: 'wework-feedback-WF-1.zip',
+  skipped: [] as string[],
+  warnings: [] as string[],
+  entries: [
+    {
+      category: 'report',
+      archivePath: 'report.md',
+      sizeBytes: 64,
+      previewable: true,
+      content: '# Wework feedback',
+      truncated: false,
+    },
+    {
+      category: 'task',
+      archivePath: 'context/task.json',
+      sizeBytes: 128,
+      previewable: true,
+      content: '{"task":{"id":"task-1"}}',
+      truncated: false,
+    },
+    {
+      category: 'screenshot',
+      archivePath: 'screenshot.png',
+      sizeBytes: 1024,
+      previewable: false,
+      content: null,
+      truncated: false,
+    },
+  ],
+}
 
 describe('TaskFeedbackDialog', () => {
   beforeEach(() => {
@@ -25,117 +69,57 @@ describe('TaskFeedbackDialog', () => {
     })
   })
 
-  test('presents runtime logs as one user-facing option', () => {
+  test('offers two groups: standard diagnostics on and full task data off by default', () => {
     render(
       <TaskFeedbackDialog
         open
+        hasActiveTask
         getTaskContext={async () => ({ taskId: 'task-1' })}
         onClose={vi.fn()}
       />
     )
 
-    expect(screen.getByText('运行日志')).toBeInTheDocument()
-    expect(screen.queryByText('Executor 日志')).not.toBeInTheDocument()
-    expect(screen.queryByText('Tauri 日志')).not.toBeInTheDocument()
-    expect(screen.getByTestId('task-feedback-runtimeLogs-checkbox')).toBeChecked()
+    expect(screen.getByText(/运行日志/)).toBeInTheDocument()
+    expect(screen.getByTestId('task-feedback-group-standard-checkbox')).toBeChecked()
+    expect(screen.getByTestId('task-feedback-group-full-task-checkbox')).not.toBeChecked()
   })
 
-  test('disables export when every information category is unchecked', () => {
+  test('disables preview when every information category is unchecked', () => {
     render(
       <TaskFeedbackDialog
         open
+        hasActiveTask
         getTaskContext={async () => ({ taskId: 'task-1' })}
         onClose={vi.fn()}
       />
     )
-    ;['runtimeLogs', 'taskInfo', 'screenshot', 'systemInfo'].forEach(key => {
-      fireEvent.click(screen.getByTestId(`task-feedback-${key}-checkbox`))
-    })
+
+    fireEvent.click(screen.getByTestId('task-feedback-group-standard-checkbox'))
 
     expect(screen.getByTestId('task-feedback-export-button')).toBeDisabled()
-    expect(screen.getByTestId('task-feedback-submit-button')).toBeDisabled()
   })
 
-  test('submits the selected diagnostics and shows the board item', async () => {
-    invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview') {
-        return Promise.resolve('data:image/png;base64,aGVsbG8=')
-      }
-      if (command === 'export_feedback_bundle') {
-        return Promise.resolve({ reportId: 'WF-2', path: '/tmp/wework-feedback-WF-2.zip' })
-      }
-      return Promise.reject(new Error(`Unexpected command: ${command}`))
-    })
-    const feedbackApi = {
-      submit: vi.fn().mockResolvedValue({
-        report_id: 'WF-2',
-        item_id: 'FEEDBACK-2',
-        duplicate: false,
-      }),
-    }
+  test('keeps standard diagnostics available in new-conversation state', () => {
     render(
       <TaskFeedbackDialog
         open
-        feedbackApi={feedbackApi}
-        getTaskContext={async () => ({ task: { title: 'Broken task' } })}
-        onClose={vi.fn()}
-      />
-    )
-
-    fireEvent.change(screen.getByTestId('task-feedback-note'), {
-      target: { value: 'Cannot send messages' },
-    })
-    fireEvent.click(screen.getByTestId('task-feedback-submit-button'))
-
-    await waitFor(() => expect(feedbackApi.submit).toHaveBeenCalledOnce())
-    expect(feedbackApi.submit).toHaveBeenCalledWith({
-      reportId: 'WF-2',
-      title: 'Cannot send messages',
-      description: 'Cannot send messages',
-      context: { task: { title: 'Broken task' } },
-      bundlePath: '/tmp/wework-feedback-WF-2.zip',
-    })
-    expect(screen.getByText(/FEEDBACK-2/)).toBeInTheDocument()
-  })
-
-  test('asks the user to contact developers without exposing the submit error', async () => {
-    invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview') return Promise.resolve(null)
-      if (command === 'export_feedback_bundle') {
-        return Promise.resolve({ reportId: 'WF-ERROR', path: '/tmp/feedback.zip' })
-      }
-      return Promise.reject(new Error(`Unexpected command: ${command}`))
-    })
-    const feedbackApi = {
-      submit: vi.fn().mockRejectedValue(new Error('MinIO connection refused')),
-    }
-    render(
-      <TaskFeedbackDialog
-        open
-        feedbackApi={feedbackApi}
+        hasActiveTask={false}
         getTaskContext={async () => ({})}
         onClose={vi.fn()}
       />
     )
 
-    fireEvent.click(screen.getByTestId('task-feedback-submit-button'))
-
-    const message = await screen.findByTestId('task-feedback-error')
-    expect(message).toHaveTextContent('workbench.feedback_contact_developer_with_report')
-    expect(message).not.toHaveTextContent('MinIO connection refused')
-    expect(message).not.toHaveClass('text-red-500')
+    expect(screen.getByTestId('task-feedback-group-full-task-checkbox')).toBeDisabled()
+    expect(screen.getByTestId('task-feedback-group-standard-checkbox')).toBeEnabled()
+    expect(screen.getAllByText('workbench.feedback_requires_task')).toHaveLength(1)
+    expect(screen.getByTestId('task-feedback-export-button')).toBeEnabled()
   })
 
-  test('hides the dialog while capturing and exports the complete task context', async () => {
-    let resolveCapture: (value: string) => void = () => undefined
-    const capture = new Promise<string>(resolve => {
-      resolveCapture = resolve
-    })
+  test('builds a preview before writing any exported file', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview') return capture
-      if (command === 'export_feedback_bundle') {
-        return Promise.resolve({ reportId: 'WF-1', path: '/tmp/feedback.zip' })
-      }
+      if (command === 'capture_main_webview')
+        return Promise.resolve('data:image/png;base64,aGVsbG8=')
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     const getTaskContext = vi.fn().mockResolvedValue({
@@ -146,26 +130,19 @@ describe('TaskFeedbackDialog', () => {
         ],
       },
     })
-    render(<TaskFeedbackDialog open getTaskContext={getTaskContext} onClose={vi.fn()} />)
+    render(
+      <TaskFeedbackDialog open hasActiveTask getTaskContext={getTaskContext} onClose={vi.fn()} />
+    )
 
+    fireEvent.click(screen.getByTestId('task-feedback-group-full-task-checkbox'))
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
 
-    await waitFor(() => {
-      const overlay = screen.getByTestId('task-feedback-dialog-overlay')
-      expect(overlay).toHaveClass('invisible')
-      expect(overlay).toHaveStyle({ visibility: 'hidden' })
-    })
-    await act(async () => resolveCapture('data:image/png;base64,aGVsbG8='))
     await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith('export_feedback_bundle', expect.anything())
+      expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
     )
-    expect(screen.getByTestId('task-feedback-dialog-overlay')).not.toHaveClass('invisible')
-    expect(screen.getByTestId('task-feedback-dialog-overlay')).not.toHaveStyle({
-      visibility: 'hidden',
-    })
     expect(getTaskContext).toHaveBeenCalledOnce()
     expect(invokeMock).toHaveBeenCalledWith(
-      'export_feedback_bundle',
+      'preview_feedback_bundle',
       expect.objectContaining({
         request: expect.objectContaining({
           taskContext: expect.objectContaining({
@@ -179,5 +156,231 @@ describe('TaskFeedbackDialog', () => {
         }),
       })
     )
+    // Nothing has been written to disk yet.
+    expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
+  })
+
+  test('never touches task context or the screenshot without opting into full task data', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    const getTaskContext = vi.fn().mockResolvedValue({ taskId: 'task-1' })
+    render(
+      <TaskFeedbackDialog open hasActiveTask getTaskContext={getTaskContext} onClose={vi.fn()} />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
+    )
+    expect(getTaskContext).not.toHaveBeenCalled()
+    expect(invokeMock).not.toHaveBeenCalledWith('capture_main_webview')
+    expect(invokeMock).toHaveBeenCalledWith(
+      'preview_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          includeTaskInfo: false,
+          includeScreenshot: false,
+          taskContext: null,
+          screenshotDataUrl: null,
+        }),
+      })
+    )
+  })
+
+  test('shows the dialog while capturing and hides it only during screenshot capture', async () => {
+    let resolveCapture: (value: string) => void = () => undefined
+    const capture = new Promise<string>(resolve => {
+      resolveCapture = resolve
+    })
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview') return capture
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-group-full-task-checkbox'))
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+
+    await waitFor(() => {
+      const overlay = screen.getByTestId('task-feedback-dialog-overlay')
+      expect(overlay).toHaveClass('invisible')
+      expect(overlay).toHaveStyle({ visibility: 'hidden' })
+    })
+    await act(async () => resolveCapture('data:image/png;base64,aGVsbG8='))
+    await waitFor(() =>
+      expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
+    )
+    expect(screen.getByTestId('task-feedback-dialog-overlay')).not.toHaveClass('invisible')
+    expect(screen.getByTestId('task-feedback-dialog-overlay')).not.toHaveStyle({
+      visibility: 'hidden',
+    })
+  })
+
+  test('skips checked categories whose content is missing instead of failing', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview') return Promise.reject(new Error('capture failed'))
+      if (command === 'preview_feedback_bundle') {
+        // The real backend localizes this; the mock returns raw keys.
+        const skippedLabels = ['taskInfo', 'screenshot']
+        return Promise.resolve({
+          ...previewResult,
+          skipped: ['taskInfo', 'screenshot'],
+          warnings: [`workbench.feedback_skipped_missing:${skippedLabels.join('、')}`],
+          entries: previewResult.entries.filter(entry => entry.category === 'report'),
+        })
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    const getTaskContext = vi.fn().mockRejectedValue(new Error('transcript unavailable'))
+    render(
+      <TaskFeedbackDialog open hasActiveTask getTaskContext={getTaskContext} onClose={vi.fn()} />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-group-full-task-checkbox'))
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
+    )
+    const notice = screen.getByTestId('task-feedback-skipped-notice')
+    expect(notice).toHaveTextContent('workbench.feedback_skipped_missing')
+    expect(screen.getByText(/taskInfo、screenshot/)).toBeInTheDocument()
+    expect(screen.queryByText(/feedback_export_failed/)).not.toBeInTheDocument()
+  })
+
+  test('lets the user expand previewable entries and inspect redacted content', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview')
+        return Promise.resolve('data:image/png;base64,aGVsbG8=')
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-group-full-task-checkbox'))
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
+    )
+
+    // The preview is grouped by category; expand a group to see its files.
+    fireEvent.click(screen.getByTestId('task-feedback-preview-category-task'))
+    fireEvent.click(screen.getByTestId('task-feedback-preview-entry-context/task.json'))
+    const content = screen.getByTestId('task-feedback-preview-content')
+    expect(content).toHaveTextContent('{"task":{"id":"task-1"}}')
+
+    // Binary entries are not expandable.
+    fireEvent.click(screen.getByTestId('task-feedback-preview-category-screenshot'))
+    expect(screen.getByTestId('task-feedback-preview-entry-screenshot.png')).toBeDisabled()
+  })
+
+  test('confirms the staged bundle only after the user approves the preview', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview')
+        return Promise.resolve('data:image/png;base64,aGVsbG8=')
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'confirm_feedback_bundle') {
+        return Promise.resolve({ reportId: 'WF-1', path: '/tmp/wework-feedback-WF-1.zip' })
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('task-feedback-confirm-button')).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId('task-feedback-confirm-button'))
+
+    await waitFor(() => expect(screen.getByText('已导出')).toBeInTheDocument())
+    expect(invokeMock).toHaveBeenCalledWith('confirm_feedback_bundle', {
+      decision: { stagingId: 'staging-1' },
+    })
+    expect(screen.getByText('/tmp/wework-feedback-WF-1.zip')).toBeInTheDocument()
+  })
+
+  test('discards the staged bundle when the user goes back from the preview', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview')
+        return Promise.resolve('data:image/png;base64,aGVsbG8=')
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'discard_feedback_bundle') return Promise.resolve(null)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await waitFor(() => expect(screen.getByText('返回')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('返回'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('task-feedback-group-standard-checkbox')).toBeInTheDocument()
+    )
+    expect(invokeMock).toHaveBeenCalledWith('discard_feedback_bundle', {
+      decision: { stagingId: 'staging-1' },
+    })
+    expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
+  })
+
+  test('discards the staged bundle when the dialog is closed from the preview', async () => {
+    const onClose = vi.fn()
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview')
+        return Promise.resolve('data:image/png;base64,aGVsbG8=')
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'discard_feedback_bundle') return Promise.resolve(null)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={onClose}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId('task-feedback-close-button'))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(invokeMock).toHaveBeenCalledWith('discard_feedback_bundle', {
+      decision: { stagingId: 'staging-1' },
+    })
   })
 })
