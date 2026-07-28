@@ -472,9 +472,11 @@ fn transcript_inserts_cached_user_message_before_active_provider_output() {
 
 #[test]
 fn active_execution_restores_cached_users_even_when_persisted_running_is_stale() {
-    let mut link = RuntimeTaskLink::default();
-    link.running = false;
-    link.status = "active".to_owned();
+    let link = RuntimeTaskLink {
+        running: false,
+        status: "active".to_owned(),
+        ..RuntimeTaskLink::default()
+    };
 
     assert!(runtime_transcript_uses_cached_user_messages(
         true,
