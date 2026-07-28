@@ -13,23 +13,20 @@ describe('createFeedbackApi', () => {
     const api = createFeedbackApi('https://wegent.example.com/api', () => 'token')
 
     await api.submit({
-      reportId: 'WF-1',
+      stagingId: 'staging-1',
       title: 'Problem',
       description: 'Details',
       context: { taskId: 'task-1' },
-      bundlePath: '/tmp/wework-feedback-WF-1.zip',
     })
 
     expect(invokeMock).toHaveBeenCalledWith('submit_feedback_bundle', {
       request: {
         apiUrl: 'https://wegent.example.com/api/v1/feedback',
         accessToken: 'token',
-        reportId: 'WF-1',
+        stagingId: 'staging-1',
         title: 'Problem',
         description: 'Details',
         context: { taskId: 'task-1' },
-        bundlePath: '/tmp/wework-feedback-WF-1.zip',
-        deleteAfterSubmit: true,
       },
     })
   })
@@ -39,11 +36,10 @@ describe('createFeedbackApi', () => {
 
     await expect(
       api.submit({
-        reportId: 'WF-1',
+        stagingId: 'staging-1',
         title: 'Problem',
         description: '',
         context: {},
-        bundlePath: '/tmp/wework-feedback-WF-1.zip',
       })
     ).rejects.toThrow('反馈通道异常，请联系开发者')
     expect(invokeMock).not.toHaveBeenCalled()

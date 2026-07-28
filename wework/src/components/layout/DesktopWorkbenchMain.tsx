@@ -2644,6 +2644,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TaskFeedbackDialog
           open={feedbackDialogOpen}
           hasActiveTask={Boolean(currentRuntimeTask)}
+          feedbackApi={services?.feedbackApi}
           onClose={() => setFeedbackDialogOpen(false)}
           getTaskContext={async () => {
             if (!currentRuntimeTask) {

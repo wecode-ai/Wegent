@@ -9,11 +9,10 @@ export interface FeedbackSubmitResult {
 }
 
 export interface FeedbackSubmitInput {
-  reportId: string
+  stagingId: string
   title: string
   description: string
   context: Record<string, unknown>
-  bundlePath: string
 }
 
 export function createFeedbackApi(apiBaseUrl: string, getToken: () => string | null) {
@@ -27,12 +26,10 @@ export function createFeedbackApi(apiBaseUrl: string, getToken: () => string | n
         request: {
           apiUrl,
           accessToken,
-          reportId: input.reportId,
+          stagingId: input.stagingId,
           title: input.title,
           description: input.description,
           context: input.context,
-          bundlePath: input.bundlePath,
-          deleteAfterSubmit: true,
         },
       })
     },
