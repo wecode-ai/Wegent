@@ -136,10 +136,6 @@ def _apply_artifact_node_scope(
                 "name": f"Knowledge Base {knowledge_base_id}",
                 "document_ids": document_ids,
                 "scope_restricted": True,
-                "artifact_context": {
-                    "artifact_id": artifact_context.artifact_id,
-                    "node_id": artifact_context.node_id,
-                },
             },
         )
     ]

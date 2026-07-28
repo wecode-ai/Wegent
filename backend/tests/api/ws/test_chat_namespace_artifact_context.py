@@ -15,7 +15,6 @@ from app.api.ws.events import (
     ChatSendPayload,
     ContextItem,
 )
-from app.services.chat.preprocessing.contexts import _prepare_contexts_for_creation
 
 
 def build_payload() -> ChatSendPayload:
@@ -81,20 +80,6 @@ def test_artifact_node_scope_replaces_client_document_selection():
     resolved = payload.contexts[0].data
     assert resolved["document_ids"] == [101, 102]
     assert resolved["scope_restricted"] is True
-    assert resolved["artifact_context"] == {
-        "artifact_id": "artifact-1",
-        "node_id": "node-2",
-    }
-
-    kb_contexts, _, _, _ = _prepare_contexts_for_creation(
-        payload.contexts,
-        subtask_id=21,
-        user_id=7,
-    )
-    assert kb_contexts[0].type_data["artifact_context"] == {
-        "artifact_id": "artifact-1",
-        "node_id": "node-2",
-    }
 
 
 def test_artifact_node_scope_requires_knowledge_task():
