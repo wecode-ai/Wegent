@@ -61,6 +61,15 @@ must ignore the completed snapshot to avoid duplicate text. Temporary chats
 use ephemeral threads and cannot depend on `thread/read(includeTurns)` to
 recover live text that was dropped.
 
+After a task settles, a work-list refresh may immediately reload its completed
+transcript. That transcript owns the final text, message status, and file
+changes, but Codex `thread/read` may temporarily omit tool items that already
+completed in the live stream. `useWorkbenchPaneSession` must reconcile the two
+messages by `turnId`: keep the transcript's authoritative fields while
+restoring live tool blocks whose status is `done` or `error` and whose block id
+is absent from the transcript. It must not restore `pending` or `streaming`
+blocks, which would make a completed task appear active again.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
