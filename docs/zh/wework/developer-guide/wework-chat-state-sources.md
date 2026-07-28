@@ -64,6 +64,10 @@ Codex provider 可能只发送带完整正文的 `item/completed`，而不发送
 尚未包含的 tool block。不得补回 `pending` 或 `streaming` block，否则已完成任务会
 重新显示为执行中。
 
+同一个 Codex turn 可能因为工具调用或中途引导被拆成多条 assistant 消息。每条消息
+必须使用不同的消息 `id`，但都保留相同的规范 `turnId`。fork、回滚等 turn 级操作
+只能使用 Codex 持久化的规范 turn ID，不能使用为了界面分段生成的消息 ID。
+
 首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
 写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使

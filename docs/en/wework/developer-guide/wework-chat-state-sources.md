@@ -70,6 +70,12 @@ restoring live tool blocks whose status is `done` or `error` and whose block id
 is absent from the transcript. It must not restore `pending` or `streaming`
 blocks, which would make a completed task appear active again.
 
+A single Codex turn can be split into multiple assistant messages by tool
+calls or mid-turn guidance. Each message must have a distinct message `id`
+while retaining the same canonical `turnId`. Turn-level actions such as fork
+and rollback must use the canonical turn ID persisted by Codex, never a
+UI-only segmented message ID.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
