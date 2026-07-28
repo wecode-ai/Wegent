@@ -1584,11 +1584,7 @@ mod tests {
         assert_eq!(creator_from_labels(&labels), 42);
         assert_eq!(
             labels_for_write(labels, "none", "in_progress"),
-            vec![
-                "bug",
-                "wegent:creator:42",
-                "wegent:status:in_progress"
-            ]
+            vec!["bug", "wegent:creator:42", "wegent:status:in_progress"]
         );
     }
 
