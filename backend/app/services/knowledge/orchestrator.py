@@ -1283,6 +1283,12 @@ class KnowledgeOrchestrator:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user.id
+        ):
+            raise ValueError(
+                "You do not have permission to add documents to this knowledge base"
+            )
 
         # Validate input based on source_type
         normalized_ext: str = DEFAULT_TEXT_FILE_EXTENSION
@@ -1456,6 +1462,12 @@ class KnowledgeOrchestrator:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user.id
+        ):
+            raise ValueError(
+                "You do not have permission to add documents to this knowledge base"
+            )
 
         # Get splitter config from data if provided
         splitter_config_dict = None
@@ -2217,6 +2229,12 @@ class KnowledgeOrchestrator:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user.id
+        ):
+            raise ValueError(
+                "You do not have permission to add documents to this knowledge base"
+            )
 
         # Scrape the web page (async)
         service = get_web_scraper_service()
