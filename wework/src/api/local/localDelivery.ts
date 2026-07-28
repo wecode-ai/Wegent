@@ -137,6 +137,12 @@ export function createExternalIssueApi(request: LocalRequest) {
         project: externalProjectDescriptor(project, token),
       })
     },
+    async removeProject(projectId: CloudProject['id']) {
+      await request('external_projects.remove', { project_id: projectId })
+    },
+    async retainProjects(projectIds: CloudProject['id'][]) {
+      await request('external_projects.retain', { project_ids: projectIds })
+    },
     async listLoopItems(project: CloudProject) {
       const records = await request<LocalLoopItemRecord[]>('external_todos.list', {
         project: externalProjectDescriptor(project),
@@ -210,6 +216,10 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     sequence_number: record.sequence_number ?? 0,
     parent_id: record.parent_id,
     created_by_user_id: record.created_by_user_id,
+    created_by_user_name:
+      typeof record.metadata.creator_label === 'string'
+        ? record.metadata.creator_label.split(':').slice(3).join(':').trim() || null
+        : null,
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     assignee_user_id: null,

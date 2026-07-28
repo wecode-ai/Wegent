@@ -54,8 +54,11 @@ import { CloudMyWorkView } from './CloudMyWorkView'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
+import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { repositoryProviderConfig } from './projectProviderConfig'
+import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
+import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { columnDotClasses, columns, priorityBadgeClasses, reorderLaneItems } from './todoShared'
 
 type ProjectView = 'board' | 'files' | 'manage'
@@ -730,8 +733,12 @@ export function CloudTodoWorkspace({
   const boardSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('')
+  const [projectSearchOpen, setProjectSearchOpen] = useState(false)
+  const [projectSearchQuery, setProjectSearchQuery] = useState('')
+  const [projectSearchFilters, setProjectSearchFilters] =
+    useState<TaskSearchFilters>(emptyTaskSearchFilters)
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [boardError, setBoardError] = useState<string | null>(null)
@@ -760,6 +767,7 @@ export function CloudTodoWorkspace({
     [availableProjectSpaceApis, projectSpaceApis, projects, services.deliveryApi]
   )
   const selectedProjectApi = selectedProject ? apiForProjectId(selectedProject.id) : undefined
+  const canCreateBoardTask = selectedProject !== null
   // Only render board items that belong to the selected project. On a project
   // switch this flips to the skeleton in the same render, before the fetch.
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
@@ -796,7 +804,24 @@ export function CloudTodoWorkspace({
     setSelectedProjectId(projectId)
     setBoardParentId(null)
     setTagFilter(null)
+    setProjectSearchOpen(false)
+    setProjectSearchQuery('')
+    setProjectSearchFilters(emptyTaskSearchFilters)
   }
+
+  useEffect(() => {
+    const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setGlobalSearchOpen(true)
+      } else if (event.key === 'Escape') {
+        setGlobalSearchOpen(false)
+        setProjectSearchOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handleGlobalSearchShortcut)
+    return () => window.removeEventListener('keydown', handleGlobalSearchShortcut)
+  }, [])
 
   function openTodoCreation(
     parent: CloudLoopItem | null,
@@ -1062,7 +1087,7 @@ export function CloudTodoWorkspace({
             <button
               type="button"
               data-testid="cloud-search-toggle"
-              onClick={() => setSearchOpen(current => !current)}
+              onClick={() => setGlobalSearchOpen(true)}
               className="flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted/60"
             >
               <Search className="h-4 w-4" /> 搜索
@@ -1071,18 +1096,6 @@ export function CloudTodoWorkspace({
               </span>
             </button>
           </nav>
-          {searchOpen && (
-            <div className="px-2 pt-2">
-              <input
-                autoFocus
-                data-testid="cloud-search-input"
-                value={searchQuery}
-                onChange={event => setSearchQuery(event.target.value)}
-                placeholder="搜索项目空间或任务"
-                className="h-8 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted"
-              />
-            </div>
-          )}
           <div className="mt-6 flex items-center px-5 text-xs font-medium text-text-muted">
             项目空间
             <button
@@ -1095,39 +1108,33 @@ export function CloudTodoWorkspace({
             </button>
           </div>
           <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2">
-            {projects
-              .filter(project =>
-                `${project.name} ${project.project_key} ${project.description}`
-                  .toLowerCase()
-                  .includes(searchQuery.trim().toLowerCase())
+            {projects.map(project => {
+              const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => {
+                    selectProject(project.id)
+                    setRootView('projects')
+                    setProjectView('board')
+                    setSelectedItem(null)
+                  }}
+                  className={cn(
+                    'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
+                    rootView === 'projects' && selectedProjectId === project.id
+                      ? 'bg-muted font-medium text-text-primary'
+                      : 'text-text-secondary hover:bg-muted/60'
+                  )}
+                >
+                  <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                  <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                  {projectCounts[project.id] ? (
+                    <span className="text-xs text-text-muted">{projectCounts[project.id]}</span>
+                  ) : null}
+                </button>
               )
-              .map(project => {
-                const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
-                return (
-                  <button
-                    key={project.id}
-                    type="button"
-                    onClick={() => {
-                      selectProject(project.id)
-                      setRootView('projects')
-                      setProjectView('board')
-                      setSelectedItem(null)
-                    }}
-                    className={cn(
-                      'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
-                      rootView === 'projects' && selectedProjectId === project.id
-                        ? 'bg-muted font-medium text-text-primary'
-                        : 'text-text-secondary hover:bg-muted/60'
-                    )}
-                  >
-                    <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                    <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
-                    {projectCounts[project.id] ? (
-                      <span className="text-xs text-text-muted">{projectCounts[project.id]}</span>
-                    ) : null}
-                  </button>
-                )
-              })}
+            })}
           </div>
         </div>
       </aside>
@@ -1203,14 +1210,16 @@ export function CloudTodoWorkspace({
             projectMembers={projectMembers}
             projectItems={projectItems}
             myWork={myWork}
-            searchQuery={searchQuery}
+            searchQuery=""
             onCreateProject={() => setCreateProjectOpen(true)}
             onSelectProject={projectId => selectProject(projectId)}
             onManageProject={projectId => {
               selectProject(projectId)
               setProjectView('manage')
             }}
-            onSelectItem={item => setSelectedItem(item)}
+            onSelectItem={item => {
+              if (item.can_view_detail !== false) setSelectedItem(item)
+            }}
             onOpenMyWork={() => setRootView('my-work')}
           />
         ) : (
@@ -1281,6 +1290,31 @@ export function CloudTodoWorkspace({
               <span className="flex-1" />
               {projectView === 'board' && (
                 <>
+                  <button
+                    type="button"
+                    data-testid="cloud-project-task-search-toggle"
+                    onClick={() => setProjectSearchOpen(current => !current)}
+                    className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
+                  >
+                    <Search className="h-3.5 w-3.5" />
+                    搜索任务
+                  </button>
+                  {projectSearchOpen && (
+                    <TaskSearchPanel
+                      items={items}
+                      members={projectMembers[selectedProject.id] ?? []}
+                      query={projectSearchQuery}
+                      filters={projectSearchFilters}
+                      tags={availableTags}
+                      onQueryChange={setProjectSearchQuery}
+                      onFiltersChange={setProjectSearchFilters}
+                      onSelect={item => {
+                        if (item.can_view_detail === false) return
+                        setSelectedItem(item)
+                        setProjectSearchOpen(false)
+                      }}
+                    />
+                  )}
                   {availableTags.length > 0 && (
                     <span className="relative z-10 ml-2 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-background px-2.5 text-xs transition hover:bg-muted">
                       <Tag className="h-3.5 w-3.5 text-text-muted" />
@@ -1304,14 +1338,16 @@ export function CloudTodoWorkspace({
                       </select>
                     </span>
                   )}
-                  <button
-                    type="button"
-                    data-testid="cloud-todo-add"
-                    onClick={() => openTodoCreation(projectView === 'board' ? boardParent : null)}
-                    className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> 新建任务
-                  </button>
+                  {canCreateBoardTask && (
+                    <button
+                      type="button"
+                      data-testid="cloud-todo-add"
+                      onClick={() => openTodoCreation(projectView === 'board' ? boardParent : null)}
+                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> 新建任务
+                    </button>
+                  )}
                 </>
               )}
             </header>
@@ -1399,16 +1435,11 @@ export function CloudTodoWorkspace({
                     >
                       <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
                         {columns.map(column => {
-                          const normalizedSearch = searchQuery.trim().toLowerCase()
                           const columnItems = items.filter(
                             item =>
                               item.parent_id === boardParentId &&
                               item.status === column.status &&
-                              (!tagFilter || (item.tags ?? []).includes(tagFilter)) &&
-                              (!normalizedSearch ||
-                                `${item.id} ${item.title} ${item.description}`
-                                  .toLowerCase()
-                                  .includes(normalizedSearch))
+                              (!tagFilter || (item.tags ?? []).includes(tagFilter))
                           )
                           return (
                             <section
@@ -1460,18 +1491,20 @@ export function CloudTodoWorkspace({
                                   </div>
                                 )}
                               </TodoColumnDropzone>
-                              <div className="shrink-0 px-2 pb-2">
-                                <button
-                                  type="button"
-                                  data-testid={`cloud-todo-column-bottom-add-${column.status}`}
-                                  onClick={() => openTodoCreation(boardParent, column.status)}
-                                  className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
-                                  aria-label={`在${column.label}中新建任务`}
-                                >
-                                  <Plus className="h-4 w-4" />
-                                  新建任务
-                                </button>
-                              </div>
+                              {canCreateBoardTask && (
+                                <div className="shrink-0 px-2 pb-2">
+                                  <button
+                                    type="button"
+                                    data-testid={`cloud-todo-column-bottom-add-${column.status}`}
+                                    onClick={() => openTodoCreation(boardParent, column.status)}
+                                    className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                                    aria-label={`在${column.label}中新建任务`}
+                                  >
+                                    <Plus className="h-4 w-4" />
+                                    新建任务
+                                  </button>
+                                </div>
+                              )}
                             </section>
                           )
                         })}
@@ -1494,7 +1527,32 @@ export function CloudTodoWorkspace({
         )}
       </main>
 
-      {selectedItem && selectedItemApi && (
+      {globalSearchOpen && (
+        <GlobalTodoSearch
+          projects={projects}
+          projectItems={projectItems}
+          projectMembers={projectMembers}
+          query={globalSearchQuery}
+          onQueryChange={setGlobalSearchQuery}
+          onClose={() => setGlobalSearchOpen(false)}
+          onSelectProject={projectId => {
+            selectProject(projectId)
+            setRootView('projects')
+            setProjectView('board')
+            setSelectedItem(null)
+            setGlobalSearchOpen(false)
+          }}
+          onSelectItem={(projectId, item) => {
+            if (item.can_view_detail === false) return
+            selectProject(projectId)
+            setRootView('projects')
+            setProjectView('board')
+            setSelectedItem(item)
+            setGlobalSearchOpen(false)
+          }}
+        />
+      )}
+      {selectedItem && selectedItem.can_view_detail !== false && selectedItemApi && (
         <TodoEditor
           key={`${selectedItem.id}:${selectedItem.version}`}
           mode="edit"

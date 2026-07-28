@@ -63,6 +63,14 @@ impl TaskRuntime {
             .map(mask_project)
     }
 
+    pub fn remove_external_project(&self, project_id: &str) -> Result<(), TaskRuntimeError> {
+        self.local_store.remove_external_project(project_id)
+    }
+
+    pub fn retain_external_projects(&self, project_ids: &[String]) -> Result<(), TaskRuntimeError> {
+        self.local_store.retain_external_projects(project_ids)
+    }
+
     pub async fn list_external_tasks(
         &self,
         project: ProjectDescriptor,
@@ -170,6 +178,81 @@ impl TaskRuntime {
                 "{provider:?}"
             ))),
         }
+    }
+
+    pub async fn search_tasks(
+        &self,
+        input: super::TaskSearch,
+    ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+        let projects = if let Some(project_id) = input.project_id.as_deref() {
+            vec![self.local_store.get_project(project_id)?]
+        } else {
+            self.local_store.list_projects()?
+        };
+        let query = input.query.trim().to_lowercase();
+        let mut matches = Vec::new();
+        for project in projects {
+            let tasks = self.list_tasks(&project.id).await?;
+            let child_ids = tasks
+                .iter()
+                .filter_map(|task| task.parent_id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            for task in tasks {
+                let tags = task
+                    .metadata
+                    .get("tags")
+                    .or_else(|| task.metadata.get("labels"))
+                    .and_then(serde_json::Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let text_matches = query.is_empty()
+                    || task.id.to_lowercase().contains(&query)
+                    || task
+                        .title
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(&query)
+                    || task.description.to_lowercase().contains(&query)
+                    || tags.iter().any(|tag| tag.to_lowercase().contains(&query));
+                if !text_matches
+                    || input
+                        .status
+                        .as_deref()
+                        .is_some_and(|value| task.status.as_deref() != Some(value))
+                    || input
+                        .priority
+                        .as_deref()
+                        .is_some_and(|value| task.priority.as_deref() != Some(value))
+                    || input
+                        .tag
+                        .as_deref()
+                        .is_some_and(|value| !tags.contains(&value))
+                    || input
+                        .creator_user_id
+                        .is_some_and(|value| task.created_by_user_id != value)
+                    || input
+                        .parent_id
+                        .as_deref()
+                        .is_some_and(|value| task.parent_id.as_deref() != Some(value))
+                    || input
+                        .has_children
+                        .is_some_and(|value| child_ids.contains(&task.id) != value)
+                {
+                    continue;
+                }
+                matches.push(task);
+                if matches.len() >= input.limit.clamp(1, 200) {
+                    return Ok(matches);
+                }
+            }
+        }
+        Ok(matches)
     }
 
     pub async fn get_task(

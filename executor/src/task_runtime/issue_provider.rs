@@ -240,12 +240,17 @@ impl IssueProvider {
                     .unwrap_or_default()
             });
             tags.retain(|label| !label.starts_with(CREATOR_LABEL_PREFIX));
-            if let Some(created_by_user_id) = current
-                .as_ref()
-                .map(|item| item.created_by_user_id)
-                .filter(|value| *value > 0)
-            {
-                tags.push(format!("{CREATOR_LABEL_PREFIX}{created_by_user_id}"));
+            if let Some(creator_label) = current.as_ref().and_then(|item| {
+                item.metadata
+                    .get("creator_label")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .or_else(|| {
+                        (item.created_by_user_id > 0)
+                            .then(|| format!("{CREATOR_LABEL_PREFIX}{}", item.created_by_user_id))
+                    })
+            }) {
+                tags.push(creator_label);
             }
             let priority = input
                 .priority
@@ -1168,6 +1173,10 @@ fn issue_loop_item(
     let status = status_from_labels(&provider_state, &labels);
     let priority = priority_from_labels(&labels);
     let created_by_user_id = creator_from_labels(&labels);
+    let creator_label = labels
+        .iter()
+        .find(|label| label.starts_with(CREATOR_LABEL_PREFIX))
+        .cloned();
     let labels = labels
         .into_iter()
         .filter(|label| {
@@ -1200,6 +1209,7 @@ fn issue_loop_item(
             "provider_state": provider_state,
             "web_url": web_url,
             "author": author,
+            "creator_label": creator_label,
             "labels": labels,
             "comments": comments,
         }),

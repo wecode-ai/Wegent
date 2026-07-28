@@ -629,7 +629,7 @@ describe('CloudTodoWorkspace', () => {
     expect(cloudServices.deliveryApi?.createCloudProject).not.toHaveBeenCalled()
   })
 
-  it('opens project member management and filters the board', async () => {
+  it('opens project member management and searches tasks without hiding the board', async () => {
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
@@ -643,9 +643,27 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-board-view'))
 
-    await userEvent.click(screen.getByTestId('cloud-search-toggle'))
-    await userEvent.type(screen.getByTestId('cloud-search-input'), 'missing')
-    expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-task-search-toggle'))
+    await userEvent.type(screen.getByTestId('cloud-project-task-search-input'), 'missing')
+    expect(screen.getByText('没有匹配的任务')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+  })
+
+  it('opens the global search with Command+K and opens a task result', async () => {
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await screen.findAllByText('Wegent V4')
+    await userEvent.keyboard('{Meta>}k{/Meta}')
+    await userEvent.type(screen.getByTestId('cloud-global-search-input'), 'WEG-1')
+    await userEvent.click(await screen.findByTestId('cloud-global-search-result-WEG-1'))
+
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
   })
 
   it('restores a missing cloud GitLab credential from project management', async () => {

@@ -71,6 +71,7 @@ class LoopItemResponse(BaseModel):
     sort_order: int
     tags: list[str] = []
     created_by_user_id: int
+    created_by_user_name: str | None = None
     can_view_detail: bool = True
     can_edit: bool = True
     current_delivery_id: str | None
@@ -111,6 +112,19 @@ class LoopItemResponse(BaseModel):
 
 class LoopItemListResponse(BaseModel):
     items: list[LoopItemResponse]
+
+
+class LoopItemCommentCreate(BaseModel):
+    body: str = Field(min_length=1)
+
+
+class LoopItemCommentResponse(BaseModel):
+    id: str
+    body: str
+    author: str
+    web_url: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class LoopItemAttachmentResponse(BaseModel):

@@ -43,6 +43,7 @@ export interface CloudLoopItem {
   sequence_number: number
   parent_id: string | null
   created_by_user_id: number
+  created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
   assignee_user_id: number | null
@@ -201,9 +202,6 @@ export function createDeliveryApi(client: HttpClient) {
       }
     }): Promise<CloudProject> {
       return client.post('/v1/cloud-projects', data)
-    },
-    getCloudProjectProviderCredential(projectId: CloudProjectIdInput): Promise<{ token: string }> {
-      return client.get(`/v1/cloud-projects/${projectId}/provider-credential`)
     },
     updateCloudProject(
       projectId: CloudProjectIdInput,

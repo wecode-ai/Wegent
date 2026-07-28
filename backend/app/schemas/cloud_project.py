@@ -156,10 +156,6 @@ class CloudProjectListResponse(BaseModel):
     items: list[CloudProjectResponse]
 
 
-class CloudProjectProviderCredentialResponse(BaseModel):
-    token: str
-
-
 class LocalBindingCreate(BaseModel):
     local_project_id: int
     device_id: str | None = Field(default=None, max_length=100)

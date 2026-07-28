@@ -13,10 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.provider_credentials import (
-    decrypt_provider_token,
-    store_provider_config,
-)
+from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject, CloudProjectLocalBinding
 from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -131,27 +128,6 @@ class CloudProjectService:
         return require_cloud_project_role(
             db, project_id, user_id, BaseRole.RestrictedAnalyst
         )
-
-    def get_provider_credential(
-        self, db: Session, project_id: int, user_id: int
-    ) -> str:
-        project = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.RestrictedAnalyst
-        ).project
-        metadata = (
-            project.metadata_json if isinstance(project.metadata_json, dict) else {}
-        )
-        try:
-            token = decrypt_provider_token(
-                project.task_provider, metadata.get("provider_config")
-            )
-        except ValueError as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-        if not token:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Provider credential is not configured"
-            )
-        return token
 
     def update(
         self,

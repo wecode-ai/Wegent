@@ -383,11 +383,12 @@ export function TodoEditor(props: TodoEditorProps) {
   const parentItem = allItems.find(candidate => candidate.id === parentId)
   const assignee = projectMembers.find(member => String(member.user_id) === assigneeId)
   const creator =
-    item && item.created_by_user_id === editProps?.project?.current_user_id
+    item?.created_by_user_name ||
+    (item && item.created_by_user_id === editProps?.project?.current_user_id
       ? editProps.project.current_user_name
       : item
         ? memberNameById(projectMembers, item.created_by_user_id)
-        : null
+        : null)
 
   async function submitCreate() {
     if (props.mode !== 'create' || !title.trim() || saving) return

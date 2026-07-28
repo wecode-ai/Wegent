@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => {
   }
   const backendDeliveryApi = {
     listCloudProjects: vi.fn(async () => ({ items: [project] })),
-    getCloudProjectProviderCredential: vi.fn(async () => ({ token: 'gitlab-secret' })),
     listLoopItems: vi.fn(),
     createLoopItem: vi.fn(),
   }

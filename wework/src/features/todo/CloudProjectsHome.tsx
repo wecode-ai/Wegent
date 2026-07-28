@@ -277,6 +277,7 @@ export function CloudProjectsHome({
                 const projectId = String(item.cloud_project_id)
                 const actorName =
                   memberNameById(projectMembers[projectId] ?? [], item.assignee_user_id) ??
+                  item.created_by_user_name ??
                   memberNameById(projectMembers[projectId] ?? [], item.created_by_user_id) ??
                   t('todo.home_activity_someone', '有人')
                 const actionLabel =

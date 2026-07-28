@@ -194,6 +194,56 @@ impl LocalTaskStore {
         Ok(descriptor_loop_item(project, provider_config))
     }
 
+    pub fn remove_external_project(&self, project_id: &str) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM project_provider_credentials
+             WHERE project_store = 'backend' AND project_id = ?1",
+            [project_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM external_project_catalog
+             WHERE project_store = 'backend' AND project_id = ?1",
+            [project_id],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn retain_external_projects(&self, project_ids: &[String]) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let transaction = connection.unchecked_transaction()?;
+        let retained = project_ids
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        let mut statement = transaction.prepare(
+            "SELECT project_id FROM external_project_catalog WHERE project_store = 'backend'",
+        )?;
+        let stored = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        for project_id in stored {
+            if retained.contains(&project_id) {
+                continue;
+            }
+            transaction.execute(
+                "DELETE FROM project_provider_credentials
+                 WHERE project_store = 'backend' AND project_id = ?1",
+                [&project_id],
+            )?;
+            transaction.execute(
+                "DELETE FROM external_project_catalog
+                 WHERE project_store = 'backend' AND project_id = ?1",
+                [&project_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn external_project(
         &self,
         project: ProjectDescriptor,
@@ -1196,6 +1246,81 @@ mod tests {
             store.get_project("cloud-1").unwrap().name.as_deref(),
             Some("Cloud GitHub board")
         );
+    }
+
+    #[test]
+    fn removes_backend_external_project_credentials_and_catalog_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = ProjectDescriptor {
+            id: "cloud-public".to_owned(),
+            public_id: Some("public-id".to_owned()),
+            project_key: "PUBLIC".to_owned(),
+            name: "Public GitHub".to_owned(),
+            description: String::new(),
+            project_store: ProjectStoreKind::Backend,
+            task_provider: TaskProviderKind::Github,
+            provider_config: json!({
+                "repository": "acme/public",
+                "token": "sensitive-token"
+            }),
+            version: 1,
+        };
+        store.configure_external_project(project).unwrap();
+
+        store.remove_external_project("cloud-public").unwrap();
+
+        assert!(store
+            .list_projects()
+            .unwrap()
+            .iter()
+            .all(|candidate| candidate.id != "cloud-public"));
+        let connection = store.connection().unwrap();
+        let credential_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM project_provider_credentials
+                 WHERE project_store = 'backend' AND project_id = 'cloud-public'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(credential_count, 0);
+    }
+
+    #[test]
+    fn retains_only_current_accounts_backend_external_projects() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        for id in ["account-a", "account-b"] {
+            store
+                .configure_external_project(ProjectDescriptor {
+                    id: id.to_owned(),
+                    public_id: None,
+                    project_key: id.to_uppercase(),
+                    name: id.to_owned(),
+                    description: String::new(),
+                    project_store: ProjectStoreKind::Backend,
+                    task_provider: TaskProviderKind::Github,
+                    provider_config: json!({
+                        "repository": format!("acme/{id}"),
+                        "token": format!("{id}-token")
+                    }),
+                    version: 1,
+                })
+                .unwrap();
+        }
+
+        store
+            .retain_external_projects(&["account-b".to_owned()])
+            .unwrap();
+
+        let project_ids = store
+            .list_projects()
+            .unwrap()
+            .into_iter()
+            .map(|project| project.id)
+            .collect::<Vec<_>>();
+        assert_eq!(project_ids, vec!["account-b"]);
     }
 
     #[test]

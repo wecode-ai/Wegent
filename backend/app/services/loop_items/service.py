@@ -326,6 +326,8 @@ class LoopItemService:
                 item.sort_order = position
                 item.version += 1
         db.commit()
+        for item in ordered:
+            db.refresh(item)
         return ordered
 
     def get(self, db: Session, item_id: str, user_id: int) -> LoopItem:
