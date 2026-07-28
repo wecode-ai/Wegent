@@ -71,6 +71,8 @@ class LoopItemResponse(BaseModel):
     sort_order: int
     tags: list[str] = []
     created_by_user_id: int
+    can_view_detail: bool = True
+    can_edit: bool = True
     current_delivery_id: str | None
     version: int
     created_at: datetime

@@ -40,6 +40,7 @@ import type {
   ProjectSpaceLocation,
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type {
@@ -51,16 +52,11 @@ import type {
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { CloudProjectManageView } from './CloudProjectManageView'
+import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
 import { repositoryProviderConfig } from './projectProviderConfig'
 import { TodoEditor } from './TodoEditor'
-import {
-  columnDotClasses,
-  columns,
-  memberAvatarClasses,
-  priorityBadgeClasses,
-  reorderLaneItems,
-} from './todoShared'
+import { columnDotClasses, columns, priorityBadgeClasses, reorderLaneItems } from './todoShared'
 
 type ProjectView = 'board' | 'files' | 'manage'
 type RootView = 'projects' | 'my-work'
@@ -172,6 +168,7 @@ function DraggableTodoCard({
     isDragging,
   } = useDraggable({
     id: item.id,
+    disabled: item.can_edit === false,
   })
   const { isOver, setNodeRef: setDropRef } = useDroppable({ id: `todo-card:${item.id}` })
   return (
@@ -191,8 +188,9 @@ function DraggableTodoCard({
       <button
         type="button"
         data-testid={`cloud-todo-card-${item.id}`}
+        disabled={item.can_view_detail === false}
         onClick={onClick}
-        className="w-full px-3 pt-3 text-left"
+        className="w-full px-3 pt-3 text-left disabled:cursor-default"
         {...listeners}
         {...attributes}
       >
@@ -216,9 +214,10 @@ function DraggableTodoCard({
         <button
           type="button"
           data-testid={`cloud-todo-card-add-child-${item.id}`}
+          disabled={item.can_edit === false}
           onClick={onAddChild}
           className={cn(
-            'ml-auto flex items-center gap-1 text-xs text-text-muted opacity-0 transition hover:text-text-primary focus-visible:opacity-100 group-hover:opacity-100'
+            'ml-auto flex items-center gap-1 text-xs text-text-muted opacity-0 transition hover:text-text-primary focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden'
           )}
         >
           <Plus className="h-3.5 w-3.5" /> 子任务
@@ -318,6 +317,7 @@ function ProjectDialog({
   onClose: () => void
   onCreated: (project: CloudProject, location: ProjectSpaceLocation) => void
 }) {
+  const { t } = useTranslation('common')
   const initialLocation =
     availableApis.find(option => option.location === defaultLocation)?.location ??
     availableApis[0]?.location ??
@@ -326,6 +326,7 @@ function ProjectDialog({
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState<ProjectSpaceLocation>(initialLocation)
   const [taskProvider, setTaskProvider] = useState<ProjectTaskProvider>('local')
+  const [visibility, setVisibility] = useState<'private' | 'public'>('private')
   const [repositoryAddress, setRepositoryAddress] = useState('')
   const [token, setToken] = useState('')
   const [saving, setSaving] = useState(false)
@@ -354,6 +355,7 @@ function ProjectDialog({
         description: description.trim(),
         task_provider: taskProvider,
         provider_config: providerConfig,
+        ...(location === 'cloud' ? { visibility } : {}),
       })
       onCreated(project, location)
     } catch (cause) {
@@ -429,6 +431,55 @@ function ProjectDialog({
             })}
           </div>
         </section>
+
+        {location === 'cloud' && (
+          <section>
+            <h3 className="text-sm font-medium text-text-primary">
+              {t('todo.project_visibility')}
+            </h3>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {(
+                [
+                  [
+                    'private',
+                    LockKeyhole,
+                    t('todo.project_visibility_private'),
+                    t('todo.project_visibility_private_description'),
+                  ],
+                  [
+                    'public',
+                    Cloud,
+                    t('todo.project_visibility_public'),
+                    t('todo.project_visibility_public_description'),
+                  ],
+                ] as const
+              ).map(([value, VisibilityIcon, label, detail]) => (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid={`cloud-project-visibility-${value}`}
+                  aria-pressed={visibility === value}
+                  onClick={() => setVisibility(value)}
+                  className={cn(
+                    'rounded-xl border px-3 py-2.5 text-left transition',
+                    visibility === value
+                      ? 'border-text-primary bg-muted/70 ring-1 ring-text-primary/10'
+                      : 'border-border hover:bg-muted/40'
+                  )}
+                >
+                  <VisibilityIcon className="h-4 w-4 text-text-secondary" />
+                  <span className="mt-2 block text-sm font-medium">{label}</span>
+                  <span className="mt-0.5 block text-xs text-text-muted">{detail}</span>
+                </button>
+              ))}
+            </div>
+            {visibility === 'public' && (
+              <p className="mt-2 text-xs leading-4 text-text-muted">
+                {t('todo.project_visibility_public_notice')}
+              </p>
+            )}
+          </section>
+        )}
 
         <section>
           <h3 className="text-sm font-medium text-text-primary">任务来源</h3>
@@ -654,6 +705,9 @@ export function CloudTodoWorkspace({
   const [projects, setProjects] = useState<LocatedCloudProject[]>([])
   const [projectCounts, setProjectCounts] = useState<Record<string, number>>({})
   const [projectMembers, setProjectMembers] = useState<Record<string, CloudProjectMember[]>>({})
+  // Every project's loop items, cached for the projects-home overview
+  // (stats, recent activity). Keyed by project id.
+  const [projectItems, setProjectItems] = useState<Record<string, CloudLoopItem[]>>({})
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [items, setItems] = useState<CloudLoopItem[]>([])
   // Which project's items are currently in `items`. Anything else rendered on
@@ -770,10 +824,10 @@ export function CloudTodoWorkspace({
               api.listLoopItems(project.id),
               api.listCloudProjectMembers(project.id),
             ])
-            const issueCount =
-              loopItemsResult.status === 'fulfilled' ? loopItemsResult.value.items.length : 0
+            const loopItems =
+              loopItemsResult.status === 'fulfilled' ? loopItemsResult.value.items : []
             const members = membersResult.status === 'fulfilled' ? membersResult.value : []
-            return [project.id, issueCount, members] as const
+            return [project.id, loopItems.length, members, loopItems] as const
           })
         )
         return { details, projects }
@@ -785,6 +839,7 @@ export function CloudTodoWorkspace({
         setProjects(results.flatMap(result => result.projects))
         setProjectCounts(Object.fromEntries(details.map(([id, count]) => [id, count])))
         setProjectMembers(Object.fromEntries(details.map(([id, , members]) => [id, members])))
+        setProjectItems(Object.fromEntries(details.map(([id, , , loopItems]) => [id, loopItems])))
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -802,6 +857,8 @@ export function CloudTodoWorkspace({
         .then(response => {
           if (!active) return
           applyBoardItems(selectedProjectId, response.items, null)
+          // Keep the projects-home cache in sync with the board fetch.
+          setProjectItems(current => ({ ...current, [selectedProjectId]: response.items }))
           // Only sync the open drawer when it belongs to this project; a drawer
           // opened from another view (e.g. my work) must not be closed here.
           setSelectedItem(current =>
@@ -833,11 +890,11 @@ export function CloudTodoWorkspace({
     }
   }, [applyBoardItems, selectedProjectApi, selectedProjectId])
   useEffect(() => {
-    if (rootView !== 'my-work') return
+    if (rootView !== 'my-work' && !(rootView === 'projects' && !selectedProjectId)) return
     void Promise.all(availableProjectSpaceApis.map(({ api }) => api.listMyWork())).then(responses =>
       setMyWork(responses.flatMap(response => response.items))
     )
-  }, [availableProjectSpaceApis, rootView])
+  }, [availableProjectSpaceApis, rootView, selectedProjectId])
   // Load the drawer project's items when the drawer shows a todo from a project
   // other than the one on the board, so subtasks and parent options stay correct.
   useEffect(() => {
@@ -886,7 +943,7 @@ export function CloudTodoWorkspace({
   ) {
     const item = items.find(candidate => candidate.id === itemId)
     const reordered = reorderLaneItems(items, itemId, status, beforeItemId)
-    if (!item || !reordered) return
+    if (!item || item.can_edit === false || !reordered) return
     const previousItems = items
     setItems(reordered.items)
     setBoardError(null)
@@ -1116,7 +1173,9 @@ export function CloudTodoWorkspace({
           <CloudMyWorkView
             items={myWork}
             // Open the detail drawer in place instead of jumping to the board.
-            onSelectItem={item => setSelectedItem(item)}
+            onSelectItem={item => {
+              if (item.can_view_detail !== false) setSelectedItem(item)
+            }}
           />
         ) : loading ? (
           <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
@@ -1138,89 +1197,22 @@ export function CloudTodoWorkspace({
             </button>
           </div>
         ) : !selectedProject ? (
-          <div className="flex min-h-0 flex-1 flex-col px-8 py-7">
-            <div className="mx-auto flex w-full max-w-[880px] items-start">
-              <div>
-                <h1 className="text-heading-md font-semibold">项目空间</h1>
-                <p className="mt-1 text-sm text-text-muted">
-                  多人和 AI 在各自本地工作区协作，共享任务、文件与交付。
-                </p>
-              </div>
-              <span className="flex-1" />
-              <button
-                type="button"
-                onClick={() => setCreateProjectOpen(true)}
-                className="flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90"
-              >
-                <Plus className="h-3.5 w-3.5" /> 新建项目空间
-              </button>
-            </div>
-            <div className="mx-auto mt-6 flex min-h-0 w-full max-w-[880px] flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
-              <div className="grid h-10 shrink-0 grid-cols-[minmax(0,1fr)_80px_120px_170px] items-center bg-muted/30 px-4 text-xs text-text-muted">
-                <span>项目</span>
-                <span>任务</span>
-                <span>更新时间</span>
-                <span>成员</span>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                {projects
-                  .filter(project =>
-                    `${project.name} ${project.project_key} ${project.description}`
-                      .toLowerCase()
-                      .includes(searchQuery.trim().toLowerCase())
-                  )
-                  .map(project => {
-                    const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
-                    return (
-                      <button
-                        key={project.id}
-                        type="button"
-                        onClick={() => selectProject(project.id)}
-                        className="grid h-12 w-full grid-cols-[minmax(0,1fr)_80px_120px_170px] items-center border-t border-border px-4 text-left transition-colors hover:bg-muted/60"
-                      >
-                        <span className="flex min-w-0 items-center gap-2.5">
-                          <ProjectLocationIcon className="h-4 w-4 shrink-0 text-text-muted" />
-                          <span className="truncate text-sm font-medium">{project.name}</span>
-                          <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
-                            {project.location === 'local' ? '本地' : '云端'}
-                          </span>
-                        </span>
-                        <span className="text-xs text-text-muted">
-                          {projectCounts[project.id] ?? '—'}
-                        </span>
-                        <span className="text-xs text-text-muted">
-                          {project.updated_at.slice(5, 10)}
-                        </span>
-                        <span className="flex items-center">
-                          {(projectMembers[project.id] ?? [])
-                            .slice(0, 3)
-                            .map((member, memberIndex) => (
-                              <span
-                                key={member.user_id}
-                                className={cn(
-                                  'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background ring-2 ring-background',
-                                  memberAvatarClasses[memberIndex % memberAvatarClasses.length],
-                                  memberIndex > 0 && '-ml-1.5'
-                                )}
-                              >
-                                {member.user_name.slice(0, 1).toUpperCase()}
-                              </span>
-                            ))}
-                          <span className="ml-2 text-xs text-text-muted">
-                            {projectMembers[project.id]
-                              ? `${projectMembers[project.id].length} 人`
-                              : '—'}
-                          </span>
-                        </span>
-                      </button>
-                    )
-                  })}
-              </div>
-            </div>
-            <p className="mx-auto mt-5 w-full max-w-[880px] text-xs text-text-muted">
-              本地空间保存在当前设备；云端空间可与项目成员共享任务、文件和交付。
-            </p>
-          </div>
+          <CloudProjectsHome
+            projects={projects}
+            projectCounts={projectCounts}
+            projectMembers={projectMembers}
+            projectItems={projectItems}
+            myWork={myWork}
+            searchQuery={searchQuery}
+            onCreateProject={() => setCreateProjectOpen(true)}
+            onSelectProject={projectId => selectProject(projectId)}
+            onManageProject={projectId => {
+              selectProject(projectId)
+              setProjectView('manage')
+            }}
+            onSelectItem={item => setSelectedItem(item)}
+            onOpenMyWork={() => setRootView('my-work')}
+          />
         ) : (
           <>
             <header
@@ -1256,31 +1248,35 @@ export function CloudTodoWorkspace({
                 >
                   事项
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setProjectView('files')}
-                  className={cn(
-                    'rounded-md px-3.5 py-1 text-sm',
-                    projectView === 'files'
-                      ? 'bg-background font-medium text-text-primary shadow-sm'
-                      : 'text-text-secondary hover:text-text-primary'
-                  )}
-                >
-                  文件
-                </button>
-                <button
-                  type="button"
-                  data-testid="cloud-project-manage-view"
-                  onClick={() => setProjectView('manage')}
-                  className={cn(
-                    'rounded-md px-3.5 py-1 text-sm',
-                    projectView === 'manage'
-                      ? 'bg-background font-medium text-text-primary shadow-sm'
-                      : 'text-text-secondary hover:text-text-primary'
-                  )}
-                >
-                  管理
-                </button>
+                {selectedProject.access_role !== 'RestrictedAnalyst' && (
+                  <button
+                    type="button"
+                    onClick={() => setProjectView('files')}
+                    className={cn(
+                      'rounded-md px-3.5 py-1 text-sm',
+                      projectView === 'files'
+                        ? 'bg-background font-medium text-text-primary shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary'
+                    )}
+                  >
+                    文件
+                  </button>
+                )}
+                {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') && (
+                  <button
+                    type="button"
+                    data-testid="cloud-project-manage-view"
+                    onClick={() => setProjectView('manage')}
+                    className={cn(
+                      'rounded-md px-3.5 py-1 text-sm',
+                      projectView === 'manage'
+                        ? 'bg-background font-medium text-text-primary shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary'
+                    )}
+                  >
+                    管理
+                  </button>
+                )}
               </nav>
               <span className="flex-1" />
               {projectView === 'board' && (
@@ -1451,7 +1447,9 @@ export function CloudTodoWorkspace({
                                     childCount={
                                       items.filter(child => child.parent_id === item.id).length
                                     }
-                                    onClick={() => setSelectedItem(item)}
+                                    onClick={() => {
+                                      if (item.can_view_detail !== false) setSelectedItem(item)
+                                    }}
                                     onAddChild={() => openTodoCreation(item)}
                                     onOpenChildren={() => setBoardParentId(item.id)}
                                   />

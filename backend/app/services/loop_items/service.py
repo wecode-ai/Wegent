@@ -33,14 +33,17 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.base_role import BaseRole
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.delivery import (
     LoopItemCreate,
     LoopItemReorder,
     LoopItemTaskBind,
     LoopItemUpdate,
 )
-from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.cloud_projects.access import (
+    CloudProjectAccess,
+    require_cloud_project_role,
+)
 from app.services.delivery.storage import delivery_storage
 from app.stores.tasks import task_store
 
@@ -52,10 +55,20 @@ class LoopItemService:
         cloud_project_id: int,
         user_id: int,
         required_role: BaseRole = BaseRole.Reporter,
-    ) -> CloudProject:
-        project = require_cloud_project_role(
-            db, cloud_project_id, user_id, required_role
-        ).project
+        *,
+        allow_public_visitor: bool = False,
+    ) -> CloudProjectAccess:
+        access = require_cloud_project_role(
+            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+        )
+        if access.is_public_visitor:
+            if not allow_public_visitor:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Insufficient permission"
+                )
+        elif not has_permission(access.role, required_role):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        project = access.project
         if project.task_provider != "local":
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -64,7 +77,65 @@ class LoopItemService:
                     "use the local Issue provider"
                 ),
             )
-        return project
+        return access
+
+    @staticmethod
+    def _item_permissions(
+        access: CloudProjectAccess, item: LoopItem, user_id: int
+    ) -> tuple[bool, bool]:
+        if access.is_public_visitor:
+            owns_item = item.created_by_user_id == user_id
+            return owns_item, owns_item
+        return True, has_permission(access.role, BaseRole.Developer)
+
+    def response_values(
+        self,
+        db: Session,
+        item: LoopItem,
+        user_id: int,
+        access: CloudProjectAccess | None = None,
+    ) -> dict[str, object]:
+        access = access or require_cloud_project_role(
+            db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+        )
+        can_view_detail, can_edit = self._item_permissions(access, item, user_id)
+        values = {
+            **item.__dict__,
+            "can_view_detail": can_view_detail,
+            "can_edit": can_edit,
+        }
+        if not can_view_detail:
+            values["description"] = ""
+        return values
+
+    def _get_item_row(
+        self, db: Session, item_id: str, *, include_deleted: bool = False
+    ) -> LoopItem:
+        query = db.query(LoopItem).filter(LoopItem.id == item_id)
+        if not include_deleted:
+            query = query.filter(loop_datetime_is_unset(LoopItem.deleted_at))
+        item = query.first()
+        if item is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        return item
+
+    def _require_item_access(
+        self,
+        db: Session,
+        item: LoopItem,
+        user_id: int,
+        *,
+        edit: bool = False,
+    ) -> CloudProjectAccess:
+        access = require_cloud_project_role(
+            db, item.cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+        )
+        can_view_detail, can_edit = self._item_permissions(access, item, user_id)
+        if edit and not can_edit:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        if not edit and not can_view_detail:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        return access
 
     def ensure_collaborator(
         self,
@@ -78,7 +149,12 @@ class LoopItemService:
     ) -> LoopItemCollaborator:
         """Ensure one project member participates in a TODO."""
 
-        require_cloud_project_role(db, item.cloud_project_id, collaborator_user_id)
+        require_cloud_project_role(
+            db,
+            item.cloud_project_id,
+            collaborator_user_id,
+            BaseRole.RestrictedAnalyst,
+        )
         collaborator = (
             db.query(LoopItemCollaborator)
             .filter(
@@ -124,9 +200,7 @@ class LoopItemService:
         self, db: Session, item_id: str, collaborator_user_id: int, user_id: int
     ) -> dict[str, object]:
         item = self.get(db, item_id, user_id)
-        require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Developer
-        )
+        self._require_item_access(db, item, user_id, edit=True)
         self.ensure_collaborator(db, item, collaborator_user_id, user_id, "manual")
         return next(
             row
@@ -138,9 +212,7 @@ class LoopItemService:
         self, db: Session, item_id: str, collaborator_user_id: int, user_id: int
     ) -> None:
         item = self.get(db, item_id, user_id)
-        require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Developer
-        )
+        self._require_item_access(db, item, user_id, edit=True)
         collaborator = (
             db.query(LoopItemCollaborator)
             .filter(
@@ -162,7 +234,11 @@ class LoopItemService:
         values: LoopItemCreate,
     ) -> LoopItem:
         self._require_internal_task_project(
-            db, cloud_project_id, user_id, BaseRole.Developer
+            db,
+            cloud_project_id,
+            user_id,
+            BaseRole.Developer,
+            allow_public_visitor=True,
         )
         if values.parent_id is not None:
             self._require_parent(db, values.parent_id, cloud_project_id)
@@ -193,7 +269,9 @@ class LoopItemService:
         return item
 
     def list(self, db: Session, cloud_project_id: int, user_id: int) -> list[LoopItem]:
-        self._require_internal_task_project(db, cloud_project_id, user_id)
+        self._require_internal_task_project(
+            db, cloud_project_id, user_id, allow_public_visitor=True
+        )
         return (
             db.query(LoopItem)
             .filter(
@@ -251,17 +329,8 @@ class LoopItemService:
         return ordered
 
     def get(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        item = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.id == item_id,
-                loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .first()
-        )
-        if item is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
-        require_cloud_project_role(db, item.cloud_project_id, user_id)
+        item = self._get_item_row(db, item_id)
+        self._require_item_access(db, item, user_id)
         return item
 
     def list_attachments(
@@ -285,9 +354,7 @@ class LoopItemService:
         source: BinaryIO,
     ) -> LoopItemAttachment:
         item = self.get(db, item_id, user_id)
-        require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Developer
-        )
+        self._require_item_access(db, item, user_id, edit=True)
         project = db.get(CloudProject, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
@@ -341,9 +408,7 @@ class LoopItemService:
     def delete_attachment(self, db: Session, attachment_id: str, user_id: int) -> None:
         attachment = self._get_attachment(db, attachment_id, user_id)
         item = self.get(db, attachment.loop_item_id, user_id)
-        require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Developer
-        )
+        self._require_item_access(db, item, user_id, edit=True)
         delivery_storage.remove_objects([attachment.object_key])
         db.delete(attachment)
         db.commit()
@@ -365,9 +430,7 @@ class LoopItemService:
         values: LoopItemUpdate,
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
-        require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Developer
-        )
+        self._require_item_access(db, item, user_id, edit=True)
         updates = values.model_dump(exclude={"version"}, exclude_unset=True)
         if "parent_id" in values.model_fields_set:
             self._validate_parent_change(db, item, values.parent_id)
@@ -404,9 +467,7 @@ class LoopItemService:
         """Soft delete a TODO; the row is kept for the recycle bin."""
 
         item = self.get(db, item_id, user_id)
-        require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Developer
-        )
+        self._require_item_access(db, item, user_id, edit=True)
         item.deleted_at = self._now()
         item.version += 1
         db.commit()
@@ -416,12 +477,8 @@ class LoopItemService:
     def restore(self, db: Session, item_id: str, user_id: int) -> LoopItem:
         """Restore a soft-deleted TODO from the recycle bin."""
 
-        item = db.query(LoopItem).filter(LoopItem.id == item_id).first()
-        if item is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
-        require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Developer
-        )
+        item = self._get_item_row(db, item_id, include_deleted=True)
+        self._require_item_access(db, item, user_id, edit=True)
         if loop_datetime_value_is_unset(item.deleted_at):
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO is not deleted")
         item.deleted_at = None
@@ -435,16 +492,16 @@ class LoopItemService:
     ) -> list[LoopItem]:
         """List soft-deleted TODOs of a project, most recently deleted first."""
 
-        require_cloud_project_role(db, cloud_project_id, user_id)
-        return (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.cloud_project_id == cloud_project_id,
-                ~loop_datetime_is_unset(LoopItem.deleted_at),
-            )
-            .order_by(LoopItem.deleted_at.desc())
-            .all()
+        access = require_cloud_project_role(
+            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
         )
+        query = db.query(LoopItem).filter(
+            LoopItem.cloud_project_id == cloud_project_id,
+            ~loop_datetime_is_unset(LoopItem.deleted_at),
+        )
+        if access.is_public_visitor:
+            query = query.filter(LoopItem.created_by_user_id == user_id)
+        return query.order_by(LoopItem.deleted_at.desc()).all()
 
     def _require_parent(
         self, db: Session, parent_id: str, cloud_project_id: int
@@ -489,9 +546,7 @@ class LoopItemService:
         user_id: int,
     ) -> LoopItemTaskBinding:
         item = self.get(db, item_id, user_id)
-        require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Developer
-        )
+        self._require_item_access(db, item, user_id, edit=True)
         self._validate_backend_task(db, values.backend_task_id, user_id)
         active = (
             db.query(LoopItemTaskBinding)
@@ -542,7 +597,9 @@ class LoopItemService:
     ) -> LoopItemTaskBinding:
         """Associate a runtime Task with a cloud project without choosing a TODO."""
 
-        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Developer)
+        require_cloud_project_role(
+            db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
+        )
         self._validate_backend_task(db, values.backend_task_id, user_id)
         active = self._active_task_binding(db, values, user_id, lock=True)
         if active is not None:
@@ -593,7 +650,7 @@ class LoopItemService:
         project = db.get(CloudProject, binding.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-        require_cloud_project_role(db, project.id, user_id)
+        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
         item = db.get(LoopItem, binding.loop_item_id) if binding.loop_item_id else None
         return binding, project, item
 

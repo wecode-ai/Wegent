@@ -43,6 +43,8 @@ export interface CloudLoopItem {
   sequence_number: number
   parent_id: string | null
   created_by_user_id: number
+  can_view_detail?: boolean
+  can_edit?: boolean
   assignee_user_id: number | null
   title: string
   description: string
@@ -84,6 +86,9 @@ export interface CloudProject {
     credential_configured?: boolean
   }
   created_by_user_id: number
+  current_user_id?: number
+  access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst'
+  visibility?: 'private' | 'public'
   status: string
   tags: string[]
   version: number
@@ -186,6 +191,7 @@ export function createDeliveryApi(client: HttpClient) {
       name: string
       description?: string
       task_provider?: 'local' | 'github' | 'gitlab'
+      visibility?: 'private' | 'public'
       provider_config?: {
         repository?: string
         domain?: string
@@ -204,6 +210,7 @@ export function createDeliveryApi(client: HttpClient) {
         name?: string
         description?: string
         tags?: string[]
+        visibility?: 'private' | 'public'
         provider_config?: {
           repository?: string
           domain?: string

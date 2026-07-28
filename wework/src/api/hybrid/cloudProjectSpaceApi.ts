@@ -18,6 +18,7 @@ export function createCloudProjectSpaceApi(
 ): DeliveryApi {
   const projects = new Map<CloudProjectId, CloudProject>()
   const taskProjects = new Map<string, CloudProjectId>()
+  const tasks = new Map<string, CloudLoopItem>()
 
   function rememberProject(project: CloudProject): CloudProject {
     projects.set(project.id, project)
@@ -25,7 +26,10 @@ export function createCloudProjectSpaceApi(
   }
 
   function rememberTasks(projectId: CloudProjectId, items: CloudLoopItem[]): void {
-    for (const item of items) taskProjects.set(item.id, projectId)
+    for (const item of items) {
+      taskProjects.set(item.id, projectId)
+      tasks.set(item.id, item)
+    }
   }
 
   function requireProject(projectId: CloudProjectId | number): CloudProject {
@@ -40,6 +44,17 @@ export function createCloudProjectSpaceApi(
     return requireProject(projectId)
   }
 
+  function requireTaskPermission(itemId: string, permission: 'view' | 'edit'): void {
+    const item = tasks.get(itemId)
+    if (!item) throw new Error('Task must be loaded before it can be accessed')
+    if (permission === 'view' && item.can_view_detail === false) {
+      throw new Error('You can only view tasks that you created in this public project')
+    }
+    if (permission === 'edit' && item.can_edit === false) {
+      throw new Error('You can only edit tasks that you created in this public project')
+    }
+  }
+
   return {
     ...storeApi,
     async listCloudProjects() {
@@ -49,7 +64,7 @@ export function createCloudProjectSpaceApi(
           rememberProject(project)
           if (
             isExternalProject(project) &&
-            project.provider_config.credential_configured !== false
+            project.provider_config?.credential_configured !== false
           ) {
             let credential
             try {
@@ -109,10 +124,11 @@ export function createCloudProjectSpaceApi(
     },
     async getLoopItem(itemId) {
       const project = requireTaskProject(itemId)
+      if (isExternalProject(project)) requireTaskPermission(itemId, 'view')
       const item = isExternalProject(project)
         ? await externalIssueApi.getLoopItem(project, itemId)
         : await storeApi.getLoopItem(itemId)
-      taskProjects.set(item.id, project.id)
+      rememberTasks(project.id, [item])
       return item
     },
     async createLoopItem(projectId, data) {
@@ -120,15 +136,16 @@ export function createCloudProjectSpaceApi(
       const item = isExternalProject(project)
         ? await externalIssueApi.createLoopItem(project, data)
         : await storeApi.createLoopItem(projectId, data)
-      taskProjects.set(item.id, project.id)
+      rememberTasks(project.id, [item])
       return item
     },
     async updateLoopItem(itemId, data) {
       const project = requireTaskProject(itemId)
+      if (isExternalProject(project)) requireTaskPermission(itemId, 'edit')
       const item = isExternalProject(project)
         ? await externalIssueApi.updateLoopItem(project, itemId, data)
         : await storeApi.updateLoopItem(itemId, data)
-      taskProjects.set(item.id, project.id)
+      rememberTasks(project.id, [item])
       return item
     },
     async reorderLoopItems(projectId, data) {
@@ -136,24 +153,31 @@ export function createCloudProjectSpaceApi(
       if (!isExternalProject(project)) {
         return storeApi.reorderLoopItems(projectId, data)
       }
+      if (project.access_role === 'RestrictedAnalyst') {
+        throw new Error('Public project visitors cannot reorder tasks')
+      }
       const response = await externalIssueApi.listLoopItems(project)
       rememberTasks(project.id, response.items)
       return response
     },
     async listDeliveries(itemId) {
+      if (isExternalProject(requireTaskProject(itemId))) requireTaskPermission(itemId, 'view')
       return isExternalProject(requireTaskProject(itemId))
         ? { items: [] }
         : storeApi.listDeliveries(itemId)
     },
     async listTaskBindings(itemId) {
+      if (isExternalProject(requireTaskProject(itemId))) requireTaskPermission(itemId, 'view')
       return isExternalProject(requireTaskProject(itemId)) ? [] : storeApi.listTaskBindings(itemId)
     },
     async listLoopItemAttachments(itemId) {
+      if (isExternalProject(requireTaskProject(itemId))) requireTaskPermission(itemId, 'view')
       return isExternalProject(requireTaskProject(itemId))
         ? []
         : storeApi.listLoopItemAttachments(itemId)
     },
     async listLoopItemCollaborators(itemId) {
+      if (isExternalProject(requireTaskProject(itemId))) requireTaskPermission(itemId, 'view')
       return isExternalProject(requireTaskProject(itemId))
         ? []
         : storeApi.listLoopItemCollaborators(itemId)

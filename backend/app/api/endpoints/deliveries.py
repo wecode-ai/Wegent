@@ -33,10 +33,19 @@ from app.schemas.delivery import (
     MyWorkItemResponse,
     MyWorkListResponse,
 )
+from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.loop_items import loop_item_service
 
 router = APIRouter()
+
+
+def _loop_item_response(
+    db: Session, item: object, current_user: User
+) -> LoopItemResponse:
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id)
+    )
 
 
 def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
@@ -117,7 +126,7 @@ def find_runtime_task_loop_item(
     item = loop_item_service.find_for_runtime_task(
         db, current_user.id, device_id, task_id
     )
-    return LoopItemResponse.model_validate(item)
+    return _loop_item_response(db, item, current_user)
 
 
 @router.get("/runtime-tasks/cloud-context", response_model=CloudTaskContextResponse)
@@ -133,8 +142,18 @@ def find_runtime_task_cloud_context(
     return CloudTaskContextResponse.model_validate(
         {
             **binding.__dict__,
-            "project": project,
-            "loop_item": item,
+            "project": {
+                **project.__dict__,
+                "current_user_id": current_user.id,
+                "access_role": cloud_project_service.access(
+                    db, project.id, current_user.id
+                ).role,
+            },
+            "loop_item": (
+                loop_item_service.response_values(db, item, current_user.id)
+                if item is not None
+                else None
+            ),
         }
     )
 
@@ -175,8 +194,16 @@ def list_loop_items(
     current_user: User = Depends(get_current_user),
 ) -> LoopItemListResponse:
     items = loop_item_service.list(db, project_id, current_user.id)
+    access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemListResponse(
-        items=[LoopItemResponse.model_validate(item) for item in items]
+        items=[
+            LoopItemResponse.model_validate(
+                loop_item_service.response_values(
+                    db, item, current_user.id, access=access
+                )
+            )
+            for item in items
+        ]
     )
 
 
@@ -192,7 +219,7 @@ def create_loop_item(
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
     item = loop_item_service.create(db, project_id, current_user.id, values)
-    return LoopItemResponse.model_validate(item)
+    return _loop_item_response(db, item, current_user)
 
 
 @router.post(
@@ -207,7 +234,7 @@ def reorder_loop_items(
 ) -> LoopItemListResponse:
     items = loop_item_service.reorder(db, project_id, current_user.id, values)
     return LoopItemListResponse(
-        items=[LoopItemResponse.model_validate(item) for item in items]
+        items=[_loop_item_response(db, item, current_user) for item in items]
     )
 
 
@@ -218,7 +245,7 @@ def get_loop_item(
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
     item = loop_item_service.get(db, item_id, current_user.id)
-    return LoopItemResponse.model_validate(item)
+    return _loop_item_response(db, item, current_user)
 
 
 @router.patch("/loop-items/{item_id}", response_model=LoopItemResponse)
@@ -229,7 +256,7 @@ def update_loop_item(
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
     item = loop_item_service.update(db, item_id, current_user.id, values)
-    return LoopItemResponse.model_validate(item)
+    return _loop_item_response(db, item, current_user)
 
 
 @router.get(

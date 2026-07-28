@@ -216,6 +216,8 @@ pub struct LoopItem {
     pub name: Option<String>,
     pub title: Option<String>,
     pub description: String,
+    #[serde(default)]
+    pub created_by_user_id: i64,
     pub sequence_number: Option<i64>,
     pub next_item_number: Option<i64>,
     pub status: Option<String>,

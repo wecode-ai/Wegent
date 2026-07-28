@@ -2,14 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::env;
+use std::{env, fs, path::Path};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::protocol::ExecutionRequest;
 
-use super::{ProjectCreate, TaskRuntime};
+use super::{BinaryInput, ProjectCreate, TaskRuntime};
 
 const TASK_MCP_SERVER_NAME: &str = "wegent_tasks";
 
@@ -186,6 +187,60 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
+        "list_todo_attachments" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let task_id = string_argument(&arguments, "task_id");
+            match (project_id, task_id) {
+                (Ok(project_id), Ok(task_id)) => runtime
+                    .list_task_attachments(project_id, task_id)
+                    .await
+                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        }
+        "upload_todo_attachment" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let task_id = string_argument(&arguments, "task_id");
+            let file_path = string_argument(&arguments, "file_path");
+            match (project_id, task_id, file_path) {
+                (Ok(project_id), Ok(task_id), Ok(file_path)) => {
+                    let input = binary_input_from_path(&arguments, file_path);
+                    match input {
+                        Ok(input) => runtime
+                            .add_task_attachment(project_id, task_id, input)
+                            .await
+                            .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                        Err(error) => Err(error),
+                    }
+                }
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "download_todo_attachment" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let task_id = string_argument(&arguments, "task_id");
+            let attachment_id = string_argument(&arguments, "attachment_id");
+            match (project_id, task_id, attachment_id) {
+                (Ok(project_id), Ok(task_id), Ok(attachment_id)) => runtime
+                    .task_attachment_path(project_id, task_id, attachment_id)
+                    .await
+                    .and_then(|path| copy_attachment_if_requested(&arguments, &path))
+                    .map(|path| json!({"path": path})),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "delete_todo_attachment" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let task_id = string_argument(&arguments, "task_id");
+            let attachment_id = string_argument(&arguments, "attachment_id");
+            match (project_id, task_id, attachment_id) {
+                (Ok(project_id), Ok(task_id), Ok(attachment_id)) => runtime
+                    .delete_task_attachment(project_id, task_id, attachment_id)
+                    .await
+                    .map(|_| json!({"deleted": true})),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
         "reorder_todos" => {
             let project_id = string_argument(&arguments, "project_id");
             let input = parse(
@@ -320,6 +375,60 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "list_todo_attachments",
+            "List attachments stored for a task. GitLab Issue attachments are read from GitLab.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "task_id": {"type": "string"}
+                },
+                "required": ["project_id", "task_id"]
+            }),
+        ),
+        tool(
+            "upload_todo_attachment",
+            "Upload a local file as a task attachment. GitLab Issue files are stored in GitLab Project Uploads.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "file_path": {"type": "string"},
+                    "display_name": {"type": "string"},
+                    "content_type": {"type": "string"}
+                },
+                "required": ["project_id", "task_id", "file_path"]
+            }),
+        ),
+        tool(
+            "download_todo_attachment",
+            "Download a task attachment and return its local path for inspection.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "attachment_id": {"type": "string"},
+                    "output_path": {"type": "string"}
+                },
+                "required": ["project_id", "task_id", "attachment_id"]
+            }),
+        ),
+        tool(
+            "delete_todo_attachment",
+            "Delete a task attachment from its authoritative task storage.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "attachment_id": {"type": "string"}
+                },
+                "required": ["project_id", "task_id", "attachment_id"]
+            }),
+        ),
+        tool(
             "reorder_todos",
             "Persist the order of tasks in one board lane",
             json!({
@@ -362,6 +471,62 @@ fn string_argument<'a>(value: &'a Value, key: &str) -> Result<&'a str, super::Ta
         .ok_or_else(|| super::TaskRuntimeError::Invalid(format!("{key} is required")))
 }
 
+fn binary_input_from_path(
+    arguments: &Value,
+    file_path: &str,
+) -> Result<BinaryInput, super::TaskRuntimeError> {
+    let bytes = fs::read(file_path).map_err(|error| {
+        super::TaskRuntimeError::Invalid(format!("cannot read attachment file: {error}"))
+    })?;
+    let display_name = arguments
+        .get("display_name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            Path::new(file_path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToOwned::to_owned)
+        })
+        .ok_or_else(|| {
+            super::TaskRuntimeError::Invalid("attachment display_name is required".to_owned())
+        })?;
+    Ok(BinaryInput {
+        display_name,
+        content_type: arguments
+            .get("content_type")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned),
+        base64: STANDARD.encode(bytes),
+    })
+}
+
+fn copy_attachment_if_requested(
+    arguments: &Value,
+    source_path: &str,
+) -> Result<String, super::TaskRuntimeError> {
+    let Some(output_path) = arguments
+        .get("output_path")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(source_path.to_owned());
+    };
+    if let Some(parent) = Path::new(output_path).parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            super::TaskRuntimeError::Invalid(format!(
+                "cannot create attachment output directory: {error}"
+            ))
+        })?;
+    }
+    fs::copy(source_path, output_path).map_err(|error| {
+        super::TaskRuntimeError::Invalid(format!("cannot copy attachment file: {error}"))
+    })?;
+    Ok(output_path.to_owned())
+}
+
 fn invalid_json(error: serde_json::Error) -> super::TaskRuntimeError {
     super::TaskRuntimeError::Invalid(error.to_string())
 }
@@ -384,6 +549,7 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task_runtime::{LocalTaskStore, TaskCreate, TaskProviderKind};
 
     #[test]
     fn injects_the_local_task_mcp_once() {
@@ -396,5 +562,114 @@ mod tests {
         assert_eq!(request.mcp_servers[0]["name"], TASK_MCP_SERVER_NAME);
         assert_eq!(request.mcp_servers[0]["type"], "stdio");
         assert_eq!(request.mcp_servers[0]["args"], json!(["task-mcp-server"]));
+    }
+
+    #[test]
+    fn exposes_task_attachment_tools() {
+        let names = tools()
+            .into_iter()
+            .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+
+        for name in [
+            "list_todo_attachments",
+            "upload_todo_attachment",
+            "download_todo_attachment",
+            "delete_todo_attachment",
+        ] {
+            assert!(names.iter().any(|candidate| candidate == name));
+        }
+    }
+
+    #[tokio::test]
+    async fn task_attachment_tools_upload_list_download_and_delete() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(ProjectCreate {
+                name: "Local attachments".to_owned(),
+                project_key: Some("LOCAL".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Inspect attachment".to_owned(),
+                    description: String::new(),
+                    status: "pending".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                },
+            )
+            .unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        let source = directory.path().join("source.txt");
+        fs::write(&source, "attachment content").unwrap();
+
+        let upload = call_tool(
+            &runtime,
+            "upload_todo_attachment",
+            json!({
+                "project_id": project.id,
+                "task_id": task.id,
+                "file_path": source,
+                "content_type": "text/plain"
+            }),
+        )
+        .await;
+        assert_eq!(upload["isError"], false);
+        let attachment: Value =
+            serde_json::from_str(upload["content"][0]["text"].as_str().unwrap()).unwrap();
+        let attachment_id = attachment["id"].as_str().unwrap();
+
+        let list = call_tool(
+            &runtime,
+            "list_todo_attachments",
+            json!({"project_id": project.id, "task_id": task.id}),
+        )
+        .await;
+        let listed: Value =
+            serde_json::from_str(list["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+
+        let output = directory.path().join("downloaded.txt");
+        let download = call_tool(
+            &runtime,
+            "download_todo_attachment",
+            json!({
+                "project_id": project.id,
+                "task_id": task.id,
+                "attachment_id": attachment_id,
+                "output_path": output
+            }),
+        )
+        .await;
+        assert_eq!(download["isError"], false);
+        assert_eq!(
+            fs::read_to_string(directory.path().join("downloaded.txt")).unwrap(),
+            "attachment content"
+        );
+
+        let deleted = call_tool(
+            &runtime,
+            "delete_todo_attachment",
+            json!({
+                "project_id": project.id,
+                "task_id": task.id,
+                "attachment_id": attachment_id
+            }),
+        )
+        .await;
+        assert_eq!(deleted["isError"], false);
+        assert!(runtime
+            .list_task_attachments(&project.id, &task.id)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

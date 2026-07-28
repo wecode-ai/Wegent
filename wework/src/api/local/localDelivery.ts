@@ -31,6 +31,7 @@ interface LocalLoopItemRecord {
   name: string | null
   title: string | null
   description: string
+  created_by_user_id: number
   sequence_number: number | null
   status: string | null
   priority: string | null
@@ -100,6 +101,9 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
         ? (record.metadata.provider_config as CloudProject['provider_config'])
         : {},
     created_by_user_id: 0,
+    current_user_id: 0,
+    access_role: 'Owner',
+    visibility: 'private',
     status: record.status ?? 'active',
     tags: stringList(record.metadata.tags),
     version: record.version,
@@ -136,14 +140,14 @@ export function createExternalIssueApi(request: LocalRequest) {
       const records = await request<LocalLoopItemRecord[]>('external_todos.list', {
         project: externalProjectDescriptor(project),
       })
-      return { items: records.map(localTask) }
+      return { items: records.map(record => localTask(record, project)) }
     },
     async getLoopItem(project: CloudProject, itemId: string) {
       const record = await request<LocalLoopItemRecord>('external_todos.get', {
         project: externalProjectDescriptor(project),
         task_id: itemId,
       })
-      return localTask(record)
+      return localTask(record, project)
     },
     async createLoopItem(
       project: CloudProject,
@@ -164,10 +168,15 @@ export function createExternalIssueApi(request: LocalRequest) {
           status: data.status ?? 'inbox',
           priority: data.priority ?? 'none',
           parent_id: data.parent_id ?? null,
-          tags: data.tags ?? [],
+          tags: [
+            ...(data.tags ?? []),
+            ...((project.current_user_id ?? 0) > 0
+              ? [`wegent:creator:${project.current_user_id}`]
+              : []),
+          ],
         },
       })
-      return localTask(record)
+      return localTask(record, project)
     },
     async updateLoopItem(
       project: CloudProject,
@@ -179,18 +188,24 @@ export function createExternalIssueApi(request: LocalRequest) {
         task_id: itemId,
         todo: data,
       })
-      return localTask(record)
+      return localTask(record, project)
     },
   }
 }
 
-function localTask(record: LocalLoopItemRecord): CloudLoopItem {
+function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLoopItem {
+  const role = project?.access_role ?? 'Owner'
+  const isPublicVisitor = role === 'RestrictedAnalyst'
+  const ownsTask =
+    Boolean(project?.current_user_id) && record.created_by_user_id === project?.current_user_id
   return {
     id: record.id,
     cloud_project_id: record.cloud_project_id ?? '',
     sequence_number: record.sequence_number ?? 0,
     parent_id: record.parent_id,
-    created_by_user_id: 0,
+    created_by_user_id: record.created_by_user_id,
+    can_view_detail: !isPublicVisitor || ownsTask,
+    can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     assignee_user_id: null,
     title: record.title ?? '',
     description: record.description,
@@ -324,7 +339,7 @@ export function createLocalDeliveryApi(
         project_id: projectId,
       })
       rememberTasks(projectId, records)
-      return { items: records.map(localTask) }
+      return { items: records.map(record => localTask(record)) }
     },
     async getLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
@@ -384,7 +399,7 @@ export function createLocalDeliveryApi(
         reorder: data,
       })
       rememberTasks(projectId, records)
-      return { items: records.map(localTask) }
+      return { items: records.map(record => localTask(record)) }
     },
     async listLoopItemAttachments(itemId: string) {
       return request<CloudLoopItemAttachment[]>('attachments.list', {

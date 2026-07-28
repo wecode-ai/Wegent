@@ -87,6 +87,55 @@ describe('local delivery API', () => {
     expect(request).not.toHaveBeenCalledWith('projects.create', expect.anything())
   })
 
+  test('reports the current user as the creator of GitHub and GitLab tasks', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'external_todos.create') {
+        return { ...taskRecord, created_by_user_id: 7 }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createExternalIssueApi(request)
+    const cloudProject = {
+      id: 'cloud-1',
+      public_id: 'cloud-public-1',
+      project_key: 'CLOUD',
+      name: 'Public GitHub board',
+      description: '',
+      project_store: 'backend' as const,
+      task_provider: 'github' as const,
+      provider_config: { repository: 'acme/repo' },
+      created_by_user_id: 1,
+      current_user_id: 7,
+      access_role: 'RestrictedAnalyst' as const,
+      visibility: 'public' as const,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '2026-07-27T00:00:00Z',
+      updated_at: '2026-07-27T00:00:00Z',
+    }
+
+    await api.createLoopItem(cloudProject, {
+      title: 'Created by visitor',
+      tags: ['customer'],
+    })
+
+    expect(request).toHaveBeenCalledWith('external_todos.create', {
+      project: expect.objectContaining({
+        id: 'cloud-1',
+        task_provider: 'github',
+      }),
+      todo: {
+        title: 'Created by visitor',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        parent_id: null,
+        tags: ['customer', 'wegent:creator:7'],
+      },
+    })
+  })
+
   test('passes external provider credentials only through executor IPC', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'projects.create') {

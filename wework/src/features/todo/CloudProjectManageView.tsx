@@ -7,6 +7,7 @@ import type {
   CloudUserSearchItem,
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { repositoryAddress, repositoryProviderConfig } from './projectProviderConfig'
 
@@ -27,6 +28,7 @@ export function CloudProjectManageView({
   project: CloudProject
   onProjectUpdated?: (project: CloudProject) => void
 }) {
+  const { t } = useTranslation('common')
   const [members, setMembers] = useState<CloudProjectMember[]>([])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<CloudUserSearchItem[]>([])
@@ -36,6 +38,10 @@ export function CloudProjectManageView({
   const [items, setItems] = useState<CloudLoopItem[]>([])
   const [registryTags, setRegistryTags] = useState<string[]>(project.tags ?? [])
   const [projectVersion, setProjectVersion] = useState(project.version)
+  const [visibility, setVisibility] = useState<'private' | 'public'>(
+    project.visibility ?? 'private'
+  )
+  const [visibilityBusy, setVisibilityBusy] = useState(false)
   const [newTag, setNewTag] = useState('')
   const [renamingTag, setRenamingTag] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -80,6 +86,25 @@ export function CloudProjectManageView({
     setRegistryTags(updated.tags ?? [])
     setProjectVersion(updated.version)
     onProjectUpdated?.(updated)
+  }
+
+  async function saveVisibility(nextVisibility: 'private' | 'public') {
+    if (visibilityBusy || nextVisibility === visibility) return
+    setVisibilityBusy(true)
+    setError(null)
+    try {
+      const updated = await api.updateCloudProject(project.id, {
+        version: projectVersion,
+        visibility: nextVisibility,
+      })
+      setVisibility(updated.visibility ?? nextVisibility)
+      setProjectVersion(updated.version)
+      onProjectUpdated?.(updated)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('todo.project_visibility_update_failed'))
+    } finally {
+      setVisibilityBusy(false)
+    }
   }
 
   async function saveProviderConfig() {
@@ -250,111 +275,152 @@ export function CloudProjectManageView({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
       <div className="mx-auto max-w-[960px]">
-        <h2 className="text-heading-md font-semibold">项目成员</h2>
+        <h2 className="text-heading-md font-semibold">{t('todo.project_visibility')}</h2>
         <p className="mt-1 text-sm text-text-muted">
-          成员只能访问被授权的云项目、任务、共享文件和交付。
+          {t('todo.project_visibility_manage_description')}
         </p>
-
-        <div className="mt-6 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
-          {members.map((member, index) => (
-            <div
-              key={member.user_id}
-              className="flex items-center gap-3 border-t border-border px-4 py-3 first:border-t-0"
-              data-testid={`cloud-project-member-${member.user_id}`}
-            >
-              <span
-                className={cn(
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background',
-                  memberAvatarClasses[index % memberAvatarClasses.length]
-                )}
-              >
-                {member.user_name.slice(0, 1)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{member.user_name}</span>
-                <span className="block truncate text-xs text-text-muted">{member.email}</span>
-              </span>
-              {member.role === 'Owner' ? (
-                <span className="w-24 text-xs text-text-secondary">Owner</span>
-              ) : (
-                <>
-                  <select
-                    data-testid={`cloud-project-member-role-${member.user_id}`}
-                    value={member.role}
-                    onChange={event =>
-                      void updateMember(
-                        member,
-                        event.target.value as Exclude<CloudProjectMember['role'], 'Owner'>
-                      )
-                    }
-                    className="h-8 w-24 rounded-lg border border-border bg-background px-1.5 text-xs outline-none focus:border-text-muted"
-                  >
-                    <option value="Maintainer">Maintainer</option>
-                    <option value="Developer">Developer</option>
-                    <option value="Reporter">Reporter</option>
-                  </select>
-                  <button
-                    type="button"
-                    data-testid={`cloud-project-member-remove-${member.user_id}`}
-                    onClick={() => void removeMember(member)}
-                    className="ml-1 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
-                    aria-label={`移除 ${member.user_name}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </>
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          {(
+            [
+              [
+                'private',
+                t('todo.project_visibility_private'),
+                t('todo.project_visibility_private_manage_description'),
+              ],
+              [
+                'public',
+                t('todo.project_visibility_public'),
+                t('todo.project_visibility_public_manage_description'),
+              ],
+            ] as const
+          ).map(([value, label, detail]) => (
+            <button
+              key={value}
+              type="button"
+              data-testid={`cloud-project-manage-visibility-${value}`}
+              disabled={visibilityBusy}
+              aria-pressed={visibility === value}
+              onClick={() => void saveVisibility(value)}
+              className={cn(
+                'rounded-xl border px-4 py-3 text-left transition disabled:opacity-60',
+                visibility === value
+                  ? 'border-text-primary bg-muted/70 ring-1 ring-text-primary/10'
+                  : 'border-border hover:bg-muted/40'
               )}
-            </div>
+            >
+              <span className="block text-sm font-medium">{label}</span>
+              <span className="mt-1 block text-xs leading-4 text-text-muted">{detail}</span>
+            </button>
           ))}
         </div>
 
-        <div className="mt-8">
-          <h3 className="text-sm font-semibold">添加成员</h3>
-          <div className="mt-3 flex gap-2">
-            <label className="flex h-9 min-w-0 flex-1 items-center rounded-lg border border-border bg-background px-3 focus-within:border-text-muted">
-              <Search className="h-4 w-4 text-text-muted" />
-              <input
-                data-testid="cloud-member-search"
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
-                placeholder="搜索用户名或邮箱"
-              />
-            </label>
-            <select
-              data-testid="cloud-member-role"
-              value={role}
-              onChange={event => setRole(event.target.value as CloudProjectMember['role'])}
-              className="h-9 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-muted"
-            >
-              <option value="Maintainer">Maintainer</option>
-              <option value="Developer">Developer</option>
-              <option value="Reporter">Reporter</option>
-            </select>
-          </div>
-          {visibleResults.length > 0 && (
-            <div className="mt-2 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
-              {visibleResults.map(user => (
-                <button
-                  key={user.id}
-                  type="button"
-                  data-testid={`cloud-member-result-${user.id}`}
-                  disabled={savingUserId !== null}
-                  onClick={() => void addMember(user)}
-                  className="flex w-full items-center border-t border-border px-4 py-2.5 text-left transition first:border-t-0 hover:bg-hover disabled:opacity-50"
+        <div className="mt-10 border-t border-border pt-8">
+          <h2 className="text-heading-md font-semibold">项目成员</h2>
+          <p className="mt-1 text-sm text-text-muted">
+            成员只能访问被授权的云项目、任务、共享文件和交付。
+          </p>
+
+          <div className="mt-6 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
+            {members.map((member, index) => (
+              <div
+                key={member.user_id}
+                className="flex items-center gap-3 border-t border-border px-4 py-3 first:border-t-0"
+                data-testid={`cloud-project-member-${member.user_id}`}
+              >
+                <span
+                  className={cn(
+                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background',
+                    memberAvatarClasses[index % memberAvatarClasses.length]
+                  )}
                 >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{user.user_name}</span>
-                    <span className="block truncate text-xs text-text-muted">{user.email}</span>
-                  </span>
-                  <span className="rounded-md bg-text-primary px-2 py-1 text-xs text-background">
-                    {savingUserId === user.id ? '添加中…' : '添加'}
-                  </span>
-                </button>
-              ))}
+                  {member.user_name.slice(0, 1)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{member.user_name}</span>
+                  <span className="block truncate text-xs text-text-muted">{member.email}</span>
+                </span>
+                {member.role === 'Owner' ? (
+                  <span className="w-24 text-xs text-text-secondary">Owner</span>
+                ) : (
+                  <>
+                    <select
+                      data-testid={`cloud-project-member-role-${member.user_id}`}
+                      value={member.role}
+                      onChange={event =>
+                        void updateMember(
+                          member,
+                          event.target.value as Exclude<CloudProjectMember['role'], 'Owner'>
+                        )
+                      }
+                      className="h-8 w-24 rounded-lg border border-border bg-background px-1.5 text-xs outline-none focus:border-text-muted"
+                    >
+                      <option value="Maintainer">Maintainer</option>
+                      <option value="Developer">Developer</option>
+                      <option value="Reporter">Reporter</option>
+                    </select>
+                    <button
+                      type="button"
+                      data-testid={`cloud-project-member-remove-${member.user_id}`}
+                      onClick={() => void removeMember(member)}
+                      className="ml-1 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
+                      aria-label={`移除 ${member.user_name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-8">
+            <h3 className="text-sm font-semibold">添加成员</h3>
+            <div className="mt-3 flex gap-2">
+              <label className="flex h-9 min-w-0 flex-1 items-center rounded-lg border border-border bg-background px-3 focus-within:border-text-muted">
+                <Search className="h-4 w-4 text-text-muted" />
+                <input
+                  data-testid="cloud-member-search"
+                  value={query}
+                  onChange={event => setQuery(event.target.value)}
+                  className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
+                  placeholder="搜索用户名或邮箱"
+                />
+              </label>
+              <select
+                data-testid="cloud-member-role"
+                value={role}
+                onChange={event => setRole(event.target.value as CloudProjectMember['role'])}
+                className="h-9 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-muted"
+              >
+                <option value="Maintainer">Maintainer</option>
+                <option value="Developer">Developer</option>
+                <option value="Reporter">Reporter</option>
+              </select>
             </div>
-          )}
-          {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+            {visibleResults.length > 0 && (
+              <div className="mt-2 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
+                {visibleResults.map(user => (
+                  <button
+                    key={user.id}
+                    type="button"
+                    data-testid={`cloud-member-result-${user.id}`}
+                    disabled={savingUserId !== null}
+                    onClick={() => void addMember(user)}
+                    className="flex w-full items-center border-t border-border px-4 py-2.5 text-left transition first:border-t-0 hover:bg-hover disabled:opacity-50"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{user.user_name}</span>
+                      <span className="block truncate text-xs text-text-muted">{user.email}</span>
+                    </span>
+                    <span className="rounded-md bg-text-primary px-2 py-1 text-xs text-background">
+                      {savingUserId === user.id ? '添加中…' : '添加'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+          </div>
         </div>
 
         <div className="mt-10">

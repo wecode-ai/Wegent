@@ -75,6 +75,7 @@ class CloudProjectService:
                 "project_store": "backend",
                 "task_provider": values.task_provider,
                 "provider_config": provider_config,
+                "visibility": values.visibility,
                 "tags": [],
             },
         )
@@ -114,6 +115,7 @@ class CloudProjectService:
                 or_(
                     CloudProject.created_by_user_id == user_id,
                     CloudProject.id.in_(member_project_ids),
+                    CloudProject.metadata_json["visibility"].as_string() == "public",
                 ),
             )
             .order_by(CloudProject.updated_at.desc())
@@ -121,13 +123,20 @@ class CloudProjectService:
         )
 
     def get(self, db: Session, project_id: int, user_id: int) -> CloudProject:
-        return require_cloud_project_role(db, project_id, user_id).project
+        return require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
+        ).project
+
+    def access(self, db: Session, project_id: int, user_id: int):
+        return require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
+        )
 
     def get_provider_credential(
         self, db: Session, project_id: int, user_id: int
     ) -> str:
         project = require_cloud_project_role(
-            db, project_id, user_id, BaseRole.Developer
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
         ).project
         metadata = (
             project.metadata_json if isinstance(project.metadata_json, dict) else {}
@@ -158,6 +167,7 @@ class CloudProjectService:
         if (
             "tags" in values.model_fields_set
             or "provider_config" in values.model_fields_set
+            or "visibility" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
             if "tags" in values.model_fields_set and values.tags is not None:
@@ -189,6 +199,12 @@ class CloudProjectService:
                         status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
                     ) from exc
                 updates.pop("provider_config", None)
+            if (
+                "visibility" in values.model_fields_set
+                and values.visibility is not None
+            ):
+                metadata["visibility"] = values.visibility
+                updates.pop("visibility", None)
             updates["metadata_json"] = metadata
         updated = (
             db.query(CloudProject)

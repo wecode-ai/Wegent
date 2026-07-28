@@ -22,6 +22,7 @@ from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
 
 SnowflakeId = Annotated[str, BeforeValidator(str)]
 TaskProvider = Literal["local", "github", "gitlab"]
+ProjectVisibility = Literal["private", "public"]
 
 
 def _normalize_repository(task_provider: str, repository: str) -> str:
@@ -64,6 +65,7 @@ class CloudProjectCreate(BaseModel):
     description: str = ""
     task_provider: TaskProvider = "local"
     provider_config: dict[str, object] = Field(default_factory=dict)
+    visibility: ProjectVisibility = "private"
 
     @field_validator("project_key")
     @classmethod
@@ -83,6 +85,7 @@ class CloudProjectUpdate(BaseModel):
     description: str | None = None
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     provider_config: dict[str, object] | None = None
+    visibility: ProjectVisibility | None = None
     version: int = Field(ge=1)
 
     @field_validator("tags", mode="before")
@@ -116,7 +119,10 @@ class CloudProjectResponse(BaseModel):
     project_store: Literal["backend"] = "backend"
     task_provider: TaskProvider = "local"
     provider_config: dict[str, object] = Field(default_factory=dict)
+    visibility: ProjectVisibility = "private"
     created_by_user_id: int
+    current_user_id: int = 0
+    access_role: BaseRole = BaseRole.RestrictedAnalyst
     status: str
     tags: list[str] = []
     version: int
@@ -136,6 +142,9 @@ class CloudProjectResponse(BaseModel):
                 "task_provider": metadata.get("task_provider", "local"),
                 "provider_config": mask_provider_config(
                     metadata.get("provider_config", {})
+                ),
+                "visibility": (
+                    "public" if metadata.get("visibility") == "public" else "private"
                 ),
                 "tags": normalize_tags(metadata.get("tags")),
             }

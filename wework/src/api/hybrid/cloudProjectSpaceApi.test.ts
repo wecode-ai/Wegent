@@ -154,6 +154,63 @@ describe('cloud project-space API', () => {
     expect(storeApi.createLoopItem).not.toHaveBeenCalled()
   })
 
+  test('blocks public visitors from opening or editing external tasks created by others', async () => {
+    const publicProject = {
+      ...project,
+      visibility: 'public' as const,
+      access_role: 'RestrictedAnalyst' as const,
+      current_user_id: 2,
+    }
+    const otherUsersIssue = {
+      id: 'CLOUD-9',
+      cloud_project_id: project.id,
+      title: 'Created by another user',
+      can_view_detail: false,
+      can_edit: false,
+    }
+    const ownedIssue = {
+      id: 'CLOUD-10',
+      cloud_project_id: project.id,
+      title: 'Created by the visitor',
+      can_view_detail: true,
+      can_edit: true,
+    }
+    const storeApi = {
+      listCloudProjects: vi.fn(async () => ({ items: [publicProject] })),
+      getCloudProjectProviderCredential: vi.fn(async () => ({ token: 'cloud-secret' })),
+    } as unknown as DeliveryApi
+    const externalIssueApi = {
+      configureProject: vi.fn(async () => undefined),
+      listLoopItems: vi.fn(async () => ({ items: [otherUsersIssue, ownedIssue] })),
+      getLoopItem: vi.fn(async () => ownedIssue),
+      updateLoopItem: vi.fn(async () => ownedIssue),
+    } as unknown as ExternalIssueApi
+    const api = createCloudProjectSpaceApi(storeApi, externalIssueApi)
+
+    await api.listCloudProjects()
+    await api.listLoopItems(publicProject.id)
+
+    await expect(api.getLoopItem(otherUsersIssue.id)).rejects.toThrow(
+      'You can only view tasks that you created in this public project'
+    )
+    await expect(
+      api.updateLoopItem(otherUsersIssue.id, {
+        version: 1,
+        title: 'Forbidden update',
+      })
+    ).rejects.toThrow('You can only edit tasks that you created in this public project')
+
+    await expect(api.getLoopItem(ownedIssue.id)).resolves.toEqual(ownedIssue)
+    await expect(
+      api.updateLoopItem(ownedIssue.id, {
+        version: 1,
+        title: 'Allowed update',
+      })
+    ).resolves.toEqual(ownedIssue)
+    expect(externalIssueApi.getLoopItem).toHaveBeenCalledTimes(1)
+    expect(externalIssueApi.updateLoopItem).toHaveBeenCalledTimes(1)
+  })
+
   test('updates backend credentials and refreshes the local executor configuration', async () => {
     const updatedProject = {
       ...project,

@@ -506,6 +506,7 @@ describe('CloudTodoWorkspace', () => {
         description: '',
         task_provider: 'local',
         provider_config: {},
+        visibility: 'private',
       })
     )
     expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
@@ -590,6 +591,7 @@ describe('CloudTodoWorkspace', () => {
         provider_config: {
           repository: 'group/project',
         },
+        visibility: 'private',
       })
     )
   })

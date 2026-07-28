@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.security import create_access_token
 from app.models.delivery import CloudProject, Delivery, DeliveryAsset
 from app.models.project import Project
 from app.models.user import User
@@ -120,6 +121,86 @@ def test_cloud_project_generates_key_when_omitted(
     assert isinstance(created.json()["id"], str)
     assert created.json()["project_key"].startswith("PRJ")
     assert 2 <= len(created.json()["project_key"]) <= 16
+
+
+def test_public_project_visitors_only_access_their_own_todo_details(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    visitor = User(
+        user_name="public-project-visitor",
+        password_hash="unused",
+        email="visitor@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(visitor)
+    test_db.commit()
+    test_db.refresh(visitor)
+    visitor_token = create_access_token(data={"sub": visitor.user_name})
+
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "public",
+            "name": "Public collaboration",
+            "visibility": "public",
+        },
+    ).json()
+    owner_item = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Owner task", "description": "private task details"},
+    ).json()
+
+    listed_projects = test_client.get(
+        "/api/v1/cloud-projects", headers=_auth(visitor_token)
+    )
+    assert listed_projects.status_code == 200
+    visible_project = next(
+        item for item in listed_projects.json()["items"] if item["id"] == project["id"]
+    )
+    assert visible_project["visibility"] == "public"
+    assert visible_project["access_role"] == "RestrictedAnalyst"
+    assert visible_project["current_user_id"] == visitor.id
+
+    listed_items = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+    )
+    assert listed_items.status_code == 200
+    owner_summary = listed_items.json()["items"][0]
+    assert owner_summary["id"] == owner_item["id"]
+    assert owner_summary["description"] == ""
+    assert owner_summary["can_view_detail"] is False
+    assert owner_summary["can_edit"] is False
+
+    hidden_detail = test_client.get(
+        f"/api/v1/loop-items/{owner_item['id']}",
+        headers=_auth(visitor_token),
+    )
+    assert hidden_detail.status_code == 404
+
+    visitor_item = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+        json={"title": "Visitor task", "description": "visitor details"},
+    )
+    assert visitor_item.status_code == 201
+    visitor_item_body = visitor_item.json()
+    assert visitor_item_body["created_by_user_id"] == visitor.id
+    assert visitor_item_body["can_view_detail"] is True
+    assert visitor_item_body["can_edit"] is True
+
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{visitor_item_body['id']}",
+        headers=_auth(visitor_token),
+        json={"version": visitor_item_body["version"], "title": "Visitor task updated"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Visitor task updated"
 
 
 def test_cloud_project_persists_external_task_provider_and_encrypted_token(
