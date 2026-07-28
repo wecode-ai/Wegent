@@ -272,8 +272,11 @@ describe('runtimeModelSelection', () => {
       namespace: 'default',
       resourceUserId: 42,
       provider: 'cloud',
+      contextWindow: 1_048_576,
+      maxOutputTokens: 96_000,
       config: {
         context_window: 128000,
+        max_output_tokens: 4096,
       },
     }
 
@@ -284,7 +287,8 @@ describe('runtimeModelSelection', () => {
         collaborationMode: 'default',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
-        weworkCloudModelContextWindow: '128000',
+        weworkCloudModelContextWindow: '1048576',
+        weworkCloudModelMaxOutputTokens: '96000',
       },
     })
   })

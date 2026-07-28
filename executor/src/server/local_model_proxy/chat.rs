@@ -1713,14 +1713,19 @@ impl<S> ChatStreamState<S> {
             output.push((state.output_index, item));
         }
         output.sort_by_key(|(index, _)| *index);
-        let response = self.response(
-            "completed",
-            output.into_iter().map(|(_, value)| value).collect(),
-        );
-        self.emit(sse(
-            "response.completed",
-            json!({"type": "response.completed", "response": response}),
-        ));
+        let incomplete = self.finish_reason.as_deref() == Some("length");
+        let status = if incomplete {
+            "incomplete"
+        } else {
+            "completed"
+        };
+        let event = if incomplete {
+            "response.incomplete"
+        } else {
+            "response.completed"
+        };
+        let response = self.response(status, output.into_iter().map(|(_, value)| value).collect());
+        self.emit(sse(event, json!({"type": event, "response": response})));
     }
 
     fn response(&self, status: &str, output: Vec<Value>) -> Value {
@@ -1733,7 +1738,7 @@ impl<S> ChatStreamState<S> {
             "output": output,
             "usage": self.usage,
             "error": Value::Null,
-            "incomplete_details": if status == "completed" && self.finish_reason.as_deref() == Some("length") { json!({"reason": "max_output_tokens"}) } else { Value::Null }
+            "incomplete_details": if status == "incomplete" { json!({"reason": "max_output_tokens"}) } else { Value::Null }
         })
     }
 
@@ -2341,6 +2346,24 @@ mod tests {
         )
         .await;
         assert!(output.contains("response.failed"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn reports_max_token_finish_as_incomplete() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"still thinking\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+
+        assert!(output.contains("response.incomplete"));
+        assert!(output.contains("\"status\":\"incomplete\""));
+        assert!(output.contains("\"reason\":\"max_output_tokens\""));
         assert!(!output.contains("response.completed"));
     }
 
