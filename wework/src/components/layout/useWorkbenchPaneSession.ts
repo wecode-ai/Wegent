@@ -86,6 +86,7 @@ interface RuntimePaneSendOptions {
   guideWhenBusy?: boolean
   interruptWhenBusy?: boolean
   additionalContext?: RuntimeAdditionalContext
+  cloudProjectId?: string
   onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
 }
 
@@ -1699,6 +1700,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             clientMessageId: optimisticMessage.id,
             initialGoal,
             additionalContext: options.additionalContext,
+            cloudProjectId: options.cloudProjectId,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
               setPendingGoalState(current =>
@@ -1778,6 +1780,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           void sendCurrentInput('', {
             codeCommentContexts,
             additionalContext: options.additionalContext,
+            cloudProjectId: options.cloudProjectId,
           })
           return
         }
@@ -1815,6 +1818,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             codeCommentContexts,
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
+            cloudProjectId: options.cloudProjectId,
             onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)

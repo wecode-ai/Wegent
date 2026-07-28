@@ -314,7 +314,6 @@ interface LocalAppServicesDeps {
 interface CloudModelGateway {
   baseUrl: string
   apiKey: string
-  mcpUrl?: string
   backendUrl?: string
 }
 
@@ -1157,15 +1156,10 @@ function messageWithApplicationContext(
       {
         kind: 'application',
         value: [
-          'The user activated the Wegent project-space capability.',
-          'Project storage and task source are independent.',
-          'Use wegent_tasks for local project spaces and for GitHub or GitLab Issues, even when the project space is stored in the Backend.',
-          'Use wegent_delivery for cloud project metadata, files, deliveries, and Backend-native TODOs only.',
-          'wegent_delivery and wegent_tasks are server ids, not callable tools.',
-          'List both sources when resolving a project name.',
-          'Never create or copy a cloud project merely because a local project is not returned by list_cloud_projects.',
-          'Use resolve_cloud_reference to resolve cloud:// references.',
-          'MCP resources describe addressable data; do not use list_mcp_resources to discover tools.',
+          'Use wework_space as the only interface for WeWork project spaces, board items, files, attachments, and deliveries.',
+          'Storage and task providers are internal implementation details.',
+          'Do not use git commands or call GitHub, GitLab, or object-storage APIs to inspect or modify project-space data.',
+          'Use list_spaces to discover spaces, get_board_item for item details, and read_item_attachment for attachment contents.',
         ].join('\n'),
       },
     ])
@@ -1226,18 +1220,7 @@ function buildLocalRuntimeExecutionRequest(
         }
       : {}),
     bot: [],
-    mcp_servers: input.cloudModelGateway?.mcpUrl
-      ? [
-          {
-            name: 'wegent_delivery',
-            type: 'streamable-http',
-            url: input.cloudModelGateway.mcpUrl,
-            headers: {
-              Authorization: `Bearer ${input.cloudModelGateway.apiKey}`,
-            },
-          },
-        ]
-      : [],
+    mcp_servers: [],
     model_config: modelConfig,
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
     enable_tools: true,

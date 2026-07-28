@@ -28,9 +28,14 @@ pub struct ProjectCreate {
     pub project_key: Option<String>,
     #[serde(default)]
     pub description: String,
+    #[serde(default = "default_task_provider")]
     pub task_provider: TaskProviderKind,
     #[serde(default = "default_provider_config")]
     pub provider_config: Value,
+}
+
+fn default_task_provider() -> TaskProviderKind {
+    TaskProviderKind::Local
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

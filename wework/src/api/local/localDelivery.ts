@@ -13,6 +13,7 @@ import type {
   DeliveryDetail,
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { openLocalFile } from '@/lib/local-terminal'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 type LocalRequest = <T>(
@@ -449,6 +450,12 @@ export function createLocalDeliveryApi(
           attachment_id: attachmentId,
         })
       )
+    },
+    async downloadLoopItemAttachment(attachmentId: string) {
+      const access = await request<LocalAccessRecord>('attachments.access', {
+        attachment_id: attachmentId,
+      })
+      await openLocalFile(access.path)
     },
     async deleteLoopItemAttachment(attachmentId: string) {
       await request('attachments.delete', { attachment_id: attachmentId })

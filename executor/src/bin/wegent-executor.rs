@@ -22,7 +22,7 @@ fn main() {
         }
         return;
     }
-    if wegent_executor::task_runtime::mcp::is_task_mcp_command() {
+    if wegent_executor::task_runtime::mcp::is_space_mcp_command() {
         if let Err(error) = runtime().block_on(wegent_executor::task_runtime::mcp::run()) {
             eprintln!("task MCP server failed: {error}");
             std::process::exit(1);

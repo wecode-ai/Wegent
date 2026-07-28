@@ -73,11 +73,16 @@ function services(): WorkbenchServices {
         sha256: 'hash',
         created_by_user_id: 1,
         created_at: '2026-07-22T00:00:00Z',
+        markdown_url: 'wegent://attachments/attachment-1',
+        markdown:
+          '[brief.txt](wegent://attachments/attachment-1)\n<!-- wegent-attachment:attachment-1 -->',
       })),
       accessLoopItemAttachment: vi.fn(async () => ({
         url: 'https://storage.test/attachment-1',
         expires_in_seconds: 900,
       })),
+      readLoopItemAttachment: vi.fn(async () => new Blob(['context'])),
+      downloadLoopItemAttachment: vi.fn(async () => undefined),
       deleteLoopItemAttachment: vi.fn(async () => undefined),
       listTaskBindings: vi.fn(async () => [
         {
@@ -477,6 +482,12 @@ describe('CloudTodoWorkspace', () => {
       )
     )
     expect((await screen.findAllByText('brief.txt')).length).toBeGreaterThan(0)
+
+    await userEvent.click(screen.getByTestId('cloud-todo-attachment-download-attachment-1'))
+    expect(workbenchServices.deliveryApi?.downloadLoopItemAttachment).toHaveBeenCalledWith(
+      'attachment-1',
+      'brief.txt'
+    )
   })
 
   it('collapses and restores the sidebar chrome', async () => {

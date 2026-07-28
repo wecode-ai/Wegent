@@ -469,6 +469,21 @@ class LoopItemService:
         attachment = self._get_attachment(db, attachment_id, user_id)
         return delivery_storage.download_url(attachment.object_key)
 
+    def attachment_content(
+        self, db: Session, attachment_id: str, user_id: int
+    ) -> tuple[bytes, str, str]:
+        attachment = self._get_attachment(db, attachment_id, user_id)
+        return (
+            delivery_storage.get_bytes(attachment.object_key),
+            attachment.content_type or "application/octet-stream",
+            attachment.display_name,
+        )
+
+    def require_attachment_access(
+        self, db: Session, attachment_id: str, user_id: int
+    ) -> None:
+        self._get_attachment(db, attachment_id, user_id)
+
     def delete_attachment(self, db: Session, attachment_id: str, user_id: int) -> None:
         attachment = self._get_attachment(db, attachment_id, user_id)
         item = self.get(db, attachment.loop_item_id, user_id)

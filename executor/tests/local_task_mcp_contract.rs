@@ -16,10 +16,10 @@ use serde_json::json;
 use serde_json::Value;
 
 #[test]
-fn task_mcp_runs_over_stdio_without_listening_on_a_port() {
+fn space_mcp_runs_over_stdio_without_listening_on_a_port() {
     let executor_home = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
-        .arg("task-mcp-server")
+        .arg("space-mcp-server")
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -40,7 +40,7 @@ fn task_mcp_runs_over_stdio_without_listening_on_a_port() {
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"create_project","arguments":{{"name":"GitHub board","project_key":"GH","task_provider":"github","provider_config":{{"repository":"acme/repo","token":"mcp-secret"}}}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"create_space","arguments":{{"name":"Feedback space","project_key":"FB"}}}}}}"#
     )
     .unwrap();
     drop(stdin);
@@ -59,40 +59,38 @@ fn task_mcp_runs_over_stdio_without_listening_on_a_port() {
 
     assert_eq!(
         responses[0].pointer("/result/serverInfo/name"),
-        Some(&Value::String("wegent_tasks".to_owned()))
+        Some(&Value::String("wework_space".to_owned()))
     );
     let tools = responses[1]
         .pointer("/result/tools")
         .and_then(Value::as_array)
         .unwrap();
-    assert!(tools.iter().any(|tool| tool["name"] == "list_projects"));
-    assert!(tools.iter().any(|tool| tool["name"] == "update_project"));
-    assert!(tools.iter().any(|tool| tool["name"] == "create_todo"));
-    assert!(tools.iter().any(|tool| tool["name"] == "update_todo"));
-    assert!(tools.iter().any(|tool| tool["name"] == "add_todo_comment"));
+    assert!(tools.iter().any(|tool| tool["name"] == "list_spaces"));
+    assert!(tools.iter().any(|tool| tool["name"] == "update_space"));
+    assert!(tools.iter().any(|tool| tool["name"] == "create_board_item"));
+    assert!(tools.iter().any(|tool| tool["name"] == "update_board_item"));
     assert!(tools
         .iter()
-        .any(|tool| tool["name"] == "list_todo_attachments"));
+        .any(|tool| tool["name"] == "add_board_item_comment"));
     assert!(tools
         .iter()
-        .any(|tool| tool["name"] == "upload_todo_attachment"));
+        .any(|tool| tool["name"] == "list_item_attachments"));
     assert!(tools
         .iter()
-        .any(|tool| tool["name"] == "download_todo_attachment"));
+        .any(|tool| tool["name"] == "upload_item_attachment"));
     assert!(tools
         .iter()
-        .any(|tool| tool["name"] == "delete_todo_attachment"));
+        .any(|tool| tool["name"] == "read_item_attachment"));
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "delete_item_attachment"));
     assert!(executor_home.path().join("data/tasks.sqlite").is_file());
     let project = responses[2]
         .pointer("/result/content/0/text")
         .and_then(Value::as_str)
         .and_then(|value| serde_json::from_str::<Value>(value).ok())
-        .unwrap_or_else(|| panic!("unexpected create_todo response: {}", responses[1]));
-    assert_eq!(
-        project["metadata"]["provider_config"]["credential_configured"],
-        true
-    );
-    assert!(!responses[2].to_string().contains("mcp-secret"));
+        .unwrap_or_else(|| panic!("unexpected create_space response: {}", responses[2]));
+    assert_eq!(project["metadata"]["task_provider"], "local");
 
     let connection =
         rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();
@@ -103,11 +101,40 @@ fn task_mcp_runs_over_stdio_without_listening_on_a_port() {
             |row| row.get(0),
         )
         .unwrap();
-    assert!(!metadata.contains("mcp-secret"));
+    assert!(metadata.contains("\"task_provider\":\"local\""));
+}
+
+#[test]
+fn bound_backend_space_fails_clearly_without_backend_connection() {
+    let executor_home = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
+        .arg("space-mcp-server")
+        .env("WEGENT_EXECUTOR_HOME", executor_home.path())
+        .env("WEWORK_SPACE_ID", "841738010351776815")
+        .env_remove("WEWORK_SPACE_BACKEND_URL")
+        .env_remove("WEWORK_SPACE_AUTH_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_spaces","arguments":{{}}}}}}"#
+    )
+    .unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let text = response["result"]["content"][0]["text"].as_str().unwrap();
+
+    assert_eq!(response["result"]["isError"], true);
+    assert!(text.contains("requires the WeWork Backend connection"));
+    assert!(text.contains("do not use git or provider APIs"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn task_mcp_routes_cloud_project_crud_through_backend() {
+async fn space_mcp_routes_board_operations_through_backend() {
     fn assert_auth(headers: &HeaderMap) {
         assert_eq!(
             headers.get("authorization").unwrap(),
@@ -115,28 +142,28 @@ async fn task_mcp_routes_cloud_project_crud_through_backend() {
         );
     }
 
-    async fn list_projects(headers: HeaderMap) -> Json<Value> {
+    async fn list_spaces(headers: HeaderMap) -> Json<Value> {
         assert_auth(&headers);
         Json(json!({"items": [{"id": 9001, "name": "Cloud GitLab"}]}))
     }
 
-    async fn list_todos(headers: HeaderMap) -> Json<Value> {
+    async fn list_board_items(headers: HeaderMap) -> Json<Value> {
         assert_auth(&headers);
         Json(json!({"items": [{"id": "GL-11", "title": "Existing"}]}))
     }
 
-    async fn get_todo(headers: HeaderMap) -> Json<Value> {
+    async fn get_board_item(headers: HeaderMap) -> Json<Value> {
         assert_auth(&headers);
         Json(json!({"id": "GL-11", "title": "Existing"}))
     }
 
-    async fn create_todo(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
+    async fn create_board_item(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
         assert_auth(&headers);
         assert_eq!(body["title"], "Created through MCP");
         Json(json!({"id": "GL-12", "title": body["title"]}))
     }
 
-    async fn update_todo(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
+    async fn update_board_item(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
         assert_auth(&headers);
         assert_eq!(body["title"], "Updated through MCP");
         Json(json!({"id": "GL-11", "title": body["title"]}))
@@ -148,7 +175,21 @@ async fn task_mcp_routes_cloud_project_crud_through_backend() {
         Json(json!({"id": "comment-1", "body": body["body"]}))
     }
 
-    async fn reorder_todos(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
+    async fn list_attachments(headers: HeaderMap) -> Json<Value> {
+        assert_auth(&headers);
+        Json(json!([{
+            "id": "attachment-1",
+            "display_name": "feedback.zip",
+            "size_bytes": 10
+        }]))
+    }
+
+    async fn read_attachment(headers: HeaderMap) -> Vec<u8> {
+        assert_auth(&headers);
+        b"diagnostic".to_vec()
+    }
+
+    async fn reorder_board_items(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
         assert_auth(&headers);
         assert_eq!(body["status"], "in_progress");
         Json(json!({"items": [{"id": "GL-11", "status": "in_progress"}]}))
@@ -160,28 +201,39 @@ async fn task_mcp_routes_cloud_project_crud_through_backend() {
         axum::serve(
             listener,
             Router::new()
-                .route("/api/v1/cloud-projects", get(list_projects))
+                .route("/api/v1/cloud-projects", get(list_spaces))
                 .route(
                     "/api/v1/cloud-projects/9001/loop-items",
-                    get(list_todos).post(create_todo),
+                    get(list_board_items).post(create_board_item),
                 )
                 .route(
                     "/api/v1/cloud-projects/9001/loop-items/reorder",
-                    post(reorder_todos),
+                    post(reorder_board_items),
                 )
-                .route("/api/v1/loop-items/GL-11", get(get_todo).patch(update_todo))
-                .route("/api/v1/loop-items/GL-11/comments", post(add_comment)),
+                .route(
+                    "/api/v1/loop-items/GL-11",
+                    get(get_board_item).patch(update_board_item),
+                )
+                .route("/api/v1/loop-items/GL-11/comments", post(add_comment))
+                .route(
+                    "/api/v1/loop-items/GL-11/attachments",
+                    get(list_attachments),
+                )
+                .route(
+                    "/api/v1/loop-item-attachments/attachment-1/content",
+                    get(read_attachment),
+                ),
         )
         .await
         .unwrap();
     });
     let executor_home = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
-        .arg("task-mcp-server")
+        .arg("space-mcp-server")
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
-        .env("WEGENT_TASK_PROJECT_ID", "9001")
-        .env("WEGENT_TASK_BACKEND_URL", format!("http://{address}"))
-        .env("WEGENT_TASK_AUTH_TOKEN", "backend-token")
+        .env("WEWORK_SPACE_ID", "9001")
+        .env("WEWORK_SPACE_BACKEND_URL", format!("http://{address}"))
+        .env("WEWORK_SPACE_AUTH_TOKEN", "backend-token")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -190,37 +242,76 @@ async fn task_mcp_routes_cloud_project_crud_through_backend() {
     let mut stdin = child.stdin.take().unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_projects","arguments":{{}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_spaces","arguments":{{}}}}}}"#
     )
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"list_todos","arguments":{{"project_id":"9001"}}}}}}"#
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+                "name": "list_item_attachments",
+                "arguments": {"space_id": "9001", "item_id": "GL-11"}
+            }
+        })
+    )
+    .unwrap();
+    let attachment_path = executor_home.path().join("feedback.zip");
+    writeln!(
+        stdin,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "read_item_attachment",
+                "arguments": {
+                    "space_id": "9001",
+                    "item_id": "GL-11",
+                    "attachment_id": "attachment-1",
+                    "output_path": attachment_path
+                }
+            }
+        })
     )
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"get_todo","arguments":{{"project_id":"9001","task_id":"GL-11"}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"list_board_items","arguments":{{"space_id":"9001"}}}}}}"#
     )
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{{"name":"create_todo","arguments":{{"project_id":"9001","todo":{{"title":"Created through MCP"}}}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"get_board_item","arguments":{{"space_id":"9001","item_id":"GL-11"}}}}}}"#
     )
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"update_todo","arguments":{{"project_id":"9001","task_id":"GL-11","todo":{{"version":1,"title":"Updated through MCP"}}}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{{"name":"create_board_item","arguments":{{"space_id":"9001","item":{{"title":"Created through MCP"}}}}}}}}"#
     )
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{{"name":"add_todo_comment","arguments":{{"project_id":"9001","task_id":"GL-11","body":"MCP comment"}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"update_board_item","arguments":{{"space_id":"9001","item_id":"GL-11","item":{{"version":1,"title":"Updated through MCP"}}}}}}}}"#
     )
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"reorder_todos","arguments":{{"project_id":"9001","reorder":{{"parent_id":null,"status":"in_progress","item_ids":["GL-11"]}}}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{{"name":"add_board_item_comment","arguments":{{"space_id":"9001","item_id":"GL-11","body":"MCP comment"}}}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"reorder_board_items","arguments":{{"space_id":"9001","reorder":{{"parent_id":null,"status":"in_progress","item_ids":["GL-11"]}}}}}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{{"name":"list_board_items","arguments":{{"space_id":"another-space"}}}}}}"#
     )
     .unwrap();
     drop(stdin);
@@ -236,6 +327,14 @@ async fn task_mcp_routes_cloud_project_crud_through_backend() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
+    assert_eq!(responses[1].pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(responses[2].pointer("/result/isError"), Some(&json!(false)));
+    assert_eq!(responses[9].pointer("/result/isError"), Some(&json!(true)));
+    assert!(responses[9]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("limited to the current project space"));
+    assert_eq!(std::fs::read(attachment_path).unwrap(), b"diagnostic");
     let projects = responses[0]
         .pointer("/result/content/0/text")
         .and_then(Value::as_str)
@@ -244,6 +343,7 @@ async fn task_mcp_routes_cloud_project_crud_through_backend() {
     assert_eq!(projects[0]["id"], 9001);
     let decoded = responses
         .iter()
+        .take(9)
         .map(|response| {
             serde_json::from_str::<Value>(
                 response
@@ -254,11 +354,12 @@ async fn task_mcp_routes_cloud_project_crud_through_backend() {
             .unwrap()
         })
         .collect::<Vec<_>>();
-    assert_eq!(decoded[1][0]["id"], "GL-11");
-    assert_eq!(decoded[2]["id"], "GL-11");
-    assert_eq!(decoded[3]["id"], "GL-12");
-    assert_eq!(decoded[4]["title"], "Updated through MCP");
-    assert_eq!(decoded[5]["body"], "MCP comment");
-    assert_eq!(decoded[6]["items"][0]["status"], "in_progress");
+    assert_eq!(decoded[1][0]["id"], "attachment-1");
+    assert_eq!(decoded[3][0]["id"], "GL-11");
+    assert_eq!(decoded[4]["id"], "GL-11");
+    assert_eq!(decoded[5]["id"], "GL-12");
+    assert_eq!(decoded[6]["title"], "Updated through MCP");
+    assert_eq!(decoded[7]["body"], "MCP comment");
+    assert_eq!(decoded[8]["items"][0]["status"], "in_progress");
     server.abort();
 }

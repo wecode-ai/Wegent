@@ -287,7 +287,6 @@ export function createHybridWorkbenchServices(
   const cloudModelGateway = {
     baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
     apiKey: options.token,
-    mcpUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/mcp/delivery/sse`,
     ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
   const localServices = createLocalAppServices({ cloudModelGateway, user: options.user })

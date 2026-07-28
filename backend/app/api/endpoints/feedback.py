@@ -42,4 +42,4 @@ def submit_feedback(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "context must be an object"
         )
-    return feedback_service.submit(db, current_user.id, values, bundle)
+    return feedback_service.submit(db, current_user, values, bundle)

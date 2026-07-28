@@ -15,28 +15,21 @@ use crate::protocol::ExecutionRequest;
 
 use super::{BinaryInput, ProjectCreate, TaskRuntime, TaskSearch};
 
-const TASK_MCP_SERVER_NAME: &str = "wegent_tasks";
+const SPACE_MCP_SERVER_NAME: &str = "wework_space";
 
-pub fn is_task_mcp_command() -> bool {
-    env::args().nth(1).as_deref() == Some("task-mcp-server")
+pub fn is_space_mcp_command() -> bool {
+    env::args().nth(1).as_deref() == Some("space-mcp-server")
 }
 
-pub fn ensure_task_mcp_server(request: &mut ExecutionRequest) {
-    if request
-        .mcp_servers
-        .iter()
-        .any(|server| server.get("name").and_then(Value::as_str) == Some(TASK_MCP_SERVER_NAME))
-    {
-        return;
-    }
+pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
     let Ok(executable) = env::current_exe() else {
         return;
     };
     let mut server = json!({
-        "name": TASK_MCP_SERVER_NAME,
+        "name": SPACE_MCP_SERVER_NAME,
         "type": "stdio",
         "command": executable,
-        "args": ["task-mcp-server"],
+        "args": ["space-mcp-server"],
     });
     if let Some(project_id) = request
         .extra
@@ -45,23 +38,29 @@ pub fn ensure_task_mcp_server(request: &mut ExecutionRequest) {
         .and_then(id_value)
         .filter(|value| !value.is_empty())
     {
-        server["env"] = json!({"WEGENT_TASK_PROJECT_ID": project_id});
+        server["env"] = json!({"WEWORK_SPACE_ID": project_id});
     }
     if let Some(backend_url) = request
         .backend_url
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        server["env"]["WEGENT_TASK_BACKEND_URL"] = json!(backend_url);
+        server["env"]["WEWORK_SPACE_BACKEND_URL"] = json!(backend_url);
     }
     if let Some(auth_token) = request
         .auth_token
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        server["env"]["WEGENT_TASK_AUTH_TOKEN"] = json!(auth_token);
+        server["env"]["WEWORK_SPACE_AUTH_TOKEN"] = json!(auth_token);
     }
-    request.mcp_servers.push(server);
+    if let Some(existing) = request.mcp_servers.iter_mut().find(|candidate| {
+        candidate.get("name").and_then(Value::as_str) == Some(SPACE_MCP_SERVER_NAME)
+    }) {
+        *existing = server;
+    } else {
+        request.mcp_servers.push(server);
+    }
 }
 
 fn id_value(value: &Value) -> Option<String> {
@@ -112,7 +111,7 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {
-                        "name": TASK_MCP_SERVER_NAME,
+                        "name": SPACE_MCP_SERVER_NAME,
                         "version": env!("CARGO_PKG_VERSION")
                     }
                 }),
@@ -137,14 +136,14 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
 }
 
 async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
-    let scoped_project_id = env::var("WEGENT_TASK_PROJECT_ID").ok();
+    let scoped_project_id = env::var("WEWORK_SPACE_ID").ok();
     if let (Some(scoped), Some(requested)) = (
         scoped_project_id.as_deref(),
-        arguments.get("project_id").and_then(Value::as_str),
+        arguments.get("space_id").and_then(Value::as_str),
     ) {
         if requested != scoped {
             return text_result(
-                "Task MCP access is limited to the current project".to_owned(),
+                "wework_space access is limited to the current project space".to_owned(),
                 true,
             );
         }
@@ -152,13 +151,15 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
     let is_local_project = scoped_project_id
         .as_deref()
         .is_some_and(|project_id| is_local_scoped_project(runtime, project_id));
-    if let (Ok(backend_url), Ok(auth_token), Some(project_id)) = (
-        env::var("WEGENT_TASK_BACKEND_URL"),
-        env::var("WEGENT_TASK_AUTH_TOKEN"),
+    let backend_url = env::var("WEWORK_SPACE_BACKEND_URL").ok();
+    let auth_token = env::var("WEWORK_SPACE_AUTH_TOKEN").ok();
+    if let (Some(backend_url), Some(auth_token), Some(project_id)) = (
+        backend_url.as_deref(),
+        auth_token.as_deref(),
         scoped_project_id.as_deref(),
     ) {
-        if !is_local_project {
-            return match call_backend_tool(&backend_url, &auth_token, project_id, name, &arguments)
+        if !is_local_project || is_backend_space_tool(name) {
+            return match call_backend_tool(backend_url, auth_token, project_id, name, &arguments)
                 .await
             {
                 Ok(value) => text_result(value.to_string(), false),
@@ -166,18 +167,25 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
             };
         }
     }
+    if scoped_project_id.is_some() && !is_local_project {
+        return text_result(
+            "The current project space requires the WeWork Backend connection. Retry through wework_space after the connection is restored; do not use git or provider APIs."
+                .to_owned(),
+            true,
+        );
+    }
     let result = match name {
-        "list_projects" => runtime.list_projects().and_then(|mut value| {
+        "list_spaces" => runtime.list_projects().and_then(|mut value| {
             if let Some(project_id) = scoped_project_id.as_deref() {
                 value.retain(|project| project.id == project_id);
             }
             serde_json::to_value(value).map_err(invalid_json)
         }),
-        "create_project" => parse(arguments)
+        "create_space" => parse(arguments)
             .and_then(|input: ProjectCreate| runtime.create_project(input))
             .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
-        "update_project" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "update_space" => {
+            let project_id = string_argument(&arguments, "space_id");
             let input = parse(
                 arguments
                     .get("project")
@@ -191,28 +199,32 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "list_todos" => match string_argument(&arguments, "project_id") {
+        "list_board_items" => match string_argument(&arguments, "space_id") {
             Ok(project_id) => runtime
                 .list_tasks(project_id)
                 .await
                 .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
             Err(error) => Err(error),
         },
-        "search_todos" => match parse::<TaskSearch>(arguments) {
-            Ok(mut input) => {
-                if input.project_id.is_none() {
-                    input.project_id = scoped_project_id;
+        "search_board_items" => {
+            let requested_space_id = arguments
+                .get("space_id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            match parse::<TaskSearch>(arguments) {
+                Ok(mut input) => {
+                    input.project_id = requested_space_id.or_else(|| scoped_project_id.clone());
+                    runtime
+                        .search_tasks(input)
+                        .await
+                        .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
                 }
-                runtime
-                    .search_tasks(input)
-                    .await
-                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
+                Err(error) => Err(error),
             }
-            Err(error) => Err(error),
-        },
-        "get_todo" => {
-            let project_id = string_argument(&arguments, "project_id");
-            let task_id = string_argument(&arguments, "task_id");
+        }
+        "get_board_item" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
             match (project_id, task_id) {
                 (Ok(project_id), Ok(task_id)) => runtime
                     .get_task(project_id, task_id)
@@ -221,11 +233,11 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "create_todo" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "create_board_item" => {
+            let project_id = string_argument(&arguments, "space_id");
             let input = parse(
                 arguments
-                    .get("todo")
+                    .get("item")
                     .cloned()
                     .unwrap_or_else(|| arguments.clone()),
             );
@@ -237,12 +249,12 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "update_todo" => {
-            let project_id = string_argument(&arguments, "project_id");
-            let task_id = string_argument(&arguments, "task_id");
+        "update_board_item" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
             let input = parse(
                 arguments
-                    .get("todo")
+                    .get("item")
                     .cloned()
                     .unwrap_or_else(|| arguments.clone()),
             );
@@ -254,9 +266,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
-        "add_todo_comment" => {
-            let project_id = string_argument(&arguments, "project_id");
-            let task_id = string_argument(&arguments, "task_id");
+        "add_board_item_comment" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
             let body = string_argument(&arguments, "body");
             match (project_id, task_id, body) {
                 (Ok(project_id), Ok(task_id), Ok(body)) => runtime
@@ -266,9 +278,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
-        "list_todo_attachments" => {
-            let project_id = string_argument(&arguments, "project_id");
-            let task_id = string_argument(&arguments, "task_id");
+        "list_item_attachments" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
             match (project_id, task_id) {
                 (Ok(project_id), Ok(task_id)) => runtime
                     .list_task_attachments(project_id, task_id)
@@ -277,9 +289,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "upload_todo_attachment" => {
-            let project_id = string_argument(&arguments, "project_id");
-            let task_id = string_argument(&arguments, "task_id");
+        "upload_item_attachment" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
             let file_path = string_argument(&arguments, "file_path");
             match (project_id, task_id, file_path) {
                 (Ok(project_id), Ok(task_id), Ok(file_path)) => {
@@ -295,9 +307,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
-        "download_todo_attachment" => {
-            let project_id = string_argument(&arguments, "project_id");
-            let task_id = string_argument(&arguments, "task_id");
+        "read_item_attachment" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
             let attachment_id = string_argument(&arguments, "attachment_id");
             match (project_id, task_id, attachment_id) {
                 (Ok(project_id), Ok(task_id), Ok(attachment_id)) => runtime
@@ -308,9 +320,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
-        "delete_todo_attachment" => {
-            let project_id = string_argument(&arguments, "project_id");
-            let task_id = string_argument(&arguments, "task_id");
+        "delete_item_attachment" => {
+            let project_id = string_argument(&arguments, "space_id");
+            let task_id = string_argument(&arguments, "item_id");
             let attachment_id = string_argument(&arguments, "attachment_id");
             match (project_id, task_id, attachment_id) {
                 (Ok(project_id), Ok(task_id), Ok(attachment_id)) => runtime
@@ -320,8 +332,8 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
-        "reorder_todos" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "reorder_board_items" => {
+            let project_id = string_argument(&arguments, "space_id");
             let input = parse(
                 arguments
                     .get("reorder")
@@ -336,15 +348,15 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "aitable_describe" => match string_argument(&arguments, "project_id") {
+        "describe_space_table" => match string_argument(&arguments, "space_id") {
             Ok(project_id) => runtime
                 .aitable_describe(project_id)
                 .await
                 .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
             Err(error) => Err(error),
         },
-        "aitable_list_records" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "list_table_records" => {
+            let project_id = string_argument(&arguments, "space_id");
             let query = arguments
                 .get("query")
                 .and_then(Value::as_str)
@@ -365,8 +377,8 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 Err(error) => Err(error),
             }
         }
-        "aitable_create_record" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "create_table_record" => {
+            let project_id = string_argument(&arguments, "space_id");
             let cells = cells_argument(&arguments);
             match (project_id, cells) {
                 (Ok(project_id), Ok(cells)) => runtime
@@ -376,8 +388,8 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "aitable_update_record" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "update_table_record" => {
+            let project_id = string_argument(&arguments, "space_id");
             let record_id = string_argument(&arguments, "record_id");
             let cells = cells_argument(&arguments);
             match (project_id, record_id, cells) {
@@ -388,8 +400,8 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
-        "aitable_delete_record" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "delete_table_record" => {
+            let project_id = string_argument(&arguments, "space_id");
             let record_id = string_argument(&arguments, "record_id");
             match (project_id, record_id) {
                 (Ok(project_id), Ok(record_id)) => runtime
@@ -399,8 +411,8 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        "aitable_create_field" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "create_table_field" => {
+            let project_id = string_argument(&arguments, "space_id");
             let name = string_argument(&arguments, "name");
             let field_type = string_argument(&arguments, "field_type");
             let property = arguments
@@ -416,8 +428,8 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
             }
         }
-        "aitable_update_field" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "update_table_field" => {
+            let project_id = string_argument(&arguments, "space_id");
             let field_id = string_argument(&arguments, "field_id");
             let payload = arguments
                 .get("field")
@@ -425,7 +437,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 .cloned()
                 .unwrap_or_else(|| arguments.clone());
             let payload = payload.as_object().cloned().map(|mut map| {
-                map.remove("project_id");
+                map.remove("space_id");
                 map.remove("field_id");
                 if let Some(config) = map.remove("config") {
                     map.insert("property".to_owned(), config);
@@ -443,8 +455,8 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 )),
             }
         }
-        "aitable_delete_field" => {
-            let project_id = string_argument(&arguments, "project_id");
+        "delete_table_field" => {
+            let project_id = string_argument(&arguments, "space_id");
             let field_id = string_argument(&arguments, "field_id");
             match (project_id, field_id) {
                 (Ok(project_id), Ok(field_id)) => runtime
@@ -454,7 +466,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
-        _ => return text_result(format!("Unknown task tool: {name}"), true),
+        _ => return text_result(format!("Unknown wework_space tool: {name}"), true),
     };
     match result {
         Ok(value) => text_result(value.to_string(), false),
@@ -476,6 +488,13 @@ fn is_local_scoped_project(runtime: &TaskRuntime, project_id: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_backend_space_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "list_space_files" | "read_space_file" | "list_deliveries" | "read_delivery"
+    )
+}
+
 async fn call_backend_tool(
     backend_url: &str,
     auth_token: &str,
@@ -487,14 +506,40 @@ async fn call_backend_tool(
     let base = format!("{}/api/v1", backend_url.trim_end_matches('/'));
     let task_id = || {
         arguments
-            .get("task_id")
+            .get("item_id")
             .and_then(Value::as_str)
             .ok_or_else(|| "task_id is required".to_owned())
     };
     let request = match name {
-        "list_projects" => client.get(format!("{base}/cloud-projects")),
-        "list_todos" => client.get(format!("{base}/cloud-projects/{project_id}/loop-items")),
-        "search_todos" => {
+        "list_spaces" => client.get(format!("{base}/cloud-projects")),
+        "list_space_files" => {
+            let mut request = client.get(format!("{base}/cloud-projects/{project_id}/files"));
+            if let Some(prefix) = arguments.get("prefix").and_then(Value::as_str) {
+                request = request.query(&[("prefix", prefix)]);
+            }
+            request
+        }
+        "read_space_file" => {
+            let file_id = string_argument(arguments, "file_id").map_err(|e| e.to_string())?;
+            let output_path = attachment_output_path(arguments, file_id)
+                .map_err(|error| error.to_string())?;
+            let access = backend_json(
+                client
+                    .get(format!(
+                        "{base}/cloud-projects/files/{}/access",
+                        encode_segment(file_id)
+                    ))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            download_backend_object(&client, &access, &output_path).await?;
+            return Ok(json!({"path": output_path}));
+        }
+        "list_board_items" => client.get(format!("{base}/cloud-projects/{project_id}/loop-items")),
+        "search_board_items" => {
             let response = backend_json(
                 client
                     .get(format!("{base}/cloud-projects/{project_id}/loop-items"))
@@ -506,14 +551,14 @@ async fn call_backend_tool(
             .await?;
             return Ok(filter_backend_tasks(response, arguments));
         }
-        "get_todo" => client.get(format!("{base}/loop-items/{}", encode_segment(task_id()?))),
-        "create_todo" => client
+        "get_board_item" => client.get(format!("{base}/loop-items/{}", encode_segment(task_id()?))),
+        "create_board_item" => client
             .post(format!("{base}/cloud-projects/{project_id}/loop-items"))
-            .json(arguments.get("todo").unwrap_or(arguments)),
-        "update_todo" => client
+            .json(arguments.get("item").unwrap_or(arguments)),
+        "update_board_item" => client
             .patch(format!("{base}/loop-items/{}", encode_segment(task_id()?)))
-            .json(arguments.get("todo").unwrap_or(arguments)),
-        "add_todo_comment" => client
+            .json(arguments.get("item").unwrap_or(arguments)),
+        "add_board_item_comment" => client
             .post(format!(
                 "{base}/loop-items/{}/comments",
                 encode_segment(task_id()?)
@@ -521,22 +566,34 @@ async fn call_backend_tool(
             .json(&json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default()
             })),
-        "list_todo_attachments" => client.get(format!(
+        "list_item_attachments" => client.get(format!(
             "{base}/loop-items/{}/attachments",
             encode_segment(task_id()?)
         )),
-        "reorder_todos" => client
+        "list_deliveries" => client.get(format!(
+            "{base}/loop-items/{}/deliveries",
+            encode_segment(task_id()?)
+        )),
+        "read_delivery" => {
+            let delivery_id = string_argument(arguments, "delivery_id")
+                .map_err(|error| error.to_string())?;
+            client.get(format!(
+                "{base}/deliveries/{}",
+                encode_segment(delivery_id)
+            ))
+        }
+        "reorder_board_items" => client
             .post(format!(
                 "{base}/cloud-projects/{project_id}/loop-items/reorder"
             ))
             .json(arguments.get("reorder").unwrap_or(arguments)),
-        "create_project" | "update_project" => {
+        "create_space" | "update_space" => {
             return Err("Cloud project management is not available through task MCP".to_owned())
         }
-        "aitable_describe" => {
+        "describe_space_table" => {
             client.get(format!("{base}/cloud-projects/{project_id}/aitable/table"))
         }
-        "aitable_list_records" => {
+        "list_table_records" => {
             let mut request = client.get(format!(
                 "{base}/cloud-projects/{project_id}/aitable/records"
             ));
@@ -551,10 +608,10 @@ async fn call_backend_tool(
             }
             return backend_json(request.bearer_auth(auth_token).send().await.map_err(|e| e.to_string())?).await;
         }
-        "aitable_create_record" => client
+        "create_table_record" => client
             .post(format!("{base}/cloud-projects/{project_id}/aitable/records"))
             .json(&json!({"cells": arguments.get("cells").cloned().unwrap_or_else(|| json!({}))})),
-        "aitable_update_record" => {
+        "update_table_record" => {
             let record_id = string_argument(arguments, "record_id").map_err(|e| e.to_string())?;
             client
                 .patch(format!(
@@ -563,7 +620,7 @@ async fn call_backend_tool(
                 ))
                 .json(&json!({"cells": arguments.get("cells").cloned().unwrap_or_else(|| json!({}))}))
         }
-        "aitable_delete_record" => {
+        "delete_table_record" => {
             let record_id = string_argument(arguments, "record_id").map_err(|e| e.to_string())?;
             let response = client
                 .delete(format!(
@@ -576,14 +633,14 @@ async fn call_backend_tool(
                 .map_err(|e| e.to_string())?;
             return backend_json(response).await;
         }
-        "aitable_create_field" => client
+        "create_table_field" => client
             .post(format!("{base}/cloud-projects/{project_id}/aitable/fields"))
             .json(&json!({
                 "name": arguments.get("name").and_then(Value::as_str).unwrap_or_default(),
                 "type": arguments.get("field_type").or_else(|| arguments.get("type")).and_then(Value::as_str).unwrap_or_default(),
                 "config": arguments.get("config").cloned().unwrap_or_else(|| json!({})),
             })),
-        "aitable_update_field" => {
+        "update_table_field" => {
             let field_id = string_argument(arguments, "field_id").map_err(|e| e.to_string())?;
             let mut payload = json!({});
             if let Some(name) = arguments.get("name").and_then(Value::as_str) {
@@ -599,7 +656,7 @@ async fn call_backend_tool(
                 ))
                 .json(&payload)
         }
-        "aitable_delete_field" => {
+        "delete_table_field" => {
             let field_id = string_argument(arguments, "field_id").map_err(|e| e.to_string())?;
             let response = client
                 .delete(format!(
@@ -612,7 +669,7 @@ async fn call_backend_tool(
                 .map_err(|e| e.to_string())?;
             return backend_json(response).await;
         }
-        "upload_todo_attachment" => {
+        "upload_item_attachment" => {
             let file_path =
                 string_argument(arguments, "file_path").map_err(|error| error.to_string())?;
             let bytes = fs::read(file_path).map_err(|error| error.to_string())?;
@@ -642,31 +699,26 @@ async fn call_backend_tool(
                 .map_err(|error| error.to_string())?;
             return backend_json(response).await;
         }
-        "download_todo_attachment" => {
+        "read_item_attachment" => {
             let attachment_id =
                 string_argument(arguments, "attachment_id").map_err(|error| error.to_string())?;
             let output_path = attachment_output_path(arguments, attachment_id)
                 .map_err(|error| error.to_string())?;
-            let access = backend_json(
-                client
-                    .get(format!(
-                        "{base}/loop-item-attachments/{}/access",
-                        encode_segment(attachment_id)
-                    ))
-                    .bearer_auth(auth_token)
-                    .send()
-                    .await
-                    .map_err(|error| error.to_string())?,
-            )
-            .await?;
-            let url = access["url"]
-                .as_str()
-                .ok_or_else(|| "attachment access URL is missing".to_owned())?;
-            let bytes = client
-                .get(url)
+            let response = client
+                .get(format!(
+                    "{base}/loop-item-attachments/{}/content",
+                    encode_segment(attachment_id)
+                ))
+                .bearer_auth(auth_token)
                 .send()
                 .await
-                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.map_err(|error| error.to_string())?;
+                return Err(format!("Backend request failed ({status}): {body}"));
+            }
+            let bytes = response
                 .bytes()
                 .await
                 .map_err(|error| error.to_string())?;
@@ -676,7 +728,7 @@ async fn call_backend_tool(
             fs::write(&output_path, bytes).map_err(|error| error.to_string())?;
             return Ok(json!({"path": output_path}));
         }
-        "delete_todo_attachment" => {
+        "delete_item_attachment" => {
             let attachment_id =
                 string_argument(arguments, "attachment_id").map_err(|error| error.to_string())?;
             let response = client
@@ -690,7 +742,7 @@ async fn call_backend_tool(
                 .map_err(|error| error.to_string())?;
             return backend_json(response).await;
         }
-        _ => return Err(format!("Unknown task tool: {name}")),
+        _ => return Err(format!("Unknown wework_space tool: {name}")),
     };
     let response = request
         .bearer_auth(auth_token)
@@ -698,7 +750,7 @@ async fn call_backend_tool(
         .await
         .map_err(|error| error.to_string())?;
     let value = backend_json(response).await?;
-    if name == "list_projects" {
+    if name == "list_spaces" {
         return Ok(Value::Array(
             value
                 .get("items")
@@ -710,10 +762,33 @@ async fn call_backend_tool(
                 .collect(),
         ));
     }
-    if name == "list_todos" {
+    if name == "list_board_items" {
         return Ok(value.get("items").cloned().unwrap_or_else(|| json!([])));
     }
     Ok(value)
+}
+
+async fn download_backend_object(
+    client: &reqwest::Client,
+    access: &Value,
+    output_path: &Path,
+) -> Result<(), String> {
+    let url = access["url"]
+        .as_str()
+        .ok_or_else(|| "Object access URL is missing".to_owned())?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Object read failed ({})", response.status()));
+    }
+    let bytes = response.bytes().await.map_err(|error| error.to_string())?;
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(output_path, bytes).map_err(|error| error.to_string())
 }
 
 async fn backend_json(response: reqwest::Response) -> Result<Value, String> {
@@ -791,70 +866,86 @@ fn encode_segment(value: &str) -> String {
 fn tools() -> Vec<Value> {
     vec![
         tool(
-            "list_projects",
-            concat!(
-                "List project spaces available to this local Executor, including ",
-                "local spaces and configured cloud GitHub or GitLab spaces"
-            ),
+            "list_spaces",
+            "List WeWork project spaces available to the current user",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
-            "create_project",
-            "Create a local project space; never use this to copy an existing cloud project",
+            "create_space",
+            "Create a WeWork project space",
             json!({
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
                     "project_key": {"type": "string"},
-                    "description": {"type": "string"},
-                    "task_provider": {"enum": ["local", "github", "gitlab", "dingtalk_aitable"]},
-                    "provider_config": {"type": "object"}
+                    "description": {"type": "string"}
                 },
-                "required": ["name", "task_provider"]
+                "required": ["name"]
             }),
         ),
         tool(
-            "update_project",
-            "Update a local project or rotate its encrypted provider credential",
+            "update_space",
+            "Update a WeWork project space",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "project": {
                         "type": "object",
                         "properties": {
                             "version": {"type": "integer"},
                             "name": {"type": "string"},
                             "description": {"type": "string"},
-                            "tags": {"type": "array", "items": {"type": "string"}},
-                            "provider_config": {
-                                "type": "object",
-                                "description": "Provider settings. token is transient and is stored only as ciphertext."
-                            }
+                            "tags": {"type": "array", "items": {"type": "string"}}
                         },
                         "required": ["version"]
                     }
                 },
-                "required": ["project_id", "project"]
+                "required": ["space_id", "project"]
             }),
         ),
         tool(
-            "list_todos",
-            "List tasks in a project",
+            "list_board_items",
+            "List board items in a project space",
             json!({
                 "type": "object",
-                "properties": {"project_id": {"type": "string"}},
-                "required": ["project_id"]
+                "properties": {"space_id": {"type": "string"}},
+                "required": ["space_id"]
             }),
         ),
         tool(
-            "search_todos",
-            "Search tasks across one project or all configured projects using text and structured filters",
+            "list_space_files",
+            "List files and folders in a WeWork project space",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "prefix": {"type": "string"}
+                },
+                "required": ["space_id"]
+            }),
+        ),
+        tool(
+            "read_space_file",
+            "Read a project-space file into the runtime and return its local path",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "file_id": {"type": "string"},
+                    "output_path": {"type": "string"}
+                },
+                "required": ["space_id", "file_id"]
+            }),
+        ),
+        tool(
+            "search_board_items",
+            "Search board items across one project or all configured projects using text and structured filters",
             json!({
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Matches task id, title, description, or tags"},
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "status": {"enum": ["inbox", "pending", "in_progress", "in_review", "completed"]},
                     "priority": {"enum": ["none", "low", "medium", "high", "urgent"]},
                     "tag": {"type": "string"},
@@ -866,116 +957,140 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
-            "create_todo",
-            "Create a local task or external Issue",
+            "create_board_item",
+            "Create an item on a project-space board",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "todo": {"type": "object"}
+                    "space_id": {"type": "string"},
+                    "item": {"type": "object"}
                 },
-                "required": ["project_id", "todo"]
+                "required": ["space_id", "item"]
             }),
         ),
         tool(
-            "get_todo",
-            "Get one task in a project",
+            "get_board_item",
+            "Get one board item in a project space",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "task_id": {"type": "string"}
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"}
                 },
-                "required": ["project_id", "task_id"]
+                "required": ["space_id", "item_id"]
             }),
         ),
         tool(
-            "update_todo",
-            "Update a local task or external Issue",
+            "update_board_item",
+            "Update an item on a project-space board",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "task_id": {"type": "string"},
-                    "todo": {"type": "object"}
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "item": {"type": "object"}
                 },
-                "required": ["project_id", "task_id", "todo"]
+                "required": ["space_id", "item_id", "item"]
             }),
         ),
         tool(
-            "add_todo_comment",
-            "Add a comment to a GitHub or GitLab Issue",
+            "add_board_item_comment",
+            "Add a comment to a board item",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "task_id": {"type": "string"},
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
                     "body": {"type": "string"}
                 },
-                "required": ["project_id", "task_id", "body"]
+                "required": ["space_id", "item_id", "body"]
             }),
         ),
         tool(
-            "list_todo_attachments",
-            "List attachments stored for a task. GitLab Issue attachments are read from GitLab.",
+            "list_item_attachments",
+            "List attachments of a board item. Use read_item_attachment to inspect contents.",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "task_id": {"type": "string"}
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"}
                 },
-                "required": ["project_id", "task_id"]
+                "required": ["space_id", "item_id"]
             }),
         ),
         tool(
-            "upload_todo_attachment",
-            "Upload a local file as a task attachment. GitLab Issue files are stored in GitLab Project Uploads.",
+            "upload_item_attachment",
+            "Upload a local file as a board-item attachment",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "task_id": {"type": "string"},
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
                     "file_path": {"type": "string"},
                     "display_name": {"type": "string"},
                     "content_type": {"type": "string"}
                 },
-                "required": ["project_id", "task_id", "file_path"]
+                "required": ["space_id", "item_id", "file_path"]
             }),
         ),
         tool(
-            "download_todo_attachment",
-            "Download a task attachment and return its local path for inspection.",
+            "read_item_attachment",
+            "Read a board-item attachment and return its local path for inspection.",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "task_id": {"type": "string"},
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
                     "attachment_id": {"type": "string"},
                     "output_path": {"type": "string"}
                 },
-                "required": ["project_id", "task_id", "attachment_id"]
+                "required": ["space_id", "item_id", "attachment_id"]
             }),
         ),
         tool(
-            "delete_todo_attachment",
-            "Delete a task attachment from its authoritative task storage.",
+            "delete_item_attachment",
+            "Delete a board-item attachment from its project-space storage.",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
-                    "task_id": {"type": "string"},
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
                     "attachment_id": {"type": "string"}
                 },
-                "required": ["project_id", "task_id", "attachment_id"]
+                "required": ["space_id", "item_id", "attachment_id"]
             }),
         ),
         tool(
-            "reorder_todos",
-            "Persist the order of tasks in one board lane",
+            "list_deliveries",
+            "List deliveries associated with a board item",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"}
+                },
+                "required": ["space_id", "item_id"]
+            }),
+        ),
+        tool(
+            "read_delivery",
+            "Read a delivery and its Markdown handoff content",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "delivery_id": {"type": "string"}
+                },
+                "required": ["space_id", "delivery_id"]
+            }),
+        ),
+        tool(
+            "reorder_board_items",
+            "Persist the order of board items in one board lane",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
                     "reorder": {
                         "type": "object",
                         "properties": {
@@ -989,107 +1104,107 @@ fn tools() -> Vec<Value> {
                         "required": ["status", "item_ids"]
                     }
                 },
-                "required": ["project_id", "reorder"]
+                "required": ["space_id", "reorder"]
             }),
         ),
         tool(
-            "aitable_describe",
-            "Describe a DingTalk AI Table: base, tables, and the dynamic field schema",
+            "describe_space_table",
+            "Describe a project-space table: base, tables, and the dynamic field schema",
             json!({
                 "type": "object",
-                "properties": {"project_id": {"type": "string"}},
-                "required": ["project_id"]
+                "properties": {"space_id": {"type": "string"}},
+                "required": ["space_id"]
             }),
         ),
         tool(
-            "aitable_list_records",
-            "Query AI Table records with optional full-text keyword and cursor pagination",
+            "list_table_records",
+            "Query project-space table records with optional full-text keyword and cursor pagination",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "query": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
                     "cursor": {"type": "string"}
                 },
-                "required": ["project_id"]
+                "required": ["space_id"]
             }),
         ),
         tool(
-            "aitable_create_record",
-            "Create an AI Table record. cells keys must be fieldIds, only provided cells are written",
+            "create_table_record",
+            "Create an project-space table record. cells keys must be fieldIds, only provided cells are written",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "cells": {"type": "object", "description": "Map of fieldId to cell value"}
                 },
-                "required": ["project_id", "cells"]
+                "required": ["space_id", "cells"]
             }),
         ),
         tool(
-            "aitable_update_record",
-            "Patch an AI Table record cell-by-cell. Only the provided fieldIds are modified",
+            "update_table_record",
+            "Patch an project-space table record cell-by-cell. Only the provided fieldIds are modified",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "record_id": {"type": "string"},
                     "cells": {"type": "object", "description": "Map of fieldId to cell value"}
                 },
-                "required": ["project_id", "record_id", "cells"]
+                "required": ["space_id", "record_id", "cells"]
             }),
         ),
         tool(
-            "aitable_delete_record",
-            "Delete an AI Table record (irreversible)",
+            "delete_table_record",
+            "Delete an project-space table record (irreversible)",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "record_id": {"type": "string"}
                 },
-                "required": ["project_id", "record_id"]
+                "required": ["space_id", "record_id"]
             }),
         ),
         tool(
-            "aitable_create_field",
-            "Add a field (column) to an AI Table",
+            "create_table_field",
+            "Add a field (column) to an project-space table",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "name": {"type": "string"},
-                    "field_type": {"type": "string", "description": "AI Table field type such as text, number, singleSelect, multipleSelect, date, user, checkbox, url"},
+                    "field_type": {"type": "string", "description": "project-space table field type such as text, number, singleSelect, multipleSelect, date, user, checkbox, url"},
                     "config": {"type": "object", "description": "Field property/options configuration"}
                 },
-                "required": ["project_id", "name", "field_type"]
+                "required": ["space_id", "name", "field_type"]
             }),
         ),
         tool(
-            "aitable_update_field",
-            "Rename or reconfigure an AI Table field. Field type cannot be changed; options are fully replaced",
+            "update_table_field",
+            "Rename or reconfigure an project-space table field. Field type cannot be changed; options are fully replaced",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "field_id": {"type": "string"},
                     "name": {"type": "string"},
                     "config": {"type": "object"}
                 },
-                "required": ["project_id", "field_id"]
+                "required": ["space_id", "field_id"]
             }),
         ),
         tool(
-            "aitable_delete_field",
-            "Delete an AI Table field and clear its values in every record (irreversible)",
+            "delete_table_field",
+            "Delete an project-space table field and clear its values in every record (irreversible)",
             json!({
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string"},
+                    "space_id": {"type": "string"},
                     "field_id": {"type": "string"}
                 },
-                "required": ["project_id", "field_id"]
+                "required": ["space_id", "field_id"]
             }),
         ),
     ]
@@ -1225,46 +1340,73 @@ mod tests {
     use crate::task_runtime::{LocalTaskStore, TaskCreate, TaskProviderKind};
 
     #[test]
-    fn injects_the_local_task_mcp_once() {
+    fn injects_wework_space_once() {
         let mut request = ExecutionRequest::default();
 
-        ensure_task_mcp_server(&mut request);
-        ensure_task_mcp_server(&mut request);
+        ensure_space_mcp_server(&mut request);
+        ensure_space_mcp_server(&mut request);
 
         assert_eq!(request.mcp_servers.len(), 1);
-        assert_eq!(request.mcp_servers[0]["name"], TASK_MCP_SERVER_NAME);
+        assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
         assert_eq!(request.mcp_servers[0]["type"], "stdio");
-        assert_eq!(request.mcp_servers[0]["args"], json!(["task-mcp-server"]));
+        assert_eq!(request.mcp_servers[0]["args"], json!(["space-mcp-server"]));
     }
 
     #[test]
-    fn scopes_task_mcp_to_the_bound_cloud_project() {
+    fn refreshes_stale_wework_space_config_for_a_follow_up_turn() {
+        let mut request = ExecutionRequest::default();
+        request.mcp_servers.push(json!({
+            "name": "wework_space",
+            "type": "stdio",
+            "command": "stale-executor",
+            "args": ["space-mcp-server"]
+        }));
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!(841738010351776815_i64));
+        request.backend_url = Some("https://wework.example.com".to_owned());
+        request.auth_token = Some("runtime-token".to_owned());
+
+        ensure_space_mcp_server(&mut request);
+
+        assert_eq!(request.mcp_servers.len(), 1);
+        assert_ne!(request.mcp_servers[0]["command"], "stale-executor");
+        assert_eq!(
+            request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"],
+            "841738010351776815"
+        );
+        assert_eq!(
+            request.mcp_servers[0]["env"]["WEWORK_SPACE_BACKEND_URL"],
+            "https://wework.example.com"
+        );
+        assert_eq!(
+            request.mcp_servers[0]["env"]["WEWORK_SPACE_AUTH_TOKEN"],
+            "runtime-token"
+        );
+    }
+
+    #[test]
+    fn scopes_wework_space_to_the_bound_project() {
         let mut request = ExecutionRequest::default();
         request
             .extra
             .insert("cloudProjectId".to_owned(), json!("cloud-42"));
 
-        ensure_task_mcp_server(&mut request);
+        ensure_space_mcp_server(&mut request);
 
-        assert_eq!(
-            request.mcp_servers[0]["env"]["WEGENT_TASK_PROJECT_ID"],
-            "cloud-42"
-        );
+        assert_eq!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"], "cloud-42");
     }
 
     #[test]
-    fn scopes_task_mcp_with_a_numeric_cloud_project_id() {
+    fn scopes_wework_space_with_a_numeric_project_id() {
         let mut request = ExecutionRequest::default();
         request
             .extra
             .insert("cloudProjectId".to_owned(), json!(9001));
 
-        ensure_task_mcp_server(&mut request);
+        ensure_space_mcp_server(&mut request);
 
-        assert_eq!(
-            request.mcp_servers[0]["env"]["WEGENT_TASK_PROJECT_ID"],
-            "9001"
-        );
+        assert_eq!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"], "9001");
     }
 
     #[test]
@@ -1294,10 +1436,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         for name in [
-            "list_todo_attachments",
-            "upload_todo_attachment",
-            "download_todo_attachment",
-            "delete_todo_attachment",
+            "list_item_attachments",
+            "upload_item_attachment",
+            "read_item_attachment",
+            "delete_item_attachment",
         ] {
             assert!(names.iter().any(|candidate| candidate == name));
         }
@@ -1307,8 +1449,8 @@ mod tests {
     fn exposes_task_search_tool() {
         let search = tools()
             .into_iter()
-            .find(|tool| tool["name"] == "search_todos")
-            .expect("search_todos tool");
+            .find(|tool| tool["name"] == "search_board_items")
+            .expect("search_board_items tool");
 
         assert_eq!(
             search["inputSchema"]["properties"]["status"]["enum"],
@@ -1318,6 +1460,33 @@ mod tests {
             search["inputSchema"]["properties"]["creator_user_id"]["type"],
             "integer"
         );
+    }
+
+    #[test]
+    fn exposes_only_wework_space_business_vocabulary() {
+        let serialized = serde_json::to_string(&tools()).unwrap().to_lowercase();
+
+        for forbidden in [
+            "wegent_tasks",
+            "wegent_delivery",
+            "github",
+            "gitlab",
+            "project_id",
+            "task_id",
+            "\"todo\"",
+        ] {
+            assert!(!serialized.contains(forbidden), "found {forbidden}");
+        }
+        for required in [
+            "list_spaces",
+            "get_board_item",
+            "list_item_attachments",
+            "read_item_attachment",
+            "list_space_files",
+            "list_deliveries",
+        ] {
+            assert!(serialized.contains(required), "missing {required}");
+        }
     }
 
     #[tokio::test]
@@ -1363,9 +1532,9 @@ mod tests {
 
         let result = call_tool(
             &runtime,
-            "search_todos",
+            "search_board_items",
             json!({
-                "project_id": project.id,
+                "space_id": project.id,
                 "query": "oauth",
                 "status": "in_progress",
                 "tag": "bug"
@@ -1377,6 +1546,61 @@ mod tests {
             serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(tasks.as_array().unwrap().len(), 1);
         assert_eq!(tasks[0]["title"], "Fix OAuth callback");
+    }
+
+    #[tokio::test]
+    async fn search_board_items_honors_the_requested_space() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let first = store
+            .create_project(ProjectCreate {
+                name: "First".to_owned(),
+                project_key: Some("FIRST".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        let second = store
+            .create_project(ProjectCreate {
+                name: "Second".to_owned(),
+                project_key: Some("SECOND".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        for (project_id, title) in [
+            (&first.id, "First feedback"),
+            (&second.id, "Second feedback"),
+        ] {
+            store
+                .create_task(
+                    project_id,
+                    TaskCreate {
+                        title: title.to_owned(),
+                        description: String::new(),
+                        status: "inbox".to_owned(),
+                        priority: "none".to_owned(),
+                        parent_id: None,
+                        tags: vec!["feedback".to_owned()],
+                    },
+                )
+                .unwrap();
+        }
+        let runtime = TaskRuntime::new(store).unwrap();
+
+        let result = call_tool(
+            &runtime,
+            "search_board_items",
+            json!({"space_id": second.id, "query": "feedback"}),
+        )
+        .await;
+        let items: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+
+        assert_eq!(items.as_array().unwrap().len(), 1);
+        assert_eq!(items[0]["title"], "Second feedback");
     }
 
     #[tokio::test]
@@ -1411,10 +1635,10 @@ mod tests {
 
         let upload = call_tool(
             &runtime,
-            "upload_todo_attachment",
+            "upload_item_attachment",
             json!({
-                "project_id": project.id,
-                "task_id": task.id,
+                "space_id": project.id,
+                "item_id": task.id,
                 "file_path": source,
                 "content_type": "text/plain"
             }),
@@ -1427,8 +1651,8 @@ mod tests {
 
         let list = call_tool(
             &runtime,
-            "list_todo_attachments",
-            json!({"project_id": project.id, "task_id": task.id}),
+            "list_item_attachments",
+            json!({"space_id": project.id, "item_id": task.id}),
         )
         .await;
         let listed: Value =
@@ -1438,10 +1662,10 @@ mod tests {
         let output = directory.path().join("downloaded.txt");
         let download = call_tool(
             &runtime,
-            "download_todo_attachment",
+            "read_item_attachment",
             json!({
-                "project_id": project.id,
-                "task_id": task.id,
+                "space_id": project.id,
+                "item_id": task.id,
                 "attachment_id": attachment_id,
                 "output_path": output
             }),
@@ -1455,10 +1679,10 @@ mod tests {
 
         let deleted = call_tool(
             &runtime,
-            "delete_todo_attachment",
+            "delete_item_attachment",
             json!({
-                "project_id": project.id,
-                "task_id": task.id,
+                "space_id": project.id,
+                "item_id": task.id,
                 "attachment_id": attachment_id
             }),
         )

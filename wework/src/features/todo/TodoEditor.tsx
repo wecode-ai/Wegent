@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   ArrowLeft,
   Calendar,
@@ -39,6 +39,7 @@ import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
+import { markdownAttachmentRows } from './attachmentMarkdown'
 import {
   columnDotClasses,
   columns,
@@ -112,6 +113,11 @@ function descendantIds(items: CloudLoopItem[], itemId: string): Set<string> {
     }
   }
   return result
+}
+
+function appendAttachmentMarkdown(description: string, markdown: string): string {
+  if (!markdown) return description
+  return `${description.trimEnd()}\n\n${markdown}`.trim()
 }
 
 const propChipClass =
@@ -300,6 +306,12 @@ export function TodoEditor(props: TodoEditorProps) {
   const editItemId = item?.id ?? null
   const editProjectId = item?.cloud_project_id ?? null
   const createProjectId = createProps?.project.id ?? null
+  const visibleAttachments = useMemo(() => {
+    const merged = new Map<string, AttachmentRow>()
+    markdownAttachmentRows(description).forEach(attachment => merged.set(attachment.id, attachment))
+    attachments.forEach(attachment => merged.set(attachment.id, attachment))
+    return Array.from(merged.values())
+  }, [attachments, description])
 
   // Edit mode loads everything tied to the item id.
   useEffect(() => {
@@ -419,11 +431,13 @@ export function TodoEditor(props: TodoEditorProps) {
           assignee_user_id: Number(assigneeId),
         })
       }
-      // Upload staged attachments after creation; a single failure must not
-      // block the rest or the panel completion.
-      await Promise.allSettled(
-        pendingFiles.map(file => api.addLoopItemAttachment(created.id, file))
-      )
+      const uploaded = await uploadAttachments(created.id, pendingFiles)
+      if (uploaded.markdown) {
+        created = await api.updateLoopItem(created.id, {
+          version: created.version,
+          description: appendAttachmentMarkdown(description, uploaded.markdown),
+        })
+      }
       if (draftKey) {
         localStorage.removeItem(draftKey)
         draftAttachmentStore.delete(draftKey)
@@ -506,10 +520,8 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentBusy(true)
     setAttachmentError(null)
     try {
-      const uploaded = await Promise.all(
-        Array.from(files).map(file => api.addLoopItemAttachment(editItemId, file))
-      )
-      setAttachments(current => [...uploaded.reverse(), ...current])
+      const result = await uploadAttachments(editItemId, Array.from(files))
+      setAttachments(current => [...result.attachments.reverse(), ...current])
     } catch (cause) {
       setAttachmentError(cause instanceof Error ? cause.message : '附件上传失败')
     } finally {
@@ -517,9 +529,40 @@ export function TodoEditor(props: TodoEditorProps) {
     }
   }
 
+  async function uploadAttachments(itemId: string, files: File[]) {
+    const uploaded = await Promise.all(
+      files.map(async file => {
+        const attachment = await api.addLoopItemAttachment(itemId, file)
+        return { attachment, markdown: attachment.markdown }
+      })
+    )
+    return {
+      attachments: uploaded.map(entry => entry.attachment),
+      markdown: uploaded.map(entry => entry.markdown).join('\n'),
+    }
+  }
+
+  function pasteAttachments(files: File[]) {
+    if (isCreate) {
+      setPendingFiles(current => [...current, ...files])
+      return
+    }
+    if (!editItemId || attachmentBusy) return
+    setAttachmentBusy(true)
+    setAttachmentError(null)
+    void uploadAttachments(editItemId, files)
+      .then(result => {
+        setAttachments(current => [...result.attachments.reverse(), ...current])
+        setDescription(current => appendAttachmentMarkdown(current, result.markdown))
+      })
+      .catch(cause => {
+        setAttachmentError(cause instanceof Error ? cause.message : '附件上传失败')
+      })
+      .finally(() => setAttachmentBusy(false))
+  }
+
   async function openAttachment(attachment: AttachmentRow) {
-    const access = await api.accessLoopItemAttachment(attachment.id)
-    window.open(access.url, '_blank', 'noopener,noreferrer')
+    await api.downloadLoopItemAttachment(attachment.id, attachment.display_name)
   }
 
   async function removeAttachment(attachment: AttachmentRow) {
@@ -802,7 +845,11 @@ export function TodoEditor(props: TodoEditorProps) {
 
           {!isAITableEdit ? (
             <div className="mt-3 min-h-[240px]">
-              <TaskDescriptionEditor value={description} onChange={setDescription} />
+              <TaskDescriptionEditor
+                value={description}
+                onChange={setDescription}
+                onPasteFiles={pasteAttachments}
+              />
               <p className="mt-2.5 text-xs text-text-muted">
                 支持 Markdown，可拖拽文件到编辑器添加附件
               </p>
@@ -816,7 +863,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
           <div className="mt-5">
             <TodoAttachmentSection
-              attachments={isCreate ? pendingAttachmentRows : attachments}
+              attachments={isCreate ? pendingAttachmentRows : visibleAttachments}
               busy={attachmentBusy}
               error={attachmentError}
               editable

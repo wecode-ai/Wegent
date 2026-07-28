@@ -554,14 +554,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : null
     const scope = composerTodoItem
       ? [
-          `Current cloud project: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
-          `Current task: ${composerTodoItem.id} — ${composerTodoItem.title}.`,
-          composerTodoItem.description ? `Task description: ${composerTodoItem.description}` : null,
-          `Current task reference: ${todoReference}.`,
+          `Current project space: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
+          `Current board item: ${composerTodoItem.id} — ${composerTodoItem.title}.`,
+          composerTodoItem.description
+            ? `Board item description: ${composerTodoItem.description}`
+            : null,
+          `Current board item reference: ${todoReference}.`,
         ]
       : [
-          `Current cloud project: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
-          'No specific task is selected.',
+          `Current project space: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
+          'No specific board item is selected.',
           `Current project reference: ${projectReference}.`,
         ]
     return {
@@ -569,8 +571,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         kind: 'application',
         value: [
           ...scope.filter((line): line is string => Boolean(line)),
-          'When the user refers to “this project” or “this task”, use this current cloud context.',
-          'Use the wegent_delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
+          'When the user refers to “this project space” or “this board item”, use this current project-space context.',
+          'Use the wework_space MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
         ].join('\n'),
       },
     }
@@ -589,12 +591,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       sendPaneInput(value, {
         ...options,
         additionalContext: cloudAdditionalContext,
+        cloudProjectId: composerCloudProject ? String(composerCloudProject.id) : undefined,
         onRuntimeTaskCreated: address => {
           if (!pendingTodoBinding) return
           pendingTodoBinding = { ...pendingTodoBinding, target: address }
         },
       }),
-    [cloudAdditionalContext, sendPaneInput]
+    [cloudAdditionalContext, composerCloudProject, sendPaneInput]
   )
 
   useEffect(() => {
