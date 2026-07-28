@@ -53,4 +53,36 @@ describe('createDocumentsFromAttachments', () => {
       })
     )
   })
+
+  it('uses an empty extension for dotless names and keeps the filename fallback', async () => {
+    const createDocument = jest
+      .fn()
+      .mockResolvedValueOnce({ id: 201 } as KnowledgeDocument)
+      .mockResolvedValueOnce({ id: 202 } as KnowledgeDocument)
+
+    await createDocumentsFromAttachments({
+      attachments: [
+        {
+          attachment: attachment(101, 'README'),
+          file: new File(['readme'], 'README', { type: 'text/plain' }),
+        },
+        {
+          attachment: attachment(102, ''),
+          file: new File(['notes'], 'notes.md', { type: 'text/markdown' }),
+        },
+      ],
+      folderId: 0,
+      createDocument,
+      fallbackError: 'create failed',
+    })
+
+    expect(createDocument).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ name: 'README', file_extension: '' })
+    )
+    expect(createDocument).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ name: 'notes.md', file_extension: 'md' })
+    )
+  })
 })

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
   ChevronRight,
@@ -43,6 +43,7 @@ interface ArtifactPanelProps {
   onCanManageChange?: (canManage: boolean) => void
   onAskNode?: (request: ArtifactPromptRequest) => void
   onCreatePptDraft: () => void
+  refreshToken?: number
 }
 
 interface CapabilityCardProps {
@@ -104,6 +105,7 @@ export function ArtifactPanel({
   onCanManageChange,
   onAskNode,
   onCreatePptDraft,
+  refreshToken = 0,
 }: ArtifactPanelProps) {
   const { t } = useTranslation('knowledge')
   const { toast } = useToast()
@@ -120,6 +122,7 @@ export function ArtifactPanel({
     remove,
     refresh,
   } = useKnowledgeArtifacts(knowledgeBaseId)
+  const previousRefreshTokenRef = useRef(refreshToken)
   const [createOpen, setCreateOpen] = useState(false)
   const [createType, setCreateType] = useState<KnowledgeArtifactType>('briefing')
   const [createSessionKey, setCreateSessionKey] = useState(0)
@@ -134,6 +137,12 @@ export function ArtifactPanel({
   useEffect(() => {
     onAvailableDocumentCountChange?.(availableDocumentCount)
   }, [availableDocumentCount, onAvailableDocumentCountChange])
+
+  useEffect(() => {
+    if (previousRefreshTokenRef.current === refreshToken) return
+    previousRefreshTokenRef.current = refreshToken
+    void refresh()
+  }, [refresh, refreshToken])
 
   useEffect(() => {
     if (isLoading || error) return

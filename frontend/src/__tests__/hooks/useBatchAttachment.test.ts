@@ -184,12 +184,17 @@ describe('useBatchAttachment — document creation retry', () => {
     expect(result.current.state.files).toHaveLength(1)
     expect(result.current.state.files[0]).toEqual(
       expect.objectContaining({
-        status: 'success',
+        status: 'error',
         error: 'create failed',
         attachment: expect.objectContaining({ id: 102 }),
       })
     )
     expect(result.current.getSuccessfulAttachments()).toHaveLength(1)
+
+    await act(async () => {
+      await result.current.retryFile(result.current.state.files[0].id)
+    })
+
     expect(mockUploadAttachment).toHaveBeenCalledTimes(2)
   })
 })

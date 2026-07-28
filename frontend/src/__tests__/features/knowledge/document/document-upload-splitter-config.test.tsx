@@ -145,4 +145,62 @@ describe('DocumentUpload splitter config defaults', () => {
       undefined
     )
   })
+
+  it('retries document creation without uploading the attachment again', async () => {
+    const file = new File(['hello'], 'notes.md', { type: 'text/markdown' })
+    const onUploadComplete = jest.fn().mockResolvedValue([{ attachmentId: 101, documentId: 201 }])
+    const retryFile = jest.fn()
+
+    mockUseBatchAttachment.mockReturnValue({
+      state: {
+        files: [
+          {
+            id: 'file-1',
+            file,
+            status: 'error',
+            progress: 100,
+            error: 'create failed',
+            attachment: {
+              id: 101,
+              filename: 'notes.md',
+              file_size: 5,
+              mime_type: 'text/markdown',
+              status: 'ready',
+              file_extension: '.md',
+              created_at: '2026-04-10T00:00:00Z',
+            },
+          },
+        ],
+        isUploading: false,
+        summary: null,
+      },
+      addFiles: jest.fn(),
+      removeFile: jest.fn(),
+      clearFiles: jest.fn(),
+      startUpload: jest.fn(),
+      retryFile,
+      renameFile: jest.fn(),
+      reset: jest.fn(),
+      applyDocumentCreationResults: jest.fn(),
+    })
+
+    render(
+      <DocumentUpload open={true} onOpenChange={jest.fn()} onUploadComplete={onUploadComplete} />
+    )
+
+    fireEvent.click(screen.getByTestId('document-creation-retry-file-1'))
+
+    await waitFor(() => expect(onUploadComplete).toHaveBeenCalledTimes(1))
+    expect(onUploadComplete).toHaveBeenCalledWith(
+      [
+        {
+          attachment: expect.objectContaining({ id: 101 }),
+          file,
+        },
+      ],
+      expect.any(Object),
+      undefined
+    )
+    expect(retryFile).not.toHaveBeenCalled()
+  })
 })

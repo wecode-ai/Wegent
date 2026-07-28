@@ -331,7 +331,7 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
   const retryFile = useCallback(
     async (id: string) => {
       const fileItem = state.files.find(f => f.id === id)
-      if (!fileItem || fileItem.status !== 'error') return
+      if (!fileItem || fileItem.status !== 'error' || fileItem.attachment) return
 
       // Reset the file status to pending
       setState(prev => ({
@@ -391,7 +391,7 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
   // This is important for rename operations where state updates may be pending
   const getSuccessfulAttachments = () => {
     return state.files
-      .filter(f => f.status === 'success' && f.attachment)
+      .filter(f => f.attachment)
       .map(f => ({ attachment: f.attachment!, file: f.file }))
   }
 
@@ -411,6 +411,7 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
           return [
             {
               ...file,
+              status: 'error' as FileUploadStatus,
               error: result.error || t('knowledge:document.document.createFailed'),
             },
           ]

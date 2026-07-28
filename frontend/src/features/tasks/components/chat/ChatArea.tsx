@@ -2037,7 +2037,7 @@ function ChatAreaContent({
             <AlertDialogAction
               data-testid="quick-phrase-overwrite-confirm"
               onClick={handleConfirmQuickPhraseOverwrite}
-              className="bg-primary text-white hover:bg-primary/90"
+              variant="primary"
             >
               {t('quick_launch.overwrite_confirm_action')}
             </AlertDialogAction>
@@ -2066,7 +2066,7 @@ function ChatAreaContent({
             <AlertDialogAction
               data-testid="knowledge-draft-confirm"
               onClick={handleConfirmExternalDraft}
-              className="bg-primary text-white hover:bg-primary/90"
+              variant="primary"
             >
               {t('knowledge_draft.confirm_action')}
             </AlertDialogAction>

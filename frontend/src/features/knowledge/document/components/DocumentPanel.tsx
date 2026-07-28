@@ -125,7 +125,7 @@ export function DocumentPanel({
   const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
   const [processingDocumentCount, setProcessingDocumentCount] = useState(0)
   const [uploadOpen, setUploadOpen] = useState(false)
-  const [sourceRevision, setSourceRevision] = useState(0)
+  const [sourceRefreshToken, setSourceRefreshToken] = useState(0)
   const sourceApplyContinuationRef = useRef<(() => void) | null>(null)
   const modelSupportsVideo = useModelSupportsVideo(knowledgeBase)
   const { create: createDocument } = useDocuments({
@@ -206,7 +206,7 @@ export function DocumentPanel({
   }
 
   const refreshSources = () => {
-    setSourceRevision(current => current + 1)
+    setSourceRefreshToken(current => current + 1)
   }
 
   const handleUploadComplete = async (
@@ -440,9 +440,9 @@ export function DocumentPanel({
 
         <div className="min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-5">
           <ArtifactPanel
-            key={sourceRevision}
             knowledgeBaseId={knowledgeBase.id}
             selectedDocumentIds={selectedDocumentIds}
+            refreshToken={sourceRefreshToken}
             onAdjustSources={openSourceDialog}
             onAvailableDocumentCountChange={setAvailableDocumentCount}
             onProcessingDocumentCountChange={setProcessingDocumentCount}

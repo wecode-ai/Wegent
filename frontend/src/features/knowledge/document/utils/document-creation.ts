@@ -36,7 +36,8 @@ export async function createDocumentsFromAttachments({
 
   for (const { attachment, file } of attachments) {
     const documentName = attachment.filename || file.name
-    const extension = documentName.split('.').pop() || ''
+    const lastDotIndex = documentName.lastIndexOf('.')
+    const extension = lastDotIndex === -1 ? '' : documentName.slice(lastDotIndex + 1)
     const multimodalPrompt = resolvePerFilePrompt(
       documentName,
       extension,

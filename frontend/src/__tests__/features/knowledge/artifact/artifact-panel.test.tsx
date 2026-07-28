@@ -16,6 +16,7 @@ const createMock = jest.fn()
 const removeMock = jest.fn()
 const toastMock = jest.fn()
 const createPptDraftMock = jest.fn()
+const refreshMock = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -104,7 +105,7 @@ describe('ArtifactPanel AI Workshop', () => {
       rename: jest.fn(),
       retry: jest.fn(),
       remove: removeMock,
-      refresh: jest.fn(),
+      refresh: refreshMock,
     })
     createMock.mockResolvedValue({ artifact_id: 'artifact-1' })
     removeMock.mockResolvedValue(undefined)
@@ -176,6 +177,32 @@ describe('ArtifactPanel AI Workshop', () => {
       expect(onCanManageChange).toHaveBeenCalledWith(true)
       expect(onProcessingDocumentCountChange).toHaveBeenCalledWith(0)
     })
+  })
+
+  it('refreshes data when the refresh token changes without remounting', async () => {
+    const { rerender } = render(
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
+        refreshToken={0}
+      />
+    )
+
+    expect(refreshMock).not.toHaveBeenCalled()
+
+    rerender(
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
+        refreshToken={1}
+      />
+    )
+
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1))
   })
 
   it('passes explicitly selected sources to a specialized capability', async () => {
