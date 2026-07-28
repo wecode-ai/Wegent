@@ -252,27 +252,29 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
         "Task".to_owned(),
     ));
 
-    handler.record_runtime_turn_id("task-1", "subtask-1", "turn-1");
+    let codex_turn_id = "019f933f-bf0d-72e3-b366-a6539ab00bcf";
+    handler.record_runtime_turn_id("task-1", "subtask-1", codex_turn_id);
 
     let link = handler
         .local_task_link("task-1")
         .expect("task should exist");
     assert_eq!(
         tasks::runtime_turn_id_from_link(&link, "subtask-1").as_deref(),
-        Some("turn-1")
+        Some(codex_turn_id)
     );
     assert_eq!(
         tasks::resolve_codex_turn_id(&link, "subtask-1").as_deref(),
-        Some("turn-1")
+        Some(codex_turn_id)
     );
     assert_eq!(
-        tasks::resolve_codex_turn_id(&link, "turn-1").as_deref(),
-        Some("turn-1")
+        tasks::resolve_codex_turn_id(&link, codex_turn_id).as_deref(),
+        Some(codex_turn_id)
     );
     assert_eq!(
-        tasks::resolve_codex_turn_id(&link, "019f933f-bf0d-72e3-b366-a6539ab00bcf").as_deref(),
-        Some("019f933f-bf0d-72e3-b366-a6539ab00bcf")
+        tasks::resolve_codex_turn_id(&link, &format!("{codex_turn_id}-1")).as_deref(),
+        Some(codex_turn_id)
     );
+    assert_eq!(tasks::resolve_codex_turn_id(&link, "turn-1-1"), None);
     assert_eq!(tasks::resolve_codex_turn_id(&link, "missing-turn"), None);
     let _ = fs::remove_file(index_path);
 }

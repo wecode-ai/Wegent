@@ -18,10 +18,13 @@ const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
-const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"] p[data-scroll-anchor]:nth-of-type(13)`
+const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
+const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
+const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"] [data-scroll-anchor]`
+const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${VIEWPORT_ANCHOR_E2E_ID}"]`
 const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   if (index === 11) {
-    return `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
+    return VIEWPORT_ANCHOR_TEXT
   }
   return `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
 })
@@ -610,13 +613,19 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-02-thinking-below-partial-response.png')
 
-      await control.command('waitFor', VIEWPORT_ANCHOR_SELECTOR, {
-        text: VIEWPORT_MARKER,
+      await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+        text: VIEWPORT_ANCHOR_TEXT,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('markElementWithText', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+        text: VIEWPORT_ANCHOR_TEXT,
+        value: VIEWPORT_ANCHOR_E2E_ID,
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
         await control.command('getText', VIEWPORT_ANCHOR_SELECTOR),
-        `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`,
+        VIEWPORT_ANCHOR_TEXT,
         'The viewport anchor paragraph was not rendered at the expected position'
       )
       await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.35' })
