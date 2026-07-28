@@ -675,11 +675,11 @@ def kb_sharing(
         text(f"""
             SELECT k.id AS kb_id,
                    COUNT(rm.user_id) AS member_count,
-                   SUM(CASE WHEN rm.role = 'owner' THEN 1 ELSE 0 END) AS owner_count,
-                   SUM(CASE WHEN rm.role = 'maintainer' THEN 1 ELSE 0 END) AS maintainer_count,
-                   SUM(CASE WHEN rm.role = 'developer' THEN 1 ELSE 0 END) AS developer_count,
-                   SUM(CASE WHEN rm.role = 'reporter' THEN 1 ELSE 0 END) AS reporter_count,
-                   SUM(CASE WHEN rm.role = 'restricted_analyst' THEN 1 ELSE 0 END)
+                   SUM(CASE WHEN rm.role = 'Owner' THEN 1 ELSE 0 END) AS owner_count,
+                   SUM(CASE WHEN rm.role = 'Maintainer' THEN 1 ELSE 0 END) AS maintainer_count,
+                   SUM(CASE WHEN rm.role = 'Developer' THEN 1 ELSE 0 END) AS developer_count,
+                   SUM(CASE WHEN rm.role = 'Reporter' THEN 1 ELSE 0 END) AS reporter_count,
+                   SUM(CASE WHEN rm.role = 'RestrictedAnalyst' THEN 1 ELSE 0 END)
                        AS restricted_analyst_count
             FROM kinds k
             LEFT JOIN resource_members rm

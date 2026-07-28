@@ -155,11 +155,22 @@ def prom_active_conversions(
     stat_session: Session,
 ) -> int:
     """Collect count of documents in active conversion states."""
-    active_count = source_session.execute(text("""
+    kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
+    kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
+
+    active_count = (
+        source_session.execute(
+            text(f"""
             SELECT COUNT(*) AS active_count
             FROM knowledge_documents
-            WHERE index_status IN ('converting', 'pending_conversion', 'indexing')
-        """)).scalar() or 0
+            WHERE is_active = 1
+              AND index_status IN ('converting', 'pending_conversion', 'indexing')
+              {kb_where}
+        """),
+            kb_params,
+        ).scalar()
+        or 0
+    )
 
     stat_session.execute(
         text("""
