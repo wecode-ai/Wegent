@@ -348,6 +348,33 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('passes Kimi dynamic-tool capability using the cloud provider model id', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-kimi-model',
+      type: 'user',
+      modelId: 'k3',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-kimi-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        weworkCloudModelKimiDynamicTools: 'true',
+      },
+    })
+  })
+
   test('passes upstream api format for Anthropic Messages cloud model', () => {
     const cloudModel: UnifiedModel = {
       name: 'shared-model',

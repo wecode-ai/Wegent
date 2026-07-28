@@ -225,6 +225,16 @@ function seedDesktopE2ECloudConnection() {
             requestPath: '/v1/messages',
           },
           {
+            id: 'desktop-e2e-kimi-k3',
+            providerProfileId: 'kimi-coding',
+            displayName: 'Desktop E2E Kimi K3',
+            modelId: 'k3',
+            codexCatalogModelId: 'wework-kimi-k3',
+            apiFormat: 'openai-chat-completions' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/chat/completions',
+          },
+          {
             id: 'desktop-e2e-luna-overseas',
             displayName: 'GPT 5.6 Luna (海外)',
             modelId: 'gpt-5.6-luna',
@@ -239,7 +249,7 @@ function seedDesktopE2ECloudConnection() {
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
-      catalogReady: localModelsCatalogReady,
+      catalogReady: model.id === 'desktop-e2e-kimi-k3' || localModelsCatalogReady,
       enabled: true,
     })
   }

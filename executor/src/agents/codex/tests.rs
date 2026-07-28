@@ -376,6 +376,21 @@ fn function_tool_profile_enables_responses_tool_conversion() {
 }
 
 #[test]
+fn explicit_upstream_preserves_kimi_dynamic_tool_capability_for_cloud_aliases() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "shared-kimi-model",
+            "upstream_api_format": "openai-chat-completions",
+            "kimi_dynamic_tools": true
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert!(upstream.kimi_dynamic_tools);
+}
+
+#[test]
 fn explicit_upstream_uses_configured_max_output_tokens() {
     let upstream = explicit_codex_upstream(
         &json!({
