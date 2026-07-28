@@ -52,6 +52,8 @@ import { installedPluginSourceLabel, mergeInstalledPlugins } from './installedPl
 type CatalogTab = 'mcp' | 'skills' | 'plugins'
 type MarketplaceKind = 'local' | 'cloud'
 
+const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
+
 interface MarketplaceOption {
   key: string
   id: string
@@ -1856,6 +1858,60 @@ export function PluginsWorkspace({
     pluginApi,
     selectedMarketplaceLoadKey,
     t,
+  ])
+
+  useEffect(() => {
+    if (
+      activeTab !== 'plugins' ||
+      selectedMarketplace?.kind !== 'cloud' ||
+      isMarketplaceConfigLoading
+    ) {
+      return
+    }
+
+    let disposed = false
+    const revalidateCloudMarketplace = () => {
+      void pluginApi
+        .listMarketplacePlugins({
+          q: normalizedQuery || undefined,
+          deviceId: currentDeviceId,
+        })
+        .then(response => {
+          if (disposed) return
+          setPluginMarketplaceState(previous => ({
+            ...previous,
+            items: response.items,
+            error: null,
+          }))
+        })
+        .catch(() => undefined)
+    }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        revalidateCloudMarketplace()
+      }
+    }
+
+    window.addEventListener('focus', revalidateCloudMarketplace)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    const intervalId = window.setInterval(
+      revalidateCloudMarketplace,
+      CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS
+    )
+
+    return () => {
+      disposed = true
+      window.removeEventListener('focus', revalidateCloudMarketplace)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.clearInterval(intervalId)
+    }
+  }, [
+    activeTab,
+    currentDeviceId,
+    isMarketplaceConfigLoading,
+    normalizedQuery,
+    pluginApi,
+    selectedMarketplace?.kind,
   ])
 
   const selectedPlugin = useMemo(

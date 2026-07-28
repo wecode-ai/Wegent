@@ -6,7 +6,10 @@ from types import SimpleNamespace
 from app.services.claude_plugin_parser import claude_plugin_parser
 from app.services.plugin_marketplace_service import PluginMarketplaceService
 from app.services.plugin_package_storage import plugin_package_storage
-from app.services.plugin_upstream_adapter import adapt_upstream_package
+from app.services.plugin_upstream_adapter import (
+    OPENAI_GITHUB_SKILL_DESCRIPTIONS,
+    adapt_upstream_package,
+)
 
 
 def _adapted_github_package() -> bytes:
@@ -32,7 +35,12 @@ def _adapted_github_package() -> bytes:
         archive.writestr(".app.json", "{}")
         archive.writestr(".mcp.json", "{}")
         archive.writestr("assets/logo.png", b"png")
-        archive.writestr("skills/github/SKILL.md", "# GitHub")
+        for path in OPENAI_GITHUB_SKILL_DESCRIPTIONS:
+            name = path.split("/")[-2]
+            archive.writestr(
+                path,
+                f"---\nname: {name}\ndescription: English description\n---\n\n# {name}\n",
+            )
         archive.writestr("skills/gh-address-comments/LICENSE.txt", "MIT")
         archive.writestr("skills/gh-fix-ci/LICENSE.txt", "MIT")
         archive.writestr("skills/yeet/LICENSE.txt", "MIT")
@@ -48,7 +56,7 @@ def test_mirrored_github_plugin_uses_wework_connector_contract() -> None:
     parsed = claude_plugin_parser.parse_package(_adapted_github_package())
 
     assert parsed.name == "github"
-    assert parsed.version == "0.1.6+wegent.2"
+    assert parsed.version == "0.1.6+wegent.3"
     assert [connector.model_dump() for connector in parsed.components.connectors] == [
         {"slug": "github", "authPolicy": "on_install"}
     ]
@@ -57,6 +65,10 @@ def test_mirrored_github_plugin_uses_wework_connector_contract() -> None:
     assert parsed.interface is not None
     assert parsed.interface.logo.startswith("data:image/png;base64,")
     assert parsed.interface.composerIcon.startswith("data:image/png;base64,")
+    assert {skill.name: skill.description for skill in parsed.components.skills} == {
+        path.split("/")[-2]: description
+        for path, description in OPENAI_GITHUB_SKILL_DESCRIPTIONS.items()
+    }
 
 
 def test_marketplace_icon_resolution_preserves_localized_interface(monkeypatch) -> None:

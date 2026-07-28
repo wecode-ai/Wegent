@@ -191,11 +191,13 @@ Best when an upstream plugin is already official or license-cleared and only nee
 - `remote_plugin_id`
 - `upstream_url` (HTTPS)
 - `license_info`
+- `sync_policy` (`auto_after_scan` by default; `review_required` is optional)
 
 Scheduled sync downloads, scans, adapts, and stores the ZIP. `auto_after_scan`
 monotonically advances `latest_release_id` after scanning; `review_required`
 creates a pending Release and advances latest only after administrator approval.
-Upstream downgrades do not move latest backwards.
+Open-source mirrors default to `auto_after_scan`; higher-risk upstreams may opt
+into `review_required`. Upstream downgrades do not move latest backwards.
 
 ## 5. Migrating an open-source plugin
 
@@ -254,11 +256,12 @@ Acceptance criteria:
 
 The GitHub plugin reuses `plugins/github` from OpenAI's `openai/plugins`
 repository. The repository does not retain a third-party source snapshot;
-Backend maintains only a deterministic reviewed adapter:
+Backend maintains only a deterministic audited adapter:
 
 - upstream URL: `https://github.com/openai/plugins/archive/refs/heads/main.zip`
 - selected plugin: Manifest `name=github`
-- sync policy: `review_required`
+- default sync policy: `auto_after_scan`
+- optional review policy: `review_required`
 - release identity: `source_type=mirror`, `source_provider=codex`, developer OpenAI
 - adapted version: `<upstream version>+wegent.<adapter version>`
 
@@ -280,29 +283,35 @@ export CONNECTOR_OAUTH_STATE_SECRET=...
 
 uv run python scripts/configure_github_connector.py --admin-user-id 1
 
-# Create or migrate the mirror and immediately stage the first reviewed release
+# Create or migrate the mirror and publish immediately after scanning
 uv run python scripts/configure_openai_github_mirror.py
+
+# Optional: require human review for a higher-risk upstream
+uv run python scripts/configure_openai_github_mirror.py \
+  --sync-policy review_required
 ```
 
 The script bootstraps `plugins` and `plugin_upstreams` in an empty database and
-also migrates an existing controlled GitHub record. The initial sync and every
-new upstream version create a pending Submission. GitHub becomes visible, or
-`latest_release_id` advances, only after administrator approval.
+also migrates an existing controlled GitHub record. By default, the initial sync
+and every new upstream version publish immediately after scanning. With
+`review_required`, synchronization creates a pending Submission and publishes
+only after administrator approval. Switching a pending upstream to automatic
+publishes its scanned candidate on the next synchronization.
 
 The adapted GitHub ZIP remains an immutable snapshot in `plugin_releases`; `plugins` stores the
 `mirror/codex` source identity and `plugin_upstreams` stores the selected OpenAI
 source and synchronization state. Celery Beat checks only enabled selected
 upstreams every six hours. Before parsing a GitHub version, Backend applies the
 same deterministic adapter and scans the result: it removes the OpenAI App/MCP
-settings, declares the Wegent Connector, and produces
+settings, declares the Wegent Connector, localizes all four skill descriptions
+for the Chinese marketplace, and produces
 `<upstream version>+wegent.<adapter version>`. Content drift under an existing
 version fails synchronization instead of overwriting a Release. A newer version
-creates a pending-review Release only after both the original and adapted
-packages pass scans. The existing Submission review promotes
-`latest_release_id`; users continue installing the current published version
-until an administrator approves the candidate. Content changes under an
-unchanged OpenAI version fail synchronization instead of overwriting a stored
-Release.
+is published automatically or staged for review, according to the upstream
+policy, only after both the original and adapted packages pass scans. In review
+mode, users continue installing the current published version until an
+administrator approves the candidate. Content changes under an unchanged OpenAI
+version fail synchronization instead of overwriting a stored Release.
 
 Wework opens GitHub OAuth before installation. Backend encrypts the user token
 and Connector Runtime proxies `https://api.githubcopilot.com/mcp/`. Executor

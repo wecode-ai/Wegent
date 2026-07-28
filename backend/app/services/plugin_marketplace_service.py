@@ -842,9 +842,26 @@ class PluginMarketplaceService:
             upstream_url=request.upstreamUrl,
             license_info=request.licenseInfo,
             sync_enabled=True,
-            sync_policy="auto_after_scan",
+            sync_policy=request.syncPolicy,
         )
         db.add(upstream)
+        db.commit()
+        db.refresh(upstream)
+        return self._upstream_item(upstream)
+
+    def update_upstream_policy(
+        self,
+        db: Session,
+        *,
+        upstream_id: int,
+        sync_policy: str,
+    ) -> PluginUpstreamItem:
+        if sync_policy not in {"auto_after_scan", "review_required"}:
+            raise HTTPException(status_code=422, detail="Invalid upstream sync policy")
+        upstream = db.get(PluginUpstream, upstream_id)
+        if not upstream:
+            raise HTTPException(status_code=404, detail="Plugin upstream not found")
+        upstream.sync_policy = sync_policy
         db.commit()
         db.refresh(upstream)
         return self._upstream_item(upstream)
@@ -982,6 +999,8 @@ class PluginMarketplaceService:
             is_newer = not latest or Version(version) > Version(latest.version)
             if existing:
                 self._verify_existing_upstream_release(existing, package)
+                if upstream.sync_policy == "auto_after_scan" and is_newer:
+                    self._publish_staged_mirrored_release(db, plugin, existing)
             elif is_newer:
                 if upstream.sync_policy == "review_required":
                     self._stage_mirrored_release(
@@ -1024,6 +1043,33 @@ class PluginMarketplaceService:
             except Exception:
                 db.rollback()
         return results
+
+    def _publish_staged_mirrored_release(
+        self,
+        db: Session,
+        plugin: Plugin | None,
+        release: PluginRelease,
+    ) -> None:
+        """Publish a pending mirror after its policy changes to automatic."""
+        if release.status == "ready":
+            return
+        if not plugin or release.status != "processing":
+            return
+        submission = (
+            db.query(PluginSubmission)
+            .filter(
+                PluginSubmission.release_id == release.id,
+                PluginSubmission.status == "pending",
+            )
+            .with_for_update()
+            .first()
+        )
+        if not submission:
+            raise ValueError("Pending mirrored release has no review submission")
+        submission.status = "approved"
+        submission.review_note = "Automatically published after scan policy change"
+        submission.reviewed_at = datetime.now()
+        self._finalize_release(db, plugin=plugin, release=release)
 
     def _publish_mirrored_release(
         self,

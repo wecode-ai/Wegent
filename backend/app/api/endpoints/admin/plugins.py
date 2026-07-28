@@ -17,6 +17,7 @@ from app.schemas.installed_plugin import (
     PluginUpstreamCreateRequest,
     PluginUpstreamItem,
     PluginUpstreamListResponse,
+    PluginUpstreamUpdateRequest,
     PluginVisibilityGrantRequest,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
@@ -61,6 +62,21 @@ def create_plugin_upstream(
 ) -> PluginUpstreamItem:
     del current_user
     return plugin_marketplace_service.create_upstream(db, request=request)
+
+
+@router.patch("/upstreams/{upstream_id}", response_model=PluginUpstreamItem)
+def update_plugin_upstream(
+    upstream_id: int,
+    request: PluginUpstreamUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> PluginUpstreamItem:
+    del current_user
+    return plugin_marketplace_service.update_upstream_policy(
+        db,
+        upstream_id=upstream_id,
+        sync_policy=request.syncPolicy,
+    )
 
 
 @router.post("/upstreams/{upstream_id}/sync", response_model=PluginUpstreamItem)

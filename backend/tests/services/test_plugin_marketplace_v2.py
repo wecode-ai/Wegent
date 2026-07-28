@@ -45,6 +45,7 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
+from app.services.plugin_upstream_adapter import OPENAI_GITHUB_SKILL_DESCRIPTIONS
 
 
 def _plugin_zip(
@@ -94,7 +95,13 @@ def _github_upstream_zip(
         archive.writestr(".app.json", "{}")
         archive.writestr(".mcp.json", "{}")
         archive.writestr("assets/logo.png", b"png")
-        archive.writestr("skills/github/SKILL.md", skill_body)
+        for path in OPENAI_GITHUB_SKILL_DESCRIPTIONS:
+            name = path.split("/")[-2]
+            body = skill_body if name == "github" else f"# {name}"
+            archive.writestr(
+                path,
+                f"---\nname: {name}\ndescription: English description\n---\n\n{body}\n",
+            )
         archive.writestr("skills/gh-address-comments/LICENSE.txt", "MIT")
         archive.writestr("skills/gh-fix-ci/LICENSE.txt", "MIT")
         archive.writestr("skills/yeet/LICENSE.txt", "MIT")
@@ -1134,6 +1141,37 @@ def test_upstream_content_digest_ignores_python_formatting_only_changes():
     ) == service._package_tree_digest(wrapped, ignored_paths=set())
 
 
+def test_admin_upstream_policy_defaults_to_auto_and_can_require_review(
+    test_db, monkeypatch
+):
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+    service = PluginMarketplaceService()
+    upstream = service.create_upstream(
+        test_db,
+        request=PluginUpstreamCreateRequest(
+            slug="gitlab",
+            displayName="GitLab",
+            marketplaceName="example/plugins",
+            remotePluginId="gitlab",
+            upstreamUrl="https://example.com/plugins.zip",
+        ),
+    )
+
+    assert upstream.syncPolicy == "auto_after_scan"
+
+    updated = service.update_upstream_policy(
+        test_db,
+        upstream_id=upstream.id,
+        sync_policy="review_required",
+    )
+
+    assert updated.syncPolicy == "review_required"
+    assert test_db.get(PluginUpstream, upstream.id).sync_policy == "review_required"
+
+
 def test_configure_controlled_upstream_creates_missing_plugin(test_db, monkeypatch):
     monkeypatch.setattr(
         "app.services.plugin_marketplace_service.validate_upstream_url",
@@ -1343,7 +1381,7 @@ def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monke
 
     result = service.sync_upstream(test_db, upstream_id=upstream.id)
 
-    assert result.lastSeenVersion == "0.1.6+wegent.2"
+    assert result.lastSeenVersion == "0.1.6+wegent.3"
     plugin = test_db.get(Plugin, upstream.pluginId)
     assert plugin.latest_release_id is None
     release = (
@@ -1356,17 +1394,20 @@ def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monke
     )
     assert release.status == "processing"
     assert submission.status == "pending"
-    assert release.version == "0.1.6+wegent.2"
+    assert release.version == "0.1.6+wegent.3"
     provenance = release.scan_report_json["provenance"]
     assert provenance["kind"] == "upstream"
     assert provenance["adapter"] == "openai-github"
-    assert provenance["adapterVersion"] == "2"
+    assert provenance["adapterVersion"] == "3"
     assert provenance["upstreamVersion"] == "0.1.6"
     with zipfile.ZipFile(io.BytesIO(stored_packages[release.storage_key])) as archive:
         manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
         assert manifest["connectors"] == [
             {"slug": "github", "authPolicy": "on_install"}
         ]
+        for path, description in OPENAI_GITHUB_SKILL_DESCRIPTIONS.items():
+            skill = archive.read(path).decode("utf-8")
+            assert f"description: {description}\n" in skill
         assert "apps" not in manifest
         assert ".mcp.json" not in archive.namelist()
 
@@ -1389,6 +1430,125 @@ def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monke
     )
     assert reviewed.status == "approved"
     assert test_db.get(Plugin, plugin.id).latest_release_id == release.id
+
+
+def test_openai_github_auto_sync_publishes_without_submission(test_db, monkeypatch):
+    service = PluginMarketplaceService()
+    stored_packages: dict[str, bytes] = {}
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+    upstream = service.configure_controlled_upstream(
+        test_db,
+        slug="github",
+        display_name="GitHub",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        visibility="public",
+    )
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.fetch_upstream_package",
+        lambda url: _github_upstream_zip(),
+    )
+    _mock_package_storage(monkeypatch, stored_packages)
+
+    result = service.sync_upstream(test_db, upstream_id=upstream.id)
+
+    plugin = test_db.get(Plugin, upstream.pluginId)
+    release = test_db.get(PluginRelease, plugin.latest_release_id)
+    assert result.syncPolicy == "auto_after_scan"
+    assert plugin.status == "published"
+    assert release.version == "0.1.6+wegent.3"
+    assert release.status == "ready"
+    assert release.scan_status == "passed"
+    assert test_db.query(PluginSubmission).count() == 0
+
+
+def test_openai_github_pending_release_publishes_after_switching_to_auto(
+    test_db, monkeypatch
+):
+    service = PluginMarketplaceService()
+    stored_packages: dict[str, bytes] = {}
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+    upstream = service.configure_controlled_upstream(
+        test_db,
+        slug="github",
+        display_name="GitHub",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        visibility="public",
+        sync_policy="review_required",
+    )
+    plugin = test_db.get(Plugin, upstream.pluginId)
+    previous = PluginRelease(
+        plugin_id=plugin.id,
+        version="0.1.6+wegent.2",
+        manifest_json={},
+        interface_json={},
+        storage_key="plugins/github-v2.zip",
+        sha256="0" * 64,
+        size_bytes=1,
+        status="ready",
+        scan_status="passed",
+    )
+    test_db.add(previous)
+    test_db.flush()
+    plugin.latest_release_id = previous.id
+    plugin.status = "published"
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.fetch_upstream_package",
+        lambda url: _github_upstream_zip(),
+    )
+    _mock_package_storage(monkeypatch, stored_packages)
+
+    result = service.sync_upstream(test_db, upstream_id=upstream.id)
+
+    assert result.lastSeenVersion == "0.1.6+wegent.3"
+    test_db.refresh(plugin)
+    assert plugin.latest_release_id == previous.id
+    candidate = (
+        test_db.query(PluginRelease)
+        .filter(
+            PluginRelease.plugin_id == plugin.id,
+            PluginRelease.version == "0.1.6+wegent.3",
+        )
+        .one()
+    )
+    submission = (
+        test_db.query(PluginSubmission)
+        .filter(PluginSubmission.release_id == candidate.id)
+        .one()
+    )
+    assert submission.status == "pending"
+
+    configured = service.configure_controlled_upstream(
+        test_db,
+        slug="github",
+        display_name="GitHub",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        visibility="public",
+        sync_policy="auto_after_scan",
+    )
+    service.sync_upstream(test_db, upstream_id=configured.id)
+
+    test_db.refresh(submission)
+    assert submission.status == "approved"
+    assert submission.reviewer_user_id is None
+    assert submission.review_note == "Automatically published after scan policy change"
+    assert candidate.status == "ready"
+    assert test_db.get(Plugin, plugin.id).latest_release_id == candidate.id
 
 
 def test_legacy_marketplace_migration_is_idempotent(test_db, test_user, monkeypatch):

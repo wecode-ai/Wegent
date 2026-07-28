@@ -10,6 +10,7 @@ import pytest
 
 from app.services.plugin_upstream_adapter import (
     OPENAI_GITHUB_ADAPTER,
+    OPENAI_GITHUB_SKILL_DESCRIPTIONS,
     adapt_upstream_package,
 )
 
@@ -34,7 +35,12 @@ def _github_package(*, include_icon: bool = True) -> bytes:
         archive.writestr(".mcp.json", "{}")
         if include_icon:
             archive.writestr("assets/logo.png", b"png")
-        archive.writestr("skills/github/SKILL.md", "# GitHub")
+        for path in OPENAI_GITHUB_SKILL_DESCRIPTIONS:
+            name = path.split("/")[-2]
+            archive.writestr(
+                path,
+                f"---\nname: {name}\ndescription: English description\n---\n\n# {name}\n",
+            )
         archive.writestr("skills/gh-address-comments/LICENSE.txt", "MIT")
         archive.writestr("skills/gh-fix-ci/LICENSE.txt", "MIT")
         archive.writestr("skills/yeet/LICENSE.txt", "MIT")
@@ -59,11 +65,11 @@ def test_openai_github_adapter_rewrites_runtime_integration_deterministically():
 
     assert first.package == second.package
     assert first.adapter == OPENAI_GITHUB_ADAPTER
-    assert first.adapter_version == "2"
+    assert first.adapter_version == "3"
     assert first.upstream_version == "0.1.6"
     with zipfile.ZipFile(io.BytesIO(first.package)) as archive:
         manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
-        assert manifest["version"] == "0.1.6+wegent.2"
+        assert manifest["version"] == "0.1.6+wegent.3"
         assert manifest["connectors"] == [
             {"slug": "github", "authPolicy": "on_install"}
         ]
@@ -72,6 +78,10 @@ def test_openai_github_adapter_rewrites_runtime_integration_deterministically():
         assert manifest["interface"]["logo"] == "./assets/logo.png"
         assert manifest["interface"]["composerIcon"] == "./assets/logo.png"
         assert manifest["interface"]["category"] == "开发工具"
+        for path, description in OPENAI_GITHUB_SKILL_DESCRIPTIONS.items():
+            skill = archive.read(path).decode("utf-8")
+            assert f"description: {description}\n" in skill
+            assert f"# {path.split('/')[-2]}\n" in skill
         assert ".app.json" not in archive.namelist()
         assert ".mcp.json" not in archive.namelist()
 

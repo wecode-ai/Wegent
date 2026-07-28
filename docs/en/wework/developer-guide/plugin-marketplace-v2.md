@@ -35,7 +35,7 @@ Publishing a local creation does not require a manually selected ZIP. Tauri loca
 
 The Executor owns managed package caching, integrity checks, sync events, and device-result reporting. Codex App Server remains the installation and uninstallation authority. Device results are exposed through `InstalledPlugin.status.devices`; an API request must never report the current device as installed when App Server rejected the operation. Server-side scanning rejects path traversal, duplicate paths, symlinks, encrypted members, sensitive files, oversized expansion, checksum mismatches, and missing manifests.
 
-Administrative APIs include `GET/POST /admin/plugins/upstreams`, `POST /admin/plugins/upstreams/{id}/sync`, `GET /admin/plugins/submissions`, and `POST /admin/plugins/submissions/{id}/review`.
+Administrative APIs include `GET/POST /admin/plugins/upstreams`, `PATCH /admin/plugins/upstreams/{id}` for synchronization policy changes, `POST /admin/plugins/upstreams/{id}/sync`, `GET /admin/plugins/submissions`, and `POST /admin/plugins/submissions/{id}/review`.
 
 `GET /plugins/capabilities` exposes whether the current user may publish. The server grants this only to administrators, the global `PLUGIN_PUBLISH_ENABLED` flag, or IDs in `PLUGIN_PUBLISH_USER_IDS`; submission endpoints repeat the authorization check. Upstream synchronization never replaces `latest_release_id` with an older SemVer and preserves the current Release after scan failures or upstream removal.
 

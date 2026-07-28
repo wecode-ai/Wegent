@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bootstrap the OpenAI GitHub plugin as a reviewed cloud mirror."""
+"""Bootstrap the OpenAI GitHub plugin as a cloud mirror."""
 
 from __future__ import annotations
 
@@ -27,6 +27,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--upstream-url", default=DEFAULT_UPSTREAM_URL)
     parser.add_argument("--license-info", default=DEFAULT_LICENSE_INFO)
+    parser.add_argument(
+        "--sync-policy",
+        choices=("auto_after_scan", "review_required"),
+        default="auto_after_scan",
+        help="Publish after scanning by default, or require administrator review",
+    )
     args = parser.parse_args()
 
     with SessionLocal() as db:
@@ -39,7 +45,7 @@ def main() -> int:
             upstream_url=args.upstream_url,
             license_info=args.license_info,
             visibility="public",
-            sync_policy="review_required",
+            sync_policy=args.sync_policy,
         )
         upstream = plugin_marketplace_service.sync_upstream(db, upstream_id=upstream.id)
     print(

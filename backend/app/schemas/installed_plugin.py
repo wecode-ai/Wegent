@@ -340,6 +340,11 @@ class PluginUpstreamCreateRequest(BaseModel):
     upstreamUrl: str
     licenseInfo: str = ""
     listingType: Literal["plugin", "skill"] = "plugin"
+    syncPolicy: Literal["auto_after_scan", "review_required"] = "auto_after_scan"
+
+
+class PluginUpstreamUpdateRequest(BaseModel):
+    syncPolicy: Literal["auto_after_scan", "review_required"]
 
 
 class PluginUpstreamItem(BaseModel):

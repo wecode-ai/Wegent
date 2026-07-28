@@ -293,6 +293,7 @@ function mockSystemSkillsFetch(
     installedMarketplaceLogo: string
   }> = {}
 ) {
+  let marketplaceUpdateAvailable = false
   const personalSkillsResponse = {
     items: [
       {
@@ -707,6 +708,14 @@ function mockSystemSkillsFetch(
       }
       if (requestUrl.pathname === '/api/plugins/marketplace') {
         const keyword = requestUrl.searchParams.get('q')
+        const currentMarketplacePlugin = marketplaceUpdateAvailable
+          ? {
+              ...marketplacePlugin,
+              version: '1.1.0',
+              latestReleaseId: 1002,
+              updateAvailable: true,
+            }
+          : marketplacePlugin
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -715,7 +724,7 @@ function mockSystemSkillsFetch(
               items:
                 keyword && !marketplacePlugin.displayName.toLowerCase().includes(keyword)
                   ? []
-                  : [marketplacePlugin],
+                  : [currentMarketplacePlugin],
             }),
         })
       }
@@ -783,6 +792,12 @@ function mockSystemSkillsFetch(
       })
     })
   )
+
+  return {
+    publishMarketplaceUpdate: () => {
+      marketplaceUpdateAvailable = true
+    },
+  }
 }
 
 describe('PluginsWorkspace', () => {
@@ -854,6 +869,24 @@ describe('PluginsWorkspace', () => {
       .mocked(fetch)
       .mock.calls.filter(([url]) => String(url).startsWith('/api/plugins/marketplace'))
     expect(marketplaceFetches.length).toBeGreaterThanOrEqual(2)
+  })
+
+  test('checks cloud plugin updates when the window regains focus', async () => {
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    render(<PluginsWorkspace />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('在对话中试用')
+
+    marketplace.publishMarketplaceUpdate()
+    fireEvent.focus(window)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+    )
   })
 
   test('installs a marketplace plugin', async () => {

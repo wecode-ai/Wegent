@@ -162,7 +162,7 @@ Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本
 
 ### 精选 Codex 镜像
 
-管理员录入 `marketplace_name + remote_plugin_id + upstream_url + license_info`。定时任务只检查 `sync_enabled=true` 的记录；发现 SemVer 新版本后下载、扫描并写入对象存储。`auto_after_scan` 在扫描通过后单调提升 `latest_release_id`；`review_required` 只生成待审核 Release，管理员批准后才提升 latest。上游返回旧版本时只更新检查信息，不回退 `latest_release_id`；扫描失败或上游删除时保留旧 Release，不影响现有用户。
+管理员录入 `marketplace_name + remote_plugin_id + upstream_url + license_info`。定时任务只检查 `sync_enabled=true` 的记录；发现 SemVer 新版本后下载、扫描并写入对象存储。开源镜像默认使用 `auto_after_scan`，扫描通过后单调提升 `latest_release_id`；高风险上游可改为 `review_required`，只生成待审核 Release，管理员批准后才提升 latest。上游返回旧版本时只更新检查信息，不回退 `latest_release_id`；扫描失败或上游删除时保留旧 Release，不影响现有用户。
 
 ### WeWork 官方插件发布
 
@@ -206,6 +206,7 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 | GET | `/plugins/submissions/{id}` | 查询投稿状态 |
 | GET | `/admin/plugins/upstreams` | 管理端查看精选镜像源和同步状态 |
 | POST | `/admin/plugins/upstreams` | 录入精选 Codex 插件 |
+| PATCH | `/admin/plugins/upstreams/{id}` | 切换扫描后自动发布或人工审核策略 |
 | POST | `/admin/plugins/upstreams/{id}/sync` | 立即镜像 |
 | GET | `/admin/plugins/submissions` | 管理端查看待审和历史投稿 |
 | POST | `/admin/plugins/submissions/{id}/review` | 审核投稿 |
