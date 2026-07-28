@@ -21,6 +21,7 @@ def test_standalone_image_includes_wework_executor_and_workspace_volume() -> Non
 
     assert "AS wework-builder" in dockerfile
     assert "pnpm install --frozen-lockfile --filter wework..." in dockerfile
+    assert "COPY shared/assets ./shared/assets" in dockerfile
     assert "pnpm run build" in dockerfile
     assert "COPY --from=wework-builder /app/wework/dist /app/wework/dist" in dockerfile
     assert "nginx" in dockerfile

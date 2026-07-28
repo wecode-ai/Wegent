@@ -113,6 +113,7 @@ import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
@@ -757,6 +758,7 @@ function localRuntimeModelConfig(
       throw new Error('Cloud model identity is incomplete')
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
+    const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
     return {
@@ -776,6 +778,9 @@ function localRuntimeModelConfig(
       },
       ...(Number.isFinite(contextWindow) && contextWindow > 0
         ? { model_context_window: contextWindow }
+        : {}),
+      ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+        ? { max_output_tokens: maxOutputTokens }
         : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
