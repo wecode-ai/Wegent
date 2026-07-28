@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -101,33 +100,3 @@ def test_get_user_personal_task_groups_lite_uses_personal_query_without_group_id
     )
     mock_filter.assert_called_once_with(paged_tasks, set(), ["online"])
     mock_build.assert_called_once_with(db, paged_tasks, 7)
-
-
-@pytest.mark.unit
-def test_filter_personal_tasks_hides_background_tasks():
-    task_service = TaskKindsService(TaskResource)
-    background = Mock(spec=TaskResource)
-    background.id = 11
-    online = Mock(spec=TaskResource)
-    online.id = 22
-
-    with patch(
-        "app.services.adapters.task_kinds.queries.Task.model_validate",
-        side_effect=[
-            SimpleNamespace(
-                status=SimpleNamespace(status="RUNNING"),
-                metadata=SimpleNamespace(labels={"type": "background"}),
-            ),
-            SimpleNamespace(
-                status=SimpleNamespace(status="RUNNING"),
-                metadata=SimpleNamespace(labels={}),
-            ),
-        ],
-    ):
-        result = task_service._filter_personal_tasks(
-            [background, online],
-            set(),
-            ["online"],
-        )
-
-    assert result == [online]

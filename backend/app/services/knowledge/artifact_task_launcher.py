@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.constants import CLIENT_ORIGIN_BACKGROUND
 from app.models.user import User
 from app.schemas.kind import Task, Team
 from app.schemas.knowledge_artifact import KnowledgeArtifactType
@@ -44,7 +43,7 @@ class ArtifactTaskLaunchResult:
 
 
 class ArtifactTaskLauncher:
-    """Create and dispatch a hidden Task for one Artifact."""
+    """Create and dispatch a Task for one Artifact."""
 
     def __init__(
         self,
@@ -71,11 +70,15 @@ class ArtifactTaskLauncher:
         message = self._build_prompt(artifact_type, instruction)
         params = TaskCreationParams(
             message=message,
-            title=title,
+            title=title
+            or (
+                "思维导图"
+                if artifact_type == KnowledgeArtifactType.MIND_MAP
+                else "简报"
+            ),
             task_type="knowledge",
             knowledge_base_id=knowledge_base_id,
             task_name=f"knowledge-artifact-{artifact_id}-{attempt}",
-            client_origin=CLIENT_ORIGIN_BACKGROUND,
             source="knowledge_artifact",
         )
         session = prepare_execution_session(
@@ -91,7 +94,7 @@ class ArtifactTaskLauncher:
                 "Artifact agent did not create an assistant subtask"
             )
 
-        self._mark_task_as_background(session.task, artifact_id, attempt)
+        self._mark_task_as_artifact(session.task, artifact_id, attempt)
         link_selected_documents_to_subtask(
             self.db,
             subtask_id=session.user_subtask.id,
@@ -176,7 +179,7 @@ class ArtifactTaskLauncher:
                 return bot
         return None
 
-    def _mark_task_as_background(
+    def _mark_task_as_artifact(
         self,
         task,
         artifact_id: str,
@@ -186,7 +189,6 @@ class ArtifactTaskLauncher:
         labels = task_crd.metadata.labels or {}
         labels.update(
             {
-                "type": "background",
                 "taskType": "knowledge",
                 "source": "knowledge_artifact",
                 "artifactId": artifact_id,

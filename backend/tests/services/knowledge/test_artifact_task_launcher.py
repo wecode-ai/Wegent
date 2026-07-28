@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.constants import CLIENT_ORIGIN_BACKGROUND
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.schemas.knowledge_artifact import KnowledgeArtifactType
 from app.services.knowledge.artifact_task_launcher import (
     ArtifactTaskConfigurationError,
@@ -37,7 +37,7 @@ async def test_launch_schedules_execution():
             "app.services.knowledge.artifact_task_launcher.prepare_execution_session",
             return_value=session,
         ) as prepare_session,
-        patch.object(launcher, "_mark_task_as_background") as mark_background,
+        patch.object(launcher, "_mark_task_as_artifact") as mark_artifact,
         patch(
             "app.services.knowledge.artifact_task_launcher.link_selected_documents_to_subtask"
         ),
@@ -52,7 +52,7 @@ async def test_launch_schedules_execution():
             artifact_id="artifact-1",
             attempt=2,
             artifact_type=KnowledgeArtifactType.BRIEFING,
-            title="项目简报",
+            title="",
             knowledge_base_id=12,
             document_ids=[101],
             instruction=None,
@@ -61,12 +61,45 @@ async def test_launch_schedules_execution():
 
     assert (
         prepare_session.call_args.kwargs["task_params"].client_origin
-        == CLIENT_ORIGIN_BACKGROUND
+        == CLIENT_ORIGIN_FRONTEND
     )
-    mark_background.assert_called_once_with(session.task, "artifact-1", 2)
+    assert prepare_session.call_args.kwargs["task_params"].title == "简报"
+    mark_artifact.assert_called_once_with(session.task, "artifact-1", 2)
     schedule_execution.assert_called_once_with(request)
     assert result.task_id == 31
     assert result.assistant_subtask_id == 41
+
+
+def test_mark_task_as_artifact_keeps_task_visible():
+    db = MagicMock()
+    launcher = ArtifactTaskLauncher(db, SimpleNamespace(id=7))
+    task = SimpleNamespace(
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {"name": "task-31", "namespace": "default"},
+            "spec": {
+                "title": "简报",
+                "prompt": "生成简报",
+                "teamRef": {"name": "team", "namespace": "default"},
+                "workspaceRef": {"name": "workspace-31", "namespace": "default"},
+            },
+        }
+    )
+
+    with patch(
+        "app.services.knowledge.artifact_task_launcher.task_store.update_json"
+    ) as update_json:
+        launcher._mark_task_as_artifact(task, "artifact-1", 2)
+
+    labels = update_json.call_args.kwargs["payload"]["metadata"]["labels"]
+    assert "type" not in labels
+    assert labels == {
+        "taskType": "knowledge",
+        "source": "knowledge_artifact",
+        "artifactId": "artifact-1",
+        "artifactAttempt": "2",
+    }
 
 
 @pytest.mark.asyncio

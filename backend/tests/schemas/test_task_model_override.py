@@ -13,12 +13,6 @@ def test_task_create_model_id_defaults_to_force_override():
     assert task.force_override_bot_model is True
 
 
-def test_task_create_accepts_background_client_origin():
-    task = TaskCreate(prompt="hello", client_origin="background")
-
-    assert task.client_origin == "background"
-
-
 def test_join_shared_task_model_id_defaults_to_force_override():
     request = JoinSharedTaskRequest(share_token="token", model_id="gpt-5")
 

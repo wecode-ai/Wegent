@@ -231,8 +231,6 @@ class TaskQueryMixin:
                 continue
 
             labels = task_crd.metadata.labels or {}
-            if labels.get("type") == "background":
-                continue
             is_subscription = labels.get("type") == "subscription"
             task_type_label = labels.get("taskType", "chat")
             is_code = task_type_label == "code"
