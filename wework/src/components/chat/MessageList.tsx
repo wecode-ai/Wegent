@@ -1803,6 +1803,7 @@ function getDisplayProcessingBlocks(
 
   return blocks
     .filter(block => {
+      if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
       return Boolean(block.content.trim())
@@ -2283,7 +2284,6 @@ function AssistantErrorCard({
 }) {
   const { t } = useTranslation('chat')
   const [isDetailExpanded, setIsDetailExpanded] = useState(false)
-  const [isDismissed, setIsDismissed] = useState(false)
   const displayError = rawError || error
   const hasErrorDetails = Boolean(displayError)
   const parsedError = parseChatError(displayError ?? '', errorType)
@@ -2308,10 +2308,6 @@ function AssistantErrorCard({
             ),
           })
 
-  if (isDismissed) {
-    return null
-  }
-
   return (
     <div
       data-testid="assistant-error-card"
@@ -2335,10 +2331,7 @@ function AssistantErrorCard({
           <button
             type="button"
             data-testid="assistant-error-retry"
-            onClick={() => {
-              setIsDismissed(true)
-              onRetry?.(message)
-            }}
+            onClick={() => onRetry?.(message)}
             className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
           >
             {t('assistant_error.actions.retry', '重试')}

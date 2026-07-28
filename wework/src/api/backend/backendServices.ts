@@ -47,6 +47,7 @@ export function createBackendWorkbenchServices(
   const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
   const taskApi = createTaskApi(client)
+  const deliveryApi = createDeliveryApi(client)
   const socketClient = createSocketClient({
     socketBaseUrl: () => socketBaseUrl,
     path: socketPath,
@@ -64,7 +65,11 @@ export function createBackendWorkbenchServices(
     gitApi: createGitApi(client),
     taskApi,
     deviceApi,
-    deliveryApi: createDeliveryApi(client),
+    deliveryApi,
+    projectSpaceApis: {
+      cloud: deliveryApi,
+      defaultLocation: 'cloud',
+    },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
     executorClient: createExecutorClientFromApis({

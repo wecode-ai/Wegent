@@ -32,6 +32,11 @@ interface RuntimeTranscriptGap {
   end: number
 }
 
+interface RuntimeTranscriptRange {
+  start: number
+  end: number
+}
+
 interface UserViewportAnchor {
   messageId: string
   anchorIndex: number
@@ -45,6 +50,7 @@ interface ScrollableMessageAreaProps {
   hasMoreBefore?: boolean
   loadingMoreBefore?: boolean
   turnNavigation?: RuntimeTurnNavigationItem[]
+  loadedTranscriptRanges?: RuntimeTranscriptRange[]
   className?: string
   scrollerClassName?: string
   messageListClassName?: string
@@ -114,6 +120,9 @@ function areScrollableMessageAreaPropsEqual(
     previous.hasMoreBefore !== next.hasMoreBefore ? 'hasMoreBefore' : null,
     previous.loadingMoreBefore !== next.loadingMoreBefore ? 'loadingMoreBefore' : null,
     previous.turnNavigation !== next.turnNavigation ? 'turnNavigation' : null,
+    previous.loadedTranscriptRanges !== next.loadedTranscriptRanges
+      ? 'loadedTranscriptRanges'
+      : null,
     previous.className !== next.className ? 'className' : null,
     previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
     previous.messageListClassName !== next.messageListClassName ? 'messageListClassName' : null,
@@ -186,6 +195,7 @@ function ScrollableMessagePaneContent({
   hasMoreBefore = false,
   loadingMoreBefore = false,
   turnNavigation,
+  loadedTranscriptRanges,
   className,
   scrollerClassName,
   messageListClassName,
@@ -240,6 +250,7 @@ function ScrollableMessagePaneContent({
   const followingBottomKeyRef = useRef<string | null>(null)
   const userScrollPausedAutoFollowRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
+  const lastScrollTopRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
@@ -378,7 +389,7 @@ function ScrollableMessagePaneContent({
 
   const renderTranscriptGapAfterMessage = useCallback(
     (message: WorkbenchMessage, nextMessage: WorkbenchMessage | undefined) => {
-      const gap = runtimeTranscriptGapBetween(message, nextMessage)
+      const gap = runtimeTranscriptGapBetween(message, nextMessage, loadedTranscriptRanges)
       if (!gap) return null
       const gapKey = runtimeTranscriptGapKey(gap)
       return (
@@ -391,7 +402,7 @@ function ScrollableMessagePaneContent({
         />
       )
     },
-    [loadTranscriptGap, loadingTranscriptGapKey, scrollRef]
+    [loadTranscriptGap, loadedTranscriptRanges, loadingTranscriptGapKey, scrollRef]
   )
 
   const saveCurrentScrollPosition = useCallback(
@@ -401,6 +412,13 @@ function ScrollableMessagePaneContent({
       setConversationScrollSnapshot(currentScrollKey, createScrollSnapshot(element, scrollTop))
     },
     [currentScrollKey, messages.length]
+  )
+
+  useLayoutEffect(
+    () => () => {
+      saveCurrentScrollPosition()
+    },
+    [saveCurrentScrollPosition]
   )
 
   const updateScrollState = useCallback(
@@ -418,6 +436,9 @@ function ScrollableMessagePaneContent({
       const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
       const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
+      const scrolledUp =
+        lastScrollTopRef.current !== null && element.scrollTop < lastScrollTopRef.current - 0.5
+      lastScrollTopRef.current = element.scrollTop
       isAtBottomRef.current = isAtBottom
       if (isScrolledToBottom) {
         userScrollPausedAutoFollowRef.current = false
@@ -425,11 +446,7 @@ function ScrollableMessagePaneContent({
       } else if (options.forceSave) {
         userScrollPausedAutoFollowRef.current = true
       }
-      if (
-        !isAtBottom &&
-        restoringScrollKeyRef.current !== currentScrollKey &&
-        followingBottomKeyRef.current !== currentScrollKey
-      ) {
+      if (!isScrolledToBottom && options.forceSave && scrolledUp) {
         clearScheduledScrolls()
       }
       if (
@@ -456,6 +473,7 @@ function ScrollableMessagePaneContent({
       } else {
         element.scrollTop = element.scrollHeight
       }
+      lastScrollTopRef.current = element.scrollTop
       if (options.saveSnapshot) {
         saveCurrentScrollPosition(element.scrollHeight)
       }
@@ -482,6 +500,7 @@ function ScrollableMessagePaneContent({
     } else {
       element.scrollTop = nextScrollTop
     }
+    lastScrollTopRef.current = element.scrollTop
 
     const overflow = element.scrollHeight > element.clientHeight + 8
     const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
@@ -654,6 +673,7 @@ function ScrollableMessagePaneContent({
     const offsetDelta = offsetFromScrollerTop - anchor.offsetFromScrollerTop
     if (Math.abs(offsetDelta) < 0.5) return
     scroller.scrollTop += offsetDelta
+    lastScrollTopRef.current = scroller.scrollTop
   }, [])
 
   useEffect(() => {
@@ -719,23 +739,12 @@ function ScrollableMessagePaneContent({
     scrollToBottom('smooth', { saveSnapshot: true })
   }
 
-  const pauseAutoFollowForUserScroll = useCallback(() => {
-    userScrollPausedAutoFollowRef.current = true
-    clearScheduledScrolls()
-    captureUserViewportAnchor()
-  }, [captureUserViewportAnchor, clearScheduledScrolls])
-
   const handleScroll = useCallback(() => {
-    if (restoringScrollKeyRef.current === currentScrollKey) {
-      updateScrollState({ skipSave: true })
-      return
-    }
-    restoringScrollKeyRef.current = null
     updateScrollState({ forceSave: true })
     if (userScrollPausedAutoFollowRef.current) {
       captureUserViewportAnchor()
     }
-  }, [captureUserViewportAnchor, currentScrollKey, updateScrollState])
+  }, [captureUserViewportAnchor, updateScrollState])
 
   useEffect(() => {
     const externalScroller = externalScrollRef?.current
@@ -791,12 +800,6 @@ function ScrollableMessagePaneContent({
             '[overflow-anchor:none]',
           scrollerClassName
         )}
-        onWheel={event => {
-          if (event.deltaY < 0) {
-            pauseAutoFollowForUserScroll()
-          }
-        }}
-        onTouchMove={pauseAutoFollowForUserScroll}
         onScroll={handleScroll}
       >
         <div
@@ -1045,17 +1048,30 @@ function RuntimeTranscriptGapMarker({
 
 function runtimeTranscriptGapBetween(
   message: WorkbenchMessage,
-  nextMessage: WorkbenchMessage | undefined
+  nextMessage: WorkbenchMessage | undefined,
+  loadedRanges: RuntimeTranscriptRange[] | undefined
 ): RuntimeTranscriptGap | null {
   if (!nextMessage) return null
   const currentIndex = runtimeMessageIndex(message)
   const nextIndex = runtimeMessageIndex(nextMessage)
   if (currentIndex === null || nextIndex === null || nextIndex <= currentIndex + 1) return null
 
-  return {
-    start: currentIndex + 1,
-    end: nextIndex,
+  let gapStart = currentIndex + 1
+  const gapEnd = nextIndex
+  const sortedRanges = [...(loadedRanges ?? [])]
+    .filter(range => range.end > range.start)
+    .sort((left, right) => left.start - right.start)
+
+  for (const range of sortedRanges) {
+    if (range.end <= gapStart) continue
+    if (range.start > gapStart) {
+      return { start: gapStart, end: Math.min(range.start, gapEnd) }
+    }
+    gapStart = Math.max(gapStart, range.end)
+    if (gapStart >= gapEnd) return null
   }
+
+  return { start: gapStart, end: gapEnd }
 }
 
 function runtimeMessageIndex(message: WorkbenchMessage): number | null {

@@ -1,19 +1,31 @@
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface CloudTodoModalProps {
   title: string
   children: ReactNode
   onClose: () => void
+  width?: 'default' | 'wide'
 }
 
-export function CloudTodoModal({ title, children, onClose }: CloudTodoModalProps) {
+export function CloudTodoModal({
+  title,
+  children,
+  onClose,
+  width = 'default',
+}: CloudTodoModalProps) {
   return (
     <div
       className="absolute inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm"
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
-      <section className="flex max-h-[calc(100vh-96px)] w-[480px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl">
+      <section
+        className={cn(
+          'flex max-h-[calc(100vh-96px)] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl',
+          width === 'wide' ? 'w-[560px]' : 'w-[480px]'
+        )}
+      >
         <header className="flex items-center gap-3 px-5 pt-4">
           <h2 className="flex-1 text-base font-semibold">{title}</h2>
           <button

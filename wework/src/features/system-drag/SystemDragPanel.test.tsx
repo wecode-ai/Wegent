@@ -39,6 +39,7 @@ describe('SystemDragPanel', () => {
     render(<SystemDragPanel />)
 
     expect(screen.getByTestId('system-drag-brand')).toHaveTextContent('Wework')
+    expect(screen.getByTestId('system-drag-panel')).toHaveClass('h-[60px]')
   })
 
   test('only shows follow-up when a conversation is selected', async () => {

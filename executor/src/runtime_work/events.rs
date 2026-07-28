@@ -178,6 +178,9 @@ pub(crate) struct CodexNotificationEventMapper {
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
     final_text_offset: usize,
+    final_message_id: Option<String>,
+    final_message_saw_delta: bool,
+    final_message_completed: bool,
     plan_blocks: BTreeMap<String, String>,
     tool_output_deltas: BTreeMap<String, String>,
     completed_user_message_count: usize,
@@ -227,7 +230,9 @@ impl CodexNotificationEventMapper {
                     phase.as_deref(),
                 );
             }
-            "item/reasoning/delta" | "item/reasoningSummary/delta" => {
+            "item/reasoning/delta"
+            | "item/reasoningSummary/delta"
+            | "item/reasoning/summaryTextDelta" => {
                 if self.is_subagent_delta(notification.params) {
                     return;
                 }
@@ -409,7 +414,7 @@ impl CodexNotificationEventMapper {
                 );
             }
             "thread/started" => {
-                self.final_text_offset = 0;
+                self.reset_final_text();
                 self.observe_root_thread(notification.params);
             }
             "turn/started" if self.has_active_goal() => {
@@ -535,7 +540,7 @@ impl CodexNotificationEventMapper {
             return true;
         }
 
-        self.final_text_offset = 0;
+        self.reset_final_text();
         self.reset_process_text();
 
         emit_response_event(
@@ -764,7 +769,7 @@ impl CodexNotificationEventMapper {
                 );
                 true
             }
-            Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
+            Ok(Some(TextChunkMapping::FinalDelta { item_id, delta })) => {
                 log_stream_text_mapping(
                     emit_context.local_task_id,
                     method,
@@ -774,8 +779,11 @@ impl CodexNotificationEventMapper {
                     &delta,
                 );
                 self.reset_process_text();
+                self.begin_final_message(item_id);
                 let offset = self.final_text_offset;
                 self.final_text_offset += delta.chars().count();
+                self.final_message_saw_delta = true;
+                self.final_message_completed = false;
                 emit_response_event(
                     emit_context.event_tx,
                     emit_context.device_id,
@@ -809,8 +817,9 @@ impl CodexNotificationEventMapper {
                 );
                 true
             }
-            Ok(Some(TextChunkMapping::FinalCompleted { text })) => {
-                if self.final_text_offset == 0 {
+            Ok(Some(TextChunkMapping::FinalCompleted { item_id, text })) => {
+                self.begin_final_message(item_id);
+                if !self.final_message_saw_delta && !self.final_message_completed {
                     log_text_mapping_metadata(
                         emit_context.local_task_id,
                         method,
@@ -838,6 +847,8 @@ impl CodexNotificationEventMapper {
                     );
                 }
                 self.final_text_offset = 0;
+                self.final_message_saw_delta = false;
+                self.final_message_completed = true;
                 true
             }
             Ok(None) => false,
@@ -853,6 +864,25 @@ impl CodexNotificationEventMapper {
                 true
             }
         }
+    }
+
+    fn begin_final_message(&mut self, item_id: Option<String>) {
+        let resolved_item_id = item_id.or_else(|| self.final_message_id.clone());
+        if self.final_message_id == resolved_item_id {
+            return;
+        }
+
+        self.final_message_id = resolved_item_id;
+        self.final_text_offset = 0;
+        self.final_message_saw_delta = false;
+        self.final_message_completed = false;
+    }
+
+    fn reset_final_text(&mut self) {
+        self.final_text_offset = 0;
+        self.final_message_id = None;
+        self.final_message_saw_delta = false;
+        self.final_message_completed = false;
     }
 
     fn emit_plan_delta(
@@ -3294,6 +3324,53 @@ mod tests {
             "Completed without a streaming delta."
         );
         assert_eq!(event["payload"]["data"]["offset"], 0);
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn emits_each_completed_final_agent_message_in_the_same_turn() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        for (id, text) in [
+            ("msg-first", "先完成真机验证。"),
+            ("msg-second", "主路径验证通过。"),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device-1",
+                "local-1",
+                &request,
+                json!({
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": id,
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": text
+                        }
+                    }
+                }),
+            );
+        }
+
+        let first = event_rx
+            .try_recv()
+            .expect("first final text event should be emitted");
+        let second = event_rx
+            .try_recv()
+            .expect("second final text event should be emitted");
+
+        assert_eq!(first["payload"]["data"]["delta"], "先完成真机验证。");
+        assert_eq!(first["payload"]["data"]["offset"], 0);
+        assert_eq!(second["payload"]["data"]["delta"], "主路径验证通过。");
+        assert_eq!(second["payload"]["data"]["offset"], 0);
         assert!(event_rx.try_recv().is_err());
     }
 

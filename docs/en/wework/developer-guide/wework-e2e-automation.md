@@ -105,6 +105,8 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
+The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`.
+
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
 The environment needs Rust, Tauri build dependencies, and a real Codex binary. The runner finds `codex` on `PATH` by default; an installed or `prepare:codex`-prepared real binary can also be selected explicitly:
@@ -247,6 +249,17 @@ An MCP connector fixture can use:
 ## Automation Bridge
 
 In test mode, Wework exposes a frontend control bridge at `window.__WEWORK_E2E__`. The bridge is installed only when `import.meta.env.MODE === "e2e"` or `VITE_WEWORK_E2E=true`; normal development and production runs do not enable it by default.
+
+Isolated real-Tauri verification can dispatch path paste or drop events to the composer with `ai:verify paste-paths` or `ai:verify drop-paths`. The `--value` argument accepts a JSON array whose entries contain `uri` and `name`; folder entries also set `isDirectory: true`:
+
+```bash
+pnpm --filter wework ai:verify paste-paths \
+  --session /absolute/path/to/session.json \
+  --selector '[data-testid="chat-message-input"]' \
+  --value '[{"uri":"file:///tmp/context","name":"context","isDirectory":true}]'
+```
+
+Replace `paste-paths` with `drop-paths` in the example to verify Finder drag and drop.
 
 Available methods:
 

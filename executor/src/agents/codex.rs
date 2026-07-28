@@ -901,9 +901,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         let forking_thread = fork_thread_id.is_some();
         if direct_thread_id.is_none() {
             if let Some(thread_id) = resume_thread_id.as_deref() {
-                // Codex ignores thread/resume configuration overrides while this client remains
-                // subscribed to the loaded thread. Release our idle subscription so a changed
-                // custom model provider can be applied during resume; the resume subscribes again.
+                // Release this client's idle subscription before resume. The task-scoped local
+                // router keeps a stable provider URL, so model changes only update its upstream.
                 client.unsubscribe_thread(thread_id).await;
             }
         }
@@ -938,6 +937,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared thread request started", &thread_fields);
             let thread = client.request(thread_operation, thread_params).await?;
             validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_model_provider(
+                thread_operation,
+                &thread,
+                launch_config.model_provider.as_deref(),
+            )?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -951,6 +955,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared thread request finished", &thread_fields);
             thread_id
         };
+        bind_local_proxy_thread(&launch_config, &thread_id)?;
         subscribed_thread_id = Some(thread_id.clone());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
@@ -1200,6 +1205,11 @@ pub async fn run_codex_app_server_turn_with_cancel(
             )
             .await?;
             validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_model_provider(
+                thread_operation,
+                &thread,
+                launch_config.model_provider.as_deref(),
+            )?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -1213,6 +1223,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             log_executor_event("codex thread request finished", &thread_fields);
             thread_id
         };
+        bind_local_proxy_thread(&launch_config, &thread_id)?;
         if let Some(sender) = &notifications {
             let _ = sender.send(json!({
                 "method": "thread/started",
@@ -1891,10 +1902,26 @@ struct CodexLaunchConfig {
 #[derive(Debug)]
 struct LocalProxyRegistration(String);
 
+impl LocalProxyRegistration {
+    fn bind_thread(&self, thread_id: &str) -> Result<(), String> {
+        local_model_proxy::bind_thread(&self.0, thread_id)
+    }
+}
+
 impl Drop for LocalProxyRegistration {
     fn drop(&mut self) {
         local_model_proxy::unregister(&self.0);
     }
+}
+
+fn bind_local_proxy_thread(
+    launch_config: &CodexLaunchConfig,
+    thread_id: &str,
+) -> Result<(), String> {
+    if let Some(registration) = launch_config.local_proxy_registration.as_deref() {
+        registration.bind_thread(thread_id)?;
+    }
+    Ok(())
 }
 
 struct PreparedCodexExecutionRequest {
@@ -1944,7 +1971,12 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
             &inference_provider,
             runtime_proxy_url(&request.model_config),
         ) {
-            configure_codex_router(&mut launch_config, upstream, model.clone());
+            configure_codex_router(
+                &mut launch_config,
+                &request.task_id,
+                upstream,
+                model.clone(),
+            );
         } else {
             launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
@@ -1959,6 +1991,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     ) {
         configure_codex_router(
             &mut launch_config,
+            &request.task_id,
             explicit_codex_upstream(&request.model_config, &base_url, &api_key),
             model.clone(),
         );
@@ -1981,11 +2014,12 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
 
 fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
+    task_id: &str,
     mut upstream: LocalModelProxyUpstream,
     routing_model_id: Option<String>,
 ) {
     upstream.routing_model_id = routing_model_id;
-    let local_token = local_model_proxy::register(upstream);
+    let local_token = local_model_proxy::register(task_id, upstream);
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
     let provider = codex_model_catalog::PROVIDER_ID;
@@ -2010,7 +2044,6 @@ fn explicit_codex_upstream(
     api_key: &str,
 ) -> LocalModelProxyUpstream {
     LocalModelProxyUpstream {
-        registration_id: model_provider(model_config),
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_config(model_config, "responses_url")
             .or_else(|| non_empty_config(model_config, "responsesUrl")),
@@ -2162,7 +2195,6 @@ fn configured_codex_provider(
     let base_url = base_url.trim_end_matches('/').to_owned();
 
     Some(LocalModelProxyUpstream {
-        registration_id: provider.to_owned(),
         request_url: Some(format!("{base_url}{request_path}")),
         base_url,
         api_format,
@@ -2226,11 +2258,11 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
         return BTreeMap::new();
     };
 
-    let no_proxy = env::var("NO_PROXY")
+    let configured_no_proxy = env::var("NO_PROXY")
         .ok()
         .or_else(|| env::var("no_proxy").ok())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_NO_PROXY.to_owned());
+        .filter(|value| !value.trim().is_empty());
+    let no_proxy = merge_required_no_proxy(configured_no_proxy.as_deref());
     [
         ("ALL_PROXY", proxy_url),
         ("HTTP_PROXY", proxy_url),
@@ -2244,6 +2276,27 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value.to_owned()))
     .collect()
+}
+
+fn merge_required_no_proxy(configured: Option<&str>) -> String {
+    let mut entries = configured
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    for required in DEFAULT_NO_PROXY.split(',') {
+        if !entries
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(required))
+        {
+            entries.push(required.to_owned());
+        }
+    }
+
+    entries.join(",")
 }
 
 fn runtime_proxy_url(model_config: &Value) -> Option<&str> {
@@ -2273,10 +2326,6 @@ fn bool_value(value: Option<&Value>) -> Option<bool> {
         },
         _ => None,
     }
-}
-
-fn model_provider(model_config: &Value) -> String {
-    explicit_model_provider(model_config).unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned())
 }
 
 fn inference_model_provider(model_config: &Value) -> String {
@@ -3307,6 +3356,36 @@ fn validate_codex_permission_profile(operation: &str, response: &Value) -> Resul
         active_profile.unwrap_or("<none>"),
         sandbox_type.unwrap_or("<none>")
     ))
+}
+
+fn validate_codex_model_provider(
+    operation: &str,
+    response: &Value,
+    expected_provider: Option<&str>,
+) -> Result<(), String> {
+    let Some(expected_provider) = expected_provider else {
+        return Ok(());
+    };
+    let applied_provider = response
+        .get("modelProvider")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            response
+                .get("thread")
+                .and_then(|thread| thread.get("modelProvider"))
+                .and_then(Value::as_str)
+        });
+
+    match applied_provider {
+        Some(applied_provider) if applied_provider == expected_provider => Ok(()),
+        Some(applied_provider) => Err(format!(
+            "codex app-server {operation} applied unexpected model provider: \
+             expected={expected_provider}, actual={applied_provider}"
+        )),
+        // Minimal test doubles and older app-server builds may omit provider metadata. Current
+        // Codex builds return it, so reject an explicit mismatch without breaking those clients.
+        None => Ok(()),
+    }
 }
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {

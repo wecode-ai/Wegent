@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   applyRuntimeConversationAction,
-  cacheRuntimeConversationMessages,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
+  cacheRuntimeConversationMessages,
+  cacheRuntimeConversationQueuedMessages,
+  cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  dispatchRuntimeConversationQueueEvent,
   evictRuntimeConversation,
   getConversationScrollSnapshot,
   getConversationVirtualMeasurements,
   getRuntimeConversationMessages,
+  getRuntimeConversationQueuedMessages,
+  getRuntimeConversationQueuePaused,
 } from './runtimeConversationCache'
 
 const address = {
@@ -75,6 +80,69 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test('settles applied guidance while the pane is unmounted', () => {
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'guidance-1',
+        content: 'follow the updated direction',
+        status: 'sending',
+        deliveryMode: 'guidance',
+        notice: '正在引导当前对话',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+      {
+        id: 'queued-2',
+        content: 'send this next',
+        status: 'queued',
+        createdAt: '2026-07-27T00:00:01.000Z',
+      },
+    ])
+
+    dispatchRuntimeConversationQueueEvent(address, {
+      type: 'guidance_applied',
+      payload: {
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        guidanceId: 'guidance-1',
+        message: 'follow the updated direction',
+        appliedAtMs: Date.now(),
+      },
+    })
+
+    expect(getRuntimeConversationQueuedMessages(address)).toMatchObject([
+      {
+        id: 'queued-2',
+        status: 'queued',
+      },
+    ])
+  })
+
+  test('matches an applied guidance by content when the runtime replaces its id', () => {
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'client-guidance-1',
+        content: 'follow the updated direction',
+        status: 'sending',
+        deliveryMode: 'guidance',
+        notice: '正在引导当前对话',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+    ])
+
+    dispatchRuntimeConversationQueueEvent(address, {
+      type: 'guidance_applied',
+      payload: {
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        guidanceId: 'runtime-guidance-1',
+        message: 'follow the updated direction',
+        appliedAtMs: Date.now(),
+      },
+    })
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
+  })
+
   test('bounds cached transcripts when many conversations are opened', () => {
     for (let index = 0; index <= 50; index += 1) {
       cacheRuntimeConversationMessages({ ...address, taskId: `task-${index}` }, [
@@ -109,10 +177,21 @@ describe('runtimeConversationCache', () => {
     cacheConversationVirtualMeasurements('device-1:task-1', [
       { index: 0, key: 'user-1', start: 0, end: 120, size: 120, lane: 0 },
     ])
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'queued-1',
+        content: 'follow up',
+        status: 'queued',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+    ])
+    cacheRuntimeConversationQueuePaused(address, true)
 
     evictRuntimeConversation(address)
 
     expect(getRuntimeConversationMessages(address)).toEqual([])
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
+    expect(getRuntimeConversationQueuePaused(address)).toBe(false)
     expect(getConversationScrollSnapshot('device-1:task-1')).toBeUndefined()
     expect(getConversationVirtualMeasurements('device-1:task-1')).toBeUndefined()
   })

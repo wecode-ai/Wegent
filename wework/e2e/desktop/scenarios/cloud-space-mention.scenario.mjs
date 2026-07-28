@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -73,20 +71,12 @@ function json(response, status, body) {
   response.end(JSON.stringify(body))
 }
 
-async function capture(control, resultDir, name) {
-  const dataUrl = await control.command('capture', ACTIVE_WORKBENCH_SELECTOR, {
-    timeoutMs: 30_000,
-  })
-  const prefix = 'data:image/png;base64,'
-  assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
-  await writeFile(join(resultDir, name), Buffer.from(dataUrl.slice(prefix.length), 'base64'))
-}
-
 async function snapshot(control) {
   return JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+  const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const projects = [WEBSITE_PROJECT, MOBILE_PROJECT]
   let createdProjectPayload = null
 
@@ -148,7 +138,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         !menuSnapshot.testIds.includes('mention-cloud-create-action'),
         'The retired create action is still rendered'
       )
-      await capture(control, resultDir, 'cloud-space-mention-01-menu-entries.png')
+      await capture(control, 'cloud-space-mention-01-menu-entries.png')
 
       // Scene 2: the direct row inserts the generic cloud://projects chip
       // without binding anything.
@@ -166,7 +156,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         !directSnapshot.testIds.includes('transient-notice'),
         'The generic reference unexpectedly bound a cloud context'
       )
-      await capture(control, resultDir, 'cloud-space-mention-02-direct-chip.png')
+      await capture(control, 'cloud-space-mention-02-direct-chip.png')
 
       // Scene 3: the project space list drills into every accessible project.
       await control.command('fill', COMPOSER_SELECTOR, { value: '@' })
@@ -190,7 +180,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         drillSnapshot.testIds.includes('mention-cloud-back-action'),
         'The project space drill lost its back row'
       )
-      await capture(control, resultDir, 'cloud-space-mention-03-project-list.png')
+      await capture(control, 'cloud-space-mention-03-project-list.png')
 
       // Scene 4: selecting a project inserts the mention chip and binds the space.
       await control.command(
@@ -218,7 +208,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         spaceSnapshot.testIds.includes('cloud-reference-status-cloud-todo-GW-1'),
         'The todo row did not render its status badge'
       )
-      await capture(control, resultDir, 'cloud-space-mention-04-bound-filter.png')
+      await capture(control, 'cloud-space-mention-04-bound-filter.png')
       await control.command('click', '[data-testid="cloud-reference-option-cloud-todo-GW-1"]')
       const todoSnapshot = await snapshot(control)
       assert.ok(
@@ -244,7 +234,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         ),
         'The @项目空间: keyword did not filter the project list'
       )
-      await capture(control, resultDir, 'cloud-space-mention-05-typed-scope.png')
+      await capture(control, 'cloud-space-mention-05-typed-scope.png')
 
       // Scene 7: a non-matching typed phrase keeps only the direct row, which
       // still inserts the generic chip.
