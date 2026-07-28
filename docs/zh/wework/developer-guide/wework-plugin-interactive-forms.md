@@ -82,13 +82,7 @@ Wework 支持插件在对话运行中向用户发起交互式表单，让用户�
 }
 ```
 
-具体插件代码不需要手写 JSON-RPC 消息。优先使用所选 MCP SDK 提供的 elicitation API，只要最终发出的请求符合上述字段即可。为了兼容更多宿主，插件应在调用 elicitation 前检查 MCP client capabilities；无法确认 capabilities 时，至少要捕获“不支持 form/openai/form”的错误，并提供非交互式降级流程。
-
-降级流程可以是：
-
-- 让用户在普通对话中输入选择结果，例如 `所有人`、`仅自己` 或指定用户名单。
-- 把选择拆成普通 MCP tool 参数，由模型重新调用工具时带上参数。
-- 对高影响操作直接停止并提示当前客户端不支持交互式确认，避免默认放行。
+具体插件代码不需要手写 JSON-RPC 消息。优先使用所选 MCP SDK 提供的 elicitation API，只要最终发出的请求符合上述字段即可。为了兼容更多宿主，插件应在调用 elicitation 前检查 MCP client capabilities；无法确认 capabilities 或 client 不支持 form elicitation 时，不要发送表单请求。
 
 面向 Wework 的插件必须优先使用 `mode: "form"`；只有确认目标宿主的 MCP client capabilities 明确支持 `openai/form` 时，才使用 `openai/form`。
 

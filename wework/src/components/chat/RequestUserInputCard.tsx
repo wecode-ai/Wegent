@@ -140,7 +140,7 @@ export function RequestUserInputCard({
         data-testid="request-user-input-ignore-button"
         disabled={isDisabled}
         onClick={onIgnore}
-        className="inline-flex h-8 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+        className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
       >
         {t('request_user_input.ignore')}
         <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
@@ -152,7 +152,7 @@ export function RequestUserInputCard({
         data-testid="request-user-input-submit-button"
         disabled={isDisabled || questions.length === 0}
         onClick={() => handleSubmit()}
-        className="inline-flex h-8 min-w-[68px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+        className="inline-flex h-11 min-w-[68px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
       >
         {t('request_user_input.submit')}
         <span className="flex h-5 w-5 items-center justify-center rounded-md bg-white/15">

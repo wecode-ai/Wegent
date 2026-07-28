@@ -91,14 +91,22 @@ impl ConnectorRuntime {
             .map_err(|error| AppIpcError::new("connector_authorization_write_failed", error))?;
         *self.cloud.write().await = Some(next_config);
         if let Err(error) = self.write_mcp_config(true).await {
-            match previous {
-                Some(ref previous_config) => {
-                    let _ = persist_connector_gateway_config(previous_config);
-                    *self.cloud.write().await = Some(previous_config.clone());
+            let rollback_result = match &previous {
+                Some(previous_config) => persist_connector_gateway_config(previous_config),
+                None => clear_connector_gateway_config(),
+            };
+            match rollback_result {
+                Ok(()) => {
+                    *self.cloud.write().await = previous;
                 }
-                None => {
-                    *self.cloud.write().await = None;
-                    let _ = clear_connector_gateway_config();
+                Err(rollback_error) => {
+                    return Err(AppIpcError::new(
+                        "connector_authorization_rollback_failed",
+                        format!(
+                            "Failed to write MCP config after updating connector authorization: {}; failed to roll back connector authorization on disk: {rollback_error}",
+                            error.message
+                        ),
+                    ));
                 }
             }
             return Err(error);

@@ -82,13 +82,7 @@ When the request reaches the Wework executor, Codex app-server forwards it as a 
 }
 ```
 
-Plugin code should usually not hand-write JSON-RPC. Prefer the elicitation API from the MCP SDK you are using, as long as the resulting request contains the fields above. For broader host compatibility, check MCP client capabilities before calling elicitation. If capabilities are unavailable, at least catch "form/openai/form is unsupported" failures and provide a non-interactive fallback.
-
-Fallbacks can include:
-
-- Ask the user to type the choice in normal chat, such as `everyone`, `only me`, or a list of users.
-- Split the decision into normal MCP tool parameters and let the model call the tool again with those parameters.
-- For high-impact operations, stop and report that the current client does not support interactive confirmation instead of allowing by default.
+Plugin code should usually not hand-write JSON-RPC. Prefer the elicitation API from the MCP SDK you are using, as long as the resulting request contains the fields above. For broader host compatibility, check MCP client capabilities before calling elicitation. If capabilities are unavailable or the client does not support form elicitation, do not send the form request.
 
 For Wework-targeted plugins, use `mode: "form"` first. Use `openai/form` only when the target host's MCP client capabilities explicitly support it.
 
