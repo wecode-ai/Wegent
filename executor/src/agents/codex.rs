@@ -63,6 +63,8 @@ const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
+const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
+    "features.tool_call_mcp_elicitation=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
@@ -712,7 +714,7 @@ fn persistent_codex_app_server_launch_config(
     ]);
     launch_config
         .config_overrides
-        .extend(codex_streaming_patch_config_overrides());
+        .extend(codex_runtime_default_config_overrides());
     launch_config
 }
 
@@ -1952,7 +1954,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .push(shell_path_config_override());
     launch_config
         .config_overrides
-        .extend(codex_streaming_patch_config_overrides());
+        .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
@@ -2079,6 +2081,12 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
         CODEX_APPLY_PATCH_FREEFORM_OVERRIDE.to_owned(),
         CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
     ]
+}
+
+fn codex_runtime_default_config_overrides() -> Vec<String> {
+    let mut overrides = codex_streaming_patch_config_overrides();
+    overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    overrides
 }
 
 fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
@@ -3315,6 +3323,18 @@ fn resolve_codex_binary(value: &str) -> String {
 
 const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
 
+pub(crate) fn codex_runtime_approval_policy() -> Value {
+    json!({
+        "granular": {
+            "sandbox_approval": false,
+            "rules": false,
+            "skill_approval": false,
+            "request_permissions": false,
+            "mcp_elicitations": true,
+        }
+    })
+}
+
 fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>) {
     params.insert(
         "permissions".to_owned(),
@@ -3406,10 +3426,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
+    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
     insert_codex_runtime_permissions(&mut params);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
@@ -3437,10 +3454,7 @@ fn thread_fork_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
+    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
     insert_codex_runtime_permissions(&mut params);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
@@ -3501,10 +3515,7 @@ fn thread_resume_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
+    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
     insert_codex_runtime_permissions(&mut params);
     Value::Object(params)
 }
@@ -3552,10 +3563,7 @@ fn turn_start_params(
             Value::String(client_user_message_id.to_owned()),
         );
     }
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
+    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
     insert_codex_runtime_permissions(&mut params);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));

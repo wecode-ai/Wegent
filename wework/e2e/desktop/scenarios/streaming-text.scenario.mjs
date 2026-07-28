@@ -12,17 +12,19 @@ const INITIAL_COMPLETION = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE'
 const PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT: keep the partial response active until released.'
 const MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_PARTIAL'
 const VIEWPORT_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_VIEWPORT_ANCHOR'
-const VIEWPORT_MARKER_URL = 'https://wework-e2e.invalid/streaming-viewport-anchor'
 const APPEND_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_APPENDED'
 const ATTACHMENT_FILENAME = 'streaming-turn-navigation.png'
 const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
-const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"] p[data-scroll-anchor]:has(a[href="${VIEWPORT_MARKER_URL}"])`
+const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
+const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
+const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"] [data-scroll-anchor]`
+const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${VIEWPORT_ANCHOR_E2E_ID}"]`
 const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   if (index === 11) {
-    return `[${VIEWPORT_MARKER}](${VIEWPORT_MARKER_URL}): this paragraph must remain fixed after the user scrolls upward.`
+    return VIEWPORT_ANCHOR_TEXT
   }
   return `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
 })
@@ -616,13 +618,19 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-02-thinking-below-partial-response.png')
 
-      await control.command('waitFor', VIEWPORT_ANCHOR_SELECTOR, {
-        text: VIEWPORT_MARKER,
+      await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+        text: VIEWPORT_ANCHOR_TEXT,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('markElementWithText', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+        text: VIEWPORT_ANCHOR_TEXT,
+        value: VIEWPORT_ANCHOR_E2E_ID,
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
         await control.command('getText', VIEWPORT_ANCHOR_SELECTOR),
-        `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`,
+        VIEWPORT_ANCHOR_TEXT,
         'The viewport anchor paragraph was not rendered at the expected position'
       )
       await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.35' })

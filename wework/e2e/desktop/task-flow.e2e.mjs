@@ -121,6 +121,8 @@ const MEMORY_SAMPLE_WINDOW_SIZE = 3
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
+const VIEW_IMAGE_PROMPT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE: inspect the verification image.'
+const VIEW_IMAGE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE_COMPLETE'
 const IMAGE_ARTIFACT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const GIT_SEED_NAME = 'README.md'
@@ -781,6 +783,34 @@ async function verifyBackgroundGuidanceNavigation({
   await captureVerificationScreenshot(control, 'guidance-background-07-restored.png')
 }
 
+async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
+  control.setScenario('view_image')
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await sendPrompt(control, composerSelector, VIEW_IMAGE_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequest('view_image'),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The model service did not receive the standalone view_image request'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: VIEW_IMAGE_COMPLETION_TEXT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await verifyViewImageProcessingBlock(control)
+}
+
 async function startPausedQueueCase({ composerSelector, control, initialPrompt, queuedPrompts }) {
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1202,6 +1232,108 @@ async function waitForTopMetrics(control, selector, description, timeoutMs = 3_0
   )
 }
 
+async function waitForProcessingBlock(
+  control,
+  selector,
+  description,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  const startedAt = Date.now()
+  let diagnostics = null
+
+  while (Date.now() - startedAt < timeoutMs) {
+    await control.command('expandProcessingSummaries', 'body')
+    const targetCount = Number(await control.command('getElementCount', selector))
+    diagnostics = {
+      targetCount,
+      finalProcessingExpandedCount: Number(
+        await control.command(
+          'getElementCount',
+          '[data-testid="final-processing-toggle"][aria-expanded="true"]'
+        )
+      ),
+      finalProcessingCollapsedCount: Number(
+        await control.command(
+          'getElementCount',
+          '[data-testid="final-processing-toggle"][aria-expanded="false"]'
+        )
+      ),
+      processingSummaryExpandedCount: Number(
+        await control.command(
+          'getElementCount',
+          '[data-testid="processing-summary-toggle"][aria-expanded="true"]'
+        )
+      ),
+      processingSummaryCollapsedCount: Number(
+        await control.command(
+          'getElementCount',
+          '[data-testid="processing-summary-toggle"][aria-expanded="false"]'
+        )
+      ),
+      processingBlockCount: Number(
+        await control.command('getElementCount', '[data-processing-block-id]')
+      ),
+      processingLivePreviewCount: Number(
+        await control.command('getElementCount', '[data-testid="processing-live-preview"]')
+      ),
+    }
+    if (targetCount > 0) return diagnostics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+
+  const snapshot = await control.command('snapshot', 'body')
+  await writeFile(
+    join(resultDir, 'processing-block-timeout-diagnostics.json'),
+    `${JSON.stringify({ description, selector, diagnostics, snapshot: JSON.parse(snapshot) }, null, 2)}\n`,
+    'utf8'
+  )
+  throw new Error(
+    `${description} did not render ${selector}; diagnostics: ${JSON.stringify(diagnostics)}`
+  )
+}
+
+async function verifyViewImageProcessingBlock(control) {
+  const viewImageBlockSelector = '[data-processing-block-id="wework-e2e-view-image"]'
+  await waitForProcessingBlock(control, viewImageBlockSelector, 'The view_image processing block')
+  await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
+  await control.command(
+    'waitFor',
+    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="false"]',
+    { visible: true, stableMs: 300, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  await captureVerificationScreenshot(
+    control,
+    '03-view-image-collapsed.png',
+    '[data-testid="processing-live-preview"]'
+  )
+  await control.command(
+    'click',
+    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle]'
+  )
+  await control.command('waitFor', '[data-testid="image-view-preview"]', {
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="true"]',
+    { stableMs: 500, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
+  await control.command('waitFor', '[data-testid="image-view-preview"]', {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  await captureVerificationScreenshot(
+    control,
+    '04-view-image-expanded.png',
+    '[data-testid="processing-live-preview"]'
+  )
+}
+
 function distanceFromBottom(metrics) {
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
 }
@@ -1350,11 +1482,20 @@ async function verifyRunningFollowUpFork({
   await control.command('waitFor', '[data-testid="pause-response-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('scrollIntoView', '[data-testid="fork-message-button"]')
+  const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
+  await control.command('scrollIntoView', firstTurnForkButtonSelector)
   await captureVerificationScreenshot(control, 'running-follow-up-fork-01-streaming.png')
 
   try {
-    await control.command('clickWhenEnabled', '[data-testid="fork-message-button"]')
+    await control.command(
+      'clickDescendantInElementWithText',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+      {
+        target: '[data-testid="fork-message-button"]',
+        text: COMPLETION_TEXT,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
     const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '', 15_000)
     assert.notEqual(
       forkTaskRowTestId,
@@ -1425,13 +1566,22 @@ async function verifyCompletedTurnFork({
       testId.startsWith('runtime-local-task-row-')
     )
   )
-  await control.command('scrollIntoView', '[data-testid="fork-message-button"]')
-  await control.command('waitFor', '[data-testid="fork-message-button"]', {
+  const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
+  await control.command('scrollIntoView', firstTurnForkButtonSelector)
+  await control.command('waitFor', firstTurnForkButtonSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'completed-turn-fork-01-source-ready.png')
-  await control.command('clickWhenEnabled', '[data-testid="fork-message-button"]')
+  await control.command(
+    'clickDescendantInElementWithText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      target: '[data-testid="fork-message-button"]',
+      text: COMPLETION_TEXT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
   assert.notEqual(
     forkTaskRowTestId,
@@ -2341,19 +2491,30 @@ async function verifyProviderBoundaryRestriction(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-selector-menu"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}`)
+  const targetModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}"]`
+  await control.command('waitFor', targetModelSelector, {
+    text: PROVIDER_SWITCH_SOL_LABEL,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const targetModelText = await control.command('getText', targetModelSelector)
+  assert.ok(
+    targetModelText.includes(PROVIDER_SWITCH_SOL_LABEL),
+    'The target model option did not display the expected model label'
+  )
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
   const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const disabledModelText = await control.command('getText', officialModelSelector)
+  const officialModelText = await control.command('getText', officialModelSelector)
   assert.ok(
-    disabledModelText.includes(PROVIDER_SWITCH_OFFICIAL_LABEL),
+    officialModelText.includes(PROVIDER_SWITCH_OFFICIAL_LABEL),
     'The target model option did not display the expected model label'
   )
   assert.doesNotMatch(
-    disabledModelText,
+    officialModelText,
     /官方 Codex|Official Codex/,
     'The target model option displayed the provider restriction inline'
   )
@@ -2624,8 +2785,13 @@ async function verifyBackgroundTaskWindowLifecycle({
     '[data-testid="desktop-workbench-content"]',
     'The middle-position conversation scroll container before switching'
   )
+  const middleDistanceBeforeSwitch = distanceFromBottom(middlePositionBeforeSwitch)
   assert.ok(
-    distanceFromBottom(middlePositionBeforeSwitch) > 100,
+    middlePositionBeforeSwitch.scrollTop > 100,
+    'The long conversation did not leave the top before testing position restoration'
+  )
+  assert.ok(
+    middleDistanceBeforeSwitch > 100,
     'The long conversation did not leave the bottom before testing position restoration'
   )
   await captureVerificationScreenshot(
@@ -2690,6 +2856,15 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     '[data-testid="desktop-workbench-content"]',
     'The middle-position conversation scroll container after switching back'
+  )
+  const middleDistanceAfterSwitch = distanceFromBottom(middlePositionAfterSwitch)
+  assert.ok(
+    middlePositionAfterSwitch.scrollTop > 100,
+    'The restored long conversation unexpectedly returned to the top'
+  )
+  assert.ok(
+    middleDistanceAfterSwitch > 100,
+    'The restored long conversation unexpectedly returned to the bottom'
   )
   await captureVerificationScreenshot(
     control,
@@ -3570,14 +3745,29 @@ function cors(response) {
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
 }
 
-function requestContainsToolOutput(request) {
-  const input = JSON.stringify(request.input ?? [])
-  return input.includes('function_call_output') || input.includes('custom_tool_call_output')
+function requestContainsToolOutput(request, callId) {
+  const containsOutput = value => {
+    if (Array.isArray(value)) return value.some(containsOutput)
+    if (!value || typeof value !== 'object') return false
+
+    const type = value.type
+    const isToolOutput = type === 'function_call_output' || type === 'custom_tool_call_output'
+    if (isToolOutput && (!callId || value.call_id === callId)) return true
+
+    return Object.values(value).some(containsOutput)
+  }
+
+  return containsOutput(request.input ?? [])
 }
 
 function requestAdvertisesShellTool(request) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   return tools.some(tool => tool?.name === 'exec_command' || tool?.name === 'shell_command')
+}
+
+function requestAdvertisesViewImageTool(request) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  return tools.some(tool => tool?.name === 'view_image')
 }
 
 function selectTool(request, name, argumentsValue) {
@@ -3647,6 +3837,13 @@ function selectViewImageTool(request, workspacePath) {
   })
 }
 
+function snapshotHasAssistantActivity(snapshot) {
+  return (
+    snapshot.testIds.includes('thinking-indicator') ||
+    snapshot.testIds.includes('process-text-block')
+  )
+}
+
 async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }) {
   control.setScenario('goal_idle')
   const taskRowsBeforeGoal = new Set(
@@ -3678,7 +3875,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
     snapshot =>
       snapshot.testIds.includes(goalRunningTestId) &&
       snapshot.testIds.includes('pause-response-button') &&
-      snapshot.testIds.includes('thinking-indicator') &&
+      snapshotHasAssistantActivity(snapshot) &&
       !snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes(goalUnreadTestId),
     'The running Goal turn did not render a consistent sidebar, composer, and message state'
@@ -3719,6 +3916,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
       snapshot.testIds.includes('goal-status-bar') &&
       snapshot.testIds.includes(goalRunningTestId) &&
       snapshot.testIds.includes('pause-response-button') &&
+      snapshotHasAssistantActivity(snapshot) &&
       !snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_IDLE_PROMPT) &&
@@ -3864,6 +4062,7 @@ async function verifyGoalRestartRecoveryLifecycle({
       snapshot.testIds.includes(goalRunningTestId) &&
       snapshot.testIds.includes('goal-status-bar') &&
       snapshot.testIds.includes('pause-response-button') &&
+      snapshotHasAssistantActivity(snapshot) &&
       !snapshot.testIds.includes('send-message-button') &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_RESTART_INITIAL_TEXT),
@@ -4268,6 +4467,7 @@ class DesktopE2EServer {
     this.failedCloudModelWaiter = null
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.viewImageStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
     this.concurrentMemoryTaskNumbers = new Set()
@@ -4275,6 +4475,7 @@ class DesktopE2EServer {
     this.matrixCase = null
     this.matrixState = null
     this.toolLessPrewarmHandled = false
+    this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
     this.toolOutput = null
@@ -4490,6 +4691,7 @@ class DesktopE2EServer {
         'cloud_follow_up',
         'model_protocol_matrix',
         'provider_switch_retry',
+        'view_image',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -4911,6 +5113,17 @@ class DesktopE2EServer {
     }
 
     if (
+      this.scenario === 'view_image' &&
+      this.viewImageStage === 'initial' &&
+      !this.viewImageToolLessPrewarmHandled &&
+      !requestAdvertisesViewImageTool(body)
+    ) {
+      this.viewImageToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
       this.scenario === 'cloud_initial' &&
       this.cloudModelStage === 'initial' &&
       !this.cloudToolLessPrewarmHandled &&
@@ -4961,9 +5174,9 @@ class DesktopE2EServer {
       )
       this.recordScenarioRequest('initial', modelRequest)
       assert.equal(
-        requestContainsToolOutput(body),
+        requestContainsToolOutput(body, 'wework-e2e-view-image'),
         true,
-        'The real Codex request did not report its tool output to the model service'
+        'The real Codex request did not report the view_image tool output to the model service'
       )
       this.toolOutput = JSON.stringify(body.input)
       this.modelStage = 'complete'
@@ -4974,6 +5187,44 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'view_image' && this.viewImageStage === 'initial') {
+      this.recordScenarioRequest('view_image', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(VIEW_IMAGE_PROMPT),
+        'The real Codex request did not contain the view_image prompt'
+      )
+      const image = selectViewImageTool(body, this.workspacePath)
+      this.viewImageStage = 'awaiting_tool_output'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall('wework-e2e-view-image', image.name, image.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'view_image') {
+      assert.equal(
+        this.viewImageStage,
+        'awaiting_tool_output',
+        `Unexpected desktop E2E view_image stage: ${this.viewImageStage}`
+      )
+      this.recordScenarioRequest('view_image', modelRequest)
+      assert.equal(
+        requestContainsToolOutput(body, 'wework-e2e-view-image'),
+        true,
+        'The real Codex request did not report the view_image tool output to the model service'
+      )
+      this.viewImageStage = 'complete'
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(VIEW_IMAGE_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -8252,47 +8503,7 @@ async function main() {
           Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
         )
       }
-      await control.command('click', '[data-testid="processing-summary-toggle"]')
-      await control.command('waitFor', '[data-processing-block-id="wework-e2e-view-image"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
-      await control.command(
-        'waitFor',
-        '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="false"]',
-        { visible: true, stableMs: 300, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-      )
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-      await captureVerificationScreenshot(
-        control,
-        '03-view-image-collapsed.png',
-        '[data-testid="processing-live-preview"]'
-      )
-      await control.command(
-        'click',
-        '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle]'
-      )
-      await control.command('waitFor', '[data-testid="image-view-preview"]', {
-        stableMs: 500,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command(
-        'waitFor',
-        '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="true"]',
-        { stableMs: 500, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-      )
-      await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
-      await control.command('waitFor', '[data-testid="image-view-preview"]', {
-        visible: true,
-        stableMs: 500,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-      await captureVerificationScreenshot(
-        control,
-        '04-view-image-expanded.png',
-        '[data-testid="processing-live-preview"]'
-      )
+      await verifyViewImageProcessingBlock(control)
       await control.command('click', '[data-testid="processing-summary-toggle"]')
       await control.command('waitFor', '[data-testid="file-change-stats-label"]', {
         text: '+1',
@@ -9115,6 +9326,9 @@ async function main() {
         restartDesktopApp,
         workspacePath,
       })
+
+      phase = 'standalone-view-image'
+      await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
 
       if (desktopScenario) {
         phase = 'desktop-extension-scenario'
