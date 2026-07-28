@@ -5,7 +5,7 @@ import { formatRelativeSidebarTime } from '@/components/layout/runtimeSidebarTim
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
-import { memberAvatarClasses } from './todoShared'
+import { memberAvatarClasses, memberNameById } from './todoShared'
 
 export interface ProjectsHomeProject {
   id: string
@@ -39,11 +39,6 @@ function isWithinLastWeek(timestamp: string | null | undefined, nowMs: number): 
   if (!timestamp) return false
   const valueMs = new Date(timestamp).getTime()
   return !Number.isNaN(valueMs) && valueMs >= nowMs - WEEK_MS
-}
-
-function memberNameById(members: CloudProjectMember[], userId: number | null): string | null {
-  if (userId === null) return null
-  return members.find(member => member.user_id === userId)?.user_name ?? null
 }
 
 function matchesQuery(project: ProjectsHomeProject, query: string): boolean {

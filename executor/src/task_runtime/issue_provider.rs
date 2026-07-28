@@ -1245,9 +1245,12 @@ fn labels_for_write(mut tags: Vec<String>, priority: &str, status: &str) -> Vec<
 }
 
 fn creator_from_labels(labels: &[String]) -> i64 {
+    // Labels are `wegent:creator:<id>` or `wegent:creator:<id>:<name>`; the
+    // numeric id is authoritative, the optional name is display-only.
     labels
         .iter()
         .find_map(|label| label.strip_prefix(CREATOR_LABEL_PREFIX))
+        .map(|value| value.split(':').next().unwrap_or(value))
         .and_then(|value| value.parse().ok())
         .filter(|value| *value > 0)
         .unwrap_or(0)
@@ -1585,6 +1588,26 @@ mod tests {
         assert_eq!(
             labels_for_write(labels, "none", "in_progress"),
             vec!["bug", "wegent:creator:42", "wegent:status:in_progress"]
+        );
+    }
+
+    #[test]
+    fn reads_wegent_creator_id_from_label_with_display_name() {
+        // The id segment stays authoritative when a display name is appended
+        // for humans browsing the provider UI.
+        let labels = vec![
+            "wegent:creator:42:Micro66".to_owned(),
+            "wegent:status:pending".to_owned(),
+        ];
+        assert_eq!(creator_from_labels(&labels), 42);
+        assert_eq!(
+            labels_for_write(labels, "none", "in_progress"),
+            vec!["wegent:creator:42:Micro66", "wegent:status:in_progress"]
+        );
+        // A label whose id segment is not numeric contributes no creator.
+        assert_eq!(
+            creator_from_labels(&["wegent:creator:unknown".to_owned()]),
+            0
         );
     }
 

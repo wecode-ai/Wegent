@@ -118,6 +118,7 @@ describe('local delivery API', () => {
     await api.createLoopItem(cloudProject, {
       title: 'Created by visitor',
       tags: ['customer'],
+      creator_name: 'Micro66',
     })
 
     expect(request).toHaveBeenCalledWith('external_todos.create', {
@@ -131,7 +132,7 @@ describe('local delivery API', () => {
         status: 'inbox',
         priority: 'none',
         parent_id: null,
-        tags: ['customer', 'wegent:creator:7'],
+        tags: ['customer', 'wegent:creator:7:Micro66'],
       },
     })
   })

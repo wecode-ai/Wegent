@@ -165,6 +165,7 @@ def test_public_project_visitors_only_access_their_own_todo_details(
     assert visible_project["visibility"] == "public"
     assert visible_project["access_role"] == "RestrictedAnalyst"
     assert visible_project["current_user_id"] == visitor.id
+    assert visible_project["current_user_name"] == visitor.user_name
 
     listed_items = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",

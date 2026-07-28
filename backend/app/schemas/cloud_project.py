@@ -122,6 +122,7 @@ class CloudProjectResponse(BaseModel):
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
     current_user_id: int = 0
+    current_user_name: str = ""
     access_role: BaseRole = BaseRole.RestrictedAnalyst
     status: str
     tags: list[str] = []

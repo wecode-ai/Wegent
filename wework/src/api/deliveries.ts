@@ -87,6 +87,7 @@ export interface CloudProject {
   }
   created_by_user_id: number
   current_user_id?: number
+  current_user_name?: string
   access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst'
   visibility?: 'private' | 'public'
   status: string

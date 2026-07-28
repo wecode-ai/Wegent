@@ -102,6 +102,7 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
         : {},
     created_by_user_id: 0,
     current_user_id: 0,
+    current_user_name: '',
     access_role: 'Owner',
     visibility: 'private',
     status: record.status ?? 'active',
@@ -158,8 +159,18 @@ export function createExternalIssueApi(request: LocalRequest) {
         priority?: CloudLoopItem['priority']
         parent_id?: string | null
         tags?: string[]
+        creator_name?: string
       }
     ) {
+      // The creator label keeps the numeric id as the authoritative identity
+      // (`wegent:creator:<id>`); a best-effort display name is appended for
+      // humans browsing the provider UI (`wegent:creator:<id>:<name>`).
+      // Provider label separators (comma for GitLab) cannot appear in names.
+      const creatorName = data.creator_name?.replace(/[,:]/g, ' ').trim()
+      const creatorLabel =
+        (project.current_user_id ?? 0) > 0
+          ? [`wegent:creator:${project.current_user_id}${creatorName ? `:${creatorName}` : ''}`]
+          : []
       const record = await request<LocalLoopItemRecord>('external_todos.create', {
         project: externalProjectDescriptor(project),
         todo: {
@@ -168,12 +179,7 @@ export function createExternalIssueApi(request: LocalRequest) {
           status: data.status ?? 'inbox',
           priority: data.priority ?? 'none',
           parent_id: data.parent_id ?? null,
-          tags: [
-            ...(data.tags ?? []),
-            ...((project.current_user_id ?? 0) > 0
-              ? [`wegent:creator:${project.current_user_id}`]
-              : []),
-          ],
+          tags: [...(data.tags ?? []), ...creatorLabel],
         },
       })
       return localTask(record, project)

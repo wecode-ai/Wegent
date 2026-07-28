@@ -145,6 +145,7 @@ def find_runtime_task_cloud_context(
             "project": {
                 **project.__dict__,
                 "current_user_id": current_user.id,
+                "current_user_name": current_user.user_name,
                 "access_role": cloud_project_service.access(
                     db, project.id, current_user.id
                 ).role,

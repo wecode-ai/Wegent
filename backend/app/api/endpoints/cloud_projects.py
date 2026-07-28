@@ -45,6 +45,7 @@ def _project_response(
         {
             **project.__dict__,
             "current_user_id": current_user.id,
+            "current_user_name": current_user.user_name,
             "access_role": access.role,
         }
     )
