@@ -982,22 +982,15 @@ class ChatContext:
         # compaction) is on, so the model can page back into detail that
         # compaction summarized away. Task-scoped and read-only.
         if self._backtrack_tools_enabled():
-            from chat_shell.compression.token_counter import TokenCounter
             from chat_shell.tools.builtin import ListHistoryTool, ReadSubtaskTool
 
-            model_id = (self._request.model_config or {}).get("model_id")
             extra_tools.append(
                 ListHistoryTool(
                     task_id=self._request.task_id,
                     in_context_ids=in_context_ids,
                 )
             )
-            extra_tools.append(
-                ReadSubtaskTool(
-                    task_id=self._request.task_id,
-                    token_counter=TokenCounter(model_name=model_id),
-                )
-            )
+            extra_tools.append(ReadSubtaskTool(task_id=self._request.task_id))
             logger.info(
                 "[CHAT_CONTEXT] Added history-backtracking tools for task_id=%d "
                 "(in_context_subtasks=%d)",

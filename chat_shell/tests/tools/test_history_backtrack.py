@@ -2,216 +2,137 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the AI history-backtracking tools (list_history / read_subtask)."""
+"""Tests for the (thin) AI history-backtracking tools.
+
+Rendering + pagination live in the shared backend service; these tools only mark
+location, forward pagination params, and relay the page. See the backend
+``test_subtask_history`` for the windowing/rendering logic.
+"""
 
 import json
 from types import SimpleNamespace
 
 import pytest
 
-from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.core.config import settings
+from chat_shell.history.subtask_records import SubtaskRecordNotAvailable
 from chat_shell.services.chat_service import ChatService
 from chat_shell.tools.builtin import history_backtrack
-from chat_shell.tools.builtin.history_backtrack import (
-    ListHistoryTool,
-    ReadSubtaskTool,
-)
+from chat_shell.tools.builtin.history_backtrack import ListHistoryTool, ReadSubtaskTool
 
 
 @pytest.mark.asyncio
-async def test_list_history_marks_location_and_paginates(monkeypatch):
-    summaries = [
-        {
-            "id": 1,
-            "role": "user",
-            "status": "COMPLETED",
-            "char_count": 5,
-            "preview": "hi",
-        },
-        {
-            "id": 2,
-            "role": "assistant",
-            "status": "COMPLETED",
-            "char_count": 9,
-            "preview": "hello",
-        },
-        {
-            "id": 3,
-            "role": "user",
-            "status": "COMPLETED",
-            "char_count": 3,
-            "preview": "yo",
-        },
-    ]
-
-    async def fake_fetch(*, task_id):
+async def test_list_history_marks_location_and_relays(monkeypatch):
+    async def fake_fetch(*, task_id, limit, offset):
         assert task_id == 2
-        return summaries
+        return {
+            "subtasks": [
+                {
+                    "id": 1,
+                    "role": "user",
+                    "status": "COMPLETED",
+                    "char_count": 2,
+                    "preview": "hi",
+                },
+                {
+                    "id": 2,
+                    "role": "assistant",
+                    "status": "COMPLETED",
+                    "char_count": 5,
+                    "preview": "hey",
+                },
+            ],
+            "total": 5,
+            "has_more": True,
+        }
 
     monkeypatch.setattr(history_backtrack, "fetch_history_subtasks", fake_fetch)
 
-    tool = ListHistoryTool(task_id=2, in_context_ids=frozenset({3}), page_size=2)
+    tool = ListHistoryTool(task_id=2, in_context_ids=frozenset({2}), page_size=2)
     result = json.loads(await tool._arun(page=1))
 
-    assert result["total"] == 3
+    assert result["total"] == 5
     assert result["has_more"] is True
-    assert [s["id"] for s in result["subtasks"]] == [1, 2]
     assert result["subtasks"][0]["location"] == "compacted"
-    # id 3 is in context but on page 2
-    page2 = json.loads(await tool._arun(page=2))
-    assert page2["subtasks"][0]["location"] == "in_context"
-    assert page2["has_more"] is False
+    assert result["subtasks"][1]["location"] == "in_context"
 
 
 @pytest.mark.asyncio
-async def test_read_subtask_renders_assistant_blocks(monkeypatch):
-    record = {
-        "id": 2,
-        "role": "assistant",
-        "status": "COMPLETED",
-        "blocks": [
-            {"type": "text", "content": "let me check"},
-            {
-                "type": "tool",
-                "tool_name": "Bash",
-                "tool_input": {"cmd": "ls"},
-                "tool_output": "a.txt",
-            },
-        ],
-    }
+async def test_list_history_forwards_pagination(monkeypatch):
+    seen = {}
 
-    async def fake_fetch(*, task_id, subtask_id):
-        return record
+    async def fake_fetch(*, task_id, limit, offset):
+        seen["limit"] = limit
+        seen["offset"] = offset
+        return {"subtasks": [], "total": 0, "has_more": False}
 
-    monkeypatch.setattr(history_backtrack, "fetch_subtask_record", fake_fetch)
+    monkeypatch.setattr(history_backtrack, "fetch_history_subtasks", fake_fetch)
 
-    tool = ReadSubtaskTool(task_id=2, token_counter=TokenCounter())
-    result = json.loads(await tool._arun(subtask_id=2))
+    tool = ListHistoryTool(task_id=2, page_size=50)
+    await tool._arun(page=3)
 
-    assert result["status"] == "success"
-    assert result["has_more"] is False
-    assert "let me check" in result["content"]
-    assert "Bash" in result["content"] and "a.txt" in result["content"]
+    assert seen == {"limit": 50, "offset": 100}
 
 
 @pytest.mark.asyncio
-async def test_read_subtask_never_splits_a_block(monkeypatch):
-    tc = TokenCounter()
-    block_a = "alpha " * 20
-    block_b = "beta " * 20
-    record = {
-        "id": 5,
-        "role": "assistant",
-        "blocks": [
-            {"type": "text", "content": block_a},
-            {"type": "text", "content": block_b},
-        ],
-    }
-
-    async def fake_fetch(*, task_id, subtask_id):
-        return record
-
-    monkeypatch.setattr(history_backtrack, "fetch_subtask_record", fake_fetch)
-
-    # Budget fits one block but not two -> page must contain exactly block A whole.
-    budget = tc.count_text(block_a) + 1
-    tool = ReadSubtaskTool(task_id=2, token_counter=tc)
-    result = json.loads(await tool._arun(subtask_id=5, max_tokens=budget))
-
-    assert result["content"] == block_a
-    assert result["next_cursor"] == 1
-    assert result["has_more"] is True
-
-    # Next page returns block B.
-    page2 = json.loads(await tool._arun(subtask_id=5, cursor=1, max_tokens=budget))
-    assert page2["content"] == block_b
-    assert page2["has_more"] is False
-
-
-@pytest.mark.asyncio
-async def test_read_subtask_truncates_oversized_single_block(monkeypatch):
-    tc = TokenCounter()
-    big = "word " * 200
-    record = {
-        "id": 7,
-        "role": "assistant",
-        "blocks": [{"type": "text", "content": big}],
-    }
-
-    async def fake_fetch(*, task_id, subtask_id):
-        return record
-
-    monkeypatch.setattr(history_backtrack, "fetch_subtask_record", fake_fetch)
-
-    tool = ReadSubtaskTool(task_id=2, token_counter=tc)
-    result = json.loads(await tool._arun(subtask_id=7, max_tokens=10))
-
-    assert "[block 0 truncated" in result["content"]
-    assert result["has_more"] is False  # only one block, fully consumed
-
-
-@pytest.mark.asyncio
-async def test_read_subtask_user_prompt_and_value_fallback(monkeypatch):
-    async def fake_user(*, task_id, subtask_id):
+async def test_read_subtask_relays_page(monkeypatch):
+    async def fake_fetch(*, task_id, subtask_id, cursor, max_chars):
+        assert max_chars > 0  # derived from the guard limit
         return {
-            "id": 1,
-            "role": "user",
-            "status": "COMPLETED",
-            "prompt": "the question",
-        }
-
-    monkeypatch.setattr(history_backtrack, "fetch_subtask_record", fake_user)
-    tool = ReadSubtaskTool(task_id=2, token_counter=TokenCounter())
-    result = json.loads(await tool._arun(subtask_id=1))
-    assert result["content"] == "the question"
-    assert result["role"] == "user"
-
-    async def fake_value(*, task_id, subtask_id):
-        return {
-            "id": 3,
             "role": "assistant",
-            "status": "FAILED",
-            "value": "partial reply",
+            "content": "rendered page",
+            "cursor": "0:0",
+            "next_cursor": "2:0",
+            "has_more": True,
+            "total_units": 5,
         }
 
-    monkeypatch.setattr(history_backtrack, "fetch_subtask_record", fake_value)
-    result = json.loads(await tool._arun(subtask_id=3))
-    assert result["content"] == "partial reply"
+    monkeypatch.setattr(history_backtrack, "fetch_subtask_record", fake_fetch)
+
+    tool = ReadSubtaskTool(task_id=2)
+    result = json.loads(await tool._arun(subtask_id=7))
+
+    assert result["content"] == "rendered page"
+    assert result["next_cursor"] == "2:0"
+    assert result["has_more"] is True
 
 
 @pytest.mark.asyncio
-async def test_read_subtask_default_budget_derives_from_guard_limit(monkeypatch):
-    tc = TokenCounter()
-    block_a = "alpha " * 20
-    block_b = "beta " * 20
-    record = {
-        "id": 5,
-        "role": "assistant",
-        "blocks": [
-            {"type": "text", "content": block_a},
-            {"type": "text", "content": block_b},
-        ],
-    }
+async def test_read_subtask_forwards_cursor_and_budget(monkeypatch):
+    seen = {}
 
-    async def fake_fetch(*, task_id, subtask_id):
-        return record
+    async def fake_fetch(*, task_id, subtask_id, cursor, max_chars):
+        seen.update(cursor=cursor, max_chars=max_chars)
+        return {
+            "role": "assistant",
+            "content": "",
+            "cursor": cursor,
+            "next_cursor": None,
+            "has_more": False,
+            "total_units": 0,
+        }
 
     monkeypatch.setattr(history_backtrack, "fetch_subtask_record", fake_fetch)
-    # Size the guard limit so the derived budget (limit - buffer) fits exactly one
-    # whole block. No max_tokens passed -> the default budget must come from here.
-    monkeypatch.setattr(
-        settings,
-        "TOOL_OUTPUT_TOKEN_LIMIT",
-        history_backtrack._PAGE_TOKEN_SELF_BUFFER + tc.count_text(block_a) + 1,
-    )
+    monkeypatch.setattr(settings, "TOOL_OUTPUT_TOKEN_LIMIT", 5000)
 
-    tool = ReadSubtaskTool(task_id=2, token_counter=tc)
-    result = json.loads(await tool._arun(subtask_id=5))
+    tool = ReadSubtaskTool(task_id=2)
+    await tool._arun(subtask_id=7, cursor="3:100")
 
-    assert result["content"] == block_a
-    assert result["next_cursor"] == 1
-    assert result["has_more"] is True
+    assert seen["cursor"] == "3:100"
+    assert seen["max_chars"] == 5000 - history_backtrack._PAGE_CHAR_SELF_BUFFER
+
+
+@pytest.mark.asyncio
+async def test_read_subtask_not_available(monkeypatch):
+    async def fake_fetch(*, task_id, subtask_id, cursor, max_chars):
+        raise SubtaskRecordNotAvailable("Subtask not found in this session")
+
+    monkeypatch.setattr(history_backtrack, "fetch_subtask_record", fake_fetch)
+
+    tool = ReadSubtaskTool(task_id=2)
+    result = json.loads(await tool._arun(subtask_id=9))
+
+    assert result["status"] == "error"
 
 
 def test_dynamic_context_includes_backtrack_hint():

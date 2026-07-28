@@ -241,7 +241,7 @@ Phase 2a 让**最后的权威 LangGraph state** 成为唯一收口的唯一来�
 Phase 2b 原计划让 FAILED / CANCELLED 终止也携带并落库 `messages_chain`。经评估后**主动搁置**，
 理由如下：
 
-- **性质是"省 token 优化"，不是"补数据丢失"。** 失败时用户已看到的 partial 回复经
+- **性质是"省 token 优化"，不是"弥补数据丢失"。** 失败时用户已看到的 partial 回复经
   `collect_completed_result(status="FAILED")` 从流式 blocks 重建进 `result.value`，reload
   仍能看到；真正缺失的只是失败轮的结构化 `messages_chain`。而 compaction 只改运行时上下文、
   **从不改写更早 subtask 的记录**，所以续聊会重新加载全量原始历史并重压一次——代价是一次重复

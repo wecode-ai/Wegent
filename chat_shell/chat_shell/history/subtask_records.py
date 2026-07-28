@@ -2,16 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Fetch history subtask summaries and raw records for AI backtracking.
+"""Fetch history subtask summaries and record pages for AI backtracking.
 
 Mirrors the loader's mode switch: HTTP mode calls the backend internal endpoints
 (``/chat/history/{session_id}/subtasks[/{id}]``) via ``RemoteHistoryStore``;
-package mode reads the database directly. Both enforce the same session (task)
-scoping as the endpoint, so the model can never read another conversation.
-
-Reads the raw record (``result.blocks`` / ``prompt``), deliberately bypassing the
-compaction-scoped history loader — the point of backtracking is to recover detail
-that compaction summarized away.
+package mode calls the shared backend service directly. Both enforce the same
+session (task) scoping, and pagination + rendering live in that shared service —
+this module is only the transport switch.
 """
 
 from __future__ import annotations
@@ -26,26 +23,31 @@ class SubtaskRecordNotAvailable(Exception):
     """Raised when a subtask cannot be read (missing or out of scope)."""
 
 
-async def fetch_history_subtasks(*, task_id: int) -> list[dict[str, Any]]:
-    """Return summaries for every non-deleted subtask of the task's session."""
+async def fetch_history_subtasks(
+    *, task_id: int, limit: int | None = None, offset: int = 0
+) -> dict[str, Any]:
+    """A page of subtask summaries: ``{subtasks, total, has_more}``."""
     session_id = f"task-{task_id}"
     if _is_http_mode():
         store = _get_remote_history_store()
-        payload = await store.list_history_subtasks(session_id)
-        return payload.get("subtasks", [])
-    return await asyncio.to_thread(_list_local, task_id)
+        return await store.list_history_subtasks(session_id, limit=limit, offset=offset)
+    return await asyncio.to_thread(_list_local, task_id, limit, offset)
 
 
-async def fetch_subtask_record(*, task_id: int, subtask_id: int) -> dict[str, Any]:
-    """Return one subtask's raw record, scoped to the task's session."""
+async def fetch_subtask_record(
+    *, task_id: int, subtask_id: int, cursor: str = "0:0", max_chars: int = 0
+) -> dict[str, Any]:
+    """One page of a subtask's rendered transcript, scoped to the task."""
     session_id = f"task-{task_id}"
     if _is_http_mode():
         store = _get_remote_history_store()
-        return await store.get_history_subtask(session_id, subtask_id)
-    return await asyncio.to_thread(_read_local, task_id, subtask_id)
+        return await store.get_history_subtask(
+            session_id, subtask_id, cursor=cursor, max_chars=max_chars
+        )
+    return await asyncio.to_thread(_read_local, task_id, subtask_id, cursor, max_chars)
 
 
-def _list_local(task_id: int) -> list[dict[str, Any]]:
+def _list_local(task_id: int, limit: int | None, offset: int) -> dict[str, Any]:
     """Package-mode summary list — delegates to the shared backend service."""
     from app.db.session import SessionLocal
     from app.services.chat.subtask_history import list_subtask_summaries
@@ -55,14 +57,18 @@ def _list_local(task_id: int) -> list[dict[str, Any]]:
     try:
         task = task_store.get_by_id(db, task_id=task_id)
         if task is None:
-            return []
-        return list_subtask_summaries(db, task_id=task_id, user_id=task.user_id)
+            return {"subtasks": [], "total": 0, "has_more": False}
+        return list_subtask_summaries(
+            db, task_id=task_id, user_id=task.user_id, limit=limit, offset=offset
+        )
     finally:
         db.close()
 
 
-def _read_local(task_id: int, subtask_id: int) -> dict[str, Any]:
-    """Package-mode raw record read — delegates to the shared backend service."""
+def _read_local(
+    task_id: int, subtask_id: int, cursor: str, max_chars: int
+) -> dict[str, Any]:
+    """Package-mode record page — delegates to the shared backend service."""
     from app.db.session import SessionLocal
     from app.services.chat.subtask_history import read_subtask_record
     from app.stores.tasks import task_store
@@ -72,7 +78,12 @@ def _read_local(task_id: int, subtask_id: int) -> dict[str, Any]:
         task = task_store.get_by_id(db, task_id=task_id)
         record = (
             read_subtask_record(
-                db, task_id=task_id, subtask_id=subtask_id, user_id=task.user_id
+                db,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                user_id=task.user_id,
+                cursor=cursor,
+                max_chars=max_chars,
             )
             if task is not None
             else None

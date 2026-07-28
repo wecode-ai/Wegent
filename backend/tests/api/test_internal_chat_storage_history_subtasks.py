@@ -2,17 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the AI history-backtracking internal endpoints:
+"""HTTP-wiring tests for the AI history-backtracking endpoints.
 
-- ``GET /chat/history/{session_id}/subtasks`` — whole-session summary list.
-- ``GET /chat/history/{session_id}/subtasks/{subtask_id}`` — one raw record.
+- ``GET /chat/history/{session_id}/subtasks`` — paged summary list.
+- ``GET /chat/history/{session_id}/subtasks/{subtask_id}`` — one transcript page.
 
-Both are un-compaction-scoped and strictly session-owned.
+Windowing/rendering logic is unit-tested in ``services/chat/test_subtask_history``;
+these cover the HTTP shape and session ownership.
 """
 
 from types import SimpleNamespace
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -32,15 +32,12 @@ def _subtask(sid, role, **kw):
         message_id=sid,
         prompt=None,
         result=None,
-        contexts=[],
-        sender_user_id=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
 
 
-@pytest.fixture
-def internal_chat_client(monkeypatch):
+def _internal_client(monkeypatch):
     monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
     app = FastAPI()
     app.include_router(chat_storage.router, prefix="/internal")
@@ -61,7 +58,8 @@ def _patch_task(monkeypatch, user_id=7):
     )
 
 
-def test_list_subtasks_returns_summaries(internal_chat_client, monkeypatch):
+def test_list_subtasks_returns_paged_summaries(monkeypatch):
+    client = _internal_client(monkeypatch)
     _patch_task(monkeypatch)
     subtasks = [
         _subtask(1, SubtaskRole.USER, prompt="hello world"),
@@ -74,41 +72,23 @@ def test_list_subtasks_returns_summaries(internal_chat_client, monkeypatch):
         raising=False,
     )
 
-    resp = internal_chat_client.get("/internal/chat/history/task-2/subtasks")
+    resp = client.get("/internal/chat/history/task-2/subtasks")
 
     assert resp.status_code == 200
-    data = resp.json()["subtasks"]
-    assert [s["id"] for s in data] == [1, 2]
-    assert data[0]["role"] == "user"
-    assert data[0]["preview"] == "hello world"
-    assert data[0]["char_count"] == len("hello world")
-    assert data[1]["preview"] == "hi there"
+    body = resp.json()
+    assert body["total"] == 2
+    assert body["has_more"] is False
+    assert [s["id"] for s in body["subtasks"]] == [1, 2]
+    assert body["subtasks"][0]["preview"] == "hello world"
 
 
-def test_list_subtasks_skips_deleted(internal_chat_client, monkeypatch):
-    _patch_task(monkeypatch)
-    deleted = _subtask(3, SubtaskRole.ASSISTANT, result={"value": "gone"})
-    deleted.status = SubtaskStatus.DELETE
-    subtasks = [_subtask(1, SubtaskRole.USER, prompt="keep"), deleted]
-    monkeypatch.setattr(
-        chat_storage.subtask_store,
-        "list_new_messages_since",
-        lambda db, **kw: subtasks,
-        raising=False,
-    )
-
-    resp = internal_chat_client.get("/internal/chat/history/task-2/subtasks")
-
-    assert resp.status_code == 200
-    assert [s["id"] for s in resp.json()["subtasks"]] == [1]
-
-
-def test_read_subtask_returns_blocks(internal_chat_client, monkeypatch):
+def test_read_subtask_returns_rendered_page(monkeypatch):
+    client = _internal_client(monkeypatch)
     _patch_task(monkeypatch)
     st = _subtask(
         2,
         SubtaskRole.ASSISTANT,
-        result={"blocks": [{"type": "text", "text": "a"}], "value": "a"},
+        result={"blocks": [{"type": "text", "content": "hello detail"}]},
     )
     monkeypatch.setattr(
         chat_storage.subtask_store,
@@ -117,35 +97,18 @@ def test_read_subtask_returns_blocks(internal_chat_client, monkeypatch):
         raising=False,
     )
 
-    resp = internal_chat_client.get("/internal/chat/history/task-2/subtasks/2")
+    resp = client.get("/internal/chat/history/task-2/subtasks/2")
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["role"] == "assistant"
-    assert body["blocks"] == [{"type": "text", "text": "a"}]
-    assert body["value"] == "a"
+    assert body["content"] == "hello detail"
+    assert body["has_more"] is False
+    assert body["cursor"] == "0:0"
 
 
-def test_read_subtask_user_returns_prompt(internal_chat_client, monkeypatch):
-    _patch_task(monkeypatch)
-    st = _subtask(1, SubtaskRole.USER, prompt="the question")
-    monkeypatch.setattr(
-        chat_storage.subtask_store,
-        "get_by_id",
-        lambda db, *, subtask_id, owner_user_id=None: st,
-        raising=False,
-    )
-
-    resp = internal_chat_client.get("/internal/chat/history/task-2/subtasks/1")
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["role"] == "user"
-    assert body["prompt"] == "the question"
-    assert body["blocks"] is None
-
-
-def test_read_subtask_rejects_deleted(internal_chat_client, monkeypatch):
+def test_read_subtask_rejects_deleted(monkeypatch):
+    client = _internal_client(monkeypatch)
     _patch_task(monkeypatch)
     deleted = _subtask(4, SubtaskRole.ASSISTANT, result={"value": "gone"})
     deleted.status = SubtaskStatus.DELETE
@@ -156,12 +119,12 @@ def test_read_subtask_rejects_deleted(internal_chat_client, monkeypatch):
         raising=False,
     )
 
-    resp = internal_chat_client.get("/internal/chat/history/task-2/subtasks/4")
-
+    resp = client.get("/internal/chat/history/task-2/subtasks/4")
     assert resp.status_code == 404
 
 
-def test_read_subtask_rejects_foreign_task(internal_chat_client, monkeypatch):
+def test_read_subtask_rejects_foreign_task(monkeypatch):
+    client = _internal_client(monkeypatch)
     _patch_task(monkeypatch)
     foreign = _subtask(9, SubtaskRole.ASSISTANT, task_id=999, result={"value": "x"})
     monkeypatch.setattr(
@@ -171,6 +134,5 @@ def test_read_subtask_rejects_foreign_task(internal_chat_client, monkeypatch):
         raising=False,
     )
 
-    resp = internal_chat_client.get("/internal/chat/history/task-2/subtasks/9")
-
+    resp = client.get("/internal/chat/history/task-2/subtasks/9")
     assert resp.status_code == 404

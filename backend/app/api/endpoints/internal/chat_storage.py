@@ -961,28 +961,33 @@ class SubtaskSummary(BaseModel):
 class SubtaskListResponse(BaseModel):
     session_id: str
     subtasks: list[SubtaskSummary]
+    total: int
+    has_more: bool
 
 
 class SubtaskRecordResponse(BaseModel):
-    """Raw, un-compaction-scoped record of a single subtask.
+    """One page of a subtask's rendered, un-compaction-scoped transcript.
 
-    ``blocks`` is the as-streamed ground truth (never compaction-lossy);
-    ``messages_chain`` / ``value`` are fallbacks for legacy/simple turns. The
-    caller (chat_shell) renders and paginates by block.
+    Paged by a compound cursor (``"<unit_idx>:<char_off>"``): whole units in the
+    common case, a within-unit character split only when a single unit alone
+    overflows the page. ``next_cursor`` is ``None`` at the end.
     """
 
     id: int
     role: str
     status: str
-    prompt: Optional[str] = None
-    blocks: Optional[list] = None
-    messages_chain: Optional[list] = None
-    value: Optional[str] = None
+    content: str
+    cursor: str
+    next_cursor: Optional[str] = None
+    has_more: bool
+    total_units: int
 
 
 @router.get("/history/{session_id}/subtasks", response_model=SubtaskListResponse)
 async def list_history_subtasks(
     session_id: str,
+    limit: Optional[int] = Query(None, description="Max summaries to return"),
+    offset: int = Query(0, description="Number of summaries to skip"),
     db: Session = Depends(get_db),
 ):
     """List the whole session's subtasks as summaries (AI history backtracking).
@@ -999,10 +1004,14 @@ async def list_history_subtasks(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    summaries = list_subtask_summaries(db, task_id=task_id, user_id=task.user_id)
+    result = list_subtask_summaries(
+        db, task_id=task_id, user_id=task.user_id, limit=limit, offset=offset
+    )
     return SubtaskListResponse(
         session_id=session_id,
-        subtasks=[SubtaskSummary(**s) for s in summaries],
+        subtasks=[SubtaskSummary(**s) for s in result["subtasks"]],
+        total=result["total"],
+        has_more=result["has_more"],
     )
 
 
@@ -1013,9 +1022,11 @@ async def list_history_subtasks(
 async def read_history_subtask(
     session_id: str,
     subtask_id: int,
+    cursor: str = Query("0:0", description="Compound cursor '<unit>:<char_off>'"),
+    max_chars: int = Query(0, description="Per-page char budget (0 = default)"),
     db: Session = Depends(get_db),
 ):
-    """Return one subtask's raw record (un-compaction-scoped) for backtracking."""
+    """Return one page of a subtask's rendered transcript (for backtracking)."""
     session_type, task_id = parse_session_id(session_id)
     if session_type != "task":
         raise HTTPException(
@@ -1026,7 +1037,12 @@ async def read_history_subtask(
         raise HTTPException(status_code=404, detail="Task not found")
 
     record = read_subtask_record(
-        db, task_id=task_id, subtask_id=subtask_id, user_id=task.user_id
+        db,
+        task_id=task_id,
+        subtask_id=subtask_id,
+        user_id=task.user_id,
+        cursor=cursor,
+        max_chars=max_chars,
     )
     if record is None:
         raise HTTPException(status_code=404, detail="Subtask not found in this session")

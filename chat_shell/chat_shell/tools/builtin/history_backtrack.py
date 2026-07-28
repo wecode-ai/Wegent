@@ -9,10 +9,10 @@ tools let the model page back into the *un-compacted* original detail — each
 earlier subtask's own record is never rewritten by compaction, so reading it by
 id recovers full fidelity.
 
-- ``list_history``: whole-session subtask summaries, each marked ``in_context``
-  or ``compacted`` so the model knows what it can no longer see verbatim.
-- ``read_subtask``: one subtask's raw record, **paginated by whole blocks** (never
-  splitting a block mid-structure) under the per-page token budget.
+Thin transport over the shared backend service: listing, rendering and
+pagination live there. ``list_history`` marks each summary ``in_context`` /
+``compacted``; ``read_subtask`` returns one transcript page plus an opaque
+``next_cursor`` to continue.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
-from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.core.config import settings
 from chat_shell.history.subtask_records import (
     SubtaskRecordNotAvailable,
@@ -35,61 +34,14 @@ from chat_shell.history.subtask_records import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_LIST_PAGE_SIZE = 50
-# A page must land strictly under the request-level tool-output guard limit, or
-# the guard re-truncates the JSON tail and breaks block-boundary paging. Derive
-# the budget from that single source of truth minus a buffer for the JSON
-# envelope (and tokenizer variance), so the two can never drift apart.
-_PAGE_TOKEN_SELF_BUFFER = 1024
+# Per-page char budget derived from the tool-output guard limit (single source of
+# truth; conservative 1 char ≈ 1 token). A page renders under the guard, so its
+# head+tail truncation only ever fires on a single oversized unit.
+_PAGE_CHAR_SELF_BUFFER = 1024
 
 
-def _page_token_budget() -> int:
-    """Per-page token budget: the guard limit minus the envelope self-buffer."""
-    return max(1, settings.TOOL_OUTPUT_TOKEN_LIMIT - _PAGE_TOKEN_SELF_BUFFER)
-
-
-def _render_block(block: dict[str, Any]) -> str:
-    """Render one stored block into a readable transcript fragment."""
-    btype = block.get("type")
-    if btype == "text":
-        return str(block.get("content") or "")
-    if btype == "tool":
-        name = block.get("display_name") or block.get("tool_name") or "tool"
-        tool_input = block.get("tool_input") or {}
-        lines = [f"[tool: {name}] input={json.dumps(tool_input, ensure_ascii=False)}"]
-        output = block.get("tool_output")
-        if output:
-            lines.append(f"output: {output}")
-        return "\n".join(lines)
-    if btype in ("guidance", "subagent"):
-        return str(block.get("content") or "")
-    return json.dumps(block, ensure_ascii=False)
-
-
-def _render_message(message: dict[str, Any]) -> str:
-    """Render one messages_chain entry (fallback for legacy turns)."""
-    role = message.get("role", "assistant")
-    content = message.get("content")
-    text = (
-        content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-    )
-    tool_calls = message.get("tool_calls")
-    if tool_calls:
-        text = f"{text}\n[tool_calls: {json.dumps(tool_calls, ensure_ascii=False)}]"
-    return f"{role}: {text}"
-
-
-def _record_to_blocks(record: dict[str, Any]) -> list[str]:
-    """Normalize a subtask record into an ordered list of renderable blocks."""
-    if record.get("role") == "user":
-        return [str(record.get("prompt") or "")]
-    blocks = record.get("blocks")
-    if isinstance(blocks, list) and blocks:
-        return [_render_block(b) for b in blocks if isinstance(b, dict)]
-    chain = record.get("messages_chain")
-    if isinstance(chain, list) and chain:
-        return [_render_message(m) for m in chain if isinstance(m, dict)]
-    value = record.get("value")
-    return [str(value)] if value else []
+def _read_max_chars() -> int:
+    return max(1, settings.TOOL_OUTPUT_TOKEN_LIMIT - _PAGE_CHAR_SELF_BUFFER)
 
 
 class ListHistoryInput(BaseModel):
@@ -121,30 +73,31 @@ class ListHistoryTool(BaseTool):
         raise NotImplementedError("list_history is async-only; use _arun")
 
     async def _arun(self, page: int = 1, **_: Any) -> str:
+        page = max(1, page)
+        offset = (page - 1) * self.page_size
         try:
-            summaries = await fetch_history_subtasks(task_id=self.task_id)
+            result = await fetch_history_subtasks(
+                task_id=self.task_id, limit=self.page_size, offset=offset
+            )
         except Exception as exc:  # network / HTTP errors
             logger.warning("[list_history] fetch failed: %s", exc)
             return json.dumps(
                 {"status": "error", "message": "History could not be listed"}
             )
 
-        for item in summaries:
+        subtasks = result.get("subtasks", [])
+        for item in subtasks:
             item["location"] = (
                 "in_context" if item.get("id") in self.in_context_ids else "compacted"
             )
-
-        page = max(1, page)
-        start = (page - 1) * self.page_size
-        window = summaries[start : start + self.page_size]
         return json.dumps(
             {
                 "status": "success",
                 "page": page,
                 "page_size": self.page_size,
-                "total": len(summaries),
-                "has_more": start + self.page_size < len(summaries),
-                "subtasks": window,
+                "total": result.get("total", len(subtasks)),
+                "has_more": result.get("has_more", False),
+                "subtasks": subtasks,
             },
             ensure_ascii=False,
         )
@@ -154,27 +107,25 @@ class ReadSubtaskInput(BaseModel):
     """Input schema for the read_subtask tool."""
 
     subtask_id: int = Field(description="Subtask id from list_history")
-    cursor: int = Field(
-        default=0, description="Block index to start from (0 = first block)"
-    )
-    max_tokens: int = Field(
-        default=0, description="Per-page token budget override (0 = default)"
+    cursor: str = Field(
+        default="0:0",
+        description="Page cursor; start at '0:0' and pass back the returned "
+        "next_cursor to continue.",
     )
 
 
 class ReadSubtaskTool(BaseTool):
-    """Read one subtask's raw detail, paginated by whole blocks."""
+    """Read one subtask's original detail, one transcript page at a time."""
 
     name: str = "read_subtask"
     description: str = (
-        "Read the full original detail of one turn (subtask) by id, with "
-        "pagination. Recovers content that compaction summarized away. Returns a "
-        "page of whole blocks plus next_cursor / has_more for paging."
+        "Read the full original detail of one turn (subtask) by id, one page at a "
+        "time. Recovers content that compaction summarized away. Start at cursor "
+        "'0:0'; if has_more is true, call again with the returned next_cursor."
     )
     args_schema: type[BaseModel] = ReadSubtaskInput
 
     task_id: int
-    token_counter: TokenCounter
     max_calls: int = 30
     _call_count: int = PrivateAttr(default=0)
 
@@ -184,9 +135,7 @@ class ReadSubtaskTool(BaseTool):
     def _run(self, *args: Any, **kwargs: Any) -> str:
         raise NotImplementedError("read_subtask is async-only; use _arun")
 
-    async def _arun(
-        self, subtask_id: int, cursor: int = 0, max_tokens: int = 0, **_: Any
-    ) -> str:
+    async def _arun(self, subtask_id: int, cursor: str = "0:0", **_: Any) -> str:
         if self._call_count >= self.max_calls:
             return json.dumps(
                 {
@@ -198,7 +147,10 @@ class ReadSubtaskTool(BaseTool):
 
         try:
             record = await fetch_subtask_record(
-                task_id=self.task_id, subtask_id=subtask_id
+                task_id=self.task_id,
+                subtask_id=subtask_id,
+                cursor=cursor,
+                max_chars=_read_max_chars(),
             )
         except SubtaskRecordNotAvailable as exc:
             return json.dumps({"status": "error", "message": str(exc)})
@@ -208,53 +160,16 @@ class ReadSubtaskTool(BaseTool):
                 {"status": "error", "message": "Subtask could not be read"}
             )
 
-        blocks = _record_to_blocks(record)
-        # Never exceed the guard limit (minus buffer); an override only shrinks it.
-        budget_cap = _page_token_budget()
-        budget = min(max_tokens, budget_cap) if max_tokens > 0 else budget_cap
-        cursor = max(0, cursor)
-
-        page_parts: list[str] = []
-        used = 0
-        index = cursor
-        total = len(blocks)
-        while index < total:
-            rendered = blocks[index]
-            tokens = self.token_counter.count_text(rendered)
-            if not page_parts and tokens > budget:
-                # A single oversized block must be split *within* the block, never
-                # across neighbours — token-clamp it and mark the truncation.
-                clamped = self._clamp_to_tokens(rendered, budget)
-                page_parts.append(
-                    f"{clamped}\n[block {index} truncated: {tokens} tokens total]"
-                )
-                index += 1
-                break
-            if page_parts and used + tokens > budget:
-                break  # stop before this block; never split a whole block
-            page_parts.append(rendered)
-            used += tokens
-            index += 1
-
-        next_cursor = index if index < total else None
         return json.dumps(
             {
                 "status": "success",
                 "subtask_id": subtask_id,
                 "role": record.get("role"),
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "has_more": next_cursor is not None,
-                "total_blocks": total,
-                "content": "\n\n".join(page_parts),
+                "cursor": record.get("cursor"),
+                "next_cursor": record.get("next_cursor"),
+                "has_more": record.get("has_more", False),
+                "total_units": record.get("total_units"),
+                "content": record.get("content", ""),
             },
             ensure_ascii=False,
         )
-
-    def _clamp_to_tokens(self, text: str, token_limit: int) -> str:
-        """Return the longest prefix of *text* within *token_limit* tokens."""
-        encoding = self.token_counter.encoding
-        ids = encoding.encode(text, disallowed_special=())
-        if len(ids) <= token_limit:
-            return text
-        return encoding.decode(ids[:token_limit])
