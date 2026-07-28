@@ -70,8 +70,7 @@ def kb_thin_doc_rate(
     kb_filter_sql = f"AND kd.kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(kd.created_at) AS d,
                    kd.kind_id AS kb_id,
                    COUNT(*) AS total_docs,
@@ -85,8 +84,7 @@ def kb_thin_doc_rate(
               AND kd.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(kd.created_at), kd.kind_id
-        """
-        ),
+        """),
         {
             "thin": _THIN_CHUNK_THRESHOLD,
             "end_date": mfilter.effective_end_date,
@@ -102,15 +100,13 @@ def kb_thin_doc_rate(
         rate = round(thin / total * 100, 2) if total > 0 else None
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_thin_doc_rate
                     (run_id, target_date, stat_date, kb_id, total_docs,
                      thin_docs, thin_doc_rate)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :total_docs,
                         :thin_docs, :thin_doc_rate)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -155,15 +151,13 @@ def doc_chunk_quality(
     kb_filter_sql = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT JSON_EXTRACT(chunks, '$.items') AS items_json
             FROM knowledge_documents
             WHERE is_active = 1
               AND chunks IS NOT NULL
               {kb_filter_sql}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -193,13 +187,11 @@ def doc_chunk_quality(
     written = 0
     for bucket, doc_count in bucket_counter.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_chunk_quality
                     (run_id, target_date, chunk_quality_bucket, doc_count)
                 VALUES (:run_id, :target_date, :chunk_quality_bucket, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -254,14 +246,12 @@ def content_freshness(
     kb_filter_sql = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT updated_at
             FROM knowledge_documents
             WHERE is_active = 1
               {kb_filter_sql}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -278,13 +268,11 @@ def content_freshness(
     written = 0
     for bucket, doc_count in bucket_counter.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_content_freshness
                     (run_id, target_date, freshness_bucket, doc_count)
                 VALUES (:run_id, :target_date, :freshness_bucket, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -319,8 +307,7 @@ def kb_content_freshness(
     kb_filter_sql = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kind_id AS kb_id,
                    COUNT(*) AS total_docs,
                    SUM(CASE WHEN updated_at >= DATE_SUB(:cutoff, INTERVAL 30 DAY)
@@ -329,8 +316,7 @@ def kb_content_freshness(
             WHERE is_active = 1
               {kb_filter_sql}
             GROUP BY kind_id
-        """
-        ),
+        """),
         {"cutoff": mfilter.effective_end_date, **kb_params},
     ).fetchall()
 
@@ -341,15 +327,13 @@ def kb_content_freshness(
         rate = round(fresh / total * 100, 2) if total > 0 else None
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_content_freshness
                     (run_id, target_date, kb_id, total_docs,
                      fresh_docs, fresh_rate)
                 VALUES (:run_id, :target_date, :kb_id, :total_docs,
                         :fresh_docs, :fresh_rate)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -391,8 +375,7 @@ def duplicate_doc_suspect(
     kb_filter_sql = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kind_id AS kb_id,
                    file_size,
                    file_extension,
@@ -402,8 +385,7 @@ def duplicate_doc_suspect(
               AND file_size > 0
               {kb_filter_sql}
             GROUP BY kind_id, file_size, file_extension
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -417,15 +399,13 @@ def duplicate_doc_suspect(
         return 0
 
     total_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kind_id AS kb_id, COUNT(*) AS total_docs
             FROM knowledge_documents
             WHERE is_active = 1 AND file_size > 0
               {kb_filter_sql}
             GROUP BY kind_id
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
     kb_total = {int(r.kb_id): int(r.total_docs) for r in total_rows}
@@ -436,15 +416,13 @@ def duplicate_doc_suspect(
         rate = round(dup_docs / total * 100, 2) if total > 0 else None
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_duplicate_doc_suspect
                     (run_id, target_date, kb_id, total_docs,
                      duplicate_docs, duplicate_rate)
                 VALUES (:run_id, :target_date, :kb_id, :total_docs,
                         :duplicate_docs, :duplicate_rate)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,

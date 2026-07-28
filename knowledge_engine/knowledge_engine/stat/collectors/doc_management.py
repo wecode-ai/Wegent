@@ -77,8 +77,7 @@ def doc_upload_trend(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(created_at) AS d,
                    kind_id AS kb_id,
                    file_extension,
@@ -91,8 +90,7 @@ def doc_upload_trend(
               AND created_at < :end_date
               {kb_where}
             GROUP BY DATE(created_at), kind_id, file_extension, source_type, user_id
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -103,15 +101,13 @@ def doc_upload_trend(
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_upload_trend
                     (run_id, target_date, stat_date, kb_id,
                      file_extension, source_type, user_id, upload_count)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id,
                         :file_extension, :source_type, :user_id, :upload_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -147,8 +143,7 @@ def doc_index_status(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT index_status,
                    file_extension,
                    kind_id AS kb_id,
@@ -157,23 +152,20 @@ def doc_index_status(
             WHERE is_active = 1
               {kb_where}
             GROUP BY index_status, file_extension, kind_id
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_index_status
                     (run_id, target_date, index_status, file_extension,
                      kb_id, doc_count)
                 VALUES (:run_id, :target_date, :index_status, :file_extension,
                         :kb_id, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -207,8 +199,7 @@ def doc_index_failure_rate(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT file_extension,
                    COUNT(*) AS total,
                    SUM(CASE WHEN index_status = 'failed' THEN 1 ELSE 0 END) AS failed,
@@ -220,23 +211,20 @@ def doc_index_failure_rate(
             WHERE is_active = 1
               {kb_where}
             GROUP BY file_extension
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_index_failure_rate
                     (run_id, target_date, file_extension,
                      total_count, failed_count, failure_rate)
                 VALUES (:run_id, :target_date, :file_extension,
                         :total_count, :failed_count, :failure_rate)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -270,14 +258,12 @@ def doc_size_distribution(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT file_size
             FROM knowledge_documents
             WHERE is_active = 1
               {kb_where}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -291,13 +277,11 @@ def doc_size_distribution(
     written = 0
     for label, sizes in buckets.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_size_distribution
                     (run_id, target_date, size_bucket, doc_count, total_size)
                 VALUES (:run_id, :target_date, :size_bucket, :doc_count, :total_size)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -330,8 +314,7 @@ def doc_update_frequency(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kind_id AS kb_id,
                    file_extension,
                    index_generation,
@@ -343,23 +326,20 @@ def doc_update_frequency(
             GROUP BY kind_id, file_extension, index_generation
             ORDER BY index_generation DESC
             LIMIT 500
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_update_frequency
                     (run_id, target_date, kb_id, file_extension,
                      index_generation, doc_count)
                 VALUES (:run_id, :target_date, :kb_id, :file_extension,
                         :index_generation, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -393,14 +373,12 @@ def doc_topic_distribution(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kind_id AS kb_id, summary
             FROM knowledge_documents
             WHERE is_active = 1
               {kb_where}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -425,13 +403,11 @@ def doc_topic_distribution(
     written = 0
     for (kb_id, topic), count in topic_counts.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_topic_distribution
                     (run_id, target_date, kb_id, topic, doc_count)
                 VALUES (:run_id, :target_date, :kb_id, :topic, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -464,8 +440,7 @@ def doc_folder_depth(
     kb_where = f"AND kb.id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kb.id AS kb_id,
                    kf.id AS folder_id,
                    kf.parent_id
@@ -474,8 +449,7 @@ def doc_folder_depth(
             WHERE kb.kind = 'KnowledgeBase'
               AND kb.is_active = 1
               {kb_where}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -510,13 +484,11 @@ def doc_folder_depth(
     written = 0
     for (kb_id, depth), count in depth_counts.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_folder_depth
                     (run_id, target_date, kb_id, depth, folder_count)
                 VALUES (:run_id, :target_date, :kb_id, :depth, :folder_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -549,8 +521,7 @@ def doc_chunk_strategy(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT JSON_UNQUOTE(JSON_EXTRACT(chunks, '$.splitter_type')) AS splitter_type,
                    file_extension,
                    COUNT(*) AS doc_count
@@ -559,21 +530,18 @@ def doc_chunk_strategy(
               AND chunks IS NOT NULL
               {kb_where}
             GROUP BY splitter_type, file_extension
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_chunk_strategy
                     (run_id, target_date, splitter_type, file_extension, doc_count)
                 VALUES (:run_id, :target_date, :splitter_type, :file_extension, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -606,15 +574,13 @@ def doc_chunk_count_distribution(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT CAST(JSON_EXTRACT(chunks, '$.total_count') AS SIGNED) AS total_count
             FROM knowledge_documents
             WHERE is_active = 1
               AND chunks IS NOT NULL
               {kb_where}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -628,13 +594,11 @@ def doc_chunk_count_distribution(
     written = 0
     for label, doc_count in buckets.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_chunk_count_distribution
                     (run_id, target_date, chunk_bucket, doc_count)
                 VALUES (:run_id, :target_date, :chunk_bucket, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -666,8 +630,7 @@ def doc_summary_status(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT JSON_UNQUOTE(JSON_EXTRACT(summary, '$.status')) AS summary_status,
                    COUNT(*) AS doc_count
             FROM knowledge_documents
@@ -675,21 +638,18 @@ def doc_summary_status(
               AND summary IS NOT NULL
               {kb_where}
             GROUP BY summary_status
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_summary_status
                     (run_id, target_date, summary_status, doc_count)
                 VALUES (:run_id, :target_date, :summary_status, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -728,8 +688,7 @@ def kb_avg_doc_length(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kind_id AS kb_id,
                    COUNT(*) AS total_docs,
                    AVG(file_size) AS avg_size
@@ -739,8 +698,7 @@ def kb_avg_doc_length(
               AND file_size > 0
               {kb_where}
             GROUP BY kind_id
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -775,15 +733,13 @@ def kb_avg_doc_length(
                 median_kb = round(sizes[k] / 1024.0, 2)
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_avg_doc_length
                     (run_id, target_date, kb_id, total_docs,
                      avg_doc_length, median_doc_length)
                 VALUES (:run_id, :target_date, :kb_id, :total_docs,
                         :avg_doc_length, :median_doc_length)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,

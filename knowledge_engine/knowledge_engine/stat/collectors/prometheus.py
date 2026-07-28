@@ -33,8 +33,7 @@ def prom_conversion_success_rate(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT file_extension,
                    COUNT(*) AS total,
                    SUM(CASE WHEN index_status = 'success' THEN 1 ELSE 0 END) AS success_cnt,
@@ -46,23 +45,20 @@ def prom_conversion_success_rate(
             WHERE is_active = 1
               {kb_where}
             GROUP BY file_extension
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_prom_conversion_success_rate
                     (run_id, target_date, file_extension, success_rate,
                      total_count, success_count)
                 VALUES (:run_id, :target_date, :file_extension, :success_rate,
                         :total_count, :success_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -102,8 +98,7 @@ def prom_conversion_duration(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT file_extension,
                    AVG(TIMESTAMPDIFF(SECOND, created_at, updated_at)) AS avg_seconds
             FROM knowledge_documents
@@ -113,8 +108,7 @@ def prom_conversion_duration(
               AND TIMESTAMPDIFF(SECOND, created_at, updated_at) < 3600
               {kb_where}
             GROUP BY file_extension
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -127,15 +121,13 @@ def prom_conversion_duration(
         p99 = round(avg_s * 2.5, 2)
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_prom_conversion_duration
                     (run_id, target_date, file_extension,
                      p50_seconds, p90_seconds, p99_seconds)
                 VALUES (:run_id, :target_date, :file_extension,
                         :p50_seconds, :p90_seconds, :p99_seconds)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -163,27 +155,18 @@ def prom_active_conversions(
     stat_session: Session,
 ) -> int:
     """Collect count of documents in active conversion states."""
-    active_count = (
-        source_session.execute(
-            text(
-                """
+    active_count = source_session.execute(text("""
             SELECT COUNT(*) AS active_count
             FROM knowledge_documents
             WHERE index_status IN ('converting', 'pending_conversion', 'indexing')
-        """
-            )
-        ).scalar()
-        or 0
-    )
+        """)).scalar() or 0
 
     stat_session.execute(
-        text(
-            """
+        text("""
             INSERT INTO kb_stat_prom_active_conversions
                 (run_id, target_date, active_count)
             VALUES (:run_id, :target_date, :active_count)
-        """
-        ),
+        """),
         {
             "run_id": run_id,
             "target_date": mfilter.target_date,
@@ -208,16 +191,14 @@ def prom_callback_success_rate(
 ) -> int:
     """Collect 7-day callback success rate based on document index status."""
     row = source_session.execute(
-        text(
-            """
+        text("""
             SELECT COUNT(*) AS total,
                    SUM(CASE WHEN index_status IN ('converting', 'pending_conversion')
                        THEN 1 ELSE 0 END) AS stuck
             FROM knowledge_documents
             WHERE is_active = 1
               AND created_at >= DATE_SUB(:end_date, INTERVAL 7 DAY)
-        """
-        ),
+        """),
         {"end_date": mfilter.effective_end_date},
     ).fetchone()
 
@@ -227,15 +208,13 @@ def prom_callback_success_rate(
     success_rate = round(success / total * 100, 2) if total > 0 else 0.0
 
     stat_session.execute(
-        text(
-            """
+        text("""
             INSERT INTO kb_stat_prom_callback_success_rate
                 (run_id, target_date, callback_type,
                  total_count, success_count, success_rate)
             VALUES (:run_id, :target_date, :callback_type,
                     :total_count, :success_count, :success_rate)
-        """
-        ),
+        """),
         {
             "run_id": run_id,
             "target_date": mfilter.target_date,

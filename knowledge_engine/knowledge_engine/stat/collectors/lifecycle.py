@@ -73,15 +73,13 @@ def kb_creation_trend(
     # gets a row for every day so the series is gapless even when a whole
     # namespace has no creation in the window.
     ns_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DISTINCT namespace
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               AND created_at < :end_date
               {kb_filter_sql}
-        """
-        ),
+        """),
         {"end_date": mfilter.effective_end_date, **kb_params},
     ).fetchall()
     namespaces = [r.namespace for r in ns_rows if r.namespace is not None]
@@ -90,8 +88,7 @@ def kb_creation_trend(
 
     # Per-day per-namespace creation counts within the window.
     count_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(created_at) AS d, namespace,
                    COUNT(*) AS new_kb
             FROM kinds
@@ -100,8 +97,7 @@ def kb_creation_trend(
               AND created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(created_at), namespace
-        """
-        ),
+        """),
         {
             "start_date": start,
             "end_date": mfilter.effective_end_date,
@@ -114,27 +110,23 @@ def kb_creation_trend(
     # baseline so the running total reflects true all-time growth rather
     # than resetting at the window start.
     base_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT namespace, COUNT(*) AS base_kb
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               AND created_at < :start_date
               {kb_filter_sql}
             GROUP BY namespace
-        """
-        ),
+        """),
         {"start_date": start, **kb_params},
     ).fetchall()
     base: dict[str, int] = {r.namespace: int(r.base_kb) for r in base_rows}
 
-    insert_sql = text(
-        """
+    insert_sql = text("""
         INSERT INTO kb_stat_kb_creation_trend
             (run_id, target_date, stat_date, namespace, new_kb_count, cumulative_kb_count)
         VALUES (:run_id, :target_date, :stat_date, :ns, :new_kb, :cumulative_kb)
-    """
-    )
+    """)
     days = [start + _td(days=i) for i in range((end - start).days + 1)]
     batch: list[dict] = []
     for ns in namespaces:
@@ -179,8 +171,7 @@ def kb_activity(
     kb_meta = fetch_kb_metadata(source_session, mfilter.kb_ids)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT k.id AS kb_id,
                    COUNT(DISTINCT kd.id) AS doc_count,
                    MAX(kd.created_at) AS last_doc_upload,
@@ -194,8 +185,7 @@ def kb_activity(
             WHERE k.kind = 'KnowledgeBase' AND k.is_active = 1
               {kb_filter_sql}
             GROUP BY k.id
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -213,8 +203,7 @@ def kb_activity(
         )
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_activity
                     (run_id, target_date, kb_id, kb_namespace, kb_name,
                      document_count, last_doc_uploaded_at, last_query_at,
@@ -222,8 +211,7 @@ def kb_activity(
                 VALUES (:run_id, :target_date, :kb_id, :ns, :name,
                         :doc_count, :last_doc, :last_query,
                         :is_stale, :is_inactive)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -263,14 +251,12 @@ def kb_topic_distribution(
     kb_filter_sql = f"AND id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, json
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               {kb_filter_sql}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -292,13 +278,11 @@ def kb_topic_distribution(
     written = 0
     for topic, count in topic_counter.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_topic_distribution
                     (run_id, target_date, topic, kb_count)
                 VALUES (:run_id, :target_date, :topic, :kb_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -332,14 +316,12 @@ def kb_retrieval_config(
     kb_filter_sql = f"AND id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, json
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               {kb_filter_sql}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -364,15 +346,13 @@ def kb_retrieval_config(
     written = 0
     for (retrieval_mode, top_k, score_threshold), count in config_counter.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_retrieval_config
                     (run_id, target_date, retrieval_mode, top_k,
                      score_threshold, kb_count)
                 VALUES (:run_id, :target_date, :retrieval_mode, :top_k,
                         :score_threshold, :kb_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -427,8 +407,7 @@ def kb_size_distribution(
 
     kb_meta = fetch_kb_metadata(source_session, mfilter.kb_ids)
     written = 0
-    insert_sql = text(
-        """
+    insert_sql = text("""
         INSERT INTO kb_stat_kb_size_distribution
             (run_id, target_date, stat_date, kb_id, kb_name, namespace,
              doc_count, total_file_size, avg_file_size,
@@ -436,8 +415,7 @@ def kb_size_distribution(
         VALUES (:run_id, :target_date, :stat_date, :kb_id, :kb_name, :namespace,
                 :doc_count, :total_file_size, :avg_file_size,
                 :max_file_size, :size_bucket)
-        """
-    )
+        """)
 
     # Cumulative-growth via "base snapshot + daily increments" instead of a
     # per-day full rescan. The previous loop ran ``len(days)`` (default 30)
@@ -451,8 +429,7 @@ def kb_size_distribution(
     # Scan 1: base cumulative per-KB snapshot for documents created strictly
     # before the window start (doc_count, sum & max of file_size).
     base_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kd.kind_id AS kb_id,
                    COUNT(*) AS base_doc_count,
                    COALESCE(SUM(kd.file_size), 0) AS base_total_size,
@@ -462,8 +439,7 @@ def kb_size_distribution(
               AND kd.created_at < :start_date
               {kb_filter_sql}
             GROUP BY kd.kind_id
-        """
-        ),
+        """),
         {"start_date": start, **kb_params},
     ).fetchall()
     base_by_kb: dict[int, tuple[int, int, int]] = {}
@@ -476,8 +452,7 @@ def kb_size_distribution(
 
     # Scan 2: daily per-KB increments inside the window.
     incr_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(kd.created_at) AS d,
                    kd.kind_id AS kb_id,
                    COUNT(*) AS day_doc_count,
@@ -489,8 +464,7 @@ def kb_size_distribution(
               AND kd.created_at <= :end_date
               {kb_filter_sql}
             GROUP BY DATE(kd.created_at), kd.kind_id
-        """
-        ),
+        """),
         {"start_date": start, "end_date": end, **kb_params},
     ).fetchall()
     incr_by_kb_day: dict[tuple, tuple[int, int, int]] = {}
@@ -505,15 +479,13 @@ def kb_size_distribution(
     # before ``end`` can have documents in the window, so this bounds the
     # emitted rows the same way the original ``k.created_at <= :cutoff`` did.
     kb_identity_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, name, namespace
             FROM kinds k
             WHERE k.kind = 'KnowledgeBase' AND k.is_active = 1
               AND k.created_at <= :cutoff
               {kb_filter_sql_kinds}
-            """
-        ),
+            """),
         {"cutoff": end, **kb_params},
     ).fetchall()
 
@@ -606,23 +578,20 @@ def kb_abandon_rate(
     from datetime import timedelta as _td
 
     written = 0
-    insert_sql = text(
-        """
+    insert_sql = text("""
         INSERT INTO kb_stat_kb_abandon_rate
             (run_id, target_date, stat_date, namespace, total_kb_count,
              stale_kb_count, inactive_kb_count, abandon_rate)
         VALUES (:run_id, :target_date, :stat_date, :namespace, :total_kb_count,
                 :stale_kb_count, :inactive_kb_count, :abandon_rate)
-        """
-    )
+        """)
     d = start
     while d <= end:
         stale_cutoff = d - _td(days=STALE_THRESHOLD_DAYS)
         inactive_cutoff = d - _td(days=INACTIVE_THRESHOLD_DAYS)
 
         rows = source_session.execute(
-            text(
-                f"""
+            text(f"""
                 SELECT k.namespace,
                        COUNT(DISTINCT k.id) AS total_kb,
                        SUM(CASE WHEN kd_last.last_update < :stale_cutoff THEN 1 ELSE 0 END)
@@ -640,8 +609,7 @@ def kb_abandon_rate(
                   AND k.created_at <= :cutoff
                   {kb_filter_sql}
                 GROUP BY k.namespace
-            """
-            ),
+            """),
             {
                 "stale_cutoff": stale_cutoff,
                 "inactive_cutoff": inactive_cutoff,
@@ -704,8 +672,7 @@ def kb_sharing(
 
     # Query 1: member counts with role breakdown
     member_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT k.id AS kb_id,
                    COUNT(rm.user_id) AS member_count,
                    SUM(CASE WHEN rm.role = 'owner' THEN 1 ELSE 0 END) AS owner_count,
@@ -721,21 +688,18 @@ def kb_sharing(
             WHERE k.kind = 'KnowledgeBase' AND k.is_active = 1
               {kb_filter_sql}
             GROUP BY k.id
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     # Query 2: share link counts
     share_rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT resource_id, COUNT(*) AS share_link_count
             FROM share_links
             WHERE resource_type = 'KnowledgeBase'
             GROUP BY resource_id
-        """
-        ),
+        """),
     ).fetchall()
 
     share_link_map: dict[int, int] = {
@@ -747,8 +711,7 @@ def kb_sharing(
         _, name = kb_meta.get(r.kb_id, ("", ""))
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_sharing
                     (run_id, target_date, kb_id, kb_name, member_count,
                      share_link_count, owner_count, maintainer_count,
@@ -756,8 +719,7 @@ def kb_sharing(
                 VALUES (:run_id, :target_date, :kb_id, :kb_name, :member_count,
                         :share_link_count, :owner_count, :maintainer_count,
                         :developer_count, :reporter_count, :restricted_analyst_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -804,14 +766,12 @@ def kb_config_sanity(
     kb_filter_sql = f"AND id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, name, json
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               {kb_filter_sql}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -845,15 +805,13 @@ def kb_config_sanity(
 
         for issue_type, issue_detail, config_value in issues:
             stat_session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO kb_stat_kb_config_sanity
                         (run_id, target_date, kb_id, kb_name,
                          issue_type, issue_detail, config_value)
                     VALUES (:run_id, :target_date, :kb_id, :kb_name,
                             :issue_type, :issue_detail, :config_value)
-                """
-                ),
+                """),
                 {
                     "run_id": run_id,
                     "target_date": mfilter.target_date,

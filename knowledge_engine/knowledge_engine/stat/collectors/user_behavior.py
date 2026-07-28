@@ -49,8 +49,7 @@ def kb_creator_ranking(
     kb_where = f"AND id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT user_id, COUNT(*) AS kb_count
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
@@ -58,8 +57,7 @@ def kb_creator_ranking(
             GROUP BY user_id
             ORDER BY kb_count DESC
             LIMIT 100
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -68,13 +66,11 @@ def kb_creator_ranking(
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_creator_ranking
                     (run_id, target_date, user_id, user_name, kb_count)
                 VALUES (:run_id, :target_date, :user_id, :user_name, :kb_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -104,8 +100,7 @@ def doc_uploader_ranking(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT user_id, COUNT(*) AS upload_count
             FROM knowledge_documents
             WHERE is_active = 1
@@ -113,8 +108,7 @@ def doc_uploader_ranking(
             GROUP BY user_id
             ORDER BY upload_count DESC
             LIMIT 100
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -123,13 +117,11 @@ def doc_uploader_ranking(
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_uploader_ranking
                     (run_id, target_date, user_id, user_name, upload_count)
                 VALUES (:run_id, :target_date, :user_id, :user_name, :upload_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -156,8 +148,7 @@ def retrieval_active_user(
     stat_session: Session,
 ) -> int:
     rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT sc.user_id,
                    SUM(CASE WHEN sc.type_data->'$.rag_result' IS NOT NULL THEN 1 ELSE 0 END)
                        AS rag_count,
@@ -171,8 +162,7 @@ def retrieval_active_user(
             GROUP BY sc.user_id
             ORDER BY total_count DESC
             LIMIT 100
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -192,15 +182,13 @@ def retrieval_active_user(
             tier = "casual"
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_retrieval_active_user
                     (run_id, target_date, user_id, user_name,
                      rag_count, head_count, total_count, user_tier)
                 VALUES (:run_id, :target_date, :user_id, :user_name,
                         :rag_count, :head_count, :total_count, :user_tier)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -230,8 +218,7 @@ def user_rag_head_preference(
     stat_session: Session,
 ) -> int:
     rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT sc.user_id,
                    SUM(CASE WHEN sc.type_data->'$.rag_result' IS NOT NULL THEN 1 ELSE 0 END)
                        AS rag_count,
@@ -243,8 +230,7 @@ def user_rag_head_preference(
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
             GROUP BY sc.user_id
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -267,15 +253,13 @@ def user_rag_head_preference(
             preference = "balanced"
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_user_rag_head_preference
                     (run_id, target_date, user_id, user_name,
                      rag_count, head_count, preference)
                 VALUES (:run_id, :target_date, :user_id, :user_name,
                         :rag_count, :head_count, :preference)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -304,9 +288,7 @@ def user_kb_binding(
     stat_session: Session,
 ) -> int:
     try:
-        rows = source_session.execute(
-            text(
-                """
+        rows = source_session.execute(text("""
                 SELECT jt.kb_id, COUNT(DISTINCT t.id) AS task_count
                 FROM tasks t,
                      JSON_TABLE(t.json, '$.spec.knowledgeBaseRefs[*]'
@@ -317,9 +299,7 @@ def user_kb_binding(
                 GROUP BY jt.kb_id
                 ORDER BY task_count DESC
                 LIMIT 100
-            """
-            )
-        ).fetchall()
+            """)).fetchall()
     except Exception:
         logger.warning(
             "JSON_TABLE not supported or query failed, skipping user_kb_binding"
@@ -337,13 +317,11 @@ def user_kb_binding(
         kb_id_clause, kb_id_params = build_kb_in_clause(kb_ids_needed, prefix="bkb")
         try:
             kb_rows = source_session.execute(
-                text(
-                    f"""
+                text(f"""
                     SELECT id, name FROM kinds
                     WHERE kind = 'KnowledgeBase' AND is_active = 1
                       AND id {kb_id_clause}
-                """
-                ),
+                """),
                 kb_id_params,
             ).fetchall()
             kb_names = {r.id: r.name or "" for r in kb_rows}
@@ -353,13 +331,11 @@ def user_kb_binding(
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_user_kb_binding
                     (run_id, target_date, kb_id, kb_name, task_count)
                 VALUES (:run_id, :target_date, :kb_id, :kb_name, :task_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -389,28 +365,24 @@ def user_permission_distribution(
     kb_where = f"AND resource_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT role, COUNT(DISTINCT user_id) AS user_count
             FROM resource_members
             WHERE resource_type = 'KnowledgeBase'
               {kb_where}
             GROUP BY role
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_user_permission_distribution
                     (run_id, target_date, role, user_count)
                 VALUES (:run_id, :target_date, :role, :user_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -439,29 +411,25 @@ def restricted_analyst_usage(
     kb_where = f"AND resource_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT resource_id AS kb_id, COUNT(DISTINCT user_id) AS analyst_count
             FROM resource_members
             WHERE role = 'RestrictedAnalyst'
               AND resource_type = 'KnowledgeBase'
               {kb_where}
             GROUP BY resource_id
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_restricted_analyst_usage
                     (run_id, target_date, kb_id, analyst_count)
                 VALUES (:run_id, :target_date, :kb_id, :analyst_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -488,8 +456,7 @@ def user_first_kb_usage(
 ) -> int:
     try:
         rows = source_session.execute(
-            text(
-                """
+            text("""
                 SELECT u.id, u.user_name, u.created_at AS registered_at,
                        MIN(sc.created_at) AS first_kb_usage_at
                 FROM users u
@@ -499,8 +466,7 @@ def user_first_kb_usage(
                 GROUP BY u.id, u.user_name, u.created_at
                 HAVING first_kb_usage_at IS NOT NULL
                 LIMIT 200
-            """
-            ),
+            """),
             {
                 "end_date": mfilter.effective_end_date,
             },
@@ -517,15 +483,13 @@ def user_first_kb_usage(
             days_to_first = delta.total_seconds() / 86400.0
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_user_first_kb_usage
                     (run_id, target_date, user_id, user_name,
                      registered_at, first_kb_usage_at, days_to_first)
                 VALUES (:run_id, :target_date, :user_id, :user_name,
                         :registered_at, :first_kb_usage_at, :days_to_first)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -559,55 +523,39 @@ def user_participation_summary(
     retrievers: dict[int, int] = {}
     members: dict[int, int] = {}
 
-    creator_rows = source_session.execute(
-        text(
-            """
+    creator_rows = source_session.execute(text("""
             SELECT user_id, COUNT(*) AS cnt
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
             GROUP BY user_id
-        """
-        )
-    ).fetchall()
+        """)).fetchall()
     for r in creator_rows:
         creators[r.user_id] = r.cnt
 
-    uploader_rows = source_session.execute(
-        text(
-            """
+    uploader_rows = source_session.execute(text("""
             SELECT user_id, COUNT(*) AS cnt
             FROM knowledge_documents
             WHERE is_active = 1
             GROUP BY user_id
-        """
-        )
-    ).fetchall()
+        """)).fetchall()
     for r in uploader_rows:
         uploaders[r.user_id] = r.cnt
 
-    retriever_rows = source_session.execute(
-        text(
-            """
+    retriever_rows = source_session.execute(text("""
             SELECT user_id, COUNT(*) AS cnt
             FROM subtask_contexts
             WHERE context_type = 'knowledge_base'
             GROUP BY user_id
-        """
-        )
-    ).fetchall()
+        """)).fetchall()
     for r in retriever_rows:
         retrievers[r.user_id] = r.cnt
 
-    member_rows = source_session.execute(
-        text(
-            """
+    member_rows = source_session.execute(text("""
             SELECT user_id, COUNT(*) AS cnt
             FROM resource_members
             WHERE resource_type = 'KnowledgeBase'
             GROUP BY user_id
-        """
-        )
-    ).fetchall()
+        """)).fetchall()
     for r in member_rows:
         members[r.user_id] = r.cnt
 
@@ -670,8 +618,7 @@ def user_participation_summary(
         _,
     ) in participation_list:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_user_participation_summary
                     (run_id, target_date, user_id, user_name,
                      is_creator, is_uploader, is_retriever, is_member,
@@ -679,8 +626,7 @@ def user_participation_summary(
                 VALUES (:run_id, :target_date, :user_id, :user_name,
                         :is_creator, :is_uploader, :is_retriever, :is_member,
                         :participation_type)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -724,8 +670,7 @@ def cross_kb_query_user(
     # when mfilter.kb_ids is set — the point is cross-KB behavior, which
     # would be invisible if scoped to one KB.
     rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT sc.user_id AS user_id,
                    COUNT(DISTINCT JSON_EXTRACT(sc.type_data, '$.knowledge_id')) AS kb_count,
                    COUNT(*) AS query_count
@@ -739,8 +684,7 @@ def cross_kb_query_user(
             HAVING kb_count >= 2
             ORDER BY kb_count DESC, query_count DESC
             LIMIT 500
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -755,15 +699,13 @@ def cross_kb_query_user(
         if uid == 0:
             continue
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_cross_kb_query_user
                     (run_id, target_date, user_id, user_name,
                      kb_count, query_count)
                 VALUES (:run_id, :target_date, :user_id, :user_name,
                         :kb_count, :query_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,

@@ -1935,8 +1935,7 @@ class KbStatQueryService:
     ) -> list:
         """Return the latest successfully collected platform row per date."""
         return session.execute(
-            text(
-                """
+            text("""
                 SELECT d.*
                 FROM kb_stat_daily_dashboard d
                 JOIN (
@@ -1956,8 +1955,7 @@ class KbStatQueryService:
                   ON latest.stat_date = d.stat_date
                  AND latest.max_run = d.run_id
                 ORDER BY d.stat_date
-                """
-            ),
+                """),
             {
                 "start_date": filter.effective_period_start,
                 "end_date": filter.period_end_date,
@@ -1973,8 +1971,7 @@ class KbStatQueryService:
         """Build the KB overview from per-KB daily and storage snapshots."""
         kb_id = int(filter.kb_ids[0])
         daily_rows = session.execute(
-            text(
-                """
+            text("""
                 SELECT d.*
                 FROM kb_stat_kb_daily_stats d
                 JOIN (
@@ -1997,8 +1994,7 @@ class KbStatQueryService:
                  AND latest.kb_id = d.kb_id
                  AND latest.max_run = d.run_id
                 ORDER BY d.stat_date
-                """
-            ),
+                """),
             {
                 "kb_id": kb_id,
                 "start_date": filter.effective_period_start,
@@ -2010,14 +2006,12 @@ class KbStatQueryService:
         storage = None
         if storage_run is not None:
             storage = session.execute(
-                text(
-                    """
+                text("""
                     SELECT doc_count, total_file_size
                     FROM kb_stat_storage_usage
                     WHERE run_id = :run_id AND kb_id = :kb_id
                     LIMIT 1
-                    """
-                ),
+                    """),
                 {"run_id": storage_run, "kb_id": kb_id},
             ).fetchone()
 
@@ -2116,8 +2110,7 @@ class KbStatQueryService:
         where = " AND ".join(conditions)
         try:
             rows = session.execute(
-                text(
-                    f"""
+                text(f"""
                     SELECT
                         h.stat_date,
                         SUM(CASE WHEN h.health_score >= 85 THEN 1 ELSE 0 END)
@@ -2152,8 +2145,7 @@ class KbStatQueryService:
                     WHERE {where}
                     GROUP BY h.stat_date
                     ORDER BY h.stat_date
-                    """
-                ),
+                    """),
                 params,
             ).fetchall()
         except (ProgrammingError, OperationalError):
@@ -2202,8 +2194,7 @@ class KbStatQueryService:
         where = " AND ".join(conditions)
         try:
             rows = session.execute(
-                text(
-                    f"""
+                text(f"""
                     SELECT
                         z.stat_date,
                         SUM(z.zero_chunk_queries) AS zero_events,
@@ -2227,8 +2218,7 @@ class KbStatQueryService:
                     WHERE {where}
                     GROUP BY z.stat_date
                     ORDER BY z.stat_date
-                    """
-                ),
+                    """),
                 params,
             ).fetchall()
         except (ProgrammingError, OperationalError):
@@ -2288,8 +2278,7 @@ class KbStatQueryService:
         where = " AND ".join(conditions)
         try:
             rows = session.execute(
-                text(
-                    f"""
+                text(f"""
                     SELECT
                         t.stat_date,
                         SUM(t.{numerator_col}) AS num_events,
@@ -2313,8 +2302,7 @@ class KbStatQueryService:
                     WHERE {where}
                     GROUP BY t.stat_date
                     ORDER BY t.stat_date
-                    """
-                ),
+                    """),
                 params,
             ).fetchall()
         except (ProgrammingError, OperationalError):

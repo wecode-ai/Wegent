@@ -37,8 +37,7 @@ def storage_usage(
     kb_where = f"AND k.id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT k.id AS kb_id,
                    k.name AS kb_name,
                    k.namespace,
@@ -51,23 +50,20 @@ def storage_usage(
               {kb_where}
             GROUP BY k.id, k.name, k.namespace
             ORDER BY total_file_size DESC
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_storage_usage
                     (run_id, target_date, kb_id, kb_name, namespace,
                      total_file_size, doc_count)
                 VALUES (:run_id, :target_date, :kb_id, :kb_name, :namespace,
                         :total_file_size, :doc_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -102,8 +98,7 @@ def attachment_storage(
 ) -> int:
     try:
         rows = source_session.execute(
-            text(
-                """
+            text("""
                 SELECT JSON_UNQUOTE(JSON_EXTRACT(type_data, '$.storage_backend')) AS storage_backend,
                        COUNT(*) AS file_count,
                        COALESCE(SUM(CAST(JSON_EXTRACT(type_data, '$.file_size') AS SIGNED)), 0) AS total_size
@@ -111,8 +106,7 @@ def attachment_storage(
                 WHERE context_type = 'attachment'
                   AND type_data IS NOT NULL
                 GROUP BY storage_backend
-            """
-            ),
+            """),
         ).fetchall()
     except Exception:
         logger.exception("Failed to collect attachment_storage metrics")
@@ -121,13 +115,11 @@ def attachment_storage(
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_attachment_storage
                     (run_id, target_date, storage_backend, file_count, total_size)
                 VALUES (:run_id, :target_date, :storage_backend, :file_count, :total_size)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -162,8 +154,7 @@ def doc_index_storage_view(
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT index_status,
                    file_extension,
                    COUNT(*) AS doc_count,
@@ -173,23 +164,20 @@ def doc_index_storage_view(
             WHERE is_active = 1
               {kb_where}
             GROUP BY index_status, file_extension
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_index_storage_view
                     (run_id, target_date, index_status, file_extension,
                      doc_count, total_file_size, avg_file_size)
                 VALUES (:run_id, :target_date, :index_status, :file_extension,
                         :doc_count, :total_file_size, :avg_file_size)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,

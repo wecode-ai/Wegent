@@ -90,8 +90,7 @@ def rag_call_frequency(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    COUNT(*) AS call_count
@@ -103,8 +102,7 @@ def rag_call_frequency(
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
             ORDER BY d
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -122,13 +120,11 @@ def rag_call_frequency(
     for r in rows:
         _, kb_name = kb_meta.get(r.kb_id, ("", ""))
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_rag_call_frequency
                     (run_id, target_date, stat_date, kb_id, kb_name, call_count)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :kb_name, :call_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -161,8 +157,7 @@ def kb_head_frequency(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    COUNT(*) AS call_count
@@ -174,8 +169,7 @@ def kb_head_frequency(
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
             ORDER BY d
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -192,13 +186,11 @@ def kb_head_frequency(
     for r in rows:
         _, kb_name = kb_meta.get(r.kb_id, ("", ""))
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_head_frequency
                     (run_id, target_date, stat_date, kb_id, kb_name, call_count)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :kb_name, :call_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -231,8 +223,7 @@ def rag_vs_head_ratio(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    SUM(CASE WHEN {RAG_RETRIEVAL_SQL} THEN 1 ELSE 0 END) AS rag_count,
                    SUM(CASE WHEN {KB_HEAD_SQL} THEN 1 ELSE 0 END) AS head_count
@@ -243,8 +234,7 @@ def rag_vs_head_ratio(
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at)
             ORDER BY d
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -260,13 +250,11 @@ def rag_vs_head_ratio(
         rag_ratio = round(rag / total * 100, 2) if total > 0 else None
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_rag_vs_head_ratio
                     (run_id, target_date, stat_date, rag_count, head_count, rag_ratio)
                 VALUES (:run_id, :target_date, :stat_date, :rag_count, :head_count, :rag_ratio)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -299,16 +287,14 @@ def doc_reference_count(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT sc.type_data
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
               {kb_filter_sql}
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -379,13 +365,11 @@ def doc_reference_count(
     doc_ids = [d[0] for d in sorted_docs]
     doc_id_clause, doc_id_params = build_kb_in_clause(doc_ids, prefix="did")
     doc_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, name
             FROM knowledge_documents
             WHERE id {doc_id_clause}
-        """
-        ),
+        """),
         doc_id_params,
     ).fetchall()
     doc_names = {r.id: r.name or "" for r in doc_rows}
@@ -394,15 +378,13 @@ def doc_reference_count(
     for doc_id, (kb_id, rag_ref, head_ref) in sorted_docs:
         total_ref = rag_ref + head_ref
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_reference_count
                     (run_id, target_date, document_id, document_name,
                      kb_id, rag_ref_count, head_ref_count, total_ref_count)
                 VALUES (:run_id, :target_date, :document_id, :document_name,
                         :kb_id, :rag_ref_count, :head_ref_count, :total_ref_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -437,8 +419,7 @@ def doc_read_count(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT sc.type_data
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
@@ -446,8 +427,7 @@ def doc_read_count(
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
               {kb_filter_sql}
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -500,13 +480,11 @@ def doc_read_count(
     doc_ids = [d[0] for d in sorted_docs]
     doc_id_clause, doc_id_params = build_kb_in_clause(doc_ids, prefix="did")
     doc_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, name
             FROM knowledge_documents
             WHERE id {doc_id_clause}
-        """
-        ),
+        """),
         doc_id_params,
     ).fetchall()
     doc_names = {r.id: r.name or "" for r in doc_rows}
@@ -514,13 +492,11 @@ def doc_read_count(
     written = 0
     for doc_id, (kb_id, read_count) in sorted_docs:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_read_count
                     (run_id, target_date, document_id, document_name, kb_id, read_count)
                 VALUES (:run_id, :target_date, :document_id, :document_name, :kb_id, :read_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -552,8 +528,7 @@ def retrieval_mode_distribution(
 ) -> int:
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.rag_result.injection_mode')) AS mode,
                    COUNT(*) AS call_count
             FROM subtask_contexts sc
@@ -563,8 +538,7 @@ def retrieval_mode_distribution(
               AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY mode
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -576,13 +550,11 @@ def retrieval_mode_distribution(
     for r in rows:
         mode = r.mode or "unknown"
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_retrieval_mode_distribution
                     (run_id, target_date, injection_mode, call_count)
                 VALUES (:run_id, :target_date, :injection_mode, :call_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -613,8 +585,7 @@ def restricted_mode_usage(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    COUNT(*) AS total_calls,
                    SUM(CASE WHEN JSON_EXTRACT(sc.type_data, '$.rag_result.restricted_mode') = TRUE
@@ -626,8 +597,7 @@ def restricted_mode_usage(
               AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY kb_id
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -642,13 +612,11 @@ def restricted_mode_usage(
         restricted_rate = round(restricted / total * 100, 2) if total > 0 else None
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_restricted_mode_usage
                     (run_id, target_date, kb_id, total_calls, restricted_calls, restricted_rate)
                 VALUES (:run_id, :target_date, :kb_id, :total_calls, :restricted_calls, :restricted_rate)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -683,15 +651,13 @@ def rag_call_limit(
     kb_where = f"AND id {kb_clause}" if kb_clause else ""
 
     kb_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id,
                    JSON_EXTRACT(json, '$.spec.maxCallsPerConversation') AS max_calls
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               {kb_where}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -717,8 +683,7 @@ def rag_call_limit(
     kb_filter_sql = f"AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') {kb_id_clause}"
 
     ctx_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    CAST(JSON_EXTRACT(sc.type_data, '$.rag_result.retrieval_count') AS SIGNED)
                        AS retrieval_count
@@ -728,8 +693,7 @@ def rag_call_limit(
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
               {kb_filter_sql}
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -748,13 +712,11 @@ def rag_call_limit(
     for kb_id, max_calls in kb_max_calls.items():
         hit_count = hit_limit_counts.get(kb_id, 0)
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_rag_call_limit
                     (run_id, target_date, kb_id, max_calls_config, hit_limit_count)
                 VALUES (:run_id, :target_date, :kb_id, :max_calls_config, :hit_limit_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -784,15 +746,13 @@ def selected_documents_usage(
     stat_session: Session,
 ) -> int:
     rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT sc.type_data
             FROM subtask_contexts sc
             WHERE sc.context_type = 'selected_documents'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -840,13 +800,11 @@ def selected_documents_usage(
     written = 0
     for (kb_id, doc_id), select_count in sorted_docs:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_selected_documents_usage
                     (run_id, target_date, kb_id, document_id, select_count)
                 VALUES (:run_id, :target_date, :kb_id, :document_id, :select_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -880,8 +838,7 @@ def chunks_count_distribution(
     """Collect platform-level buckets for chunks returned by each RAG call."""
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT
                 CASE
                     WHEN chunks_count = 0 THEN '0'
@@ -908,8 +865,7 @@ def chunks_count_distribution(
                   {kb_filter_sql}
             ) events
             GROUP BY chunk_bucket
-        """
-        ),
+        """),
         {
             "start_date": mfilter.effective_period_start,
             "end_date": mfilter.effective_end_date,
@@ -919,14 +875,12 @@ def chunks_count_distribution(
 
     for row in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_chunks_count_distribution
                     (run_id, target_date, chunk_bucket, call_count)
                 VALUES
                     (:run_id, :target_date, :chunk_bucket, :call_count)
-                """
-            ),
+                """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -959,8 +913,7 @@ def kb_active_users(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    sc.user_id,
                    SUM(CASE WHEN {RAG_RETRIEVAL_SQL} THEN 1 ELSE 0 END) AS rag_count,
@@ -971,8 +924,7 @@ def kb_active_users(
               AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY kb_id, sc.user_id
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1001,15 +953,13 @@ def kb_active_users(
     for r in rows:
         total = int(r.rag_count or 0) + int(r.head_count or 0)
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_active_users
                     (run_id, target_date, kb_id, user_id, user_name,
                      rag_count, head_count, total_count)
                 VALUES (:run_id, :target_date, :kb_id, :user_id, :user_name,
                         :rag_count, :head_count, :total_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1042,8 +992,7 @@ def kb_rag_head_ratio(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    SUM(CASE WHEN {RAG_RETRIEVAL_SQL} THEN 1 ELSE 0 END) AS rag_count,
@@ -1055,8 +1004,7 @@ def kb_rag_head_ratio(
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
             ORDER BY d
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1071,15 +1019,13 @@ def kb_rag_head_ratio(
         rag_ratio = round(rag / (rag + head) * 100, 2) if (rag + head) > 0 else None
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_rag_head_ratio
                     (run_id, target_date, stat_date, kb_id,
                      rag_count, head_count, rag_ratio)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id,
                         :rag_count, :head_count, :rag_ratio)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1111,8 +1057,7 @@ def kb_zero_chunk_rate(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    COUNT(*) AS total_queries,
@@ -1125,8 +1070,7 @@ def kb_zero_chunk_rate(
               AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1142,15 +1086,13 @@ def kb_zero_chunk_rate(
         low_conf = 1 if 0 < total < LOW_CONFIDENCE_THRESHOLD else 0
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_zero_chunk_rate
                     (run_id, target_date, stat_date, kb_id, total_queries,
                      zero_chunk_queries, zero_chunk_rate, low_confidence)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :total_queries,
                         :zero_chunk_queries, :zero_chunk_rate, :low_confidence)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1183,8 +1125,7 @@ def kb_retrieval_mode_dist(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.rag_result.injection_mode')) AS mode,
                    COUNT(*) AS call_count
@@ -1195,8 +1136,7 @@ def kb_retrieval_mode_dist(
               AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY kb_id, mode
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1208,13 +1148,11 @@ def kb_retrieval_mode_dist(
     for r in rows:
         mode = r.mode or "unknown"
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_retrieval_mode_dist
                     (run_id, target_date, kb_id, injection_mode, call_count)
                 VALUES (:run_id, :target_date, :kb_id, :injection_mode, :call_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1250,16 +1188,14 @@ def _fetch_kb_score_thresholds(
     kb_clause, kb_params = build_kb_in_clause(kb_ids) if kb_ids else ("", {})
     kb_where = f"AND id {kb_clause}" if kb_clause else ""
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id,
                    JSON_UNQUOTE(
                        JSON_EXTRACT(json, '$.spec.retrievalConfig.score_threshold')
                    ) AS threshold
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1 {kb_where}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -1318,8 +1254,7 @@ def retrieval_score_distribution(
     # JSON_EXTRACT over LONGTEXT (vs a native JSON column) is unreliable
     # across MySQL versions and there is no precedent for it in collectors.
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    sc.extracted_text
@@ -1332,8 +1267,7 @@ def retrieval_score_distribution(
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
               {kb_filter_sql}
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1388,8 +1322,7 @@ def retrieval_score_distribution(
         low_score_rate = round(low_count / len(scores_sorted) * 100, 2)
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_retrieval_score_distribution
                     (run_id, target_date, stat_date, kb_id, total_samples,
                      avg_score, p50_score, p90_score,
@@ -1397,8 +1330,7 @@ def retrieval_score_distribution(
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :total_samples,
                         :avg_score, :p50_score, :p90_score,
                         :score_threshold, :low_score_rate)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1419,15 +1351,13 @@ def retrieval_score_distribution(
         rate = round(low / total * 100, 2) if total > 0 else None
         low_conf = 1 if 0 < total < LOW_CONFIDENCE_THRESHOLD else 0
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_low_score_rate
                     (run_id, target_date, stat_date, kb_id, total_queries,
                      low_score_queries, low_score_rate, low_confidence)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :total_queries,
                         :low_score_queries, :low_score_rate, :low_confidence)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1471,8 +1401,7 @@ def answer_adoption_rate(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    COUNT(*) AS total_queries,
@@ -1486,8 +1415,7 @@ def answer_adoption_rate(
               AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1503,15 +1431,13 @@ def answer_adoption_rate(
         low_conf = 1 if 0 < total < LOW_CONFIDENCE_THRESHOLD else 0
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_answer_adoption_rate
                     (run_id, target_date, stat_date, kb_id, total_queries,
                      adopted_queries, adoption_rate, low_confidence)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :total_queries,
                         :adopted_queries, :adoption_rate, :low_confidence)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1551,8 +1477,7 @@ def kb_retrieval_hit_rate(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    COUNT(*) AS total_queries,
@@ -1565,8 +1490,7 @@ def kb_retrieval_hit_rate(
               AND sc.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), kb_id
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1585,15 +1509,13 @@ def kb_retrieval_hit_rate(
         low_conf = 1 if 0 < total < LOW_CONFIDENCE_THRESHOLD else 0
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_retrieval_hit_rate
                     (run_id, target_date, stat_date, kb_id, total_queries,
                      hit_queries, hit_rate, low_confidence)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :total_queries,
                         :hit_queries, :hit_rate, :low_confidence)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1636,8 +1558,7 @@ def query_dedup_rate(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    LOWER(TRIM(JSON_UNQUOTE(
@@ -1649,8 +1570,7 @@ def query_dedup_rate(
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
               {kb_filter_sql}
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1677,15 +1597,13 @@ def query_dedup_rate(
         low_conf = 1 if 0 < total < LOW_CONFIDENCE_THRESHOLD else 0
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_query_dedup_rate
                     (run_id, target_date, stat_date, kb_id, total_queries,
                      unique_queries, dedup_rate, low_confidence)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id, :total_queries,
                         :unique_queries, :dedup_rate, :low_confidence)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -1722,8 +1640,7 @@ def kb_slow_query_rate(
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED) AS kb_id,
                    CAST(JSON_EXTRACT(sc.type_data, '$.rag_result.latency_ms') AS DECIMAL(20,4)) AS latency_ms
             FROM subtask_contexts sc
@@ -1732,8 +1649,7 @@ def kb_slow_query_rate(
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
               {kb_filter_sql}
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -1768,15 +1684,13 @@ def kb_slow_query_rate(
         low_conf = 1 if 0 < total < LOW_CONFIDENCE_THRESHOLD else 0
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_slow_query_rate
                     (run_id, target_date, kb_id, total_queries,
                      slow_queries, p95_latency_ms, slow_rate, low_confidence)
                 VALUES (:run_id, :target_date, :kb_id, :total_queries,
                         :slow_queries, :p95_latency_ms, :slow_rate, :low_confidence)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,

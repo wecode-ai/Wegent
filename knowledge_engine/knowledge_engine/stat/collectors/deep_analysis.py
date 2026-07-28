@@ -67,8 +67,7 @@ def kb_health_score(
     from datetime import timedelta as _td
 
     written = 0
-    insert_sql = text(
-        """
+    insert_sql = text("""
         INSERT INTO kb_stat_kb_health_score
             (run_id, target_date, stat_date, kb_id, kb_name, namespace,
              activity_score, index_success_score, enable_score,
@@ -76,13 +75,11 @@ def kb_health_score(
         VALUES (:run_id, :target_date, :stat_date, :kb_id, :kb_name, :namespace,
                 :activity_score, :index_success_score, :enable_score,
                 :summary_score, :health_score, :formula_version)
-        """
-    )
+        """)
     d = start
     while d <= end:
         rows = source_session.execute(
-            text(
-                f"""
+            text(f"""
                 SELECT k.id AS kb_id,
                        k.name AS kb_name,
                        k.namespace,
@@ -102,8 +99,7 @@ def kb_health_score(
                   AND k.created_at <= :cutoff
                   {kb_filter_sql}
                 GROUP BY k.id, k.name, k.namespace
-            """
-            ),
+            """),
             {
                 "cutoff": d,
                 **kb_params,
@@ -177,15 +173,13 @@ def doc_value_ranking(
 ) -> int:
     # Query 1: fetch subtask_contexts to count rag/head references per doc
     ctx_rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT sc.type_data, sc.user_id
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -254,15 +248,13 @@ def doc_value_ranking(
             sorted(referenced_ids), prefix="did"
         )
         doc_rows = source_session.execute(
-            text(
-                f"""
+            text(f"""
                 SELECT id, name, kind_id, updated_at
                 FROM knowledge_documents
                 WHERE is_active = 1
                   AND id {did_clause}
                   {kb_where}
-            """
-            ),
+            """),
             {**did_params, **kb_params},
         ).fetchall()
 
@@ -305,8 +297,7 @@ def doc_value_ranking(
     written = 0
     for d in scored_docs:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_value_ranking
                     (run_id, target_date, document_id, document_name, kb_id,
                      rag_ref_count, head_ref_count, unique_users,
@@ -314,8 +305,7 @@ def doc_value_ranking(
                 VALUES (:run_id, :target_date, :doc_id, :doc_name, :kb_id,
                         :rag_ref, :head_ref, :unique_users,
                         :days_since_update, :value_score)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -355,8 +345,7 @@ def doc_lifecycle_trace(
     kb_filter_sql = f"AND kind_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, name, kind_id AS kb_id, file_extension,
                    index_status, index_generation, file_size,
                    created_at, updated_at
@@ -365,16 +354,14 @@ def doc_lifecycle_trace(
               {kb_filter_sql}
             ORDER BY updated_at DESC
             LIMIT 200
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_doc_lifecycle_trace
                     (run_id, target_date, document_id, document_name, kb_id,
                      file_extension, index_status, index_generation, file_size,
@@ -382,8 +369,7 @@ def doc_lifecycle_trace(
                 VALUES (:run_id, :target_date, :doc_id, :doc_name, :kb_id,
                         :file_extension, :index_status, :index_generation, :file_size,
                         :created_at_doc, :updated_at_doc)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -428,8 +414,7 @@ def user_pattern_evolution(
     if kbf_clause:
         kb_filter_sql = "AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') " + kbf_clause
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT sc.user_id,
                    DATE_FORMAT(sc.created_at, '%%Y-%%m') AS stat_month,
                    SUM(CASE WHEN sc.type_data->'$.rag_result' IS NOT NULL
@@ -442,8 +427,7 @@ def user_pattern_evolution(
               {kb_filter_sql}
             GROUP BY sc.user_id, stat_month
             ORDER BY sc.user_id, stat_month
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             **kbf_params,
@@ -479,15 +463,13 @@ def user_pattern_evolution(
         rag_ratio = round(rag / total * 100, 2) if total > 0 else 0.0
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_user_pattern_evolution
                     (run_id, target_date, user_id, user_name,
                      stat_month, rag_count, head_count, rag_ratio)
                 VALUES (:run_id, :target_date, :user_id, :user_name,
                         :stat_month, :rag_count, :head_count, :rag_ratio)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -532,8 +514,7 @@ def kb_growth_curve(
 
     # SQL1: Daily new docs per KB
     doc_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(kd.created_at) AS d,
                    kd.kind_id AS kb_id,
                    COUNT(*) AS new_docs
@@ -543,8 +524,7 @@ def kb_growth_curve(
               AND kd.created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(kd.created_at), kd.kind_id
-        """
-        ),
+        """),
         {
             "start_date": start,
             "end_date": end,
@@ -554,8 +534,7 @@ def kb_growth_curve(
 
     # SQL2: Daily new members per KB
     member_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(rm.created_at) AS d,
                    rm.resource_id AS kb_id,
                    COUNT(*) AS new_members
@@ -565,8 +544,7 @@ def kb_growth_curve(
               AND rm.created_at < :end_date
               {kb_filter_sql2}
             GROUP BY DATE(rm.created_at), rm.resource_id
-        """
-        ),
+        """),
         {
             "start_date": start,
             "end_date": end,
@@ -576,16 +554,14 @@ def kb_growth_curve(
 
     # SQL3: Base cumulative counts (before period start)
     base_doc_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT kd.kind_id AS kb_id, COUNT(*) AS base_docs
             FROM knowledge_documents kd
             WHERE kd.is_active = 1
               AND kd.created_at < :start_date
               {kb_filter_sql}
             GROUP BY kd.kind_id
-        """
-        ),
+        """),
         {
             "start_date": start,
             **kb_params,
@@ -593,16 +569,14 @@ def kb_growth_curve(
     ).fetchall()
 
     base_member_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT rm.resource_id AS kb_id, COUNT(*) AS base_members
             FROM resource_members rm
             WHERE rm.resource_type = 'KnowledgeBase'
               AND rm.created_at < :start_date
               {kb_filter_sql2}
             GROUP BY rm.resource_id
-        """
-        ),
+        """),
         {
             "start_date": start,
             **kb_params,
@@ -646,15 +620,13 @@ def kb_growth_curve(
             running_members += daily_members.get((d, kb_id), 0)
 
             stat_session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO kb_stat_kb_growth_curve
                         (run_id, target_date, kb_id, kb_name, stat_date,
                          cumulative_docs, cumulative_members)
                     VALUES (:run_id, :target_date, :kb_id, :kb_name, :stat_date,
                             :cumulative_docs, :cumulative_members)
-                """
-                ),
+                """),
                 {
                     "run_id": run_id,
                     "target_date": mfilter.target_date,
@@ -700,8 +672,7 @@ def rag_head_verify_rate(
         kb_filter_sql = "AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') " + kbf_clause
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(sc.created_at) AS d,
                    JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS kb_id,
                    SUM(CASE WHEN sc.type_data->'$.rag_result' IS NOT NULL
@@ -716,8 +687,7 @@ def rag_head_verify_rate(
               {kb_filter_sql}
             GROUP BY DATE(sc.created_at), JSON_EXTRACT(sc.type_data, '$.knowledge_id')
             ORDER BY d
-        """
-        ),
+        """),
         {
             "start_date": start,
             "end_date": end,
@@ -742,15 +712,13 @@ def rag_head_verify_rate(
                 pass
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_rag_head_verify_rate
                     (run_id, target_date, stat_date, kb_id,
                      total_rag_calls, verified_by_head, verify_rate)
                 VALUES (:run_id, :target_date, :stat_date, :kb_id,
                         :total_rag_calls, :verified_by_head, :verify_rate)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -788,14 +756,12 @@ def knowledge_coverage(
 
     # SQL1: Fetch KB topics from kinds.json
     kb_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, name, json
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               {kb_filter_sql}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -814,8 +780,7 @@ def knowledge_coverage(
     # doesn't exist at the top level of type_data). See retrieval.py
     # collectors for the canonical path pattern.
     query_rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS kb_id,
                    JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.rag_result.query')) AS query_text
             FROM subtask_contexts sc
@@ -824,8 +789,7 @@ def knowledge_coverage(
               AND sc.created_at < :end_date
             ORDER BY sc.created_at DESC
             LIMIT 500
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -861,15 +825,13 @@ def knowledge_coverage(
                 match_type = "none"
 
             stat_session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO kb_stat_knowledge_coverage
                         (run_id, target_date, kb_id, kb_name,
                          topic, query_text, match_type)
                     VALUES (:run_id, :target_date, :kb_id, :kb_name,
                             :topic, :query_text, :match_type)
-                """
-                ),
+                """),
                 {
                     "run_id": run_id,
                     "target_date": mfilter.target_date,
@@ -906,21 +868,18 @@ def user_segmentation(
     # SQL1: Creators — distinct users who created KnowledgeBases
     creator_count = (
         source_session.execute(
-            text(
-                """
+            text("""
             SELECT COUNT(DISTINCT user_id) AS cnt
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
-        """
-            ),
+        """),
         ).scalar()
         or 0
     )
 
     # SQL2: Active users — queried KB >= 10 times
     active_rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT COUNT(*) AS cnt FROM (
                 SELECT user_id
                 FROM subtask_contexts
@@ -928,15 +887,13 @@ def user_segmentation(
                 GROUP BY user_id
                 HAVING COUNT(*) >= 10
             ) AS active_users
-        """
-        ),
+        """),
     ).fetchone()
     active_count = active_rows.cnt if active_rows else 0
 
     # SQL3: Casual users — queried KB > 0 and < 10 times
     casual_rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT COUNT(*) AS cnt FROM (
                 SELECT user_id
                 FROM subtask_contexts
@@ -944,8 +901,7 @@ def user_segmentation(
                 GROUP BY user_id
                 HAVING COUNT(*) > 0 AND COUNT(*) < 10
             ) AS casual_users
-        """
-        ),
+        """),
     ).fetchone()
     casual_count = casual_rows.cnt if casual_rows else 0
 
@@ -953,8 +909,7 @@ def user_segmentation(
     observer_count = 0
     try:
         observer_rows = source_session.execute(
-            text(
-                """
+            text("""
                 SELECT COUNT(DISTINCT rm.user_id) AS cnt
                 FROM resource_members rm
                 WHERE rm.resource_type = 'KnowledgeBase'
@@ -964,8 +919,7 @@ def user_segmentation(
                       WHERE sc.context_type = 'knowledge_base'
                         AND sc.user_id IS NOT NULL
                   )
-            """
-            ),
+            """),
         ).fetchone()
         observer_count = observer_rows.cnt if observer_rows else 0
     except Exception:
@@ -981,13 +935,11 @@ def user_segmentation(
     written = 0
     for segment, count in segments:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_user_segmentation
                     (run_id, target_date, segment, user_count)
                 VALUES (:run_id, :target_date, :segment, :user_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,

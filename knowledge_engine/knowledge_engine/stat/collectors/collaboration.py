@@ -61,16 +61,14 @@ def kb_member_scale(
 
     # Query 1: member counts per KB
     member_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT resource_id AS kb_id,
                    COUNT(DISTINCT user_id) AS member_count
             FROM resource_members
             WHERE resource_type = 'KnowledgeBase'
               {kb_where}
             GROUP BY resource_id
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -79,14 +77,12 @@ def kb_member_scale(
     # Query 2: all active KBs (to include those with no members)
     kb_filter_sql = f"AND id {kb_clause}" if kb_clause else ""
     kb_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               {kb_filter_sql}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -100,13 +96,11 @@ def kb_member_scale(
     written = 0
     for bucket, kb_count in bucket_counter.items():
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_kb_member_scale
                     (run_id, target_date, scale_bucket, kb_count)
                 VALUES (:run_id, :target_date, :scale_bucket, :kb_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -140,8 +134,7 @@ def invitation_chain(
     kb_where = f"AND resource_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT invited_by_user_id AS inviter_id,
                    user_id AS invitee_id,
                    role,
@@ -153,8 +146,7 @@ def invitation_chain(
               {kb_where}
             ORDER BY id DESC
             LIMIT 200
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -171,15 +163,13 @@ def invitation_chain(
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_invitation_chain
                     (run_id, target_date, inviter_id, inviter_name,
                      invitee_id, invitee_name, role, kb_id)
                 VALUES (:run_id, :target_date, :inviter_id, :inviter_name,
                         :invitee_id, :invitee_name, :role, :kb_id)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -218,16 +208,14 @@ def share_link_usage(
 
     # Query 1: link count per KB
     link_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT sl.resource_id AS kb_id,
                    COUNT(sl.id) AS link_count
             FROM share_links sl
             WHERE sl.resource_type = 'KnowledgeBase'
               {kb_where}
             GROUP BY sl.resource_id
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -235,26 +223,22 @@ def share_link_usage(
 
     # Query 2: join count per share link
     join_rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT share_link_id, COUNT(*) AS total_joins
             FROM resource_members
             WHERE share_link_id IS NOT NULL
               AND resource_type = 'KnowledgeBase'
             GROUP BY share_link_id
-        """
-        ),
+        """),
     ).fetchall()
 
     # Query 3: map share_link_id -> resource_id (kb_id)
     sl_rows = source_session.execute(
-        text(
-            """
+        text("""
             SELECT id, resource_id
             FROM share_links
             WHERE resource_type = 'KnowledgeBase'
-        """
-        ),
+        """),
     ).fetchall()
 
     sl_to_kb: dict[int, int] = {r.id: r.resource_id for r in sl_rows}
@@ -270,14 +254,12 @@ def share_link_usage(
     kb_name_map: dict[int, str] = {}
     kb_filter_sql = f"AND id {kb_clause}" if kb_clause else ""
     kb_name_rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, name
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
               {kb_filter_sql}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
     kb_name_map = {r.id: r.name for r in kb_name_rows}
@@ -291,15 +273,13 @@ def share_link_usage(
         )
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_share_link_usage
                     (run_id, target_date, kb_id, kb_name,
                      link_count, total_joins, avg_joins_per_link)
                 VALUES (:run_id, :target_date, :kb_id, :kb_name,
                         :link_count, :total_joins, :avg_joins_per_link)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -336,8 +316,7 @@ def approval_efficiency(
     kb_where = f"AND resource_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT resource_id AS kb_id,
                    AVG(TIMESTAMPDIFF(MINUTE, requested_at, reviewed_at)) AS avg_minutes,
                    COUNT(*) AS total_requests,
@@ -351,8 +330,7 @@ def approval_efficiency(
               {kb_where}
             GROUP BY resource_id
             LIMIT 100
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -366,15 +344,13 @@ def approval_efficiency(
         approval_rate = round(approved / total * 100, 2) if total > 0 else 0.0
 
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_approval_efficiency
                     (run_id, target_date, kb_id, avg_approval_minutes,
                      total_requests, approved_count, approval_rate)
                 VALUES (:run_id, :target_date, :kb_id, :avg_minutes,
                         :total_requests, :approved_count, :approval_rate)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,
@@ -416,8 +392,7 @@ def cross_org_access(
     kb_where = f"AND rm.resource_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT rm.resource_id AS kb_id,
                    k.namespace AS kb_namespace,
                    k.name AS kb_name,
@@ -430,8 +405,7 @@ def cross_org_access(
                 AND k.is_active = 1
             WHERE rm.resource_type = 'KnowledgeBase'
               {kb_where}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
@@ -453,15 +427,13 @@ def cross_org_access(
     for uid in cross_org_users:
         for kb_id, kb_ns, kb_name, role in user_records[uid]:
             stat_session.execute(
-                text(
-                    """
+                text("""
                     INSERT INTO kb_stat_cross_org_access
                         (run_id, target_date, kb_id, kb_namespace, kb_name,
                          user_id, user_namespace, role)
                     VALUES (:run_id, :target_date, :kb_id, :kb_namespace, :kb_name,
                             :user_id, :user_namespace, :role)
-                """
-                ),
+                """),
                 {
                     "run_id": run_id,
                     "target_date": mfilter.target_date,
@@ -499,8 +471,7 @@ def permission_change_trend(
     kb_where = f"AND resource_id {kb_clause}" if kb_clause else ""
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT DATE(created_at) AS d,
                    role,
                    status,
@@ -510,8 +481,7 @@ def permission_change_trend(
               AND created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               {kb_where}
             GROUP BY DATE(created_at), role, status
-        """
-        ),
+        """),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
@@ -522,13 +492,11 @@ def permission_change_trend(
     written = 0
     for r in rows:
         stat_session.execute(
-            text(
-                """
+            text("""
                 INSERT INTO kb_stat_permission_change_trend
                     (run_id, target_date, stat_date, role, status, change_count)
                 VALUES (:run_id, :target_date, :stat_date, :role, :status, :change_count)
-            """
-            ),
+            """),
             {
                 "run_id": run_id,
                 "target_date": mfilter.target_date,

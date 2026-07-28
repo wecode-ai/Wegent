@@ -367,8 +367,7 @@ def mark_kb_stat_orphaned_runs(
     with stat_session_factory() as stat_session:
         params = {"err": _ORPHANED_RUN_ERROR_MESSAGE, "target_date": target_date}
         stat_session.execute(
-            text(
-                """
+            text("""
                 UPDATE kb_stat_collector_runs c
                 JOIN kb_stat_runs r ON r.id = c.run_id
                 SET c.status = 'failed', c.completed_at = NOW(),
@@ -376,20 +375,17 @@ def mark_kb_stat_orphaned_runs(
                 WHERE c.status = 'running'
                   AND r.status = 'running'
                   AND r.target_date = :target_date
-                """
-            ),
+                """),
             params,
         )
         result = stat_session.execute(
-            text(
-                """
+            text("""
                 UPDATE kb_stat_runs
                 SET status = 'failed', completed_at = NOW(),
                     error_message = :err
                 WHERE status = 'running'
                   AND target_date = :target_date
-                """
-            ),
+                """),
             params,
         )
         stat_session.commit()
@@ -417,8 +413,7 @@ def mark_kb_stat_stale_runs(
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
     with stat_session_factory() as stat_session:
         stat_session.execute(
-            text(
-                """
+            text("""
                 UPDATE kb_stat_collector_runs c
                 JOIN kb_stat_runs r ON r.id = c.run_id
                 SET c.status = 'failed', c.completed_at = NOW(),
@@ -426,20 +421,17 @@ def mark_kb_stat_stale_runs(
                 WHERE c.status = 'running'
                   AND r.status = 'running'
                   AND r.started_at < :cutoff
-                """
-            ),
+                """),
             {"err": _STALE_RUN_ERROR_MESSAGE, "cutoff": cutoff},
         )
         result = stat_session.execute(
-            text(
-                """
+            text("""
             UPDATE kb_stat_runs
             SET status = 'failed', completed_at = NOW(),
                 error_message = :err
             WHERE status = 'running'
               AND started_at < :cutoff
-        """
-            ),
+        """),
             {"err": _STALE_RUN_ERROR_MESSAGE, "cutoff": cutoff},
         )
         stat_session.commit()
@@ -461,15 +453,13 @@ def _create_run(
     stat_end: date,
 ) -> int:
     result = session.execute(
-        text(
-            """
+        text("""
             INSERT INTO kb_stat_runs
                 (started_at, status, target_date, kb_filter, triggered_by,
                  triggered_user_id, stat_start, stat_end, metrics_count)
             VALUES (NOW(), 'running', :target_date, :kb_filter, :triggered_by,
                     :triggered_user_id, :stat_start, :stat_end, 0)
-        """
-        ),
+        """),
         {
             "target_date": target_date,
             "kb_filter": json.dumps(list(kb_ids)) if kb_ids else None,
@@ -487,13 +477,11 @@ def _create_collector_run(
     session: Session, *, run_id: int, domain: str, name: str
 ) -> int:
     result = session.execute(
-        text(
-            """
+        text("""
             INSERT INTO kb_stat_collector_runs
                 (run_id, domain, collector_name, status, started_at, rows_written)
             VALUES (:run_id, :domain, :name, 'running', NOW(), 0)
-        """
-        ),
+        """),
         {"run_id": run_id, "domain": domain, "name": name},
     )
     session.commit()
@@ -510,15 +498,13 @@ def _update_collector_run(
     error_message: Optional[str] = None,
 ) -> None:
     session.execute(
-        text(
-            """
+        text("""
             UPDATE kb_stat_collector_runs
             SET status = :status, completed_at = NOW(),
                 rows_written = :rows_written, duration_ms = :duration_ms,
                 error_message = :error_message
             WHERE id = :id
-        """
-        ),
+        """),
         {
             "id": collector_run_id,
             "status": status,
@@ -539,14 +525,12 @@ def _finalize_run(
     error_message: Optional[str] = None,
 ) -> None:
     session.execute(
-        text(
-            """
+        text("""
             UPDATE kb_stat_runs
             SET status = :status, completed_at = NOW(),
                 metrics_count = :metrics_count, error_message = :error_message
             WHERE id = :id
-        """
-        ),
+        """),
         {
             "id": run_id,
             "status": status,

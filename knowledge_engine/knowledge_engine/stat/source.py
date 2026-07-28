@@ -55,14 +55,12 @@ def fetch_kb_metadata(
         kb_clause = f"AND id {kb_clause}"
 
     rows = source_session.execute(
-        text(
-            f"""
+        text(f"""
             SELECT id, namespace, name
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
             {kb_clause}
-        """
-        ),
+        """),
         kb_params,
     ).fetchall()
 
