@@ -620,7 +620,7 @@ fn required(value: &Map<String, Value>, key: &str) -> Result<String, TaskRuntime
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(ToOwned::to_owned)
-        .ok_or_else(|| invalid(&format!("provider_config.{key} is required")))
+        .ok_or_else(|| invalid(format!("provider_config.{key} is required")))
 }
 
 fn unwrap(response: Value) -> Value {

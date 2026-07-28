@@ -330,7 +330,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
         }
         "aitable_describe" => match string_argument(&arguments, "project_id") {
             Ok(project_id) => runtime
-                .aitable_describe(&project_id)
+                .aitable_describe(project_id)
                 .await
                 .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
             Err(error) => Err(error),
@@ -351,7 +351,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 .unwrap_or(100);
             match project_id {
                 Ok(project_id) => runtime
-                    .aitable_list_records(&project_id, query.as_deref(), limit, cursor.as_deref())
+                    .aitable_list_records(project_id, query.as_deref(), limit, cursor.as_deref())
                     .await
                     .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
                 Err(error) => Err(error),
@@ -362,7 +362,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
             let cells = cells_argument(&arguments);
             match (project_id, cells) {
                 (Ok(project_id), Ok(cells)) => runtime
-                    .aitable_create_record(&project_id, cells)
+                    .aitable_create_record(project_id, cells)
                     .await
                     .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
                 (Err(error), _) | (_, Err(error)) => Err(error),
@@ -374,7 +374,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
             let cells = cells_argument(&arguments);
             match (project_id, record_id, cells) {
                 (Ok(project_id), Ok(record_id), Ok(cells)) => runtime
-                    .aitable_update_record(&project_id, &record_id, cells)
+                    .aitable_update_record(project_id, record_id, cells)
                     .await
                     .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
@@ -385,7 +385,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
             let record_id = string_argument(&arguments, "record_id");
             match (project_id, record_id) {
                 (Ok(project_id), Ok(record_id)) => runtime
-                    .aitable_delete_record(&project_id, &record_id)
+                    .aitable_delete_record(project_id, record_id)
                     .await
                     .map(|_| json!({"deleted": true})),
                 (Err(error), _) | (_, Err(error)) => Err(error),
@@ -402,7 +402,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 .unwrap_or_else(|| json!({}));
             match (project_id, name, field_type) {
                 (Ok(project_id), Ok(name), Ok(field_type)) => runtime
-                    .aitable_create_field(&project_id, &name, &field_type, property)
+                    .aitable_create_field(project_id, name, field_type, property)
                     .await
                     .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
                 (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
@@ -426,7 +426,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
             });
             match (project_id, field_id, payload) {
                 (Ok(project_id), Ok(field_id), Some(payload)) => runtime
-                    .aitable_update_field(&project_id, &field_id, payload)
+                    .aitable_update_field(project_id, field_id, payload)
                     .await
                     .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
                 (Err(error), _, _) | (_, Err(error), _) => Err(error),
@@ -440,7 +440,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
             let field_id = string_argument(&arguments, "field_id");
             match (project_id, field_id) {
                 (Ok(project_id), Ok(field_id)) => runtime
-                    .aitable_delete_field(&project_id, &field_id)
+                    .aitable_delete_field(project_id, field_id)
                     .await
                     .map(|_| json!({"deleted": true})),
                 (Err(error), _) | (_, Err(error)) => Err(error),
