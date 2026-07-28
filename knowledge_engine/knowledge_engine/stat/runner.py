@@ -293,7 +293,6 @@ def prune_old_runs(
     # (it already missed the per-KB detail tables). kb_stat_runs is deleted
     # separately below.
     import knowledge_engine.stat.models.metrics  # noqa: F401
-    import knowledge_engine.stat.models.pipeline  # noqa: F401
     from knowledge_engine.stat.models.base import StatBase
 
     metric_tables = sorted(

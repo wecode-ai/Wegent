@@ -929,7 +929,7 @@ def chunks_count_distribution(
             ),
             {
                 "run_id": run_id,
-                "target_date": mfilter.period_end_date,
+                "target_date": mfilter.target_date,
                 "chunk_bucket": row.chunk_bucket,
                 "call_count": int(row.call_count or 0),
             },
