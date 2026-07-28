@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Bot, Library, FileText, MessageSquare, Shield } from 'lucide-react'
+import { Wrench, Library, FileText, MessageSquare, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -249,8 +249,8 @@ export function KnowledgeDetailPanel({
             onClick={() => setMobileWorkspaceTab('workshop')}
             data-testid="knowledge-mobile-workshop-tab"
           >
-            <Bot className="mr-1.5 h-4 w-4" />
-            {t('artifact.aiWorkshop')}
+            <Wrench className="mr-1.5 h-4 w-4" />
+            {t('artifact.tools')}
           </Button>
         </div>
 

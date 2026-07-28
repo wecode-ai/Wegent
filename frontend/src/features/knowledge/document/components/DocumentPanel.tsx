@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Bot, PanelRightClose, PanelRightOpen, Plus, Upload } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, Plus, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -73,7 +73,7 @@ interface DocumentPanelProps {
   onNewChat?: () => void
   /** Callback when collapsed state changes */
   onCollapsedChange?: (collapsed: boolean) => void
-  /** Whether the AI Workshop is the active workspace surface on small screens. */
+  /** Whether the tools panel is the active workspace surface on small screens. */
   mobileVisible?: boolean
   /** Whether the knowledge base uses organization-level public routes. */
   isOrganization?: boolean
@@ -328,13 +328,13 @@ export function DocumentPanel({
                   size="sm"
                   onClick={toggleCollapsed}
                   className="h-8 w-8 p-0 rounded-full shadow-md bg-base"
-                  aria-label={t('artifact.showWorkshop')}
+                  aria-label={t('artifact.showTools')}
                 >
                   <PanelRightOpen className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="left">
-                <p>{t('artifact.showWorkshop')}</p>
+                <p>{t('artifact.showTools')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -358,16 +358,8 @@ export function DocumentPanel({
       </div>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-start justify-between gap-2 px-4 pt-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="rounded-xl bg-primary/10 p-2.5 text-primary">
-              <Bot className="h-5 w-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="font-semibold">{t('artifact.aiWorkshop')}</h2>
-              <p className="mt-0.5 text-xs text-text-secondary">{t('artifact.aiWorkshopHint')}</p>
-            </div>
-          </div>
+        <div className="flex items-center justify-between gap-2 px-4 pt-4">
+          <h2 className="text-sm font-semibold">{t('artifact.tools')}</h2>
           <div className="flex items-center gap-1">
             {onNewChat && (
               <TooltipProvider>
@@ -394,8 +386,8 @@ export function DocumentPanel({
               size="sm"
               onClick={toggleCollapsed}
               className="hidden h-8 w-8 p-0 lg:inline-flex"
-              title={t('artifact.hideWorkshop')}
-              aria-label={t('artifact.hideWorkshop')}
+              title={t('artifact.hideTools')}
+              aria-label={t('artifact.hideTools')}
               data-testid="knowledge-panel-collapse-button"
             >
               <PanelRightClose className="h-4 w-4" />
