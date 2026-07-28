@@ -1100,6 +1100,49 @@ fn codex_run_state_uses_latest_completed_agent_message_in_same_turn() {
 }
 
 #[test]
+fn codex_run_state_prefers_explicit_final_text_over_unphased_text() {
+    let mut state = CodexRunState::default();
+
+    for (id, phase, text) in [
+        ("msg-uncertain", None, "I may need another tool."),
+        ("msg-final", Some("final_answer"), "The task is complete."),
+    ] {
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": id,
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "phase": phase,
+                        "text": text
+                    }
+                }
+            }))
+            .is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "The task is complete.".to_owned()
+        }
+    );
+}
+
+#[test]
 fn codex_run_state_does_not_duplicate_completed_text_after_matching_delta() {
     let mut state = CodexRunState::default();
 
