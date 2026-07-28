@@ -147,6 +147,26 @@ export async function createDocument(
   return apiClient.post<KnowledgeDocument>(`/knowledge-bases/${knowledgeBaseId}/documents`, data)
 }
 
+export interface CreateTextKnowledgeDocumentRequest {
+  knowledge_base_id: number
+  name: string
+  content: string
+}
+
+/**
+ * Create a Markdown document directly from text content.
+ */
+export async function createTextKnowledgeDocument(
+  data: CreateTextKnowledgeDocumentRequest
+): Promise<KnowledgeDocument> {
+  return apiClient.post<KnowledgeDocument>('/knowledge/documents', {
+    ...data,
+    source_type: 'text',
+    file_extension: 'md',
+    folder_id: 0,
+  })
+}
+
 /**
  * Update a document (enable/disable status)
  */

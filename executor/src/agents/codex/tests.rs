@@ -687,6 +687,19 @@ fn codex_launch_config_forwards_runtime_proxy_env() {
 }
 
 #[test]
+fn required_loopback_hosts_are_merged_into_no_proxy() {
+    assert_eq!(
+        merge_required_no_proxy(Some("example.com, localhost")),
+        "example.com,localhost,127.0.0.1,::1,host.docker.internal"
+    );
+    assert_eq!(
+        merge_required_no_proxy(Some("LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL")),
+        "LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL"
+    );
+    assert_eq!(merge_required_no_proxy(None), DEFAULT_NO_PROXY);
+}
+
+#[test]
 fn codex_launch_config_does_not_forward_task_identity() {
     let request = ExecutionRequest {
         task_id: "task-525".to_owned(),
@@ -1002,6 +1015,97 @@ fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
         outcome,
         ExecutionOutcome::Completed {
             content: "Current directory: /tmp/project".to_owned()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_uses_latest_completed_agent_message_in_same_turn() {
+    let mut state = CodexRunState::default();
+
+    for (id, text) in [
+        ("msg-before-tool", "I found the failing step."),
+        (
+            "msg-after-tool",
+            "The failure is caused by a stale lockfile.",
+        ),
+    ] {
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": id,
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "text": text
+                    }
+                }
+            }))
+            .is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "The failure is caused by a stale lockfile.".to_owned()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_does_not_duplicate_completed_text_after_matching_delta() {
+    let mut state = CodexRunState::default();
+
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-final",
+                "delta": "Done."
+            }
+        }))
+        .is_none());
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-final",
+                    "type": "agentMessage",
+                    "role": "assistant",
+                    "text": "Done."
+                }
+            }
+        }))
+        .is_none());
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Done.".to_owned()
         }
     );
 }

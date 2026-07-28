@@ -120,6 +120,7 @@ export function ConversationQueuePanel({
                 status={message.status}
                 error={message.error}
                 notice={message.notice}
+                deliveryMode={message.deliveryMode}
                 mode="queue"
                 onGuide={onSendQueuedAsGuidance}
                 onInterrupt={onInterruptAndSendQueuedMessage}
@@ -150,6 +151,7 @@ interface QueueRowProps {
   status: QueuedWorkbenchMessage['status'] | GuidanceWorkbenchMessage['status']
   error?: string
   notice?: string
+  deliveryMode?: QueuedWorkbenchMessage['deliveryMode']
   mode: 'queue' | 'guidance'
   onGuide?: (id: string) => void
   onEdit?: (id: string) => void
@@ -164,6 +166,7 @@ function QueueRow({
   status,
   error,
   notice,
+  deliveryMode,
   mode,
   onGuide,
   onEdit,
@@ -182,7 +185,7 @@ function QueueRow({
     isDragging,
   } = useSortable({ id, disabled: !canReorder })
   const isBusy = status === 'sending'
-  const isSendingGuidance = isBusy && notice === '正在引导当前对话'
+  const isSendingGuidance = isBusy && deliveryMode === 'guidance'
   const showInlineInterrupt = mode === 'guidance' || mode === 'queue'
   const statusText =
     status === 'failed'

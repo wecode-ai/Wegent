@@ -32,6 +32,11 @@ interface RuntimeTranscriptGap {
   end: number
 }
 
+interface RuntimeTranscriptRange {
+  start: number
+  end: number
+}
+
 interface UserViewportAnchor {
   messageId: string
   anchorIndex: number
@@ -45,6 +50,7 @@ interface ScrollableMessageAreaProps {
   hasMoreBefore?: boolean
   loadingMoreBefore?: boolean
   turnNavigation?: RuntimeTurnNavigationItem[]
+  loadedTranscriptRanges?: RuntimeTranscriptRange[]
   className?: string
   scrollerClassName?: string
   messageListClassName?: string
@@ -114,6 +120,9 @@ function areScrollableMessageAreaPropsEqual(
     previous.hasMoreBefore !== next.hasMoreBefore ? 'hasMoreBefore' : null,
     previous.loadingMoreBefore !== next.loadingMoreBefore ? 'loadingMoreBefore' : null,
     previous.turnNavigation !== next.turnNavigation ? 'turnNavigation' : null,
+    previous.loadedTranscriptRanges !== next.loadedTranscriptRanges
+      ? 'loadedTranscriptRanges'
+      : null,
     previous.className !== next.className ? 'className' : null,
     previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
     previous.messageListClassName !== next.messageListClassName ? 'messageListClassName' : null,
@@ -186,6 +195,7 @@ function ScrollableMessagePaneContent({
   hasMoreBefore = false,
   loadingMoreBefore = false,
   turnNavigation,
+  loadedTranscriptRanges,
   className,
   scrollerClassName,
   messageListClassName,
@@ -379,7 +389,7 @@ function ScrollableMessagePaneContent({
 
   const renderTranscriptGapAfterMessage = useCallback(
     (message: WorkbenchMessage, nextMessage: WorkbenchMessage | undefined) => {
-      const gap = runtimeTranscriptGapBetween(message, nextMessage)
+      const gap = runtimeTranscriptGapBetween(message, nextMessage, loadedTranscriptRanges)
       if (!gap) return null
       const gapKey = runtimeTranscriptGapKey(gap)
       return (
@@ -392,7 +402,7 @@ function ScrollableMessagePaneContent({
         />
       )
     },
-    [loadTranscriptGap, loadingTranscriptGapKey, scrollRef]
+    [loadTranscriptGap, loadedTranscriptRanges, loadingTranscriptGapKey, scrollRef]
   )
 
   const saveCurrentScrollPosition = useCallback(
@@ -1038,17 +1048,30 @@ function RuntimeTranscriptGapMarker({
 
 function runtimeTranscriptGapBetween(
   message: WorkbenchMessage,
-  nextMessage: WorkbenchMessage | undefined
+  nextMessage: WorkbenchMessage | undefined,
+  loadedRanges: RuntimeTranscriptRange[] | undefined
 ): RuntimeTranscriptGap | null {
   if (!nextMessage) return null
   const currentIndex = runtimeMessageIndex(message)
   const nextIndex = runtimeMessageIndex(nextMessage)
   if (currentIndex === null || nextIndex === null || nextIndex <= currentIndex + 1) return null
 
-  return {
-    start: currentIndex + 1,
-    end: nextIndex,
+  let gapStart = currentIndex + 1
+  const gapEnd = nextIndex
+  const sortedRanges = [...(loadedRanges ?? [])]
+    .filter(range => range.end > range.start)
+    .sort((left, right) => left.start - right.start)
+
+  for (const range of sortedRanges) {
+    if (range.end <= gapStart) continue
+    if (range.start > gapStart) {
+      return { start: gapStart, end: Math.min(range.start, gapEnd) }
+    }
+    gapStart = Math.max(gapStart, range.end)
+    if (gapStart >= gapEnd) return null
   }
+
+  return { start: gapStart, end: gapEnd }
 }
 
 function runtimeMessageIndex(message: WorkbenchMessage): number | null {

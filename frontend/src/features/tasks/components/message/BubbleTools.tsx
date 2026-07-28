@@ -5,7 +5,17 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw, History, Send } from 'lucide-react'
+import {
+  BookPlus,
+  Check,
+  Copy,
+  History,
+  Pencil,
+  RefreshCw,
+  Send,
+  ThumbsDown,
+  ThumbsUp,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -171,6 +181,10 @@ export interface BubbleToolsProps {
   }>
   /** Optional callback when copy succeeds - used for telemetry */
   onCopySuccess?: () => void
+  /** Save the displayed Markdown content to a knowledge base. */
+  onSaveToKnowledge?: (content: string) => void
+  /** Whether the save-to-knowledge action should be shown. */
+  showSaveToKnowledge?: boolean
   /** Current feedback state (from useMessageFeedback hook) */
   feedback: FeedbackState
   /** Handler for like button click (from useMessageFeedback hook) */
@@ -205,6 +219,8 @@ const BubbleTools = ({
   contentToCopy,
   tools = [],
   onCopySuccess,
+  onSaveToKnowledge,
+  showSaveToKnowledge = false,
   feedback,
   onLike,
   onDislike,
@@ -229,6 +245,22 @@ const BubbleTools = ({
         tooltip={t('chat:actions.copy') || 'Copy'}
         className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
       />
+      {showSaveToKnowledge && onSaveToKnowledge && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onSaveToKnowledge(contentToCopy)}
+              className="h-11 w-11 !rounded-full bg-fill-tert hover:!bg-fill-sec sm:h-[30px] sm:w-[30px]"
+              data-testid="message-save-to-knowledge-button"
+            >
+              <BookPlus className="h-3.5 w-3.5 text-text-muted" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('chat:saveToKnowledge.action')}</TooltipContent>
+        </Tooltip>
+      )}
       {/* Re-edit button - restores original user message to input box */}
       {showReEdit && onReEditClick && (
         <Tooltip>
