@@ -26,10 +26,10 @@ from app.services.user_runtime_config import user_runtime_config_service
 class TestModelAggregationService:
     """Tests for model_aggregation_service methods."""
 
-    def test_wework_lists_runtime_codex_model_when_user_auth_enabled(
+    def test_wework_does_not_synthesize_runtime_codex_model_when_user_auth_enabled(
         self, test_db: Session, test_user: User, monkeypatch
     ):
-        """Wework should see a runtime-only Codex GPT model after auth is enabled."""
+        """Wework model lists come from stored models and local Executor catalogs only."""
         monkeypatch.setattr(
             "app.services.model_aggregation_service.kind_service.list_resources",
             lambda user_id, kind, namespace: [],
@@ -56,26 +56,7 @@ class TestModelAggregationService:
             client_origin="wework",
         )
 
-        runtime_model = next(
-            model for model in models if model["name"] == "codex-gpt-5.5"
-        )
-        assert runtime_model["type"] == "runtime"
-        assert runtime_model["provider"] == "openai"
-        assert runtime_model["modelId"] == "gpt-5.5"
-        assert runtime_model["runtime"] == {
-            "family": "openai.openai-responses",
-            "provider": "openai",
-        }
-        assert runtime_model["config"] == {
-            "protocol": "openai-responses",
-            "apiFormat": "responses",
-            "ui": {
-                "family": "gpt",
-                "modelLabel": "GPT-5.5",
-                "controls": ["speed"],
-                "sortOrder": 10,
-            },
-        }
+        assert all(model["name"] != "codex-gpt-5.5" for model in models)
 
     def test_runtime_codex_model_is_hidden_outside_wework(
         self, test_db: Session, test_user: User, monkeypatch
@@ -156,14 +137,25 @@ class TestModelAggregationService:
             "metadata": {"name": "generic-model", "namespace": "default"},
             "spec": {
                 "modelConfig": {
+                    "modelCapabilities": {
+                        "supportsImage": False,
+                        "supportsVideo": False,
+                    },
                     "env": {
                         "model": "openai",
                         "model_id": "generic-model-id",
                         "api_key": "secret",
-                    }
+                    },
+                    "context_window": 1048576,
+                    "max_output_tokens": 131072,
                 },
                 "modelGroup": "Primary Group",
                 "modelSubGroup": "Secondary Group",
+                "costIndex": 50,
+                "modelCapabilities": {
+                    "supportsImage": True,
+                    "supportsVideo": True,
+                },
             },
             "status": {"state": "Available"},
         }
@@ -173,6 +165,109 @@ class TestModelAggregationService:
         assert info["model_group"] == "Primary Group"
         assert info["model_sub_group"] == "Secondary Group"
         assert info["provider"] == "openai"
+        assert info["context_window"] == 1048576
+        assert info["max_output_tokens"] == 131072
+        assert info["cost_index"] == "50"
+        assert info["model_capabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+        assert "modelCapabilities" not in info["config"]
+
+    def test_model_limits_come_from_runtime_config(self):
+        """Runtime limits should be exposed as display metadata."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "claude-opus", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "claude",
+                        "model_id": "claude-opus-4-8",
+                    },
+                    "context_window": 1000000,
+                    "max_output_tokens": 128000,
+                }
+            },
+            "status": {"state": "Available"},
+        }
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="claude-opus",
+            namespace="default",
+            json=model_crd,
+            is_active=True,
+        )
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert info["context_window"] == 1000000
+        assert info["max_output_tokens"] == 128000
+        assert model_dict["contextWindow"] == 1000000
+        assert model_dict["maxOutputTokens"] == 128000
+
+    def test_runtime_config_model_limits_override_legacy_top_level_values(self):
+        """Runtime modelConfig limits take precedence over legacy fields."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "claude-opus", "namespace": "default"},
+            "spec": {
+                "contextWindow": 200000,
+                "maxOutputTokens": 32000,
+                "modelConfig": {
+                    "context_window": 1000000,
+                    "max_output_tokens": 128000,
+                },
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["context_window"] == 1000000
+        assert info["max_output_tokens"] == 128000
+
+    def test_model_limits_fall_back_to_legacy_top_level_values(self):
+        """Legacy limits remain available when modelConfig omits them."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-claude", "namespace": "default"},
+            "spec": {
+                "contextWindow": 200000,
+                "maxOutputTokens": 32000,
+                "modelConfig": {},
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["context_window"] == 200000
+        assert info["max_output_tokens"] == 32000
+
+    def test_invalid_legacy_model_limits_are_ignored(self):
+        """Legacy limits must be actual integers rather than coerced values."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "invalid-legacy-limits", "namespace": "default"},
+            "spec": {
+                "contextWindow": True,
+                "maxOutputTokens": "32000",
+                "modelConfig": {},
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["context_window"] is None
+        assert info["max_output_tokens"] is None
 
     def test_unified_model_exposes_runtime_family_without_env(self):
         """Test API model data exposes runtime family without sensitive env."""
@@ -182,6 +277,10 @@ class TestModelAggregationService:
             provider="openai",
             model_id="gpt-5.4",
             resource_user_id=0,
+            context_window=1048576,
+            max_output_tokens=131072,
+            cost_index="50",
+            model_capabilities={"supportsImage": True, "supportsVideo": True},
             config={
                 "env": {
                     "model": "openai",
@@ -189,6 +288,10 @@ class TestModelAggregationService:
                     "api_key": "secret",
                 },
                 "protocol": "openai-responses",
+                "modelCapabilities": {
+                    "supportsImage": False,
+                    "supportsVideo": False,
+                },
             },
         )
 
@@ -202,12 +305,75 @@ class TestModelAggregationService:
         assert "env" not in model_dict["config"]
         assert "env" not in full_model_dict["config"]
         assert model_dict["resourceUserId"] == 0
+        assert model_dict["contextWindow"] == 1048576
+        assert model_dict["maxOutputTokens"] == 131072
+        assert model_dict["costIndex"] == "50"
+        assert model_dict["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+        assert model_dict["config"]["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
         assert full_model_dict["resourceUserId"] == 0
         assert full_model_dict["runtime"] == {
             "family": "openai.openai-responses",
             "provider": "openai",
         }
-        assert full_model_dict["config"] == {"protocol": "openai-responses"}
+        assert full_model_dict["config"] == {
+            "protocol": "openai-responses",
+            "modelCapabilities": {
+                "supportsImage": True,
+                "supportsVideo": True,
+            },
+        }
+
+    def test_extract_model_info_normalizes_legacy_config_capabilities(self):
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {"model": "gemini", "model_id": "legacy-model"},
+                    "modelCapabilities": {
+                        "supportsImage": True,
+                        "supportsVideo": True,
+                    },
+                }
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["model_capabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+        assert "modelCapabilities" not in info["config"]
+
+    def test_extract_model_info_rejects_malformed_legacy_capabilities(self):
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "modelCapabilities": {
+                        "supportsImage": "true",
+                        "supportsVideo": False,
+                    }
+                }
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["model_capabilities"] is None
+        assert "modelCapabilities" not in info["config"]
 
     def test_runtime_family_falls_back_to_provider_without_protocol(self):
         """Test runtime family remains provider-only when spec.protocol is absent."""
@@ -234,12 +400,23 @@ class TestModelAggregationService:
             "spec": {
                 "protocol": "openai-responses",
                 "apiFormat": "responses",
+                "costIndex": 50,
+                "modelCapabilities": {
+                    "supportsImage": True,
+                    "supportsVideo": True,
+                },
                 "modelConfig": {
+                    "modelCapabilities": {
+                        "supportsImage": False,
+                        "supportsVideo": False,
+                    },
                     "env": {
                         "model": "openai",
                         "model_id": "gpt-5.4",
                         "api_key": "secret",
-                    }
+                    },
+                    "context_window": 1048576,
+                    "max_output_tokens": 131072,
                 },
             },
             "status": {"state": "Available"},
@@ -258,8 +435,107 @@ class TestModelAggregationService:
         assert model_dict["provider"] == "openai"
         assert model_dict["model_id"] == "gpt-5.4"
         assert model_dict["config"]["protocol"] == "openai-responses"
+        assert model_dict["contextWindow"] == 1048576
+        assert model_dict["maxOutputTokens"] == 131072
+        assert model_dict["costIndex"] == "50"
+        assert model_dict["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+        assert model_dict["config"]["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
         assert model_dict["config"]["apiFormat"] == "responses"
         assert model_dict["config"]["env"] == {}
+
+    def test_public_model_adapter_normalizes_legacy_config_capabilities(self):
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-public-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {"model": "gemini", "model_id": "legacy-public-model"},
+                    "modelCapabilities": {
+                        "supportsImage": True,
+                        "supportsVideo": True,
+                    },
+                }
+            },
+            "status": {"state": "Available"},
+        }
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="legacy-public-model",
+            namespace="default",
+            json=model_crd,
+            is_active=True,
+        )
+
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert model_dict["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+        assert model_dict["config"]["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+
+    def test_public_model_adapter_normalizes_direct_legacy_capabilities(self):
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="legacy-direct-model",
+            namespace="default",
+            json={
+                "env": {
+                    "model": "gemini",
+                    "model_id": "legacy-direct-model",
+                },
+                "modelCapabilities": {
+                    "supportsImage": True,
+                    "supportsVideo": False,
+                },
+            },
+            is_active=True,
+        )
+
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert model_dict["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": False,
+        }
+        assert model_dict["config"]["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": False,
+        }
+
+    def test_public_model_adapter_extracts_legacy_spec_model_limits(self):
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="legacy-limit-model",
+            namespace="default",
+            json={
+                "spec": {
+                    "modelConfig": {
+                        "context_window": 1000000,
+                        "max_output_tokens": 128000,
+                    }
+                }
+            },
+            is_active=True,
+        )
+
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert model_dict["contextWindow"] == 1000000
+        assert model_dict["maxOutputTokens"] == 128000
 
     def _create_public_shell(
         self,
@@ -654,3 +930,183 @@ class TestModelAggregationService:
 
         assert shell_type == "PublicType"  # From public shell
         assert support_model == ["public-provider"]  # From public shell
+
+    def test_wework_filters_models_by_is_wework_available(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """Only models with isWeworkAvailable=True are returned to wework."""
+        public_available_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "public-wework-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": "public-wework-model"}
+                },
+                "isWeworkAvailable": True,
+            },
+            "status": {"state": "Available"},
+        }
+        public_unavailable_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "public-no-wework", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": "public-no-wework"}
+                }
+            },
+            "status": {"state": "Available"},
+        }
+        public_available = Kind(
+            user_id=0,
+            kind="Model",
+            name="public-wework-model",
+            namespace="default",
+            json=public_available_crd,
+            is_active=True,
+        )
+        public_unavailable = Kind(
+            user_id=0,
+            kind="Model",
+            name="public-no-wework",
+            namespace="default",
+            json=public_unavailable_crd,
+            is_active=True,
+        )
+
+        user_available = Kind(
+            user_id=test_user.id,
+            kind="Model",
+            name="user-wework-model",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Model",
+                "metadata": {
+                    "name": "user-wework-model",
+                    "namespace": "default",
+                },
+                "spec": {
+                    "modelConfig": {
+                        "env": {"model": "claude", "model_id": "user-wework-model"}
+                    },
+                    "isWeworkAvailable": True,
+                },
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+        user_unavailable = Kind(
+            user_id=test_user.id,
+            kind="Model",
+            name="user-no-wework",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Model",
+                "metadata": {"name": "user-no-wework", "namespace": "default"},
+                "spec": {
+                    "modelConfig": {
+                        "env": {"model": "claude", "model_id": "user-no-wework"}
+                    }
+                },
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+
+        test_db.add_all(
+            [public_available, public_unavailable, user_available, user_unavailable]
+        )
+        test_db.commit()
+
+        def fake_list_resources(user_id, kind, namespace):
+            if user_id == test_user.id and kind == "Model" and namespace == "default":
+                return [user_available, user_unavailable]
+            return []
+
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            fake_list_resources,
+        )
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="all",
+            model_category_type="llm",
+            client_origin="wework",
+        )
+        names = {model["name"] for model in models}
+
+        assert "public-wework-model" in names
+        assert "user-wework-model" in names
+        assert "public-no-wework" not in names
+        assert "user-no-wework" not in names
+
+    def test_frontend_lists_models_regardless_of_wework_flag(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """Non-wework clients should see models whether or not isWeworkAvailable is set."""
+        public_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "public-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {"env": {"model": "openai", "model_id": "public-model"}}
+            },
+            "status": {"state": "Available"},
+        }
+        public_model = Kind(
+            user_id=0,
+            kind="Model",
+            name="public-model",
+            namespace="default",
+            json=public_crd,
+            is_active=True,
+        )
+        user_model = Kind(
+            user_id=test_user.id,
+            kind="Model",
+            name="user-model",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Model",
+                "metadata": {"name": "user-model", "namespace": "default"},
+                "spec": {
+                    "modelConfig": {
+                        "env": {"model": "claude", "model_id": "user-model"}
+                    },
+                    "isWeworkAvailable": True,
+                },
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+
+        test_db.add_all([public_model, user_model])
+        test_db.commit()
+
+        def fake_list_resources(user_id, kind, namespace):
+            if user_id == test_user.id and kind == "Model" and namespace == "default":
+                return [user_model]
+            return []
+
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            fake_list_resources,
+        )
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="all",
+            model_category_type="llm",
+            client_origin="frontend",
+        )
+        names = {model["name"] for model in models}
+
+        assert "public-model" in names
+        assert "user-model" in names

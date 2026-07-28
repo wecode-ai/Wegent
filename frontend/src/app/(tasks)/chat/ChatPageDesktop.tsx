@@ -39,6 +39,7 @@ import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
 import { calculateOpenLinks } from '@/utils/openLinks'
+import { resolveChatPageTaskType } from '@/utils/taskRouting'
 import type { MessageBlock } from '@/features/tasks/components/message/thinking/types'
 import type { UnifiedMessage } from '@wegent/chat-core'
 
@@ -122,29 +123,25 @@ export function ChatPageDesktop() {
   const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
   const hasOpenTask = !!taskId
 
-  // Determine taskType based on device selection, URL agent filter, and selected task.
+  // Existing tasks always retain their persisted execution mode. Device selection
+  // only determines the mode for a new task.
   // When Wework URL is configured, default chat shows both chat and code agents but
   // remains chat-first until a code-only agent is selected inside ChatArea.
-  const taskType: TaskType =
-    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
-      ? 'task'
-      : isCodeAgentMode || isCodeTaskOpen
-        ? 'code'
-        : 'chat'
+  const taskType: TaskType = resolveChatPageTaskType({
+    taskId,
+    selectedTask: selectedTaskDetail,
+    selectedDeviceId,
+    isCodeAgentMode,
+  })
   const teamModeFilter: 'chat' | 'code' | 'task' | 'all' =
-    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
-      ? 'task'
-      : isCodeAgentMode || isCodeTaskOpen
-        ? 'code'
-        : hasWeworkCodeUrl
-          ? 'all'
-          : 'chat'
-  const showRepositorySelector =
-    !selectedDeviceId && selectedTaskDetail?.task_type !== 'task' && teamModeFilter !== 'chat'
+    taskType === 'task' ? 'task' : taskType === 'code' ? 'code' : hasWeworkCodeUrl ? 'all' : 'chat'
+  const showRepositorySelector = taskType !== 'task' && teamModeFilter !== 'chat'
 
   // Compute disabled reason for device mode
   const disabledReason =
-    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+    taskType === 'task' &&
+    selectedDeviceId &&
+    (!selectedDevice || selectedDevice.status === 'offline')
       ? t('devices:device_offline_cannot_send')
       : undefined
 

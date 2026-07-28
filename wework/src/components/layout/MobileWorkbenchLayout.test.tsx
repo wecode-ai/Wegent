@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -11,6 +11,10 @@ import type {
 import type { RuntimeWorkListResponse, UnifiedModel } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { MobileWorkbenchLayout as ActualMobileWorkbenchLayout } from './MobileWorkbenchLayout'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import '@/i18n'
 
 const paneSessionMockRef = vi.hoisted(() => ({
@@ -45,7 +49,12 @@ function createPaneStatus({
   return {
     sendPhase: isSubmitting ? 'submitting' : isAwaitingAssistant ? 'awaiting_assistant' : 'idle',
     activeAssistantMessage,
-    taskExecution: { known: taskRunning, running: taskRunning, status: null },
+    taskExecution: {
+      known: taskRunning,
+      running: taskRunning,
+      continuable: true,
+      status: null,
+    },
     isSubmitting,
     isAwaitingAssistant,
     isAssistantStreaming,
@@ -151,6 +160,7 @@ type LegacyMobileWorkbenchLayoutProps = {
   onCreateEnvironmentBranch?: (...args: unknown[]) => Promise<void>
   onUpgradeDevice?: (...args: unknown[]) => Promise<void>
   onRequestUserInputSubmit?: (...args: unknown[]) => Promise<boolean> | void
+  onRetryFailedMessage?: (message: WorkbenchMessage) => Promise<boolean>
 }
 
 function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
@@ -195,13 +205,23 @@ function MobileWorkbenchLayout(props: LegacyMobileWorkbenchLayoutProps) {
   const { workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
   // eslint-disable-next-line react-hooks/immutability -- Vitest hoisted mocks need the latest pane session before rendering the layout.
   paneSessionMockRef.current = paneSession
+  const lifecycleStore = useMemo(() => {
+    const store = new RuntimeTaskLifecycleStore('mobile-workbench-layout-test')
+    store.syncRuntimeWork(workbenchValue.state.runtimeWork)
+    if (workbenchValue.state.currentRuntimeTask) {
+      store.executorStarted(workbenchValue.state.currentRuntimeTask)
+    }
+    return store
+  }, [workbenchValue.state.currentRuntimeTask, workbenchValue.state.runtimeWork])
 
   return (
-    <WorkbenchContext.Provider value={workbenchValue}>
-      <WorkbenchPaneContext.Provider value={paneValue}>
-        <ActualMobileWorkbenchLayout />
-      </WorkbenchPaneContext.Provider>
-    </WorkbenchContext.Provider>
+    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+      <WorkbenchContext.Provider value={workbenchValue}>
+        <WorkbenchPaneContext.Provider value={paneValue}>
+          <ActualMobileWorkbenchLayout />
+        </WorkbenchPaneContext.Provider>
+      </WorkbenchContext.Provider>
+    </RuntimeTaskLifecycleProvider>
   )
 }
 
@@ -236,6 +256,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     listLocalSkills: vi.fn().mockResolvedValue([]),
     ...props.projectChat,
   }
+  const lifecycleTaskRunning = Boolean(state.currentRuntimeTask)
   const workbenchValue = {
     state,
     isStartupReady: true,
@@ -243,7 +264,6 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
       listWorkspaceEntries: vi.fn().mockResolvedValue({ path: '/', entries: [] }),
       readWorkspaceTextFile: vi.fn(),
     },
-    currentRuntimeTaskRunning: Boolean(state.currentRuntimeTask),
     cloudWorkStatus: {
       availability: 'available',
       checks: { teams: 'available', devices: 'available', runtimeWork: 'available' },
@@ -323,7 +343,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
     cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
     sendCurrentInput: props.onSend ?? vi.fn().mockResolvedValue(true),
-    retryFailedMessage: vi.fn().mockResolvedValue(true),
+    retryFailedMessage: props.onRetryFailedMessage ?? vi.fn().mockResolvedValue(true),
     pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
     loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
     revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
@@ -354,7 +374,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     status: createPaneStatus({
       messages: props.messages ?? [],
       sending: Boolean(state.isSending),
-      taskRunning: workbenchValue.currentRuntimeTaskRunning,
+      taskRunning: lifecycleTaskRunning,
     }),
     transcriptLoading: false,
     transcriptHasMoreBefore: false,
@@ -364,7 +384,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
     loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
     send: props.onSend ?? vi.fn().mockResolvedValue(undefined),
-    retryFailedMessage: vi.fn().mockResolvedValue(true),
+    retryFailedMessage: props.onRetryFailedMessage ?? vi.fn().mockResolvedValue(true),
     sendRequestUserInputResponse: props.onRequestUserInputSubmit ?? vi.fn().mockResolvedValue(true),
     ignoreRequestUserInput: vi.fn(),
     answeredRequestUserInputIds: new Set(),
@@ -843,6 +863,55 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('中')
+  })
+
+  test('retries a failed message immediately after selecting a replacement model', async () => {
+    const currentModel: UnifiedModel = {
+      name: 'gpt-current',
+      type: 'runtime',
+      displayName: 'GPT Current',
+      config: { ui: { family: 'gpt', modelLabel: 'GPT Current', sortOrder: 10 } },
+    }
+    const replacementModel: UnifiedModel = {
+      name: 'gpt-replacement',
+      type: 'runtime',
+      displayName: 'GPT Replacement',
+      config: { ui: { family: 'gpt', modelLabel: 'GPT Replacement', sortOrder: 20 } },
+    }
+    const failedMessage: WorkbenchMessage = {
+      id: 'failed-assistant',
+      role: 'assistant',
+      content: '',
+      status: 'failed',
+      error: 'model request failed',
+      createdAt: '2026-07-24T14:21:25.000+08:00',
+    }
+    const setSelectedModel = vi.fn()
+    const retryFailedMessage = vi.fn().mockResolvedValue(true)
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={baseState}
+        messages={[failedMessage]}
+        projectChat={{
+          ...baseProjectChat,
+          models: [currentModel, replacementModel],
+          selectedModel: currentModel,
+          setSelectedModel,
+        }}
+        onRetryFailedMessage={retryFailedMessage}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-error-switch-model-retry'))
+    await waitFor(() => expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument())
+    await userEvent.click(screen.getByTestId('model-option-gpt-replacement'))
+
+    await waitFor(() => expect(retryFailedMessage).toHaveBeenCalledWith(failedMessage))
+    expect(setSelectedModel).toHaveBeenCalledWith(replacementModel)
+    expect(setSelectedModel.mock.invocationCallOrder[0]).toBeLessThan(
+      retryFailedMessage.mock.invocationCallOrder[0]
+    )
   })
 
   test('shows the selected project in the mobile empty project selector', () => {
@@ -1351,45 +1420,51 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('shows running status on mobile runtime tasks', async () => {
+    const runningWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 1, name: 'github_wegent' },
+          totalTasks: 1,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              tasks: [
+                {
+                  taskId: 'codex-1',
+                  workspacePath: '/repo/Wegent',
+                  title: 'Fix reconnect',
+                  runtime: 'codex',
+                  running: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('mobile-layout-test')
+    lifecycleStore.syncRuntimeWork(runningWork)
+
     render(
-      <MobileWorkbenchLayout
-        state={{
-          ...baseState,
-          runtimeWork: {
-            projects: [
-              {
-                project: { id: 1, name: 'github_wegent' },
-                totalTasks: 1,
-                deviceWorkspaces: [
-                  {
-                    id: 91,
-                    deviceId: 'local-device',
-                    deviceName: 'Local Mac',
-                    deviceStatus: 'online',
-                    available: true,
-                    workspacePath: '/repo/Wegent',
-                    tasks: [
-                      {
-                        taskId: 'codex-1',
-                        workspacePath: '/repo/Wegent',
-                        title: 'Fix reconnect',
-                        runtime: 'codex',
-                        running: true,
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-            chats: [],
-            totalTasks: 1,
-          },
-        }}
-        messages={[]}
-        onSelectProject={vi.fn()}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-      />
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <MobileWorkbenchLayout
+          state={{
+            ...baseState,
+            runtimeWork: runningWork,
+          }}
+          messages={[]}
+          onSelectProject={vi.fn()}
+          onInputChange={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </RuntimeTaskLifecycleProvider>
     )
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))

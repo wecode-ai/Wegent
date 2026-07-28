@@ -1069,27 +1069,6 @@ class SqlAlchemyTaskStore:
             .all()
         )
 
-    def list_accessible_active_tasks_for_user(
-        self, db: Session, *, user_id: int
-    ) -> list[TaskResource]:
-        return (
-            db.query(TaskResource)
-            .outerjoin(
-                ResourceMember,
-                (ResourceMember.resource_id == TaskResource.id)
-                & (ResourceMember.resource_type == ResourceType.TASK)
-                & (ResourceMember.entity_type == "user")
-                & (ResourceMember.entity_id == str(user_id))
-                & (ResourceMember.status == MemberStatus.APPROVED),
-            )
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                (TaskResource.user_id == user_id) | (ResourceMember.id.isnot(None)),
-            )
-            .all()
-        )
-
     def count_non_deleted_by_ids(
         self,
         db: Session,

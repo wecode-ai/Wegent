@@ -223,8 +223,16 @@ class WeworkAuthSessionCreateResponse(BaseModel):
     session_id: str
     poll_token: str
     authorize_url: str
+    web_url: str
     expires_at: int
     poll_interval_seconds: int
+
+
+class WeworkWebConfigResponse(BaseModel):
+    """Web application metadata exposed to Wework desktop."""
+
+    web_url: str
+    socket_url: Optional[str] = None
 
 
 class WeworkAuthSessionPollResponse(BaseModel):

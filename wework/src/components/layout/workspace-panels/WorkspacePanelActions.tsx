@@ -14,7 +14,7 @@ import {
 } from '@/lib/local-workspace-openers'
 import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { getProjectDeviceId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
@@ -52,6 +52,9 @@ interface WorkspacePanelActionsProps {
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
   onOpenEnvironmentChangesReview: () => void
+  onDeliver?: () => void
+  todoLabel?: string
+  onManageTodo?: () => void
   rightPanelOpen: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
@@ -79,6 +82,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
   onOpenEnvironmentChangesReview,
+  onDeliver,
+  todoLabel,
+  onManageTodo,
   rightPanelOpen,
   bottomPanelOpen,
   onToggleRightPanel,
@@ -98,18 +104,20 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     codeServerProjectDeviceId && (currentProject || workspaceTarget)
   )
   const codeServerDevice = codeServerProjectDeviceId
-    ? devices.find(device => device.device_id === codeServerProjectDeviceId)
+    ? findWorkbenchDevice(devices, codeServerProjectDeviceId)
     : undefined
   const remoteWorkspaceSession = Boolean(
     workspaceTarget?.workspaceSource === 'remote' ||
     (codeServerDevice &&
-      (supportsCloudSessions(codeServerDevice) || supportsRemoteSessions(codeServerDevice)))
+      (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
+        supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId)))
   )
   const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
   const codeServerEnabled = Boolean(
     workspaceSessionApi &&
     codeServerDevice &&
-    (supportsCloudSessions(codeServerDevice) || supportsRemoteSessions(codeServerDevice))
+    (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
+      supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId))
   )
   const localWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
@@ -167,7 +175,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
-      await openExternalUrl(session.url)
+      await openExternalUrl(session.url, { target: 'system' })
     } catch (error) {
       console.error('Failed to start project IDE:', error)
       setIdeError(getStartFailedMessage(error))
@@ -215,6 +223,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onCheckoutBranch={onCheckoutEnvironmentBranch}
           onCreateBranch={onCreateEnvironmentBranch}
           onOpenChangesReview={onOpenEnvironmentChangesReview}
+          onDeliver={onDeliver}
+          todoLabel={todoLabel}
+          onManageTodo={onManageTodo}
         />
       )}
       {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (

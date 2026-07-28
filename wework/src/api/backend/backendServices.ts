@@ -1,5 +1,6 @@
 import { getToken } from '@/api/auth'
 import { createDeviceApi } from '@/api/devices'
+import { createDeliveryApi } from '@/api/deliveries'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
 import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
@@ -46,6 +47,7 @@ export function createBackendWorkbenchServices(
   const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
   const taskApi = createTaskApi(client)
+  const deliveryApi = createDeliveryApi(client)
   const socketClient = createSocketClient({
     socketBaseUrl: () => socketBaseUrl,
     path: socketPath,
@@ -63,6 +65,11 @@ export function createBackendWorkbenchServices(
     gitApi: createGitApi(client),
     taskApi,
     deviceApi,
+    deliveryApi,
+    projectSpaceApis: {
+      cloud: deliveryApi,
+      defaultLocation: 'cloud',
+    },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
     executorClient: createExecutorClientFromApis({
@@ -80,7 +87,6 @@ export function createBackendWorkbenchServices(
       startProjectCodeServer: projectApi.startCodeServerSession,
       startDeviceTerminal: deviceApi.startTerminal,
       startDeviceCodeServer: deviceApi.startCodeServer,
-      getDeviceVncConfig: deviceApi.getVncConfig,
       createRemoteTerminalClient: sessionId =>
         createRemoteTerminalClient(sessionId, {
           socketBaseUrl,

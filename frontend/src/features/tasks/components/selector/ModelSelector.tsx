@@ -20,7 +20,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
-import { ChevronDown, Video, ImageIcon } from 'lucide-react'
+import { ChevronDown, ImageIcon, Info, Video } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { ModelIcon } from '@/components/icons/ModelIcon'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -53,6 +53,7 @@ export type {
 
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection'
+import { ModelInformationContent } from './ModelInformationContent'
 
 // ============================================================================
 // Types
@@ -103,6 +104,49 @@ function getModelKey(model: Model): string {
 /** Get a stable sync key for comparing models across component boundaries */
 function getModelSyncKey(model: Model | null): string | null {
   return model ? getModelKey(model) : null
+}
+
+interface ModelInformationActionProps {
+  model: Model
+  label: string
+  unavailableLabel: string
+}
+
+function ModelInformationAction({ model, label, unavailableLabel }: ModelInformationActionProps) {
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false)
+  const button = (
+    <button
+      type="button"
+      data-testid={`model-info-${model.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
+      aria-label={label}
+      className="flex min-h-[44px] w-11 shrink-0 self-stretch items-center justify-center text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary md:min-h-0 md:w-8"
+    >
+      <Info className="h-4 w-4" aria-hidden="true" />
+    </button>
+  )
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent
+          side="right"
+          align="start"
+          sideOffset={8}
+          data-testid="model-details-preview"
+          className="w-[420px] max-w-[calc(100vw-32px)] overflow-visible rounded-lg bg-base p-5 text-text-primary"
+        >
+          <div className="mb-4">
+            <div className="truncate text-lg font-semibold">{model.displayName || model.name}</div>
+            <div className="mt-1 truncate text-sm text-text-muted">
+              {model.modelId || unavailableLabel}
+            </div>
+          </div>
+          <ModelInformationContent model={model} />
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
 }
 
 // ============================================================================
@@ -414,6 +458,20 @@ export default function ModelSelector({
                   </span>
                 ) : null
               }
+              renderModelActions={model => {
+                if (isMobile || modelCategoryType !== 'llm') return null
+
+                const label = `${t('common:models.view_details')}：${
+                  model.displayName || model.name
+                }`
+                return (
+                  <ModelInformationAction
+                    model={model}
+                    label={label}
+                    unavailableLabel={t('common:models.details_unavailable')}
+                  />
+                )
+              }}
               footer={
                 <div
                   data-testid="model-selector-footer"

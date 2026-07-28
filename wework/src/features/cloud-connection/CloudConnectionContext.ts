@@ -16,7 +16,8 @@ export interface CloudConnectionContextValue extends CloudConnectionSnapshot {
   serviceKey: string
   connectWithAuthorization: (
     backendUrl: string,
-    openAuthorizationUrl?: OpenCloudAuthorizationUrl
+    openAuthorizationUrl?: OpenCloudAuthorizationUrl,
+    socketBaseUrlOverride?: string
   ) => Promise<User>
   refreshUser: () => Promise<User | null>
   disconnect: () => void

@@ -6,8 +6,8 @@
 #   - Load a per-environment config file (scripts/ios-env/<ENV>.env).
 #   - Export the VITE_* variables consumed by src/config/runtime.ts.
 #
-# NOTE: iOS native builds have no Vite dev proxy, so VITE_API_BASE_URL and
-# VITE_SOCKET_BASE_URL MUST be absolute URLs reachable from the device/simulator.
+# NOTE: iOS native builds have no Vite dev proxy, so VITE_WEGENT_BACKEND_URL
+# MUST be an absolute URL reachable from the device/simulator.
 
 # Resolve directories relative to this library file.
 WEWORK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,10 +53,7 @@ print_wework_env_summary() {
   local env_name="$1"
   echo "  ENV=$env_name"
   echo "  ENV_FILE=${WEWORK_RESOLVED_ENV_FILE:-<none>}"
-  echo "  VITE_API_BASE_URL=${VITE_API_BASE_URL:-<unset>}"
-  echo "  VITE_SOCKET_BASE_URL=${VITE_SOCKET_BASE_URL:-<unset>}"
   echo "  VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
-  echo "  VITE_SOCKET_PATH=${VITE_SOCKET_PATH:-<unset>}"
   echo "  VITE_APP_BASE_PATH=${VITE_APP_BASE_PATH:-<unset>}"
   echo "  APPLE_DEVELOPMENT_TEAM=${APPLE_DEVELOPMENT_TEAM:-<unset>}"
 }

@@ -60,7 +60,7 @@ describe('runtimeTaskSidebarHelpers', () => {
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
   })
 
-  test('does not reorder a running task when streaming updates change updatedAt', () => {
+  test('uses the latest activity when a completed task resumes and updates again', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
@@ -90,8 +90,8 @@ describe('runtimeTaskSidebarHelpers', () => {
     }
 
     expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
-      'completed',
       'running',
+      'completed',
     ])
   })
 
@@ -119,6 +119,28 @@ describe('runtimeTaskSidebarHelpers', () => {
       runtimeHandle: {
         threadId: 'provider-session-1',
       },
+    })
+  })
+
+  test('uses a chat task path when its grouping workspace is a git worktree', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/worktrees/277/repo',
+      available: true,
+      tasks: [],
+    }
+
+    expect(
+      getRuntimeTaskAddress(workspace, {
+        taskId: 'standalone-chat',
+        workspacePath: '/home/user/Documents/Codex/standalone-chat',
+        title: 'Standalone chat',
+        runtime: 'codex',
+      })
+    ).toMatchObject({
+      deviceId: 'device-1',
+      taskId: 'standalone-chat',
+      workspacePath: '/home/user/Documents/Codex/standalone-chat',
     })
   })
 

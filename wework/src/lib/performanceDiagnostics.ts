@@ -121,7 +121,7 @@ export function isPerformanceDiagnosticsShortcut(event: KeyboardEvent): boolean 
     event.shiftKey &&
     event.altKey &&
     (event.metaKey || event.ctrlKey) &&
-    event.code === `Key${TOGGLE_SHORTCUT_KEY}`
+    (event.code === `Key${TOGGLE_SHORTCUT_KEY}` || event.key.toUpperCase() === TOGGLE_SHORTCUT_KEY)
   )
 }
 

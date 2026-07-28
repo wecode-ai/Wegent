@@ -18,8 +18,9 @@ use super::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
     notification_mapping::{
-        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        log_dropped_notification, log_stream_text_mapping, log_text_mapping,
+        log_text_mapping_metadata, map_text_chunk, map_tool_output_delta, notification_item_id,
+        TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -34,6 +35,24 @@ use super::{
 
 const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
 const MAX_TOOL_OUTPUT_BUFFER_BYTES: usize = 512 * 1024;
+
+fn codex_error_will_retry(params: &Value) -> bool {
+    params
+        .get("willRetry")
+        .or_else(|| params.get("will_retry"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn codex_retry_message(params: &Value) -> String {
+    params
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .or_else(|| params.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("Reconnecting")
+        .to_owned()
+}
 
 pub(crate) fn emit_response_event(
     event_tx: &Option<broadcast::Sender<Value>>,
@@ -159,10 +178,14 @@ pub(crate) struct CodexNotificationEventMapper {
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
     final_text_offset: usize,
+    final_message_id: Option<String>,
+    final_message_saw_delta: bool,
+    final_message_completed: bool,
     plan_blocks: BTreeMap<String, String>,
     tool_output_deltas: BTreeMap<String, String>,
     completed_user_message_count: usize,
     goal_status: Option<String>,
+    reconnecting_block_id: Option<String>,
 }
 
 struct ProcessTextStream {
@@ -189,6 +212,9 @@ impl CodexNotificationEventMapper {
             request,
         };
         let notification = codex_notification(&message);
+        if notification.method != "error" {
+            self.clear_reconnecting(&emit_context);
+        }
         match notification.method.as_str() {
             "item/agentMessage/delta" => {
                 if self.is_subagent_delta(notification.params) {
@@ -204,7 +230,9 @@ impl CodexNotificationEventMapper {
                     phase.as_deref(),
                 );
             }
-            "item/reasoning/delta" | "item/reasoningSummary/delta" => {
+            "item/reasoning/delta"
+            | "item/reasoningSummary/delta"
+            | "item/reasoning/summaryTextDelta" => {
                 if self.is_subagent_delta(notification.params) {
                     return;
                 }
@@ -386,7 +414,7 @@ impl CodexNotificationEventMapper {
                 );
             }
             "thread/started" => {
-                self.final_text_offset = 0;
+                self.reset_final_text();
                 self.observe_root_thread(notification.params);
             }
             "turn/started" if self.has_active_goal() => {
@@ -430,6 +458,9 @@ impl CodexNotificationEventMapper {
                     }),
                 );
             }
+            "error" if codex_error_will_retry(notification.params) => {
+                self.emit_reconnecting(&emit_context, notification.params);
+            }
             _ => {
                 log_unhandled_codex_raw_message(
                     local_task_id,
@@ -451,6 +482,53 @@ impl CodexNotificationEventMapper {
         self.goal_status.as_deref() == Some("active")
     }
 
+    fn emit_reconnecting(&mut self, context: &EventEmitContext<'_>, params: &Value) {
+        if self.reconnecting_block_id.is_some() {
+            return;
+        }
+        let id = format!(
+            "reconnecting-{}-{}",
+            context.local_task_id, context.request.subtask_id
+        );
+        self.reconnecting_block_id = Some(id.clone());
+        emit_response_event(
+            context.event_tx,
+            context.device_id,
+            "response.block.created",
+            context.local_task_id,
+            context.request,
+            json!({
+                "block": {
+                    "id": id,
+                    "type": "tool",
+                    "tool_name": "runtime_reconnecting",
+                    "tool_input": {
+                        "message": codex_retry_message(params),
+                    },
+                    "status": "streaming",
+                    "timestamp": now_ms(),
+                }
+            }),
+        );
+    }
+
+    fn clear_reconnecting(&mut self, context: &EventEmitContext<'_>) {
+        let Some(id) = self.reconnecting_block_id.take() else {
+            return;
+        };
+        emit_response_event(
+            context.event_tx,
+            context.device_id,
+            "response.block.updated",
+            context.local_task_id,
+            context.request,
+            json!({
+                "block_id": id,
+                "updates": { "status": "done" }
+            }),
+        );
+    }
+
     fn emit_applied_guidance(&mut self, context: &EventEmitContext<'_>, params: &Value) -> bool {
         let item = params.get("item").unwrap_or(params);
         if item_type(item).as_str() != "usermessage" {
@@ -462,7 +540,7 @@ impl CodexNotificationEventMapper {
             return true;
         }
 
-        self.final_text_offset = 0;
+        self.reset_final_text();
         self.reset_process_text();
 
         emit_response_event(
@@ -691,7 +769,7 @@ impl CodexNotificationEventMapper {
                 );
                 true
             }
-            Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
+            Ok(Some(TextChunkMapping::FinalDelta { item_id, delta })) => {
                 log_stream_text_mapping(
                     emit_context.local_task_id,
                     method,
@@ -701,8 +779,11 @@ impl CodexNotificationEventMapper {
                     &delta,
                 );
                 self.reset_process_text();
+                self.begin_final_message(item_id);
                 let offset = self.final_text_offset;
                 self.final_text_offset += delta.chars().count();
+                self.final_message_saw_delta = true;
+                self.final_message_completed = false;
                 emit_response_event(
                     emit_context.event_tx,
                     emit_context.device_id,
@@ -736,16 +817,38 @@ impl CodexNotificationEventMapper {
                 );
                 true
             }
-            Ok(Some(TextChunkMapping::FinalCompleted)) => {
-                log_text_mapping(
-                    emit_context.local_task_id,
-                    method,
-                    "ignore_completed_final_snapshot",
-                    resolved_phase,
-                    params,
-                    "",
-                );
+            Ok(Some(TextChunkMapping::FinalCompleted { item_id, text })) => {
+                self.begin_final_message(item_id);
+                if !self.final_message_saw_delta && !self.final_message_completed {
+                    log_text_mapping_metadata(
+                        emit_context.local_task_id,
+                        method,
+                        "emit_completed_final_without_delta",
+                        resolved_phase,
+                        params,
+                        text.len(),
+                    );
+                    emit_response_event(
+                        emit_context.event_tx,
+                        emit_context.device_id,
+                        "response.output_text.delta",
+                        emit_context.local_task_id,
+                        emit_context.request,
+                        json!({"delta": text, "offset": 0}),
+                    );
+                } else {
+                    log_text_mapping(
+                        emit_context.local_task_id,
+                        method,
+                        "ignore_completed_final_snapshot",
+                        resolved_phase,
+                        params,
+                        "",
+                    );
+                }
                 self.final_text_offset = 0;
+                self.final_message_saw_delta = false;
+                self.final_message_completed = true;
                 true
             }
             Ok(None) => false,
@@ -761,6 +864,25 @@ impl CodexNotificationEventMapper {
                 true
             }
         }
+    }
+
+    fn begin_final_message(&mut self, item_id: Option<String>) {
+        let resolved_item_id = item_id.or_else(|| self.final_message_id.clone());
+        if self.final_message_id == resolved_item_id {
+            return;
+        }
+
+        self.final_message_id = resolved_item_id;
+        self.final_text_offset = 0;
+        self.final_message_saw_delta = false;
+        self.final_message_completed = false;
+    }
+
+    fn reset_final_text(&mut self) {
+        self.final_text_offset = 0;
+        self.final_message_id = None;
+        self.final_message_saw_delta = false;
+        self.final_message_completed = false;
     }
 
     fn emit_plan_delta(
@@ -1683,6 +1805,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn emits_one_transient_block_while_codex_reconnects() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+        let retry = |attempt| {
+            json!({
+                "method": "error",
+                "params": {
+                    "error": { "message": format!("Reconnecting... {attempt}/5") },
+                    "willRetry": true
+                }
+            })
+        };
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &request,
+            retry(1),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &request,
+            retry(2),
+        );
+
+        let created = event_rx.try_recv().expect("reconnecting block");
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(
+            created["payload"]["data"]["block"]["tool_name"],
+            "runtime_reconnecting"
+        );
+        assert!(event_rx.try_recv().is_err());
+
+        mapper.map(
+            &Some(event_tx),
+            "device",
+            "task",
+            &request,
+            json!({"method": "turn/diff/updated", "params": {}}),
+        );
+
+        let cleared = event_rx.try_recv().expect("reconnecting block update");
+        assert_eq!(cleared["event"], "response.block.updated");
+        assert_eq!(cleared["payload"]["data"]["updates"]["status"], "done");
+    }
+
+    #[test]
     fn emits_guidance_applied_for_second_completed_user_message() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -2576,15 +2753,29 @@ mod tests {
     }
 
     #[test]
-    fn ignores_legacy_final_agent_message_snapshots_for_live_delta_stream() {
+    fn ignores_legacy_final_agent_message_snapshots_after_live_delta_stream() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
             ..ExecutionRequest::default()
         };
+        let mut mapper = CodexNotificationEventMapper::default();
 
-        map_codex_notification(
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": "Done."
+                }
+            }),
+        );
+        mapper.map(
             &Some(event_tx),
             "device-1",
             "local-1",
@@ -2599,6 +2790,12 @@ mod tests {
             }),
         );
 
+        let event = event_rx
+            .try_recv()
+            .expect("live final delta should be emitted");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(event["payload"]["data"]["delta"], "Done.");
+        assert_eq!(event["payload"]["data"]["offset"], 0);
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -3091,6 +3288,93 @@ mod tests {
     }
 
     #[test]
+    fn emits_completed_final_agent_message_when_no_delta_was_received() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Completed without a streaming delta."
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("final text event should be emitted");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(
+            event["payload"]["data"]["delta"],
+            "Completed without a streaming delta."
+        );
+        assert_eq!(event["payload"]["data"]["offset"], 0);
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn emits_each_completed_final_agent_message_in_the_same_turn() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        for (id, text) in [
+            ("msg-first", "先完成真机验证。"),
+            ("msg-second", "主路径验证通过。"),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device-1",
+                "local-1",
+                &request,
+                json!({
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": id,
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": text
+                        }
+                    }
+                }),
+            );
+        }
+
+        let first = event_rx
+            .try_recv()
+            .expect("first final text event should be emitted");
+        let second = event_rx
+            .try_recv()
+            .expect("second final text event should be emitted");
+
+        assert_eq!(first["payload"]["data"]["delta"], "先完成真机验证。");
+        assert_eq!(first["payload"]["data"]["offset"], 0);
+        assert_eq!(second["payload"]["data"]["delta"], "主路径验证通过。");
+        assert_eq!(second["payload"]["data"]["offset"], 0);
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn maps_codex_commentary_then_tool_then_unphased_final_without_duplication() {
         let (event_tx, mut event_rx) = broadcast::channel(8);
         let request = ExecutionRequest {
@@ -3377,6 +3661,123 @@ mod tests {
         assert_eq!(event["event"], "response.block.updated");
         assert_eq!(event["payload"]["data"]["block_id"], "image-view-1");
         assert_eq!(event["payload"]["data"]["updates"]["status"], "done");
+    }
+
+    #[test]
+    fn completes_the_original_tool_across_interleaved_text_and_tool_events() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "command-item-1",
+                        "callId": "call-1",
+                        "type": "commandExecution",
+                        "command": "pwd",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "message-1",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": ""
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "message-1",
+                    "delta": "Checking another command."
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "command-item-2",
+                        "callId": "call-2",
+                        "type": "commandExecution",
+                        "command": "git status",
+                        "status": "inProgress"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "command-item-1",
+                        "callId": "call-1",
+                        "type": "commandExecution",
+                        "command": "pwd",
+                        "status": "completed",
+                        "aggregatedOutput": "/workspace\n",
+                        "exitCode": 0
+                    }
+                }
+            }),
+        );
+
+        let first_tool = event_rx.try_recv().expect("first tool start");
+        let process_text = event_rx.try_recv().expect("interleaved text");
+        let second_tool = event_rx.try_recv().expect("second tool start");
+        let first_tool_done = event_rx.try_recv().expect("first tool completion");
+
+        assert_eq!(first_tool["event"], "response.block.created");
+        assert_eq!(first_tool["payload"]["data"]["block"]["id"], "call-1");
+        assert_eq!(process_text["event"], "response.block.created");
+        assert_eq!(process_text["payload"]["data"]["block"]["type"], "text");
+        assert_eq!(second_tool["event"], "response.block.created");
+        assert_eq!(second_tool["payload"]["data"]["block"]["id"], "call-2");
+        assert_eq!(first_tool_done["event"], "response.block.updated");
+        assert_eq!(first_tool_done["payload"]["data"]["block_id"], "call-1");
+        assert_eq!(
+            first_tool_done["payload"]["data"]["updates"]["status"],
+            "done"
+        );
+        assert!(event_rx.try_recv().is_err());
     }
 
     #[test]

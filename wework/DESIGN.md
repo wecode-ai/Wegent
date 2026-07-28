@@ -151,7 +151,8 @@ from `8px` through `24px`, in whole-pixel steps. Changing UI size scales every
 UI and heading token by `configuredSize / 14` and rounds each result to the
 nearest pixel. Code size is independent and applies directly to code blocks,
 diffs, editors, and terminals. The increase/decrease-font-size shortcuts step
-both configured values together while respecting their separate limits.
+both configured values together while respecting their separate limits. The
+reset-font-size shortcut restores the default `14px` UI and `12px` code sizes.
 
 Product code must consume the semantic Tailwind sizes, `heading-*` classes,
 `text-chat`, `text-code`, or the corresponding CSS variables. Arbitrary font
@@ -164,6 +165,12 @@ that cannot inherit Wework variables requires a narrow documented exception.
 The primary weight is regular. Codex uses subtle intermediate platform weights,
 but Wework maps them to `400` for body and `500` for emphasis. Use `600`
 sparingly and avoid `700` in product chrome.
+
+Entered composer text uses the primary text color so it reads as content. Normal
+menu labels and composer actions such as the quick-phrase trigger also use the
+primary text color, but remain at regular weight so they stay crisp without
+appearing bold. Descriptions, metadata, and shortcuts use secondary or tertiary
+text colors.
 
 Keep sentence case. Do not use uppercase labels for visual hierarchy. Use no
 more than three type roles in a compact surface. Truncate repeated secondary
@@ -453,6 +460,9 @@ The active-conversation capture is also normative:
   are quiet and subordinate.
 - The bottom Composer shares the thread column and stays visible. It uses the
   same input hierarchy as home but without the home project-selector layer.
+- When opening, closing, or resizing a side panel reflows conversation content,
+  preserve the reader's visible message or content anchor. Continue following
+  the bottom only when the reader was already at the bottom before the reflow.
 - When the right work panel is open, render it as a floating `12px`-radius white
   panel near the top-right with a subtle ring and shadow. “输出” and “来源” are
   stacked sections separated by a quiet hairline, each with its own trailing add
@@ -501,6 +511,9 @@ recipe closely:
 - attachment inset is `8px`, with the nested radius derived from the outer
   composer radius rather than chosen independently;
 - footer controls use compact `4px–8px` gaps and `28px` actions;
+- desktop project, quick-phrase, model, execution-mode, and branch selectors
+  use the same `text-sm` role at regular weight; mobile variants may retain
+  their larger touch-oriented typography;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
@@ -547,6 +560,15 @@ Menu items use `14px` text, an `8px` radius, `8px–10px` horizontal padding,
 `4px` vertical padding, a `6px` icon gap, and a neutral hover/focus surface.
 Icons default to `16px` at `75%` opacity and become fully visible on hover or
 focus. Disabled items use `50%` opacity and do not activate.
+
+In the narrow environment popover, workspace and executor metadata form one
+compact two-line item. Lead with a folder icon and the recognizable workspace
+directory name. For local execution, show the executor name beside a laptop
+icon; for cloud execution, show the device IP beside a cloud icon. Keep
+execution-location and field labels available to assistive
+technology and tooltips instead of repeating them visually. Keep the complete
+workspace path available through the tooltip, accessible name, and copy action;
+copy feedback must not change the row's geometry.
 
 Use a menu for commands, a popover for a compact interactive surface, and a
 dialog when a decision blocks continuation. Do not substitute one merely to get
@@ -640,10 +662,32 @@ semantics for all three.
 - Back returns to the previous meaningful context; Close dismisses a layer.
 - Opening or closing sidebars, previews, terminals, and settings preserves the
   active task and unsent composer input.
+- Opening the bottom workspace panel starts or restores its Terminal directly;
+  it must not show an IDE launcher or require an intermediate tool choice.
+- Workspace IDEs and native editors launch only from the titlebar “Open
+  location” control, including its local-editor picker and remote code-server
+  behavior.
 - Resizable panes keep useful minimum sizes and preserve user-owned allocation
   where the feature supports it.
 - External URLs, applications, and windows must be clear before activation.
 - Essential information and actions cannot exist only on hover.
+
+### 7.3 Runtime and conversation state
+
+- Keep task execution lifecycle state separate from conversation delivery
+  state. The runtime task state machine owns execution, turns, and goals; the
+  conversation queue reducer owns queued messages and guidance delivery.
+- Runtime conversation events are keyed by task address and must update the
+  shared conversation cache even when that task's pane is not active or
+  mounted.
+- A guidance item remains pending until a matching runtime
+  `guidance_applied` event settles it. Match the client identifier first and
+  use guidance content only when the runtime replaces that identifier.
+- UI labels such as “Guiding” are projections of typed delivery state. Do not
+  use localized display text as state or transition input.
+- Navigation between tasks must not leak queue state into the newly active
+  conversation, and reopening a background task must show every event received
+  while it was inactive.
 
 ## 8. Motion
 
@@ -678,6 +722,9 @@ Change composition rather than proportionally shrinking desktop UI.
 - Mobile interactive targets are at least `44px × 44px`.
 - Desktop exceptional dense targets never fall below WCAG's `24px` floor.
 - Collapse lower-priority labels before controls overlap.
+- Development-only status and diagnostic overlays default to a compact control;
+  reveal full text and details only after deliberate activation, and never cover
+  primary controls.
 - Switch panes to overlays or sequential views before the main content becomes
   unusable.
 - Test long Chinese and English text, constrained height, system scaling, and

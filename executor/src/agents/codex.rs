@@ -6,7 +6,6 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     future::Future,
-    io::{self, Write},
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
@@ -27,15 +26,13 @@ use tokio::{
 use crate::{
     agents::runtime_capabilities,
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
-    codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
-    logging::{log_executor_event, task_fields, wework_debug_log},
+    logging::{log_executor_event, task_fields},
     process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
-    runtime_work::codex_stream_debug_enabled,
     server::{
-        executor_loopback_base_url,
+        codex_model_catalog, executor_loopback_base_url,
         local_model_proxy::{self, LocalModelProxyUpstream},
     },
 };
@@ -47,11 +44,9 @@ const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
-const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
-const CODEX_HOME_ENV: &str = "CODEX_HOME";
-const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+const CODEX_ROUTER_API_KEY: &str = "wework-local-router";
 const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_BINARY",
     "WEGENT_EXECUTOR_HOME",
@@ -65,12 +60,10 @@ const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_B
 const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
+const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
-const CODEX_RAW_LOG_PREVIEW_CHARS: usize = 1200;
-const CODEX_RAW_LOG_LARGE_STRING_CHARS: usize = 2048;
-const CODEX_RAW_LOG_STRING_PREVIEW_CHARS: usize = 240;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
 The messages before this boundary are inherited reference context from the main thread.
@@ -85,6 +78,7 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
+
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -93,6 +87,16 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/webp",
     "image/bmp",
 ];
+
+#[path = "codex/diagnostics.rs"]
+mod diagnostics;
+#[path = "codex/home.rs"]
+mod home;
+
+use diagnostics::{json_scalar_field, json_string_field};
+#[cfg(test)]
+use home::WEGENT_CODEX_HOME_ENV;
+use home::{prepare_wework_codex_home, wework_codex_home, CODEX_HOME_ENV};
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -181,90 +185,15 @@ struct ActiveCodexTurn {
 pub struct CodexAppServerTurn {
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub goal_status: Option<String>,
+    pub goal_status_observed: bool,
 }
 
-pub type CodexRequestUserInputReceiver = mpsc::Receiver<Value>;
+#[path = "codex/interaction.rs"]
+mod interaction;
 
-#[derive(Default)]
-struct InteractionAnswerRouterState {
-    pending: HashMap<String, oneshot::Sender<Result<Value, String>>>,
-    buffered: HashMap<String, Value>,
-    closed: bool,
-}
-
-struct InteractionAnswerRouter {
-    state: Arc<Mutex<InteractionAnswerRouterState>>,
-}
-
-impl InteractionAnswerRouter {
-    fn new(mut receiver: CodexRequestUserInputReceiver) -> Arc<Self> {
-        let router = Arc::new(Self {
-            state: Arc::new(Mutex::new(InteractionAnswerRouterState::default())),
-        });
-        let state = router.state.clone();
-        tokio::spawn(async move {
-            while let Some(answer) = receiver.recv().await {
-                let mut state = state.lock().await;
-                let key = interaction_answer_key(&answer).or_else(|| {
-                    (state.pending.len() == 1)
-                        .then(|| state.pending.keys().next().cloned())
-                        .flatten()
-                });
-                let Some(key) = key else {
-                    continue;
-                };
-                if let Some(sender) = state.pending.remove(&key) {
-                    let _ = sender.send(Ok(answer));
-                } else {
-                    state.buffered.insert(key, answer);
-                }
-            }
-            let mut state = state.lock().await;
-            state.closed = true;
-            for (_, sender) in state.pending.drain() {
-                let _ = sender.send(Err("request_user_input response channel closed".to_owned()));
-            }
-        });
-        router
-    }
-
-    async fn receive(&self, key: String) -> Result<Value, String> {
-        let receiver = {
-            let mut state = self.state.lock().await;
-            if let Some(answer) = state.buffered.remove(&key) {
-                return Ok(answer);
-            }
-            if state.closed {
-                return Err("request_user_input response router closed".to_owned());
-            }
-            let (sender, receiver) = oneshot::channel();
-            if state.pending.insert(key, sender).is_some() {
-                return Err("duplicate pending interaction correlation key".to_owned());
-            }
-            receiver
-        };
-        receiver
-            .await
-            .map_err(|_| "request_user_input response router closed".to_owned())?
-    }
-}
-
-fn interaction_answer_key(answer: &Value) -> Option<String> {
-    answer
-        .get("requestId")
-        .or_else(|| answer.get("request_id"))
-        .or_else(|| answer.get("itemId"))
-        .or_else(|| answer.get("item_id"))
-        .and_then(interaction_value_key)
-}
-
-fn interaction_value_key(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
-        Value::Number(value) => Some(value.to_string()),
-        _ => None,
-    }
-}
+pub use interaction::CodexRequestUserInputReceiver;
+use interaction::{interaction_value_key, InteractionAnswerRouter};
 
 #[derive(Debug, Clone)]
 pub struct CodexAppServerEngine {
@@ -535,19 +464,10 @@ impl CodexAppServerClient {
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
-        let result: Result<(), String> = async {
-            let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
-            let message = json!({
-                "method": "thread/unsubscribe",
-                "id": request_id,
-                "params": {"threadId": thread_id},
-            });
-            let write_result = handle.write_message(message).await;
-            handle.remove_pending(request_id).await;
-            drop(response_rx);
-            write_result
-        }
-        .await;
+        let result = self
+            .request("thread/unsubscribe", json!({"threadId": thread_id}))
+            .await
+            .map(|_| ());
         if let Err(error) = result {
             log_executor_event(
                 "codex shared thread unsubscribe failed",
@@ -741,7 +661,7 @@ async fn start_persistent_codex_app_server(
             rpc.notify("initialized", json!({})),
         )
         .await?;
-        Ok((rpc.stdin, rpc.stdout, rpc.next_id))
+        Ok(rpc.into_parts())
     }
     .await;
 
@@ -779,11 +699,55 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
+    launch_config
+        .config_overrides
+        .extend(codex_router_provider_overrides());
     launch_config.config_overrides.extend([
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
+        // MCP tools are deferred behind tool_search by the bundled Codex. The
+        // search tool must be enabled at persistent app-server startup; enabling
+        // it per thread is too late because feature registration is process-wide.
+        "features.tool_search=true".to_owned(),
     ]);
     launch_config
+        .config_overrides
+        .extend(codex_streaming_patch_config_overrides());
+    launch_config
+}
+
+fn codex_router_provider_overrides() -> Vec<String> {
+    let local_base_url = executor_loopback_base_url()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
+    let provider = codex_model_catalog::PROVIDER_ID;
+    let (auth_command, auth_args) = codex_router_auth_command();
+    vec![
+        format!("model_provider={provider}"),
+        format!("model_providers.{provider}.name=\"Wework model router\""),
+        format!("model_providers.{provider}.base_url=\"{local_base_url}/v1/codex-router\""),
+        format!("model_providers.{provider}.wire_api=\"responses\""),
+        format!(
+            "model_providers.{provider}.auth.command={}",
+            toml_value(auth_command)
+        ),
+        format!(
+            "model_providers.{provider}.auth.args={}",
+            serde_json::to_string(&auth_args).expect("router auth args must serialize")
+        ),
+    ]
+}
+
+#[cfg(unix)]
+fn codex_router_auth_command() -> (&'static str, Vec<&'static str>) {
+    ("/usr/bin/printf", vec!["%s", CODEX_ROUTER_API_KEY])
+}
+
+#[cfg(windows)]
+fn codex_router_auth_command() -> (&'static str, Vec<&'static str>) {
+    (
+        "cmd.exe",
+        vec!["/D", "/S", "/C", "<nul set /p =wework-local-router"],
+    )
 }
 
 async fn read_persistent_codex_app_server_stdout(
@@ -935,6 +899,13 @@ async fn run_codex_app_server_turn_on_shared_client(
             .map(str::to_owned);
         let resuming_thread = resume_thread_id.is_some();
         let forking_thread = fork_thread_id.is_some();
+        if direct_thread_id.is_none() {
+            if let Some(thread_id) = resume_thread_id.as_deref() {
+                // Release this client's idle subscription before resume. The task-scoped local
+                // router keeps a stable provider URL, so model changes only update its upstream.
+                client.unsubscribe_thread(thread_id).await;
+            }
+        }
         let thread_id = if let Some(thread_id) = direct_thread_id {
             state.set_root_thread_id(thread_id.clone());
             let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -966,6 +937,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared thread request started", &thread_fields);
             let thread = client.request(thread_operation, thread_params).await?;
             validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_model_provider(
+                thread_operation,
+                &thread,
+                launch_config.model_provider.as_deref(),
+            )?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -979,6 +955,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared thread request finished", &thread_fields);
             thread_id
         };
+        bind_local_proxy_thread(&launch_config, &thread_id)?;
         subscribed_thread_id = Some(thread_id.clone());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
@@ -1006,17 +983,13 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;
                 let goal_response = client.request("thread/goal/set", goal_params).await?;
-                if goal_response_goal_is_active(&goal_response) {
-                    state.set_goal_status("active");
-                }
+                sync_goal_status_from_response(&mut state, &goal_response);
             } else if resuming_thread {
                 if let Ok(goal_response) = client
                     .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
                     .await
                 {
-                    if goal_response_goal_is_active(&goal_response) {
-                        state.set_goal_status("active");
-                    }
+                    sync_goal_status_from_response(&mut state, &goal_response);
                 }
             }
 
@@ -1042,7 +1015,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(cwd) = request.cwd() {
             turn_fields.push(("cwd", cwd.to_owned()));
         }
-        if let Some(model) = model_id(request) {
+        if let Some(model) = codex_request_model(request) {
             turn_fields.push(("model", model));
         }
         log_executor_event("codex shared turn request started", &turn_fields);
@@ -1099,7 +1072,13 @@ async fn run_codex_app_server_turn_on_shared_client(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex shared turn request finished", &turn_fields);
-        Ok(CodexAppServerTurn { thread_id, outcome })
+        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        Ok(CodexAppServerTurn {
+            thread_id,
+            outcome,
+            goal_status,
+            goal_status_observed,
+        })
     }
     .await;
 
@@ -1226,6 +1205,11 @@ pub async fn run_codex_app_server_turn_with_cancel(
             )
             .await?;
             validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_model_provider(
+                thread_operation,
+                &thread,
+                launch_config.model_provider.as_deref(),
+            )?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -1239,6 +1223,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             log_executor_event("codex thread request finished", &thread_fields);
             thread_id
         };
+        bind_local_proxy_thread(&launch_config, &thread_id)?;
         if let Some(sender) = &notifications {
             let _ = sender.send(json!({
                 "method": "thread/started",
@@ -1264,12 +1249,13 @@ pub async fn run_codex_app_server_turn_with_cancel(
         if !request.ephemeral {
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                with_rpc_timeout(
+                let goal_response = with_rpc_timeout(
                     "thread/goal/set",
                     timeout_seconds,
                     rpc.request("thread/goal/set", goal_params, &mut state),
                 )
                 .await?;
+                sync_goal_status_from_response(&mut state, &goal_response);
             }
             if let Some(name) = initial_thread_name
                 .as_deref()
@@ -1297,7 +1283,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         if let Some(cwd) = request.cwd() {
             turn_fields.push(("cwd", cwd.to_owned()));
         }
-        if let Some(model) = model_id(request) {
+        if let Some(model) = codex_request_model(request) {
             turn_fields.push(("model", model));
         }
         log_executor_event("codex turn request started", &turn_fields);
@@ -1335,7 +1321,13 @@ pub async fn run_codex_app_server_turn_with_cancel(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex turn request finished", &turn_fields);
-        Ok(CodexAppServerTurn { thread_id, outcome })
+        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        Ok(CodexAppServerTurn {
+            thread_id,
+            outcome,
+            goal_status,
+            goal_status_observed,
+        })
     }
     .await;
 
@@ -1702,12 +1694,15 @@ fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> O
         .or_else(|| string_value(params, "turn_id"))
 }
 
-fn goal_response_goal_is_active(response: &Value) -> bool {
-    response
+fn sync_goal_status_from_response(state: &mut CodexRunState, response: &Value) {
+    match response
         .get("goal")
         .and_then(|goal| goal.get("status"))
         .and_then(Value::as_str)
-        .is_some_and(|status| status.eq_ignore_ascii_case("active"))
+    {
+        Some(status) => state.set_goal_status(status),
+        None => state.clear_goal_status(),
+    }
 }
 
 fn string_value(value: &Value, key: &str) -> Option<String> {
@@ -1749,99 +1744,6 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-fn wework_codex_home() -> PathBuf {
-    env::var_os(WEGENT_CODEX_HOME_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executor_home().join("codex"))
-}
-
-fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String> {
-    fs::create_dir_all(codex_home).map_err(|error| {
-        format!(
-            "failed to create Codex home {}: {error}",
-            codex_home.display()
-        )
-    })?;
-    link_user_codex_auth(codex_home)?;
-    normalize_wework_codex_config(codex_home)
-}
-
-fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
-    use toml_edit::{value, DocumentMut};
-
-    let config_path = codex_home.join("config.toml");
-    let content = fs::read_to_string(&config_path).unwrap_or_default();
-    let mut document = content.parse::<DocumentMut>().map_err(|error| {
-        format!(
-            "failed to parse Codex config {}: {error}",
-            config_path.display()
-        )
-    })?;
-    let legacy_instructions = document
-        .get("instructions")
-        .and_then(|item| item.as_str())
-        .unwrap_or_default();
-    let developer_instructions = document
-        .get("developer_instructions")
-        .and_then(|item| item.as_str())
-        .unwrap_or_default();
-    let user_instructions = if legacy_instructions.trim().is_empty() {
-        strip_wework_browser_instructions(developer_instructions).to_owned()
-    } else {
-        legacy_instructions.trim().to_owned()
-    };
-
-    document.remove("instructions");
-    document["developer_instructions"] =
-        value(combined_codex_developer_instructions(&user_instructions));
-    if document
-        .get("personality")
-        .and_then(|item| item.as_str())
-        .is_none()
-    {
-        document["personality"] = value("pragmatic");
-    }
-
-    let next_content = document.to_string();
-    if next_content == content {
-        return Ok(());
-    }
-    let temporary_path = config_path.with_extension("toml.tmp");
-    fs::write(&temporary_path, next_content).map_err(|error| {
-        format!(
-            "failed to write Codex config {}: {error}",
-            temporary_path.display()
-        )
-    })?;
-    if let Ok(metadata) = fs::metadata(&config_path) {
-        fs::set_permissions(&temporary_path, metadata.permissions()).map_err(|error| {
-            format!(
-                "failed to preserve Codex config permissions {}: {error}",
-                temporary_path.display()
-            )
-        })?;
-    }
-    #[cfg(unix)]
-    if !config_path.exists() {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temporary_path, fs::Permissions::from_mode(0o600)).map_err(
-            |error| {
-                format!(
-                    "failed to secure Codex config permissions {}: {error}",
-                    temporary_path.display()
-                )
-            },
-        )?;
-    }
-    fs::rename(&temporary_path, &config_path).map_err(|error| {
-        format!(
-            "failed to replace Codex config {}: {error}",
-            config_path.display()
-        )
-    })
-}
-
 pub(crate) fn combined_codex_developer_instructions(user_instructions: &str) -> String {
     let user_instructions = user_instructions.trim();
     if user_instructions.is_empty() {
@@ -1855,54 +1757,6 @@ pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
         .strip_suffix(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
         .unwrap_or(instructions)
         .trim()
-}
-
-fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
-    let target = codex_home.join("auth.json");
-    if let Ok(metadata) = fs::symlink_metadata(&target) {
-        if metadata.file_type().is_symlink() && !target.exists() {
-            fs::remove_file(&target).map_err(|error| {
-                format!(
-                    "failed to remove stale Codex auth link {}: {error}",
-                    target.display()
-                )
-            })?;
-        } else {
-            return Ok(());
-        }
-    }
-    let Some(source) = user_codex_auth_path().filter(|path| path.is_file()) else {
-        return Ok(());
-    };
-
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&source, &target).map_err(|error| {
-            format!(
-                "failed to link Codex auth {} -> {}: {error}",
-                target.display(),
-                source.display()
-            )
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        fs::copy(&source, &target).map(|_| ()).map_err(|error| {
-            format!(
-                "failed to copy Codex auth {} -> {}: {error}",
-                source.display(),
-                target.display()
-            )
-        })
-    }
-}
-
-fn user_codex_auth_path() -> Option<PathBuf> {
-    env::var_os(CODEX_HOME_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|home| home.join("auth.json"))
-        .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))
 }
 
 #[cfg(test)]
@@ -2011,772 +1865,15 @@ fn codex_turn_startup_timeout_seconds() -> u64 {
         .unwrap_or(DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS)
 }
 
-struct JsonRpcConnection {
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
-}
+#[path = "codex/json_rpc.rs"]
+mod json_rpc;
 
-impl JsonRpcConnection {
-    fn new(stdin: ChildStdin, stdout: ChildStdout) -> Self {
-        Self::new_with_next_id(stdin, stdout, 1)
-    }
+use json_rpc::JsonRpcConnection;
 
-    fn new_with_next_id(stdin: ChildStdin, stdout: ChildStdout, next_id: u64) -> Self {
-        Self {
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id,
-        }
-    }
+#[path = "codex/run_state.rs"]
+mod run_state;
 
-    async fn request(
-        &mut self,
-        method: &str,
-        request_params: Value,
-        state: &mut CodexRunState,
-    ) -> Result<Value, String> {
-        let request_id = self.send_request(method, request_params).await?;
-        loop {
-            let message = self.read_message().await?;
-            if response_id(&message) == Some(request_id) {
-                return response_result(message);
-            }
-            if let Some(outcome) = state.handle_message(&message) {
-                return Err(format!(
-                    "codex app-server completed before {method} response: {outcome:?}"
-                ));
-            }
-        }
-    }
-
-    async fn request_ignoring_notifications(
-        &mut self,
-        method: &str,
-        params: Value,
-    ) -> Result<Value, String> {
-        let request_id = self.send_request(method, params).await?;
-        loop {
-            let message = self.read_message().await?;
-            if response_id(&message) == Some(request_id) {
-                return response_result(message);
-            }
-            if message.get("method").and_then(Value::as_str) == Some("error") {
-                return Err(codex_error_message(message_params(&message)));
-            }
-        }
-    }
-
-    async fn send_request(&mut self, method: &str, params: Value) -> Result<u64, String> {
-        let request_id = self.next_id;
-        self.next_id += 1;
-        self.write_message(json!({
-            "method": method,
-            "id": request_id,
-            "params": params,
-        }))
-        .await?;
-        Ok(request_id)
-    }
-
-    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
-        self.write_message(json!({
-            "method": method,
-            "params": params,
-        }))
-        .await
-    }
-
-    async fn read_turn(
-        &mut self,
-        turn_request_id: u64,
-        state: &mut CodexRunState,
-        notifications: Option<CodexNotificationSender>,
-        mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-    ) -> Result<ExecutionOutcome, String> {
-        let mut saw_turn_response = false;
-        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
-        let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let mut waiting_for_initial_progress = true;
-        loop {
-            let message = if waiting_for_initial_progress {
-                match timeout_at(startup_deadline, self.read_message()).await {
-                    Ok(result) => result?,
-                    Err(_) => {
-                        return Err(format!(
-                            "codex app-server turn made no model or tool progress for {startup_timeout_seconds}s"
-                        ));
-                    }
-                }
-            } else {
-                self.read_message().await?
-            };
-            log_codex_raw_turn_message(&message);
-            if response_id(&message) == Some(turn_request_id) {
-                response_result(message)?;
-                saw_turn_response = true;
-                continue;
-            }
-            if waiting_for_initial_progress
-                && codex_notification_has_initial_progress(&message, state)
-            {
-                waiting_for_initial_progress = false;
-            }
-            if let Some(sender) = &notifications {
-                let _ = sender.send(message.clone());
-            }
-            if message
-                .get("method")
-                .and_then(Value::as_str)
-                .is_some_and(|method| method == "item/tool/requestUserInput")
-            {
-                self.answer_request_user_input(&message, &mut request_user_input_answers)
-                    .await?;
-                continue;
-            }
-            if message
-                .get("method")
-                .and_then(Value::as_str)
-                .is_some_and(|method| method == "mcpServer/elicitation/request")
-            {
-                self.answer_mcp_server_elicitation(&message, &mut request_user_input_answers)
-                    .await?;
-                continue;
-            }
-            if let Some(outcome) = state.handle_message(&message) {
-                return Ok(outcome);
-            }
-            if !saw_turn_response {
-                continue;
-            }
-        }
-    }
-
-    async fn answer_request_user_input(
-        &mut self,
-        message: &Value,
-        request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
-    ) -> Result<(), String> {
-        let request_id = json_rpc_request_id(message)
-            .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
-        let Some(receiver) = request_user_input_answers else {
-            return Err("request_user_input requires a runtime response channel".to_owned());
-        };
-        let response = receiver
-            .recv()
-            .await
-            .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
-        self.write_message(json!({
-            "id": request_id,
-            "result": request_user_input_result(response),
-        }))
-        .await
-    }
-
-    async fn answer_mcp_server_elicitation(
-        &mut self,
-        message: &Value,
-        request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
-    ) -> Result<(), String> {
-        let request_id = json_rpc_request_id(message)
-            .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
-        let result =
-            receive_mcp_server_elicitation_response(message, request_user_input_answers.as_mut())
-                .await?;
-        self.write_message(json!({
-            "id": request_id,
-            "result": result,
-        }))
-        .await
-    }
-
-    async fn write_message(&mut self, message: Value) -> Result<(), String> {
-        let mut line = serde_json::to_vec(&message)
-            .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
-        line.push(b'\n');
-        let preview = serde_json::to_string(&message).unwrap_or_default();
-        let preview = if preview.len() > 2048 {
-            format!("{}...", &preview[..2048])
-        } else {
-            preview
-        };
-        wework_debug_log(&format!(
-            "codex rpc send id={:?} method={:?} body={}",
-            message.get("id"),
-            message.get("method"),
-            preview
-        ));
-        self.stdin
-            .write_all(&line)
-            .await
-            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
-    }
-
-    async fn read_message(&mut self) -> Result<Value, String> {
-        let mut line = String::new();
-        let bytes_read = self
-            .stdout
-            .read_line(&mut line)
-            .await
-            .map_err(|error| format!("failed to read codex JSON-RPC message: {error}"))?;
-        if bytes_read == 0 {
-            return Err("codex app-server exited before completing the turn".to_owned());
-        }
-        let message: Value = serde_json::from_str(&line)
-            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))?;
-        let preview = if line.len() > 2048 {
-            format!("{}...", &line[..2048])
-        } else {
-            line.clone()
-        };
-        wework_debug_log(&format!(
-            "codex rpc recv id={:?} method={:?} body={}",
-            message.get("id"),
-            message.get("method"),
-            preview.trim()
-        ));
-        Ok(message)
-    }
-}
-
-#[derive(Default)]
-struct CodexRunState {
-    final_text: String,
-    saw_delta: bool,
-    agent_message_phases: CodexAgentMessagePhaseTracker,
-    root_thread_id: Option<String>,
-    goal_status: Option<String>,
-}
-
-impl CodexRunState {
-    fn set_root_thread_id(&mut self, thread_id: impl Into<String>) {
-        self.root_thread_id = Some(thread_id.into());
-    }
-
-    fn set_goal_status(&mut self, status: impl Into<String>) {
-        self.goal_status = Some(status.into().to_ascii_lowercase());
-    }
-
-    fn goal_is_active(&self) -> bool {
-        self.goal_status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case("active"))
-    }
-
-    fn reset_turn_output(&mut self) {
-        self.final_text.clear();
-        self.saw_delta = false;
-        self.agent_message_phases = CodexAgentMessagePhaseTracker::default();
-    }
-
-    fn handle_message(&mut self, message: &Value) -> Option<ExecutionOutcome> {
-        match message.get("method").and_then(Value::as_str) {
-            Some("thread/started") => {
-                if self.root_thread_id.is_none() {
-                    if let Some(thread_id) = stream_thread_id(message_params(message)) {
-                        self.root_thread_id = Some(thread_id);
-                    }
-                }
-                None
-            }
-            Some("turn/started") => {
-                if !self.is_subagent_message(message_params(message)) {
-                    self.reset_turn_output();
-                }
-                None
-            }
-            Some("thread/goal/updated") => {
-                if let Some(status) = message_params(message)
-                    .get("goal")
-                    .and_then(|goal| goal.get("status"))
-                    .and_then(Value::as_str)
-                {
-                    self.set_goal_status(status);
-                }
-                None
-            }
-            Some("thread/goal/cleared") => {
-                self.goal_status = None;
-                None
-            }
-            Some("item/started") => {
-                if self.is_subagent_message(message_params(message)) {
-                    return None;
-                }
-                self.agent_message_phases
-                    .observe_item(message_params(message));
-                None
-            }
-            Some("item/agentMessage/delta") => {
-                if self.is_subagent_message(message_params(message)) {
-                    return None;
-                }
-                self.append_delta(message_params(message));
-                None
-            }
-            Some("item/completed") => {
-                let params = message_params(message);
-                if self.is_subagent_message(params) {
-                    return None;
-                }
-                self.append_completed_message(params);
-                self.agent_message_phases.forget_item(params);
-                None
-            }
-            Some("turn/completed")
-                if !self.is_subagent_message(message_params(message))
-                    && is_root_codex_turn_event(message_params(message)) =>
-            {
-                Some(self.completed(message_params(message)))
-            }
-            Some("turn/completed") => None,
-            Some("error") => {
-                let params = message_params(message);
-                log_codex_run_state_error(params);
-                if codex_error_will_retry(params) {
-                    return None;
-                }
-                Some(ExecutionOutcome::Failed {
-                    message: codex_error_message(params),
-                })
-            }
-            _ => None,
-        }
-    }
-
-    fn is_subagent_message(&self, params: &Value) -> bool {
-        codex_agent_path(params)
-            .or_else(|| params.get("item").and_then(codex_agent_path))
-            .is_some_and(|agent_path| agent_path != "/root")
-            || self
-                .root_thread_id
-                .as_deref()
-                .is_some_and(|root_thread_id| {
-                    stream_thread_id(params).is_some_and(|thread_id| thread_id != root_thread_id)
-                })
-    }
-
-    fn append_delta(&mut self, params: &Value) {
-        let text = params.get("delta").and_then(Value::as_str).unwrap_or("");
-        let phase = self.agent_message_phases.phase_for_delta(params);
-        if codex_phase_is_process(phase.as_deref()) {
-            log_codex_run_state_text(
-                "delta",
-                "skip_process",
-                phase.as_deref(),
-                params,
-                params,
-                text,
-            );
-            return;
-        }
-        if let Some(delta) = params.get("delta").and_then(Value::as_str) {
-            log_codex_run_state_text(
-                "delta",
-                "append_final",
-                phase.as_deref(),
-                params,
-                params,
-                delta,
-            );
-            self.final_text.push_str(delta);
-            self.saw_delta = true;
-        }
-    }
-
-    fn append_completed_message(&mut self, params: &Value) {
-        let phase = self.agent_message_phases.phase_for_item(params);
-        if self.saw_delta {
-            log_codex_run_state_text(
-                "completed",
-                "skip_after_delta",
-                phase.as_deref(),
-                params,
-                params,
-                "",
-            );
-            return;
-        }
-        let item = params.get("item").unwrap_or(params);
-        let item_type = item
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .replace('_', "")
-            .to_ascii_lowercase();
-        if item_type == "plan" {
-            let text = extract_text(item).unwrap_or_default();
-            log_codex_run_state_text(
-                "completed",
-                "skip_plan",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
-            return;
-        }
-        if !matches!(item_type.as_str(), "agentmessage" | "message") {
-            log_codex_run_state_text("completed", "skip_non_message", None, params, item, "");
-            return;
-        }
-        if codex_phase_is_process(phase.as_deref()) {
-            let text = extract_text(item).unwrap_or_default();
-            log_codex_run_state_text(
-                "completed",
-                "skip_process",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
-            return;
-        }
-        if item
-            .get("role")
-            .and_then(Value::as_str)
-            .is_some_and(|role| role != "assistant")
-        {
-            log_codex_run_state_text(
-                "completed",
-                "skip_non_assistant",
-                phase.as_deref(),
-                params,
-                item,
-                "",
-            );
-            return;
-        }
-        if let Some(text) = extract_text(item) {
-            log_codex_run_state_text(
-                "completed",
-                "set_final",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
-            self.final_text = text;
-            self.saw_delta = true;
-        }
-    }
-
-    fn completed(&self, params: &Value) -> ExecutionOutcome {
-        let status = params
-            .get("turn")
-            .and_then(|turn| turn.get("status"))
-            .or_else(|| params.get("status"))
-            .and_then(Value::as_str)
-            .unwrap_or("completed")
-            .to_ascii_lowercase();
-        match status.as_str() {
-            "completed" | "complete" | "succeeded" => ExecutionOutcome::Completed {
-                content: self.final_text.clone(),
-            },
-            "cancelled" | "canceled" | "interrupted" => {
-                ExecutionOutcome::Cancelled { message: status }
-            }
-            other => ExecutionOutcome::Failed {
-                message: format!("codex turn ended with status {other}"),
-            },
-        }
-    }
-}
-
-fn codex_error_will_retry(params: &Value) -> bool {
-    params
-        .get("willRetry")
-        .or_else(|| params.get("will_retry"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn is_root_codex_turn_event(params: &Value) -> bool {
-    let turn = params.get("turn").unwrap_or(params);
-    codex_agent_path(turn)
-        .or_else(|| codex_agent_path(params))
-        .map_or(true, |agent_path| agent_path == "/root")
-}
-
-fn stream_thread_id(value: &Value) -> Option<String> {
-    value
-        .get("threadId")
-        .or_else(|| value.get("thread_id"))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            value
-                .get("thread")
-                .and_then(|thread| thread.get("id"))
-                .and_then(Value::as_str)
-        })
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
-fn codex_agent_path(value: &Value) -> Option<String> {
-    value
-        .get("agent_path")
-        .or_else(|| value.get("agentPath"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
-fn log_codex_run_state_text(
-    source: &str,
-    action: &str,
-    resolved_phase: Option<&str>,
-    params: &Value,
-    item: &Value,
-    text: &str,
-) {
-    if source == "delta" && !codex_stream_debug_enabled() {
-        return;
-    }
-
-    log_executor_event(
-        "codex run state text classification",
-        &[
-            ("source", source.to_owned()),
-            ("action", action.to_owned()),
-            (
-                "resolved_phase",
-                resolved_phase.unwrap_or("<none>").to_owned(),
-            ),
-            ("item_id", json_string_field(params, "itemId")),
-            ("params_type", json_string_field(params, "type")),
-            ("params_phase", json_string_field(params, "phase")),
-            ("params_channel", json_string_field(params, "channel")),
-            ("item_type", json_string_field(item, "type")),
-            ("item_phase", json_string_field(item, "phase")),
-            ("item_channel", json_string_field(item, "channel")),
-            (
-                "payload_type",
-                nested_json_string_field(item, "payload", "type"),
-            ),
-            (
-                "payload_phase",
-                nested_json_string_field(item, "payload", "phase"),
-            ),
-            (
-                "payload_channel",
-                nested_json_string_field(item, "payload", "channel"),
-            ),
-            ("text_len", text.len().to_string()),
-            ("text_preview", truncate_log_text(text, 160)),
-        ],
-    );
-}
-
-fn log_codex_run_state_error(params: &Value) {
-    let message = codex_error_message(params);
-    let params_json = serde_json::to_string(params)
-        .unwrap_or_else(|error| format!("failed to serialize codex error params: {error}"));
-    log_executor_event(
-        "codex run state error",
-        &[
-            ("message", message),
-            ("code", json_string_field(params, "code")),
-            ("params_len", params_json.len().to_string()),
-            ("params_preview", truncate_log_text(&params_json, 500)),
-        ],
-    );
-}
-
-fn log_codex_raw_turn_message(message: &Value) {
-    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
-    if matches!(
-        method,
-        "item/agentMessage/delta" | "item/reasoning/delta" | "item/reasoningSummary/delta"
-    ) && !codex_stream_debug_enabled()
-    {
-        return;
-    }
-
-    if !matches!(
-        method,
-        "item/agentMessage/delta"
-            | "item/reasoning/delta"
-            | "item/reasoningSummary/delta"
-            | "item/fileChange/patchUpdated"
-            | "turn/plan/updated"
-            | "item/started"
-            | "item/completed"
-            | "turn/completed"
-            | "error"
-    ) {
-        return;
-    }
-
-    let params = message_params(message);
-    let item = params.get("item").unwrap_or(params);
-    let raw_len = serialized_json_len(message)
-        .map(|length| length.to_string())
-        .unwrap_or_else(|error| format!("failed to measure codex raw message: {error}"));
-    let raw_preview = codex_raw_log_preview(message);
-    log_executor_event(
-        "codex raw turn message",
-        &[
-            ("method", method.to_owned()),
-            ("message_id", json_string_field(message, "id")),
-            ("params_keys", json_object_keys(params)),
-            ("params_type", json_string_field(params, "type")),
-            ("params_phase", json_string_field(params, "phase")),
-            ("params_channel", json_string_field(params, "channel")),
-            ("params_item_id", json_string_field(params, "item_id")),
-            ("params_message_id", json_string_field(params, "message_id")),
-            (
-                "params_output_index",
-                json_scalar_field(params, "output_index"),
-            ),
-            (
-                "params_content_index",
-                json_scalar_field(params, "content_index"),
-            ),
-            ("item_keys", json_object_keys(item)),
-            ("item_type", json_string_field(item, "type")),
-            ("item_id", json_string_field(item, "id")),
-            ("item_phase", json_string_field(item, "phase")),
-            ("item_channel", json_string_field(item, "channel")),
-            (
-                "item_turn_id",
-                nested_json_string_field(
-                    item,
-                    "internal_chat_message_metadata_passthrough",
-                    "turn_id",
-                ),
-            ),
-            ("raw_len", raw_len),
-            ("raw_preview", raw_preview),
-        ],
-    );
-}
-
-struct ByteCounter {
-    length: usize,
-}
-
-impl Write for ByteCounter {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        self.length += buffer.len();
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-fn serialized_json_len(value: &Value) -> serde_json::Result<usize> {
-    let mut counter = ByteCounter { length: 0 };
-    serde_json::to_writer(&mut counter, value)?;
-    Ok(counter.length)
-}
-
-fn codex_raw_log_preview(value: &Value) -> String {
-    let sanitized = sanitize_codex_raw_log_value(value, None);
-    let preview = serde_json::to_string(&sanitized)
-        .unwrap_or_else(|error| format!("failed to serialize codex raw message preview: {error}"));
-    truncate_log_text(&preview, CODEX_RAW_LOG_PREVIEW_CHARS)
-}
-
-fn sanitize_codex_raw_log_value(value: &Value, key: Option<&str>) -> Value {
-    match value {
-        Value::Object(object) => Value::Object(
-            object
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        sanitize_codex_raw_log_value(value, Some(key.as_str())),
-                    )
-                })
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|item| sanitize_codex_raw_log_value(item, None))
-                .collect(),
-        ),
-        Value::String(text) if should_summarize_codex_raw_log_string(key, text) => {
-            Value::String(format!(
-                "[{} chars omitted; preview: {}]",
-                text.chars().count(),
-                truncate_log_text(text, CODEX_RAW_LOG_STRING_PREVIEW_CHARS)
-            ))
-        }
-        _ => value.clone(),
-    }
-}
-
-fn should_summarize_codex_raw_log_string(key: Option<&str>, text: &str) -> bool {
-    matches!(
-        key,
-        Some("aggregatedOutput")
-            | Some("toolOutput")
-            | Some("tool_output")
-            | Some("toolOutputDelta")
-            | Some("tool_output_delta")
-            | Some("output")
-            | Some("stdout")
-            | Some("stderr")
-    ) || text.len() > CODEX_RAW_LOG_LARGE_STRING_CHARS
-}
-
-fn json_string_field(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn json_scalar_field(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .map(|value| {
-            value
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| value.to_string())
-        })
-        .unwrap_or_default()
-}
-
-fn json_object_keys(value: &Value) -> String {
-    value
-        .as_object()
-        .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","))
-        .unwrap_or_default()
-}
-
-fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> String {
-    value
-        .get(object_key)
-        .and_then(|object| object.get(key))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn truncate_log_text(text: &str, max_chars: usize) -> String {
-    let mut result = String::new();
-    for (index, ch) in text.chars().enumerate() {
-        if index >= max_chars {
-            result.push('…');
-            return result;
-        }
-        result.push(ch);
-    }
-    result
-}
+use run_state::{log_codex_raw_turn_message, stream_thread_id, CodexRunState};
 
 fn initialize_params() -> Value {
     json!({
@@ -2799,6 +1896,32 @@ struct CodexLaunchConfig {
     env: BTreeMap<String, String>,
     effort: Option<String>,
     summary: Option<String>,
+    local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
+}
+
+#[derive(Debug)]
+struct LocalProxyRegistration(String);
+
+impl LocalProxyRegistration {
+    fn bind_thread(&self, thread_id: &str) -> Result<(), String> {
+        local_model_proxy::bind_thread(&self.0, thread_id)
+    }
+}
+
+impl Drop for LocalProxyRegistration {
+    fn drop(&mut self) {
+        local_model_proxy::unregister(&self.0);
+    }
+}
+
+fn bind_local_proxy_thread(
+    launch_config: &CodexLaunchConfig,
+    thread_id: &str,
+) -> Result<(), String> {
+    if let Some(registration) = launch_config.local_proxy_registration.as_deref() {
+        registration.bind_thread(thread_id)?;
+    }
+    Ok(())
 }
 
 struct PreparedCodexExecutionRequest {
@@ -2813,7 +1936,7 @@ struct CodexLocalImage {
 }
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
-    let model = model_id(request);
+    let model = codex_request_model(request);
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
@@ -2843,10 +1966,21 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     let use_user_config = use_user_runtime_config(&request.model_config);
     let project_id = project_id(request);
     if use_user_config {
-        launch_config.model_provider = explicit_model_provider(&request.model_config);
-        if let Some(model_provider) = &launch_config.model_provider {
+        let inference_provider = inference_model_provider(&request.model_config);
+        if let Some(upstream) = configured_codex_provider(
+            &inference_provider,
+            runtime_proxy_url(&request.model_config),
+        ) {
+            configure_codex_router(
+                &mut launch_config,
+                &request.task_id,
+                upstream,
+                model.clone(),
+            );
+        } else {
+            launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
-                model_provider,
+                &inference_provider,
                 request.model_config.get("default_headers"),
                 project_id.as_deref(),
             ));
@@ -2855,41 +1989,14 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         non_empty_config(&request.model_config, "base_url"),
         api_key(&request.model_config),
     ) {
-        let model_provider = model_provider(&request.model_config);
-        let (provider_base_url, provider_api_key) =
-            resolve_codex_provider_config(&request.model_config, &base_url, &api_key);
-        launch_config.model_provider = Some(model_provider.clone());
-        launch_config.config_overrides.extend([
-            "forced_login_method=api".to_owned(),
-            format!("model_provider={model_provider}"),
-            format!(
-                "model_providers.{model_provider}.name={}",
-                toml_value(
-                    &non_empty_config(&request.model_config, "provider_name")
-                        .or_else(|| non_empty_config(&request.model_config, "display_name"))
-                        .unwrap_or_else(|| DEFAULT_PROVIDER_NAME.to_owned())
-                )
-            ),
-            format!(
-                "model_providers.{model_provider}.base_url={}",
-                toml_value(&provider_base_url)
-            ),
-            format!(
-                "model_providers.{model_provider}.wire_api={}",
-                toml_value(&wire_api(&request.model_config))
-            ),
-            format!(
-                "model_providers.{model_provider}.experimental_bearer_token={}",
-                toml_value(&provider_api_key)
-            ),
-        ]);
-        launch_config.config_overrides.extend(header_overrides(
-            &model_provider,
-            request.model_config.get("default_headers"),
-            project_id.as_deref(),
-        ));
+        configure_codex_router(
+            &mut launch_config,
+            &request.task_id,
+            explicit_codex_upstream(&request.model_config, &base_url, &api_key),
+            model.clone(),
+        );
     } else {
-        launch_config.model_provider = explicit_model_provider(&request.model_config);
+        launch_config.model_provider = Some(inference_model_provider(&request.model_config));
     }
 
     launch_config
@@ -2902,27 +2009,56 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
 
-    let base_url = non_empty_config(&request.model_config, "base_url");
-    let api_key_present = api_key(&request.model_config).is_some();
-    let use_user_config = use_user_runtime_config(&request.model_config);
-    let provider_id = explicit_model_provider(&request.model_config)
-        .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned());
-    wework_debug_log(&format!(
-        "build_codex_launch_config model_id={:?} base_url={:?} api_key_present={} \
-         use_user_config={} model_provider={} config_overrides={} model_config_keys={:?}",
-        model_id(request),
-        base_url,
-        api_key_present,
-        use_user_config,
-        provider_id,
-        launch_config.config_overrides.len(),
-        request
-            .model_config
-            .as_object()
-            .map(|object| object.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default()
-    ));
     launch_config
+}
+
+fn configure_codex_router(
+    launch_config: &mut CodexLaunchConfig,
+    task_id: &str,
+    mut upstream: LocalModelProxyUpstream,
+    routing_model_id: Option<String>,
+) {
+    upstream.routing_model_id = routing_model_id;
+    let local_token = local_model_proxy::register(task_id, upstream);
+    let local_base_url = executor_loopback_base_url()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
+    let provider = codex_model_catalog::PROVIDER_ID;
+    launch_config.local_proxy_registration =
+        Some(Arc::new(LocalProxyRegistration(local_token.clone())));
+    launch_config.model_provider = Some(provider.to_owned());
+    launch_config.config_overrides.extend([
+        "forced_login_method=api".to_owned(),
+        format!("model_provider={provider}"),
+        format!("model_providers.{provider}.name=\"Wework model router\""),
+        format!(
+            "model_providers.{provider}.base_url={}",
+            toml_value(&format!("{local_base_url}/v1/codex-router/{local_token}"))
+        ),
+        format!("model_providers.{provider}.wire_api=\"responses\""),
+    ]);
+}
+
+fn explicit_codex_upstream(
+    model_config: &Value,
+    base_url: &str,
+    api_key: &str,
+) -> LocalModelProxyUpstream {
+    LocalModelProxyUpstream {
+        base_url: base_url.trim_end_matches('/').to_owned(),
+        request_url: non_empty_config(model_config, "responses_url")
+            .or_else(|| non_empty_config(model_config, "responsesUrl")),
+        api_format: non_empty_config(model_config, "upstream_api_format")
+            .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
+        convert_custom_tools: non_empty_config(model_config, "tool_profile")
+            .or_else(|| non_empty_config(model_config, "toolProfile"))
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
+        api_key: api_key.to_owned(),
+        default_headers: parse_header_map(model_config.get("default_headers")),
+        proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
+        model_id: non_empty_config(model_config, "model_id"),
+        routing_model_id: None,
+    }
 }
 
 fn shell_path_config_override() -> String {
@@ -2935,6 +2071,7 @@ fn shell_path_config_override() -> String {
 fn codex_streaming_patch_config_overrides() -> Vec<String> {
     vec![
         CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned(),
+        CODEX_APPLY_PATCH_FREEFORM_OVERRIDE.to_owned(),
         CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
     ]
 }
@@ -2951,6 +2088,23 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
         overrides.push(format!("model_context_window={context_window}"));
     }
     overrides
+}
+
+fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
+    let compat_proxy = bool_value(
+        request
+            .model_config
+            .get("codex_responses_compat_proxy")
+            .or_else(|| request.model_config.get("codexResponsesCompatProxy")),
+    )
+    .unwrap_or(false);
+    let catalog_model_id = non_empty_config(&request.model_config, "codex_catalog_model_id")
+        .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
+    if compat_proxy {
+        catalog_model_id.clone().or_else(|| model_id(request))
+    } else {
+        model_id(request)
+    }
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -2981,37 +2135,76 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
-fn resolve_codex_provider_config(
-    model_config: &Value,
-    base_url: &str,
-    api_key: &str,
-) -> (String, String) {
-    let normalized_base_url = base_url.trim_end_matches('/').to_owned();
-    let wire_api = wire_api(model_config);
-    let use_compat_proxy = bool_value(model_config.get("codex_responses_compat_proxy"))
-        .unwrap_or(false)
-        || bool_value(model_config.get("codexResponsesCompatProxy")).unwrap_or(false);
-    if wire_api != "responses" || !use_compat_proxy {
-        return (normalized_base_url, api_key.to_owned());
-    }
+fn configured_codex_provider(
+    provider: &str,
+    proxy_url: Option<&str>,
+) -> Option<LocalModelProxyUpstream> {
+    use toml_edit::DocumentMut;
 
-    let local_token = local_model_proxy::register(LocalModelProxyUpstream {
-        base_url: normalized_base_url,
-        request_url: non_empty_config(model_config, "responses_url")
-            .or_else(|| non_empty_config(model_config, "responsesUrl")),
-        api_format: non_empty_config(model_config, "upstream_api_format")
-            .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
-            .unwrap_or_else(|| "openai-responses".to_owned()),
-        api_key: api_key.to_owned(),
-        default_headers: parse_header_map(model_config.get("default_headers")),
-        proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
-    });
-    let local_base_url = executor_loopback_base_url()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
-    (
-        format!("{local_base_url}/v1/codex-responses-proxy"),
-        local_token,
-    )
+    let document = fs::read_to_string(wework_codex_home().join("config.toml"))
+        .ok()?
+        .parse::<DocumentMut>()
+        .ok()?;
+    let provider_config = document
+        .get("model_providers")?
+        .get(provider)?
+        .as_table_like()?;
+    let base_url = provider_config.get("base_url")?.as_str()?.trim();
+    if base_url.is_empty() {
+        return None;
+    }
+    let api_key = provider_config
+        .get("experimental_bearer_token")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .or_else(|| {
+            provider_config
+                .get("env_key")
+                .and_then(|value| value.as_str())
+                .and_then(|key| env::var(key).ok())
+        })?;
+    let default_headers = provider_config
+        .get("http_headers")
+        .and_then(|value| value.as_table_like())
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(key, value)| Some((key.to_owned(), value.as_str()?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let api_format = provider_config
+        .get("upstream_api_format")
+        .or_else(|| provider_config.get("upstreamApiFormat"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai-responses")
+        .to_owned();
+    let convert_custom_tools = api_format != "openai-responses"
+        || provider_config
+            .get("tool_profile")
+            .or_else(|| provider_config.get("toolProfile"))
+            .and_then(|value| value.as_str())
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+    let request_path = match api_format.as_str() {
+        "openai-chat-completions" => "/chat/completions",
+        "anthropic-messages" => "/messages",
+        _ => "/responses",
+    };
+    let base_url = base_url.trim_end_matches('/').to_owned();
+
+    Some(LocalModelProxyUpstream {
+        request_url: Some(format!("{base_url}{request_path}")),
+        base_url,
+        api_format,
+        convert_custom_tools,
+        api_key,
+        default_headers,
+        proxy_url: proxy_url.map(str::to_owned),
+        model_id: None,
+        routing_model_id: None,
+    })
 }
 
 fn executor_server_port() -> u16 {
@@ -3065,11 +2258,11 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
         return BTreeMap::new();
     };
 
-    let no_proxy = env::var("NO_PROXY")
+    let configured_no_proxy = env::var("NO_PROXY")
         .ok()
         .or_else(|| env::var("no_proxy").ok())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_NO_PROXY.to_owned());
+        .filter(|value| !value.trim().is_empty());
+    let no_proxy = merge_required_no_proxy(configured_no_proxy.as_deref());
     [
         ("ALL_PROXY", proxy_url),
         ("HTTP_PROXY", proxy_url),
@@ -3083,6 +2276,27 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value.to_owned()))
     .collect()
+}
+
+fn merge_required_no_proxy(configured: Option<&str>) -> String {
+    let mut entries = configured
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    for required in DEFAULT_NO_PROXY.split(',') {
+        if !entries
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(required))
+        {
+            entries.push(required.to_owned());
+        }
+    }
+
+    entries.join(",")
 }
 
 fn runtime_proxy_url(model_config: &Value) -> Option<&str> {
@@ -3114,8 +2328,28 @@ fn bool_value(value: Option<&Value>) -> Option<bool> {
     }
 }
 
-fn model_provider(model_config: &Value) -> String {
-    explicit_model_provider(model_config).unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned())
+fn inference_model_provider(model_config: &Value) -> String {
+    explicit_model_provider(model_config).unwrap_or_else(configured_inference_model_provider)
+}
+
+pub(crate) fn configured_inference_model_provider() -> String {
+    configured_inference_model_provider_from_path(&wework_codex_home().join("config.toml"))
+}
+
+fn configured_inference_model_provider_from_path(config_path: &Path) -> String {
+    use toml_edit::DocumentMut;
+
+    fs::read_to_string(config_path)
+        .ok()
+        .and_then(|content| content.parse::<DocumentMut>().ok())
+        .and_then(|document| {
+            document
+                .get("model_provider")
+                .and_then(|item| item.as_str())
+                .map(sanitize_provider_id)
+        })
+        .filter(|provider| !is_internal_codex_provider(provider))
+        .unwrap_or_else(|| "openai".to_owned())
 }
 
 fn explicit_model_provider(model_config: &Value) -> Option<String> {
@@ -3123,6 +2357,11 @@ fn explicit_model_provider(model_config: &Value) -> Option<String> {
         .or_else(|| non_empty_config(model_config, "model_provider"))
         .or_else(|| non_empty_config(model_config, "provider"))
         .map(|value| sanitize_provider_id(&value))
+        .filter(|provider| !is_internal_codex_provider(provider))
+}
+
+fn is_internal_codex_provider(provider: &str) -> bool {
+    provider == codex_model_catalog::PROVIDER_ID || provider == "wework-catalog"
 }
 
 fn sanitize_provider_id(value: &str) -> String {
@@ -3143,21 +2382,6 @@ fn sanitize_provider_id(value: &str) -> String {
     } else {
         sanitized
     }
-}
-
-fn wire_api(model_config: &Value) -> String {
-    let api_format = non_empty_config(model_config, "api_format")
-        .or_else(|| non_empty_config(model_config, "apiFormat"))
-        .map(|value| value.to_ascii_lowercase());
-    let protocol =
-        non_empty_config(model_config, "protocol").map(|value| value.to_ascii_lowercase());
-    if api_format.as_deref() == Some("responses") || protocol.as_deref() == Some("openai-responses")
-    {
-        return "responses".to_owned();
-    }
-    non_empty_config(model_config, "wire_api")
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_else(|| "responses".to_owned())
 }
 
 fn api_key(request: &Value) -> Option<String> {
@@ -3401,6 +2625,11 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
         format!(
             "{}={}",
+            toml_key_path(&["features", "code_mode", "direct_only_tool_namespaces",]),
+            toml_json_value(&json!([WEWORK_BROWSER_MCP_SERVER_NAME]))
+        ),
+        format!(
+            "{}={}",
             toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
             toml_value(&command.display().to_string())
         ),
@@ -3641,6 +2870,12 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
+    let binary_attachment_context =
+        AttachmentPromptProcessor::build_binary_attachment_context(&success);
+    if !binary_attachment_context.is_empty() {
+        request.prompt =
+            append_text_attachment_context(&request.prompt, &binary_attachment_context);
+    }
     let text_attachment_context =
         AttachmentPromptProcessor::build_text_attachment_context(&success);
     if !text_attachment_context.is_empty() {
@@ -4079,6 +3314,21 @@ fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>)
     );
 }
 
+fn insert_runtime_workspace_roots(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    let roots = request
+        .runtime_workspace_roots
+        .iter()
+        .map(|root| root.trim())
+        .filter(|root| !root.is_empty())
+        .collect::<Vec<_>>();
+    if !roots.is_empty() {
+        params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
+    }
+}
+
 fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
     let active_profile = response
         .get("activePermissionProfile")
@@ -4108,15 +3358,46 @@ fn validate_codex_permission_profile(operation: &str, response: &Value) -> Resul
     ))
 }
 
+fn validate_codex_model_provider(
+    operation: &str,
+    response: &Value,
+    expected_provider: Option<&str>,
+) -> Result<(), String> {
+    let Some(expected_provider) = expected_provider else {
+        return Ok(());
+    };
+    let applied_provider = response
+        .get("modelProvider")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            response
+                .get("thread")
+                .and_then(|thread| thread.get("modelProvider"))
+                .and_then(Value::as_str)
+        });
+
+    match applied_provider {
+        Some(applied_provider) if applied_provider == expected_provider => Ok(()),
+        Some(applied_provider) => Err(format!(
+            "codex app-server {operation} applied unexpected model provider: \
+             expected={expected_provider}, actual={applied_provider}"
+        )),
+        // Minimal test doubles and older app-server builds may omit provider metadata. Current
+        // Codex builds return it, so reject an explicit mismatch without breaking those clients.
+        None => Ok(()),
+    }
+}
+
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -4140,13 +3421,14 @@ fn thread_fork_params(
         params.insert("path".to_owned(), Value::String(path.to_owned()));
     }
     params.insert("excludeTurns".to_owned(), Value::Bool(true));
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -4203,13 +3485,14 @@ fn thread_resume_params(
 ) -> Value {
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -4269,7 +3552,8 @@ fn turn_start_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
-    if let Some(model) = model_id(request) {
+    insert_runtime_workspace_roots(&mut params, request);
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     if let Some(effort) = &launch_config.effort {
@@ -4309,7 +3593,7 @@ fn codex_collaboration_mode_payload(
     Some(json!({
         "mode": mode,
         "settings": {
-            "model": model_id(request),
+            "model": codex_request_model(request),
             "reasoningEffort": launch_config.effort,
             "developerInstructions": Value::Null,
         }
@@ -4949,1215 +4233,5 @@ fn extract_text(item: &Value) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn interaction_answer_router_matches_reverse_order_answers() {
-        let (sender, receiver) = mpsc::channel(2);
-        let router = InteractionAnswerRouter::new(receiver);
-        let first = {
-            let router = router.clone();
-            tokio::spawn(async move { router.receive("41".to_owned()).await })
-        };
-        let second = {
-            let router = router.clone();
-            tokio::spawn(async move { router.receive("42".to_owned()).await })
-        };
-
-        sender
-            .send(json!({"requestId": 42, "answers": {"choice": "second"}}))
-            .await
-            .expect("second answer should be sent");
-        sender
-            .send(json!({"requestId": 41, "answers": {"choice": "first"}}))
-            .await
-            .expect("first answer should be sent");
-
-        assert_eq!(
-            first.await.expect("first waiter should join").unwrap()["answers"]["choice"],
-            "first"
-        );
-        assert_eq!(
-            second.await.expect("second waiter should join").unwrap()["answers"]["choice"],
-            "second"
-        );
-    }
-
-    #[tokio::test]
-    async fn interaction_answer_router_rejects_waiters_after_channel_closes() {
-        let (sender, receiver) = mpsc::channel(1);
-        let router = InteractionAnswerRouter::new(receiver);
-        drop(sender);
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if router.state.lock().await.closed {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("router should observe the closed response channel");
-
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            router.receive("closed-request".to_owned()),
-        )
-        .await
-        .expect("closed router should not leave the waiter pending");
-
-        assert_eq!(
-            result.unwrap_err(),
-            "request_user_input response router closed"
-        );
-    }
-
-    #[test]
-    fn normalize_reasoning_effort_preserves_supported_codex_levels() {
-        for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
-            assert_eq!(normalize_reasoning_effort(Some(effort)), effort);
-        }
-    }
-
-    #[test]
-    fn normalize_reasoning_effort_maps_aliases_to_supported_codex_levels() {
-        for (value, expected) in [
-            ("minimal", "low"),
-            ("轻度", "low"),
-            ("中等", "medium"),
-            ("extra high", "xhigh"),
-            ("x-high", "xhigh"),
-            ("最高", "max"),
-            ("maximum", "max"),
-            ("极高", "ultra"),
-        ] {
-            assert_eq!(normalize_reasoning_effort(Some(value)), expected);
-        }
-    }
-
-    #[test]
-    fn normalize_reasoning_effort_uses_default_for_disabled_or_unknown_values() {
-        for value in [None, Some("off"), Some("unknown")] {
-            assert_eq!(normalize_reasoning_effort(value), DEFAULT_REASONING_EFFORT);
-        }
-    }
-
-    #[test]
-    fn wework_codex_home_defaults_to_executor_home_codex() {
-        let _lock = crate::test_env::lock();
-        let home = unique_test_path("wework-codex-home-default");
-        let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-        env::set_var("WEGENT_EXECUTOR_HOME", &home);
-        env::remove_var(WEGENT_CODEX_HOME_ENV);
-        env::set_var(
-            CODEX_HOME_ENV,
-            home.join("user-codex-should-not-be-wework-home"),
-        );
-
-        assert_eq!(wework_codex_home(), home.join("codex"));
-
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn wework_codex_home_prefers_explicit_wework_home() {
-        let _lock = crate::test_env::lock();
-        let executor_home = unique_test_path("wework-codex-home-executor");
-        let codex_home = unique_test_path("wework-codex-home-explicit");
-        let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
-        env::set_var(WEGENT_CODEX_HOME_ENV, &codex_home);
-        env::set_var(CODEX_HOME_ENV, executor_home.join("ignored-codex"));
-
-        assert_eq!(wework_codex_home(), codex_home);
-
-        let _ = fs::remove_dir_all(executor_home);
-        let _ = fs::remove_dir_all(codex_home);
-    }
-
-    #[test]
-    fn prepare_wework_codex_home_links_user_auth() {
-        let _lock = crate::test_env::lock();
-        let root = unique_test_path("wework-codex-home-auth");
-        let user_codex_home = root.join("user-codex");
-        let codex_home = root.join("wework-codex");
-        let source_auth = user_codex_home.join("auth.json");
-        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-        fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
-            .expect("user Codex home should be created");
-        fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
-        env::set_var(CODEX_HOME_ENV, &user_codex_home);
-
-        prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
-
-        let linked_auth = codex_home.join("auth.json");
-        assert!(linked_auth.is_file());
-        #[cfg(unix)]
-        assert_eq!(
-            fs::read_link(&linked_auth).expect("auth should be a symlink"),
-            source_auth
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn prepare_wework_codex_home_replaces_stale_auth_link() {
-        let _lock = crate::test_env::lock();
-        let root = unique_test_path("wework-codex-home-stale-auth");
-        let user_codex_home = root.join("user-codex");
-        let codex_home = root.join("wework-codex");
-        let source_auth = user_codex_home.join("auth.json");
-        let stale_source = root.join("missing-auth.json");
-        let linked_auth = codex_home.join("auth.json");
-        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-        fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
-            .expect("user Codex home should be created");
-        fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
-        fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
-        std::os::unix::fs::symlink(&stale_source, &linked_auth)
-            .expect("stale auth link should be created");
-        env::set_var(CODEX_HOME_ENV, &user_codex_home);
-
-        prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
-
-        assert_eq!(
-            fs::read_link(&linked_auth).expect("auth should be a symlink"),
-            source_auth
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn prepare_wework_codex_home_migrates_base_instruction_override() {
-        let _lock = crate::test_env::lock();
-        let root = unique_test_path("wework-codex-config-migration");
-        let codex_home = root.join("codex");
-        fs::create_dir_all(&codex_home).expect("Codex home should be created");
-        fs::write(
-            codex_home.join("config.toml"),
-            "instructions = \"用中文回复\"\n",
-        )
-        .expect("legacy config should be written");
-
-        prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
-
-        let config = fs::read_to_string(codex_home.join("config.toml"))
-            .expect("normalized config should be readable");
-        assert!(!config
-            .lines()
-            .any(|line| line.starts_with("instructions =")));
-        assert!(config.contains("developer_instructions"));
-        assert!(config.contains("用中文回复"));
-        assert!(config.contains("browser_navigate"));
-        assert!(config.contains("personality = \"pragmatic\""));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn codex_raw_log_preview_summarizes_large_command_output() {
-        let output = "x".repeat(4096);
-        let message = json!({
-            "method": "item/completed",
-            "params": {
-                "item": {
-                    "id": "cmd-1",
-                    "type": "commandExecution",
-                    "aggregatedOutput": output,
-                }
-            }
-        });
-
-        let preview = codex_raw_log_preview(&message);
-
-        assert!(preview.contains("4096 chars omitted"));
-        assert!(!preview.contains(&"x".repeat(512)));
-        assert_eq!(
-            serialized_json_len(&message).expect("message length should serialize"),
-            serde_json::to_string(&message)
-                .expect("message should serialize")
-                .len()
-        );
-    }
-
-    #[test]
-    fn codex_launch_config_enables_streaming_patch_updates() {
-        let request = ExecutionRequest {
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5-codex",
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-
-        assert!(launch_config
-            .config_overrides
-            .contains(&CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned()));
-        assert!(launch_config
-            .config_overrides
-            .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
-    }
-
-    #[test]
-    fn codex_launch_config_forwards_web_search_mode() {
-        let request = ExecutionRequest {
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5-codex",
-                "web_search": "disabled",
-                "image_generation": false,
-                "model_context_window": 128000,
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-        let params = thread_start_params(&request, &launch_config);
-        let config = params
-            .get("config")
-            .and_then(Value::as_object)
-            .expect("thread config should be present");
-
-        assert_eq!(config.get("web_search"), Some(&json!("disabled")));
-        assert_eq!(config.get("features.image_generation"), Some(&json!(false)));
-        assert_eq!(config.get("model_context_window"), Some(&json!(128000)));
-    }
-
-    #[test]
-    fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
-        let request = ExecutionRequest {
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "mimo-v2.5-pro",
-                "base_url": "http://models.local/v1",
-                "api_key": "sk-local",
-                "api_format": "responses",
-                "codex_responses_compat_proxy": true,
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-
-        assert!(launch_config.config_overrides.iter().any(|override_value| {
-            override_value.starts_with("model_providers.wecode-openai.base_url=\"http://127.0.0.1:")
-                && override_value.ends_with("/v1/codex-responses-proxy\"")
-        }));
-        assert!(launch_config.config_overrides.iter().any(|override_value| {
-            override_value
-                .starts_with("model_providers.wecode-openai.experimental_bearer_token=\"model-")
-        }));
-    }
-
-    #[test]
-    fn codex_launch_config_forwards_runtime_proxy_env() {
-        let request = ExecutionRequest {
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5-codex",
-                "proxy": {
-                    "url": "http://127.0.0.1:7890"
-                },
-                "runtime_config": {
-                    "codex": {
-                        "use_proxy": true
-                    }
-                }
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-
-        assert_eq!(
-            launch_config.env.get("HTTP_PROXY").map(String::as_str),
-            Some("http://127.0.0.1:7890")
-        );
-        assert_eq!(
-            launch_config.env.get("HTTPS_PROXY").map(String::as_str),
-            Some("http://127.0.0.1:7890")
-        );
-        assert_eq!(
-            launch_config.env.get("ALL_PROXY").map(String::as_str),
-            Some("http://127.0.0.1:7890")
-        );
-    }
-
-    #[test]
-    fn codex_launch_config_does_not_forward_task_identity() {
-        let request = ExecutionRequest {
-            task_id: "task-525".to_owned(),
-            auth_token: Some("task-jwt".to_owned()),
-            skill_identity_token: Some("skill-jwt".to_owned()),
-            user_name: Some("alice".to_owned()),
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5-codex",
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-        let params = thread_start_params(&request, &launch_config);
-        let config = params
-            .get("config")
-            .and_then(Value::as_object)
-            .expect("thread config should include shell env");
-
-        assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
-        assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
-        assert!(config
-            .get("shell_environment_policy.set.WEGENT_TASK_ID")
-            .is_none());
-        assert!(config
-            .get("shell_environment_policy.set.AUTH_TOKEN")
-            .is_none());
-        assert!(config
-            .get("shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN")
-            .is_none());
-        assert!(config
-            .get("shell_environment_policy.set.WEGENT_SKILL_USER_NAME")
-            .is_none());
-    }
-
-    #[test]
-    fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
-        let request_launch_config = CodexLaunchConfig {
-            env: BTreeMap::from([("HTTP_PROXY".to_owned(), "http://127.0.0.1:7890".to_owned())]),
-            config_overrides: vec![
-                "model_provider=wecode-openai".to_owned(),
-                "mcp_servers.wework.command=\"node\"".to_owned(),
-            ],
-            model_provider: Some("wecode-openai".to_owned()),
-            effort: Some("high".to_owned()),
-            summary: Some("auto".to_owned()),
-            ..CodexLaunchConfig::default()
-        };
-
-        let launch_config = persistent_codex_app_server_launch_config(&request_launch_config);
-
-        assert_eq!(
-            launch_config.env.get("HTTP_PROXY").map(String::as_str),
-            Some("http://127.0.0.1:7890")
-        );
-        assert_eq!(
-            launch_config.config_overrides,
-            vec!["goals=true", "features.code_mode_host=true"]
-        );
-        assert!(launch_config.model_provider.is_none());
-        assert!(launch_config.effort.is_none());
-        assert!(launch_config.summary.is_none());
-    }
-
-    #[test]
-    fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "phase": "commentary",
-                    "delta": "I will inspect."
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: String::new()
-            }
-        );
-    }
-
-    #[test]
-    fn goal_created_during_turn_keeps_notification_reader_alive() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "thread/goal/updated",
-                "params": {
-                    "threadId": "thread-1",
-                    "goal": { "status": "active" }
-                }
-            }))
-            .is_none());
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "thread-1",
-                    "turn": { "status": "completed" }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert!(should_wait_for_goal_continuation(&outcome, &state));
-    }
-
-    #[test]
-    fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "channel": "commentary",
-                    "delta": "I will inspect."
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: String::new()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_keeps_completed_plan_out_of_final_content() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": "turn-1-plan",
-                        "type": "plan",
-                        "text": "# Plan\n\n- Execute the steps."
-                    }
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: String::new()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_routes_item_id_deltas_by_started_phase() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-commentary",
-                        "type": "agentMessage",
-                        "phase": "commentary",
-                        "text": ""
-                    }
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-commentary",
-                    "delta": "I will inspect."
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-final",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": ""
-                    }
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-final",
-                    "delta": "Done."
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "Done.".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "delta": "Current directory: /tmp/project"
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "Current directory: /tmp/project".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
-        let mut request = ExecutionRequest {
-            prompt: Value::String("plan this".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5",
-            }),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert(
-            "collaborationMode".to_owned(),
-            Value::String("plan".to_owned()),
-        );
-        let launch_config = CodexLaunchConfig {
-            effort: Some("high".to_owned()),
-            ..CodexLaunchConfig::default()
-        };
-
-        let params = turn_start_params(
-            "thread-1",
-            &request,
-            &launch_config,
-            vec![json!({"type": "text", "text": "plan this"})],
-        );
-
-        assert_eq!(params["collaborationMode"]["mode"], "plan");
-        assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
-        assert_eq!(
-            params["collaborationMode"]["settings"]["reasoningEffort"],
-            "high"
-        );
-        assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
-    }
-
-    #[test]
-    fn turn_start_params_includes_client_user_message_id() {
-        let mut request = ExecutionRequest::default();
-        request.extra.insert(
-            "client_user_message_id".to_owned(),
-            Value::String("runtime-local-pane-1".to_owned()),
-        );
-
-        let params = turn_start_params(
-            "thread-1",
-            &request,
-            &CodexLaunchConfig::default(),
-            Vec::new(),
-        );
-
-        assert_eq!(params["clientUserMessageId"], "runtime-local-pane-1");
-    }
-
-    #[test]
-    fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
-        let request = ExecutionRequest::default();
-        let launch_config = CodexLaunchConfig::default();
-        let thread_start = thread_start_params(&request, &launch_config);
-        let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
-        let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
-        let turn_start = turn_start_params("thread-1", &request, &launch_config, Vec::new());
-
-        for params in [thread_start, thread_resume, thread_fork, turn_start] {
-            assert_eq!(
-                params["permissions"],
-                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
-            );
-            assert!(params.get("sandboxPolicy").is_none());
-            assert!(params.get("sandbox").is_none());
-        }
-    }
-
-    #[test]
-    fn codex_permission_profile_validation_rejects_effective_downgrade() {
-        let response = json!({
-            "activePermissionProfile": {"id": ":workspace"},
-            "sandbox": {"type": "workspaceWrite", "networkAccess": false},
-        });
-
-        let error = validate_codex_permission_profile("thread/resume", &response)
-            .expect_err("workspace-write must not be accepted");
-
-        assert!(error.contains("active_profile=:workspace"));
-        assert!(error.contains("sandbox=workspaceWrite"));
-    }
-
-    #[test]
-    fn codex_permission_profile_validation_accepts_effective_full_access() {
-        let response = json!({
-            "activePermissionProfile": {"id": ":danger-full-access"},
-            "sandbox": {"type": "dangerFullAccess"},
-        });
-
-        validate_codex_permission_profile("thread/resume", &response).unwrap();
-    }
-
-    #[test]
-    fn turn_input_expands_absolute_skill_markdown_mentions_for_app_server() {
-        let input = turn_input(&Value::String(
-            "[$linear](/Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage".to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![
-                json!({"type": "text", "text": "$linear triage", "text_elements": []}),
-                json!({
-                    "type": "skill",
-                    "name": "linear",
-                    "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn turn_input_expands_legacy_skill_markdown_mentions_for_app_server() {
-        let input = turn_input(&Value::String(
-            "[$linear](skill:///Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage"
-                .to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![
-                json!({"type": "text", "text": "$linear triage", "text_elements": []}),
-                json!({
-                    "type": "skill",
-                    "name": "linear",
-                    "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn turn_input_deduplicates_legacy_and_absolute_references_to_the_same_skill() {
-        let input = turn_input(&Value::String(
-            "[$linear](skill:///Users/me/skills/linear/SKILL.md) then [$linear](/Users/me/skills/linear/SKILL.md)"
-                .to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![
-                json!({
-                    "type": "text",
-                    "text": "$linear then $linear",
-                    "text_elements": [],
-                }),
-                json!({
-                    "type": "skill",
-                    "name": "linear",
-                    "path": "/Users/me/skills/linear/SKILL.md",
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
-        let input = turn_input(&Value::String(
-            "Use [$calendar](app://google-calendar) and [$sample](plugin://sample@test)".to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![
-                json!({
-                    "type": "text",
-                    "text": "Use $calendar and @sample",
-                    "text_elements": [],
-                }),
-                json!({
-                    "type": "mention",
-                    "name": "calendar",
-                    "path": "app://google-calendar",
-                }),
-                json!({
-                    "type": "mention",
-                    "name": "sample",
-                    "path": "plugin://sample@test",
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn turn_input_converts_composer_file_references_to_plain_paths() {
-        let input = turn_input(&Value::String(
-            "Inspect [$frontend](folder://%2FUsers%2Fme%2FMy%20Project%2Ffrontend) and [$auth.ts](file://%2FUsers%2Fme%2FMy%20Project%2Ffrontend%2Fauth.ts)"
-                .to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![json!({
-                "type": "text",
-                "text": "Inspect \"/Users/me/My Project/frontend\" and \"/Users/me/My Project/frontend/auth.ts\"",
-                "text_elements": [],
-            })]
-        );
-    }
-
-    #[test]
-    fn codex_launch_config_includes_cdp_browser_mcp_server() {
-        let _lock = crate::test_env::lock();
-        let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
-        let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
-        let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
-        env::set_var("WEGENT_EXECUTOR_HOME", &home);
-        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
-        let request = ExecutionRequest {
-            task_id: "task:123".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-        let params = thread_start_params(&request, &launch_config);
-        let config = params
-            .get("config")
-            .and_then(Value::as_object)
-            .expect("thread config should be present");
-        assert!(!config.contains_key("developer_instructions"));
-        assert_eq!(
-            config["skills.config"],
-            json!([
-                {
-                    "name": "browser:control-in-app-browser",
-                    "enabled": false,
-                },
-                {
-                    "name": "chrome:control-chrome",
-                    "enabled": false,
-                },
-            ])
-        );
-        assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
-        assert_eq!(
-            config["mcp_servers.wework_browser.command"],
-            env::current_exe().unwrap().display().to_string()
-        );
-        assert_eq!(
-            config["mcp_servers.wework_browser.args"],
-            json!(["browser-mcp-server"])
-        );
-        assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
-        assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
-        assert_eq!(
-            config["mcp_servers.wework_browser.default_tools_approval_mode"],
-            "approve"
-        );
-        assert_eq!(
-            config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
-            "http://127.0.0.1:43127"
-        );
-        assert_eq!(
-            config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
-            "workspace-browser-task-123"
-        );
-
-        if let Some(old_home) = old_home {
-            env::set_var("WEGENT_EXECUTOR_HOME", old_home);
-        } else {
-            env::remove_var("WEGENT_EXECUTOR_HOME");
-        }
-        if let Some(old_bridge_addr) = old_bridge_addr {
-            env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
-        } else {
-            env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
-        }
-    }
-
-    #[test]
-    fn turn_start_params_includes_default_collaboration_mode_when_requested() {
-        let mut request = ExecutionRequest {
-            prompt: Value::String("continue this".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5",
-            }),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert(
-            "collaborationMode".to_owned(),
-            Value::String("default".to_owned()),
-        );
-        let launch_config = CodexLaunchConfig {
-            effort: Some("medium".to_owned()),
-            ..CodexLaunchConfig::default()
-        };
-
-        let params = turn_start_params(
-            "thread-1",
-            &request,
-            &launch_config,
-            vec![json!({"type": "text", "text": "continue this"})],
-        );
-
-        assert_eq!(params["collaborationMode"]["mode"], "default");
-        assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
-        assert_eq!(
-            params["collaborationMode"]["settings"]["reasoningEffort"],
-            "medium"
-        );
-        assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
-    }
-
-    #[test]
-    fn thread_goal_set_params_maps_initial_goal() {
-        let params = thread_goal_set_params(
-            "thread-1",
-            &json!({
-                "objective": "ship the feature",
-                "status": "paused",
-                "tokenBudget": 1200,
-            }),
-        )
-        .expect("initial goal should map to Codex goal params");
-
-        assert_eq!(
-            params,
-            json!({
-                "threadId": "thread-1",
-                "objective": "ship the feature",
-                "status": "paused",
-                "tokenBudget": 1200,
-            })
-        );
-    }
-
-    #[test]
-    fn thread_goal_set_params_rejects_empty_objective() {
-        let error = thread_goal_set_params("thread-1", &json!({"objective": "   "}))
-            .expect_err("empty objective should be rejected");
-
-        assert_eq!(error, "initial goal objective is required");
-    }
-
-    #[test]
-    fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_child_turns() {
-        let mut state = CodexRunState::default();
-        state.set_root_thread_id("thread-root");
-
-        let active_item = json!({
-            "method": "item/started",
-            "params": {
-                "threadId": "thread-root",
-                "turnId": "turn-current",
-                "item": { "type": "reasoning" }
-            }
-        });
-        assert_eq!(
-            active_root_turn_notification_id(&active_item, &state).as_deref(),
-            Some("turn-current")
-        );
-
-        let completed_turn = json!({
-            "method": "turn/completed",
-            "params": {
-                "threadId": "thread-root",
-                "turn": { "id": "turn-current", "status": "completed" }
-            }
-        });
-        assert_eq!(
-            active_root_turn_notification_id(&completed_turn, &state),
-            None
-        );
-
-        let child_item = json!({
-            "method": "item/started",
-            "params": {
-                "threadId": "thread-root",
-                "turnId": "child-turn",
-                "agentPath": "/root/worker",
-                "item": { "type": "reasoning" }
-            }
-        });
-        assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
-    }
-
-    #[test]
-    fn initial_progress_excludes_user_echo_retry_errors_and_subagents() {
-        let mut state = CodexRunState::default();
-        state.set_root_thread_id("thread-root");
-
-        let user_echo = json!({
-            "method": "item/completed",
-            "params": {
-                "threadId": "thread-root",
-                "item": { "type": "userMessage", "text": "hello" }
-            }
-        });
-        assert!(!codex_notification_has_initial_progress(&user_echo, &state));
-
-        let retryable_error = json!({
-            "method": "error",
-            "params": {
-                "threadId": "thread-root",
-                "message": "Reconnecting... 1/5",
-                "willRetry": true
-            }
-        });
-        assert!(!codex_notification_has_initial_progress(
-            &retryable_error,
-            &state
-        ));
-
-        let subagent_tool = json!({
-            "method": "item/started",
-            "params": {
-                "threadId": "thread-root",
-                "agentPath": "/root/worker",
-                "item": { "type": "commandExecution" }
-            }
-        });
-        assert!(!codex_notification_has_initial_progress(
-            &subagent_tool,
-            &state
-        ));
-
-        let root_tool = json!({
-            "method": "item/started",
-            "params": {
-                "threadId": "thread-root",
-                "item": { "type": "commandExecution" }
-            }
-        });
-        assert!(codex_notification_has_initial_progress(&root_tool, &state));
-    }
-
-    #[test]
-    fn codex_run_state_ignores_subagent_turn_completion() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "delta": "Still working"
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed",
-                        "agent_path": "/root/worker"
-                    }
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed",
-                        "agent_path": "/root"
-                    }
-                }
-            }))
-            .expect("root turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "Still working".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_ignores_cross_thread_final_deltas() {
-        let mut state = CodexRunState::default();
-        state.set_root_thread_id("root-thread");
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "threadId": "child-thread",
-                    "turnId": "child-turn",
-                    "itemId": "msg-child",
-                    "delta": "child"
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "threadId": "root-thread",
-                    "turnId": "root-turn",
-                    "itemId": "msg-root",
-                    "delta": "root"
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "root-thread",
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("root turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "root".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_ignores_cross_thread_turn_completion() {
-        let mut state = CodexRunState::default();
-        state.set_root_thread_id("root-thread");
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "threadId": "root-thread",
-                    "turnId": "root-turn",
-                    "itemId": "msg-root",
-                    "delta": "root"
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "child-thread",
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "root-thread",
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("root turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "root".to_owned()
-            }
-        );
-    }
-}
+#[path = "codex/tests.rs"]
+mod tests;

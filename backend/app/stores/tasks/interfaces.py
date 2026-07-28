@@ -371,10 +371,6 @@ class TaskStore(Protocol):
         self, db: Session, *, user_id: int
     ) -> list[TaskResource]: ...
 
-    def list_accessible_active_tasks_for_user(
-        self, db: Session, *, user_id: int
-    ) -> list[TaskResource]: ...
-
     def count_non_deleted_by_ids(
         self,
         db: Session,

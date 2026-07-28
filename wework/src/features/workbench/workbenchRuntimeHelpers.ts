@@ -1,6 +1,10 @@
 import { joinDevicePath } from '@/lib/device-workspace-path'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  normalizeRuntimeWorkspacePath,
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+} from '@/lib/runtime-project'
 import type {
   DeviceInfo,
   RuntimeTaskSummary,
@@ -138,6 +142,7 @@ function runtimeTaskAddressFromWorkspace(
     taskId: task.taskId,
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
     ...(task.taskId ? { taskId: task.taskId } : {}),
+    ...(task.threadId ? { threadId: task.threadId } : {}),
     ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }
@@ -152,6 +157,62 @@ export function projectTaskAddresses(
   return runtimeWork.projects.flatMap(projectWork =>
     keySet.has(projectWork.project.key) ? workspaceTaskAddresses(projectWork.deviceWorkspaces) : []
   )
+}
+
+export function removeRuntimeTasks(
+  runtimeWork: RuntimeWorkListResponse,
+  addresses: RuntimeTaskAddress[]
+): RuntimeWorkListResponse {
+  if (addresses.length === 0) return runtimeWork
+
+  const removeFromWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
+    ...workspace,
+    tasks: workspace.tasks.filter(task => {
+      const taskAddress = runtimeTaskAddressFromWorkspace(workspace, task)
+      return !addresses.some(address => runtimeTaskMatchesArchivedAddress(taskAddress, address))
+    }),
+  })
+  const projects = runtimeWork.projects.map(project => {
+    const deviceWorkspaces = project.deviceWorkspaces.map(removeFromWorkspace)
+    return {
+      ...project,
+      deviceWorkspaces,
+      totalTasks: deviceWorkspaces.reduce((total, workspace) => total + workspace.tasks.length, 0),
+    }
+  })
+  const chats = runtimeWork.chats.map(removeFromWorkspace)
+
+  return {
+    ...runtimeWork,
+    projects,
+    chats,
+    totalTasks:
+      projects.reduce((total, project) => total + (project.totalTasks ?? 0), 0) +
+      chats.reduce((total, workspace) => total + workspace.tasks.length, 0),
+  }
+}
+
+export function runtimeWorkContainsTask(
+  runtimeWork: RuntimeWorkListResponse,
+  address: RuntimeTaskAddress
+): boolean {
+  const workspaces = [
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+    ...runtimeWork.chats,
+  ]
+  return workspaces.some(workspace =>
+    workspace.tasks.some(task =>
+      runtimeTaskMatchesArchivedAddress(runtimeTaskAddressFromWorkspace(workspace, task), address)
+    )
+  )
+}
+
+function runtimeTaskMatchesArchivedAddress(
+  taskAddress: RuntimeTaskAddress,
+  archivedAddress: RuntimeTaskAddress
+): boolean {
+  if (taskAddress.taskId !== archivedAddress.taskId) return false
+  return taskAddress.deviceId === archivedAddress.deviceId
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -209,19 +270,26 @@ export function findRuntimeTask(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress | null | undefined
 ): RuntimeTaskSummary | null {
+  const workspace = findRuntimeTaskWorkspace(runtimeWork, address)
+  return workspace?.tasks.find(item => item.taskId === address?.taskId) ?? null
+}
+
+export function findRuntimeTaskWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): RuntimeDeviceWorkspace | null {
   if (!runtimeWork || !address) return null
   const workspaces = [
     ...runtimeWork.chats,
     ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
   ]
-
-  for (const workspace of workspaces) {
-    if (workspace.deviceId !== address.deviceId) continue
-    const task = workspace.tasks.find(item => item.taskId === address.taskId)
-    if (task) return task
-  }
-
-  return null
+  return (
+    workspaces.find(
+      workspace =>
+        workspace.deviceId === address.deviceId &&
+        workspace.tasks.some(task => task.taskId === address.taskId)
+    ) ?? null
+  )
 }
 
 export function getRememberedStandaloneDeviceId(
@@ -253,12 +321,34 @@ function getProjectDeviceWorkspaces(
   return projectWork?.deviceWorkspaces ?? []
 }
 
-export function getSingleProjectDeviceWorkspaceId(
+export function getDefaultProjectDeviceWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | null | undefined
+): RuntimeDeviceWorkspace | null {
+  const workspaces = getSelectableProjectDeviceWorkspaces(runtimeWork, projectId)
+  if (workspaces.length === 1) return workspaces[0]
+
+  const projectWork = runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectId
+  )
+  if (projectWork?.project.source !== 'local_project') return null
+
+  const primaryRoot = projectWork.project.roots?.[0]?.path
+  if (primaryRoot) {
+    const normalizedPrimaryRoot = normalizeRuntimeWorkspacePath(primaryRoot)
+    const primaryWorkspace = workspaces.find(
+      workspace => normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedPrimaryRoot
+    )
+    if (primaryWorkspace) return primaryWorkspace
+  }
+  return workspaces[0] ?? null
+}
+
+export function getDefaultProjectDeviceWorkspaceId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: number | null | undefined
 ): number | null {
-  const workspaces = getSelectableProjectDeviceWorkspaces(runtimeWork, projectId)
-  return workspaces.length === 1 ? (workspaces[0].id ?? null) : null
+  return getDefaultProjectDeviceWorkspace(runtimeWork, projectId)?.id ?? null
 }
 
 export function findSelectableProject(
@@ -283,7 +373,7 @@ export function findProjectDeviceWorkspace(
   if (deviceWorkspaceId) {
     return workspaces.find(workspace => workspace.id === deviceWorkspaceId) ?? null
   }
-  return workspaces.length === 1 ? workspaces[0] : null
+  return getDefaultProjectDeviceWorkspace(runtimeWork, projectId)
 }
 
 export function findProjectMetadataDeviceWorkspace(
@@ -295,7 +385,22 @@ export function findProjectMetadataDeviceWorkspace(
   if (deviceWorkspaceId) {
     return workspaces.find(workspace => workspace.id === deviceWorkspaceId) ?? null
   }
-  return workspaces.length === 1 ? workspaces[0] : null
+  if (workspaces.length === 1) return workspaces[0]
+
+  const projectWork = runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectId
+  )
+  if (projectWork?.project.source !== 'local_project') return null
+
+  const primaryRoot = projectWork.project.roots?.[0]?.path
+  if (primaryRoot) {
+    const normalizedPrimaryRoot = normalizeRuntimeWorkspacePath(primaryRoot)
+    const primaryWorkspace = workspaces.find(
+      workspace => normalizeRuntimeWorkspacePath(workspace.workspacePath) === normalizedPrimaryRoot
+    )
+    if (primaryWorkspace) return primaryWorkspace
+  }
+  return workspaces[0] ?? null
 }
 
 const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g

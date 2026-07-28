@@ -295,10 +295,15 @@ class TestKnowledgeTool:
             "kb_id": 77,
         }
         mock_result.model_dump.return_value = expected_payload
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ) as mock_get_read_user,
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",
@@ -313,6 +318,11 @@ class TestKnowledgeTool:
             )
 
         assert result == expected_payload
+        mock_get_read_user.assert_called_once_with(
+            mock_session,
+            token_info,
+            77,
+        )
         mock_read.assert_called_once_with(
             db=mock_session,
             user=mock_user,
@@ -333,10 +343,15 @@ class TestKnowledgeTool:
         )
         mock_user = object()
         mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ),
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",
@@ -364,10 +379,15 @@ class TestKnowledgeTool:
         )
         mock_user = object()
         mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ),
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",

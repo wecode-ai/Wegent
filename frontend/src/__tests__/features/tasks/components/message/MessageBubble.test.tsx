@@ -41,9 +41,14 @@ jest.mock('@/features/tasks/components/message/ContextBadgeList', () => ({
   default: () => null,
 }))
 
+const mockBubbleTools = jest.fn()
+
 jest.mock('@/features/tasks/components/message/BubbleTools', () => ({
   __esModule: true,
-  default: () => null,
+  default: (props: unknown) => {
+    mockBubbleTools(props)
+    return null
+  },
   CopyButton: () => null,
   EditButton: () => null,
 }))
@@ -158,6 +163,274 @@ describe('MessageBubble', () => {
     mockMixedContentView.mockClear()
     mockThinkingDisplay.mockClear()
     mockStreamingWaitIndicator.mockClear()
+    mockBubbleTools.mockClear()
+  })
+
+  it('offers saving completed AI Markdown to a knowledge base', () => {
+    const onSaveToKnowledge = jest.fn()
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$# Final answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={onSaveToKnowledge}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentToCopy: '# Final answer',
+        onSaveToKnowledge,
+        showSaveToKnowledge: true,
+      })
+    )
+  })
+
+  it('re-renders when save action presence changes but ignores callback identity changes', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$# Final answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+    }
+    const team = makeTeam()
+    const props = {
+      msg,
+      index: 0,
+      selectedTaskDetail: null,
+      selectedTeam: team,
+      theme: 'light' as const,
+      t,
+    }
+    const { rerender } = render(<MessageBubble {...props} />)
+
+    expect(mockBubbleTools).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showSaveToKnowledge: false })
+    )
+
+    mockBubbleTools.mockClear()
+    rerender(<MessageBubble {...props} onSaveToKnowledge={jest.fn()} />)
+
+    expect(mockBubbleTools).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showSaveToKnowledge: true })
+    )
+
+    mockBubbleTools.mockClear()
+    rerender(<MessageBubble {...props} onSaveToKnowledge={jest.fn()} />)
+
+    expect(mockBubbleTools).not.toHaveBeenCalled()
+  })
+
+  it('preserves Deep Research citation links in regular messages', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$Research result [cite: 1]',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+      result: {
+        annotations: [
+          {
+            start_index: 16,
+            end_index: 25,
+            source: 'https://example.com/source',
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentToCopy: 'Research result (参考来源: [1](https://example.com/source))',
+        showSaveToKnowledge: true,
+      })
+    )
+  })
+
+  it.each([
+    {
+      name: 'streaming',
+      overrides: { status: 'streaming' as const, subtaskStatus: 'RUNNING' },
+    },
+    {
+      name: 'error',
+      overrides: { status: 'error' as const, subtaskStatus: 'FAILED' },
+    },
+    {
+      name: 'incomplete',
+      overrides: {
+        status: 'completed' as const,
+        subtaskStatus: 'COMPLETED',
+        isIncomplete: true,
+      },
+    },
+    {
+      name: 'empty',
+      overrides: {
+        status: 'completed' as const,
+        subtaskStatus: 'COMPLETED',
+        content: '${$$}$',
+      },
+    },
+  ])('does not offer saving $name AI messages', ({ overrides }) => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$Answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      ...overrides,
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools.mock.calls.some(call => call[0].showSaveToKnowledge === true)).toBe(
+      false
+    )
+  })
+
+  it('saves only text blocks from a completed blocks message', () => {
+    const onSaveToKnowledge = jest.fn()
+    const msg: Message = {
+      type: 'ai',
+      content: 'Second paragraph',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      status: 'completed',
+      subtaskStatus: 'COMPLETED',
+      result: {
+        blocks: [
+          {
+            id: 'thinking-1',
+            type: 'thinking',
+            status: 'done',
+            content: 'Private reasoning',
+          },
+          {
+            id: 'text-1',
+            type: 'text',
+            status: 'done',
+            content: 'First paragraph',
+          },
+          {
+            id: 'text-2',
+            type: 'text',
+            status: 'done',
+            content: 'Second paragraph',
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={onSaveToKnowledge}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentToCopy: 'First paragraph\n\nSecond paragraph',
+        onSaveToKnowledge,
+        showSaveToKnowledge: true,
+      })
+    )
+  })
+
+  it('preserves Deep Research citation links in blocks messages', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: 'Second result [cite: 2]',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      status: 'completed',
+      subtaskStatus: 'COMPLETED',
+      result: {
+        blocks: [
+          {
+            id: 'text-1',
+            type: 'text',
+            status: 'done',
+            content: 'First result [cite: 1]',
+          },
+          {
+            id: 'text-2',
+            type: 'text',
+            status: 'done',
+            content: 'Second result [cite: 2]',
+          },
+        ],
+        annotations: [
+          {
+            start_index: 13,
+            end_index: 22,
+            source: 'https://example.com/first',
+          },
+          {
+            start_index: 37,
+            end_index: 46,
+            source: 'https://example.com/second',
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentToCopy:
+          'First result (参考来源: [1](https://example.com/first))\n\n' +
+          'Second result (参考来源: [2](https://example.com/second))',
+        showSaveToKnowledge: true,
+      })
+    )
   })
 
   it('shows the selected agent displayName for AI message headers', () => {

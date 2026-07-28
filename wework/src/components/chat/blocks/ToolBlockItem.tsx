@@ -1,12 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
-import { Streamdown } from 'streamdown'
 import { useTranslation } from '@/hooks/useTranslation'
+import { terminalOutputToText } from '@/lib/terminal-text'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { AssistantMarkdown } from '../AssistantMarkdown'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
-import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
+import { resolveDirectMarkdownImageSrc } from '../assistantMarkdownLinks'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import {
   getToolActivityFilePaths,
@@ -21,10 +23,12 @@ import {
   isFileCreateToolName,
   isFileEditToolName,
   isGuidanceToolName,
+  isImageViewToolName,
   isFileReadToolName,
 } from './toolBlockKinds'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
+import { usePersistentProcessingExpansion } from './processingExpansionState'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
 const INLINE_DIFF_MAX_LINES = 96
@@ -35,9 +39,10 @@ interface ToolBlockItemProps {
   shimmer?: boolean
   durationStartedAt?: number
   durationEndAt?: number
+  fileEditDurations?: FileEditDurationsByBlock
   forceExpanded?: boolean
   stateKey?: string
-  onOpenWorkspaceFile?: (path: string) => void
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
@@ -50,7 +55,9 @@ export function ToolBlockItem({
   shimmer = false,
   durationStartedAt,
   durationEndAt,
+  fileEditDurations,
   forceExpanded = false,
+  stateKey,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
   onLoadFullTranscript,
@@ -58,7 +65,7 @@ export function ToolBlockItem({
   onExpandedChange,
 }: ToolBlockItemProps) {
   const { t } = useTranslation('chat')
-  const [userExpanded, setUserExpanded] = useState(false)
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(stateKey)
   const isRunning = block.status !== 'done' && block.status !== 'error'
   const duration = useToolDuration(
     durationStartedAt ?? block.createdAt,
@@ -73,10 +80,22 @@ export function ToolBlockItem({
   }, [block.type, expanded, onExpandedChange])
 
   if (block.type === 'thinking') {
-    return <ThinkingBlockItem block={block} isRunning={isRunning} />
+    return (
+      <ThinkingBlockItem
+        block={block}
+        isRunning={isRunning}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
   }
   if (block.type === 'text') {
-    return <ProcessTextBlockItem block={block} isRunning={isRunning} />
+    return (
+      <ProcessTextBlockItem
+        block={block}
+        isRunning={isRunning}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
   }
   if (block.type === 'plan') {
     return <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
@@ -86,9 +105,23 @@ export function ToolBlockItem({
       <ProcessFileChangesBlockItem
         block={block}
         shimmer={shimmer}
-        duration={duration}
+        fileEditDurations={fileEditDurations}
         onExpandedChange={onExpandedChange}
       />
+    )
+  }
+
+  if (block.toolName === 'runtime_reconnecting') {
+    return (
+      <div
+        className="min-w-0 truncate py-1 text-sm text-text-muted"
+        data-testid="runtime-reconnecting-status"
+        role="status"
+      >
+        <span className="tool-activity-shimmer">
+          {t('tool_activity.reconnecting', '连接中断，正在重连…')}
+        </span>
+      </div>
     )
   }
 
@@ -104,6 +137,8 @@ export function ToolBlockItem({
     searchRunning: t('tool_activity.search_running'),
     searchDone: t('tool_activity.search_done'),
     searchError: t('tool_activity.search_error'),
+    imageView: filename => t('tool_activity.image_view', { filename }),
+    imageViewFallback: t('tool_activity.image_view_fallback'),
   })
   const workspaceFilePath = getWorkspaceFilePath(block)
   const labelContent = (
@@ -201,12 +236,12 @@ function PlanBlockItem({
 function ProcessFileChangesBlockItem({
   block,
   shimmer,
-  duration,
+  fileEditDurations,
   onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
   shimmer: boolean
-  duration: string
+  fileEditDurations?: FileEditDurationsByBlock
   onExpandedChange?: (expanded: boolean) => void
 }) {
   const { t } = useTranslation('chat')
@@ -230,6 +265,7 @@ function ProcessFileChangesBlockItem({
         {summary.files.map(file => {
           const previewLines = fileDiffPreviewLines(file, summary)
           const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
+          const editDuration = fileEditDurations?.get(block.id)?.get(file.path)
           return (
             <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
               <button
@@ -239,7 +275,7 @@ function ProcessFileChangesBlockItem({
                 onClick={() =>
                   setExpandedFilePath(current => (current === file.path ? null : file.path))
                 }
-                className="group flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
+                className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
                 <span
@@ -248,10 +284,7 @@ function ProcessFileChangesBlockItem({
                   {fileChangeRowLabel(file, t, isRunning)}
                 </span>
                 {!file.binary ? (
-                  <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium">
-                    <span className="text-green-600">+{file.additions}</span>
-                    <span className="text-red-500">-{file.deletions}</span>
-                  </span>
+                  <FileChangeLineStats file={file} isRunning={isRunning} streamId={block.id} />
                 ) : null}
                 {previewLines.length > 0 ? (
                   <ChevronDown
@@ -261,9 +294,13 @@ function ProcessFileChangesBlockItem({
                     strokeWidth={2}
                   />
                 ) : null}
-                <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">
-                  {duration}
-                </span>
+                <FileEditDurationText
+                  key={editDuration?.id ?? block.id}
+                  duration={editDuration}
+                  fallbackStartedAt={block.createdAt}
+                  fallbackCompletedAt={block.completedAt}
+                  isRunning={isRunning}
+                />
               </button>
               {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
             </div>
@@ -274,8 +311,223 @@ function ProcessFileChangesBlockItem({
   )
 }
 
+export interface FileEditDuration {
+  id: string
+  startedAt: number
+  completedAt?: number
+}
+
+export type FileEditDurationsByBlock = ReadonlyMap<string, ReadonlyMap<string, FileEditDuration>>
+
+type FileChangeStatBlock = {
+  id: string
+  additions: number
+  deletions: number
+}
+
+type FileChangeStatBlockStyle = CSSProperties & {
+  '--file-change-stat-addition-height': string
+  '--file-change-stat-deletion-height': string
+  '--file-change-stat-blocks-width': string
+  '--file-change-stat-x': string
+  '--file-change-stat-alpha': string
+}
+
+function FileChangeLineStats({
+  file,
+  isRunning,
+  streamId,
+}: {
+  file: TurnFileChangeItem
+  isRunning: boolean
+  streamId: string
+}) {
+  const [statBlocks, setStatBlocks] = useState<FileChangeStatBlock[]>([])
+  const previousRef = useRef({
+    streamId,
+    additions: file.additions,
+    deletions: file.deletions,
+  })
+  const visibleStatBlocks =
+    isRunning && statBlocks.length > 0
+      ? statBlocks
+      : buildStaticFileChangeStatBlocks(file, streamId)
+
+  useEffect(() => {
+    const previous = previousRef.current
+    if (previous.streamId !== streamId) {
+      previousRef.current = {
+        streamId,
+        additions: file.additions,
+        deletions: file.deletions,
+      }
+      setStatBlocks([])
+      return
+    }
+
+    const addedDelta = Math.max(0, file.additions - previous.additions)
+    const deletedDelta = Math.max(0, file.deletions - previous.deletions)
+    previousRef.current = {
+      streamId,
+      additions: file.additions,
+      deletions: file.deletions,
+    }
+
+    if (!isRunning || (addedDelta === 0 && deletedDelta === 0)) return
+
+    const now = Date.now()
+    setStatBlocks(current =>
+      [
+        ...current,
+        {
+          id: `${streamId}:${now}:${addedDelta}:${deletedDelta}`,
+          additions: addedDelta,
+          deletions: deletedDelta,
+        },
+      ].slice(-6)
+    )
+  }, [file.additions, file.deletions, isRunning, streamId])
+
+  return (
+    <span
+      className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums"
+      data-testid="file-change-line-stats"
+    >
+      <span className="inline-flex items-center text-green-600">
+        +
+        <AnimatedChangeNumber
+          key={`${streamId}:additions`}
+          value={file.additions}
+          deltaPrefix="+"
+        />
+      </span>
+      <span className="inline-flex items-center text-red-500">
+        -
+        <AnimatedChangeNumber
+          key={`${streamId}:deletions`}
+          value={file.deletions}
+          deltaPrefix="-"
+        />
+      </span>
+      {visibleStatBlocks.length > 0 ? <FileChangeStatBlocks blocks={visibleStatBlocks} /> : null}
+    </span>
+  )
+}
+
+function buildStaticFileChangeStatBlocks(
+  file: TurnFileChangeItem,
+  streamId: string
+): FileChangeStatBlock[] {
+  if (file.additions === 0 && file.deletions === 0) return []
+  return [
+    {
+      id: `${streamId}:${file.path}:${file.additions}:${file.deletions}`,
+      additions: file.additions,
+      deletions: file.deletions,
+    },
+  ]
+}
+
+function AnimatedChangeNumber({ value, deltaPrefix }: { value: number; deltaPrefix: '+' | '-' }) {
+  const previousValueRef = useRef(value)
+  const [delta, setDelta] = useState(0)
+  const [animationId, setAnimationId] = useState(0)
+
+  useEffect(() => {
+    if (previousValueRef.current === value) return
+    const deltaValue = Math.abs(value - previousValueRef.current)
+    previousValueRef.current = value
+    setDelta(0)
+    const frame = requestAnimationFrame(() => {
+      setDelta(deltaValue)
+      setAnimationId(current => current + 1)
+    })
+    const timeout = window.setTimeout(() => setDelta(0), 560)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
+  }, [value])
+
+  return (
+    <span className="file-change-delta-number">
+      <span className="file-change-rolling-viewport">
+        <span
+          key={`${value}-${animationId}`}
+          className={`file-change-rolling-value ${delta > 0 ? 'is-rolling' : ''}`}
+        >
+          {value}
+        </span>
+      </span>
+      {delta > 0 ? (
+        <span key={`${deltaPrefix}${delta}-${value}`} className="file-change-delta-badge">
+          {deltaPrefix}
+          {delta}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function FileChangeStatBlocks({ blocks }: { blocks: FileChangeStatBlock[] }) {
+  const width = Math.max(6, (blocks.length - 1) * 7 + 6)
+
+  return (
+    <span
+      className="file-change-stat-blocks"
+      aria-hidden="true"
+      style={{ '--file-change-stat-blocks-width': `${width}px` } as FileChangeStatBlockStyle}
+    >
+      {blocks.map((block, index) => {
+        const age = blocks.length - index - 1
+        const additionHeight = block.additions > 0 ? Math.min(10, 3 + block.additions * 1.6) : 0
+        const deletionHeight = block.deletions > 0 ? Math.min(10, 3 + block.deletions * 1.6) : 0
+        return (
+          <span
+            key={block.id}
+            className="file-change-stat-block"
+            style={
+              {
+                '--file-change-stat-addition-height': `${additionHeight}px`,
+                '--file-change-stat-deletion-height': `${deletionHeight}px`,
+                '--file-change-stat-x': `${index * 7}px`,
+                '--file-change-stat-alpha': `${Math.max(0.28, 0.96 - age * 0.11)}`,
+              } as FileChangeStatBlockStyle
+            }
+          >
+            {block.additions > 0 ? <span className="file-change-stat-segment is-addition" /> : null}
+            {block.deletions > 0 ? <span className="file-change-stat-segment is-deletion" /> : null}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+function FileEditDurationText({
+  duration,
+  fallbackStartedAt,
+  fallbackCompletedAt,
+  isRunning,
+}: {
+  duration: FileEditDuration | undefined
+  fallbackStartedAt: number
+  fallbackCompletedAt: number | undefined
+  isRunning: boolean
+}) {
+  const durationIsRunning = duration ? duration.completedAt === undefined : isRunning
+  const text = useToolDuration(
+    duration?.startedAt ?? fallbackStartedAt,
+    duration?.completedAt ?? fallbackCompletedAt,
+    durationIsRunning
+  )
+
+  return <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">{text}</span>
+}
+
 function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, isRunning: boolean) {
   const [now, setNow] = useState(() => Date.now())
+  const [anchoredStartedAt] = useState(startedAt)
   const wasRunning = useRef(isRunning)
   const [completedAt, setCompletedAt] = useState<number | null>(null)
 
@@ -290,9 +542,9 @@ function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, i
     wasRunning.current = isRunning
   }, [isRunning])
 
-  const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? startedAt)
+  const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? anchoredStartedAt)
   if (!isRunning && completedAt === null && fallbackEndAt === undefined) return ''
-  return `${(Math.max(0, endedAt - startedAt) / 1000).toFixed(1)}s`
+  return `${(Math.max(0, endedAt - anchoredStartedAt) / 1000).toFixed(1)}s`
 }
 
 function fileChangeRowLabel(
@@ -586,9 +838,11 @@ function basename(path: string): string {
 function ThinkingBlockItem({
   block,
   isRunning,
+  onOpenWorkspaceFile,
 }: {
   block: Extract<ProcessingBlock, { type: 'thinking' }>
   isRunning: boolean
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
@@ -643,7 +897,11 @@ function ThinkingBlockItem({
           className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
           data-testid="thinking-detail"
         >
-          <ProcessMarkdown content={block.content} />
+          <AssistantMarkdown
+            content={block.content}
+            variant="process"
+            onOpenFile={onOpenWorkspaceFile}
+          />
         </div>
       )}
     </div>
@@ -653,9 +911,11 @@ function ThinkingBlockItem({
 function ProcessTextBlockItem({
   block,
   isRunning,
+  onOpenWorkspaceFile,
 }: {
   block: Extract<ProcessingBlock, { type: 'text' }>
   isRunning: boolean
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
 
@@ -671,82 +931,15 @@ function ProcessTextBlockItem({
       data-testid="process-text-block"
     >
       <div className="min-w-0">
-        <ProcessMarkdown content={block.content} />
+        <AssistantMarkdown
+          content={block.content}
+          isStreaming={isRunning}
+          variant="process"
+          onOpenFile={onOpenWorkspaceFile}
+        />
       </div>
     </div>
   )
-}
-
-function ProcessMarkdown({ content }: { content: string }) {
-  return (
-    <div className="thinking-markdown min-w-0 break-words leading-6 text-text-secondary">
-      <Streamdown
-        mode="streaming"
-        controls={false}
-        lineNumbers={false}
-        urlTransform={url => url}
-        components={{
-          p: ({ children }) => <p className="mb-1.5 min-w-0 break-words leading-6">{children}</p>,
-          ul: ({ children }) => <ul className="mb-1.5 list-disc space-y-0.5 pl-5">{children}</ul>,
-          ol: ({ children }) => (
-            <ol className="mb-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>
-          ),
-          li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
-          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-          code: ({ className, children, node, ...props }) => {
-            const match = /language-(\w*)/.exec(className || '')
-            const text = reactNodeToText(children)
-            const isBlock =
-              ('data-block' in props && Boolean(props['data-block'])) ||
-              node?.properties?.dataBlock === 'true' ||
-              Boolean(match) ||
-              text.includes('\n')
-            if (isBlock) {
-              const lang = match ? match[1] || '' : ''
-              return (
-                <MarkdownCodeBlock lang={lang} compact>
-                  {text || children}
-                </MarkdownCodeBlock>
-              )
-            }
-            return (
-              <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-                {children}
-              </code>
-            )
-          },
-          inlineCode: ({ children }) => (
-            <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-              {children}
-            </code>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
-              {children}
-            </blockquote>
-          ),
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              className="break-words text-primary underline"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {content}
-      </Streamdown>
-    </div>
-  )
-}
-
-function reactNodeToText(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(reactNodeToText).join('')
-  return ''
 }
 
 type GenericToolLabels = {
@@ -761,6 +954,8 @@ type GenericToolLabels = {
   searchRunning: string
   searchDone: string
   searchError: string
+  imageView: (filename: string) => string
+  imageViewFallback: string
 }
 
 function getBlockLabel(
@@ -811,6 +1006,13 @@ function getBlockLabel(
     return {
       icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
       label: prefix.webSearch,
+    }
+  }
+  if (isImageViewToolName(name)) {
+    const path = getInputField(block, 'path', 'file_path', 'filePath')
+    return {
+      icon: <FileIcon />,
+      label: path ? genericLabels.imageView(basename(path)) : genericLabels.imageViewFallback,
     }
   }
   if (isGuidanceToolName(name)) {
@@ -1000,6 +1202,9 @@ function renderBlockDetail(
   if (isWebSearchToolName(name)) {
     return <WebSearchBlockDetail block={block} />
   }
+  if (isImageViewToolName(name)) {
+    return <ImageViewBlockDetail block={block} />
+  }
   if (isGuidanceToolName(name)) {
     return null
   }
@@ -1013,7 +1218,60 @@ function hasBlockDetail(block: ToolBlock): boolean {
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
     isFileEditToolName(name) ||
-    isWebSearchToolName(name)
+    isWebSearchToolName(name) ||
+    isImageViewToolName(name)
+  )
+}
+
+function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
+  const { t } = useTranslation('chat')
+  const source = getImageViewSource(block)
+  const resolvedSource = source ? resolveDirectMarkdownImageSrc(source) : null
+
+  if (!resolvedSource) return null
+
+  return (
+    <div
+      className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface"
+      data-testid="image-view-block-detail"
+    >
+      <img
+        src={resolvedSource}
+        alt={t('tool_activity.image_preview_alt')}
+        className="max-h-96 w-full object-contain"
+        data-testid="image-view-preview"
+      />
+    </div>
+  )
+}
+
+function getImageViewSource(block: ToolBlock): string | undefined {
+  const output = block.toolOutput
+  if (typeof output === 'string' && isImageSource(output)) return output
+  if (isRecord(output)) {
+    const directSource = getStringField(output, 'image_url', 'imageUrl', 'url', 'path')
+    if (directSource && isImageSource(directSource)) return directSource
+
+    const nestedImageUrl = output.image_url
+    if (isRecord(nestedImageUrl)) {
+      const nestedSource = getStringField(nestedImageUrl, 'url')
+      if (nestedSource && isImageSource(nestedSource)) return nestedSource
+    }
+  }
+
+  return getInputField(block, 'path', 'file_path', 'filePath')
+}
+
+function isImageSource(value: string): boolean {
+  const source = value.trim()
+  return (
+    source.startsWith('data:image/') ||
+    source.startsWith('blob:') ||
+    source.startsWith('file://') ||
+    /^https?:\/\//i.test(source) ||
+    /^asset:/i.test(source) ||
+    source.startsWith('/') ||
+    /^[a-zA-Z]:[\\/]/.test(source)
   )
 }
 
@@ -1049,11 +1307,20 @@ function BashBlockDetail({
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
-  const outputText =
-    typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
+  const rawOutputText = useMemo(
+    () => (typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''),
+    [output]
+  )
+  const outputText = useMemo(() => terminalOutputToText(rawOutputText), [rawOutputText])
+  const outputRef = useRef<HTMLPreElement>(null)
   const isDone = block.status === 'done'
   const isError = block.status === 'error'
   const [copied, setCopied] = useState(false)
+
+  useLayoutEffect(() => {
+    const outputElement = outputRef.current
+    if (outputElement) outputElement.scrollTop = outputElement.scrollHeight
+  }, [outputText])
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(command ?? '')
@@ -1134,8 +1401,12 @@ function BashBlockDetail({
               ) : null}
             </div>
           ) : null}
-          <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary">
-            {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
+          <pre
+            ref={outputRef}
+            className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary"
+            data-testid="shell-tool-output"
+          >
+            {outputText}
           </pre>
         </>
       )}

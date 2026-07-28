@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeWork",
   "mainBinaryName": "WeWork",
-  "version": "0.0.23",
+  "version": "0.1.2",
   "identifier": "io.wecode.wework",
   "build": {
     "frontendDist": "../dist",
@@ -11,6 +11,7 @@
     "beforeBuildCommand": "pnpm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "WeWork",
@@ -21,7 +22,7 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "decorations": true,
-        "dragDropEnabled": true,
+        "dragDropEnabled": false,
         "trafficLightPosition": {
           "x": 19,
           "y": 21
@@ -36,9 +37,7 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": [
-            "**/*"
-          ]
+          "allow": ["**/*"]
         }
       }
     }
@@ -54,12 +53,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/wegent-executor"
-    ],
-    "resources": [
-      "binaries/codex/**/*"
-    ],
+    "externalBin": ["binaries/wegent-executor"],
+    "resources": ["binaries/codex/**/*", "bundled-hooks/**/*"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

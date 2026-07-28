@@ -14,7 +14,6 @@ import {
   MessageSquareText,
   Loader2,
   LogOut,
-  Monitor,
   MoreHorizontal,
   Network,
   Package,
@@ -27,10 +26,12 @@ import {
   Terminal,
   Trash2,
   UserRound,
+  Webhook,
   X,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -45,7 +46,6 @@ import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
-import { buildVncPageUrl } from '@/lib/vnc'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
@@ -76,12 +76,17 @@ import { AboutSettingsPage } from './AboutSettingsPage'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
+import { HooksSettingsPage } from '@/features/hooks/HooksSettingsPage'
+import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
   createSettingsRemoteTerminalClientFactory,
   type CloudSettingsConnection,
 } from './settings-cloud-api'
+
+const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
+const keepConnectionsSettingsOpen = () => undefined
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -195,6 +200,13 @@ const settingsNavItems: SettingsNavItem[] = [
     category: 'coding',
   },
   {
+    key: 'hooks',
+    icon: Webhook,
+    label: 'settings_nav_hooks',
+    fallback: 'Hooks',
+    category: 'coding',
+  },
+  {
     key: 'archived-conversations',
     icon: Archive,
     label: 'settings_nav_archived_conversations',
@@ -261,33 +273,6 @@ function StatusPill({ status }: { status: DeviceInfo['status'] }) {
   )
 }
 
-function DeviceActionButton({
-  testId,
-  icon: Icon,
-  label,
-  onClick,
-  disabled,
-}: {
-  testId: string
-  icon: ComponentType<{ className?: string }>
-  label: string
-  onClick?: () => void
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <Icon className="h-3.5 w-3.5" />
-      <span>{label}</span>
-    </button>
-  )
-}
-
 function DeviceIconActionButton({
   testId,
   icon: Icon,
@@ -345,34 +330,6 @@ function deviceDisplayName(device: DeviceInfo): string {
 
   if (name && !defaultNames.includes(name)) return name
   return device.client_ip?.trim() || name || device.device_id
-}
-
-function VncDesktopButton({ deviceId }: { deviceId: string }) {
-  const cloudConnection = useOptionalCloudConnection()
-  const [loading, setLoading] = useState(false)
-
-  const handleClick = useCallback(async () => {
-    if (loading) return
-    setLoading(true)
-    try {
-      const config = await createSettingsDeviceApi(cloudConnection).getVncConfig(deviceId)
-      await openExternalUrl(buildVncPageUrl(deviceId, config.sandbox_id))
-    } catch (e) {
-      console.error('Failed to open device desktop:', e)
-    } finally {
-      setLoading(false)
-    }
-  }, [cloudConnection, deviceId, loading])
-
-  return (
-    <DeviceActionButton
-      testId={`connection-vnc-button-${deviceId}`}
-      icon={Monitor}
-      label="桌面"
-      onClick={handleClick}
-      disabled={loading}
-    />
-  )
 }
 
 type ConfirmDeviceAction = 'restart' | 'delete'
@@ -831,7 +788,13 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   onClick={() => handleStartCloudSession('code-server')}
                   disabled={!isOnline || sessionLoading === 'code-server'}
                 />
-                {canUseCloudSessions && <VncDesktopButton deviceId={device.device_id} />}
+                {canUseCloudSessions && cloudDesktopExtension.available && (
+                  <CloudDesktopDeviceAction
+                    deviceId={device.device_id}
+                    disabled={!isOnline}
+                    onOpened={keepConnectionsSettingsOpen}
+                  />
+                )}
               </>
             )}
             {canUseCloudLifecycleActions && (
@@ -1366,7 +1329,7 @@ export function ConnectionsSettingsPage({
         <DesktopTopBar
           testId="settings-sidebar-topbar"
           className={cn(
-            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] bg-transparent pr-2 pl-2',
+            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] shrink-0 bg-transparent pr-2 pl-2',
             usesOverlayTitlebar && 'h-[76px] pt-6'
           )}
           left={
@@ -1382,7 +1345,10 @@ export function ConnectionsSettingsPage({
           }
         />
 
-        <nav className="space-y-1 px-1.5">
+        <nav
+          data-testid="settings-sidebar-nav"
+          className="scrollbar-soft min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5"
+        >
           {visibleSettingsNavItems.map((item, index) => {
             const showCategory =
               item.category && visibleSettingsNavItems[index - 1]?.category !== item.category
@@ -1475,6 +1441,8 @@ export function ConnectionsSettingsPage({
             onRefreshWorkLists={onRefreshWorkLists}
             onLeaveSettings={onBack}
           />
+        ) : activeNav === 'hooks' ? (
+          <HooksSettingsPage />
         ) : activeNav === 'archived-conversations' ? (
           <ArchivedConversationsSettingsPage
             api={services?.runtimeWorkApi}

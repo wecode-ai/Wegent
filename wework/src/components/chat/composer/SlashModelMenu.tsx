@@ -192,7 +192,7 @@ export function SlashModelMenu({
                   highlighted ? 'bg-muted' : 'hover:bg-muted',
                 ].join(' ')}
               >
-                <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5 text-text-primary">
+                <span className="min-w-0 flex-1 truncate text-sm font-normal leading-5 text-text-primary">
                   {getModelDisplayLabel(model, selectedModelOptions, resolveLabel)}
                 </span>
                 {description && (

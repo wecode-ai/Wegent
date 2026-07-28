@@ -4,6 +4,8 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
+  systemDragEnabled: boolean
+  preventSleepWhileTasksRunning: boolean
   closeToTrayHintSeen: boolean
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
@@ -27,6 +29,25 @@ export interface QuickPhrase {
   title: string
   content: string
   mode: QuickPhraseMode
+  attachmentPaths?: string[]
+  createdAt?: number
+}
+
+export const QUICK_PHRASE_STASH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
+function stashCreatedAt(phrase: Pick<QuickPhrase, 'id' | 'createdAt'>): number | null {
+  if (typeof phrase.createdAt === 'number' && Number.isFinite(phrase.createdAt)) {
+    return phrase.createdAt
+  }
+  if (!phrase.id.startsWith('stash-')) return null
+  const timestamp = Number(phrase.id.slice('stash-'.length).split('-')[0])
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+export function isExpiredQuickPhraseStash(phrase: QuickPhrase, now = Date.now()): boolean {
+  if (!phrase.id.startsWith('stash-')) return false
+  const createdAt = stashCreatedAt(phrase)
+  return createdAt !== null && now - createdAt >= QUICK_PHRASE_STASH_MAX_AGE_MS
 }
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
@@ -35,6 +56,8 @@ export type BrowserLinkTarget = 'system' | 'wework'
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
+  systemDragEnabled?: boolean
+  preventSleepWhileTasksRunning?: boolean
   closeToTrayHintSeen?: boolean
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
@@ -75,6 +98,8 @@ export const defaultQuickPhrases: QuickPhrase[] = [
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
@@ -125,6 +150,14 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.showMainWindowOnLaunch === 'boolean'
         ? record.showMainWindowOnLaunch
         : defaultAppPreferences.showMainWindowOnLaunch,
+    systemDragEnabled:
+      typeof record.systemDragEnabled === 'boolean'
+        ? record.systemDragEnabled
+        : defaultAppPreferences.systemDragEnabled,
+    preventSleepWhileTasksRunning:
+      typeof record.preventSleepWhileTasksRunning === 'boolean'
+        ? record.preventSleepWhileTasksRunning
+        : defaultAppPreferences.preventSleepWhileTasksRunning,
     closeToTrayHintSeen:
       typeof record.closeToTrayHintSeen === 'boolean'
         ? record.closeToTrayHintSeen
@@ -181,7 +214,9 @@ function mergeAppPreferences(value: unknown): AppPreferences {
         ? record.appshotsPlaySound
         : defaultAppPreferences.appshotsPlaySound,
     quickPhrases: Array.isArray(record.quickPhrases)
-      ? record.quickPhrases.flatMap(item => normalizeQuickPhrase(item))
+      ? record.quickPhrases
+          .flatMap(item => normalizeQuickPhrase(item))
+          .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
   }
 }
@@ -192,9 +227,34 @@ function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
   const id = typeof record.id === 'string' ? record.id : ''
   const title = typeof record.title === 'string' ? record.title.trim() : ''
   const content = typeof record.content === 'string' ? record.content.trim() : ''
+  const attachmentPaths = Array.isArray(record.attachmentPaths)
+    ? record.attachmentPaths.flatMap(path =>
+        typeof path === 'string' && path.trim() ? [path.trim()] : []
+      )
+    : []
   const mode = record.mode
-  if (!id || !title || !content || !['normal', 'plan', 'goal'].includes(mode ?? '')) return []
-  return [{ id, title, content, mode: mode as QuickPhraseMode }]
+  const createdAt =
+    typeof record.createdAt === 'number' && Number.isFinite(record.createdAt)
+      ? record.createdAt
+      : undefined
+  if (
+    !id ||
+    !title ||
+    (!content && attachmentPaths.length === 0) ||
+    !['normal', 'plan', 'goal'].includes(mode ?? '')
+  ) {
+    return []
+  }
+  return [
+    {
+      id,
+      title,
+      content,
+      mode: mode as QuickPhraseMode,
+      ...(attachmentPaths.length > 0 && { attachmentPaths }),
+      ...(createdAt !== undefined && { createdAt }),
+    },
+  ]
 }
 
 function emitAppPreferencesChanged(preferences: AppPreferences) {

@@ -19,12 +19,12 @@ import {
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
-import { getRuntimeTaskWorkspacePath } from './workbenchRuntimeHelpers'
+import { getRuntimeTaskWorkspacePath, removeRuntimeTasks } from './workbenchRuntimeHelpers'
+import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
 const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
-
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
   defaultTeam: null,
@@ -33,7 +33,6 @@ export const initialWorkbenchState: WorkbenchState = {
   runtimeWork: null,
   currentProject: null,
   currentRuntimeTask: null,
-  activeRuntimeTasks: [],
   standaloneChatKey: 0,
   selectedDeviceWorkspaceId: null,
   pendingProjectWorkspaceProjectId: null,
@@ -82,6 +81,7 @@ export type WorkbenchAction =
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | { type: 'runtime_project_removed'; projectId: number }
   | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
       type: 'runtime_workspace_opened'
@@ -93,8 +93,10 @@ export type WorkbenchAction =
       type: 'project_workspace_selected'
       project: ProjectWithTasks
       deviceWorkspaceId: number | null
+      startFreshChat?: boolean
     }
   | { type: 'project_updated'; project: ProjectWithTasks }
+  | { type: 'project_removed'; projectId: number }
   | {
       type: 'project_cleared'
       standaloneDeviceId?: string | null
@@ -119,8 +121,7 @@ export type WorkbenchAction =
       type: 'runtime_task_optimistic_removed'
       address: RuntimeTaskAddress
     }
-  | { type: 'runtime_task_started'; address: RuntimeTaskAddress }
-  | { type: 'runtime_task_settled'; address: RuntimeTaskAddress }
+  | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
 
@@ -307,8 +308,7 @@ function mergeRuntimeTasks(
       }
       if (
         isFreshOptimisticRuntimeTask(task) &&
-        !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task)) &&
-        !nextTasks.some(nextTask => isResolvedOptimisticRuntimeTask(task, nextTask))
+        !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
       ) {
         return task
       }
@@ -333,30 +333,6 @@ function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
   const rawTimestamp = task.updatedAt ?? task.createdAt
   const timestamp = typeof rawTimestamp === 'number' ? rawTimestamp : Date.parse(rawTimestamp ?? '')
   return Number.isNaN(timestamp) || Date.now() - timestamp < OPTIMISTIC_TASK_PRESERVE_MS
-}
-
-function isResolvedOptimisticRuntimeTask(
-  optimisticTask: RuntimeTaskSummary,
-  resolvedTask: RuntimeTaskSummary
-): boolean {
-  if (!isOptimisticRuntimeTask(optimisticTask)) return false
-  if (isOptimisticRuntimeTask(resolvedTask)) return false
-  if (!optimisticTask.title || optimisticTask.title !== resolvedTask.title) return false
-  if (
-    optimisticTask.runtime &&
-    resolvedTask.runtime &&
-    optimisticTask.runtime !== resolvedTask.runtime
-  ) {
-    return false
-  }
-  if (
-    optimisticTask.workspacePath &&
-    resolvedTask.workspacePath &&
-    optimisticTask.workspacePath !== resolvedTask.workspacePath
-  ) {
-    return false
-  }
-  return true
 }
 
 function runtimeTaskKey(deviceId: string, task: Pick<RuntimeTaskSummary, 'taskId'>): string {
@@ -453,12 +429,7 @@ function upsertRuntimeTask(
 ): RuntimeDeviceWorkspace {
   return {
     ...workspace,
-    tasks: [
-      task,
-      ...workspace.tasks.filter(
-        item => item.taskId !== task.taskId && !isResolvedOptimisticRuntimeTask(item, task)
-      ),
-    ],
+    tasks: [task, ...workspace.tasks.filter(item => item.taskId !== task.taskId)],
   }
 }
 
@@ -597,55 +568,10 @@ function removeOptimisticRuntimeTask(
   }
 }
 
-function sameRuntimeTaskActivity(left: RuntimeTaskAddress, right: RuntimeTaskAddress): boolean {
-  if (left.deviceId !== right.deviceId || left.taskId !== right.taskId) return false
-  if (!left.workspacePath || !right.workspacePath) return true
-  return left.workspacePath === right.workspacePath
-}
-
-function upsertActiveRuntimeTask(
-  current: RuntimeTaskAddress[],
-  address: RuntimeTaskAddress
-): RuntimeTaskAddress[] {
-  return [
-    ...current.filter(activeAddress => !sameRuntimeTaskActivity(activeAddress, address)),
-    address,
-  ]
-}
-
-function updateRuntimeTaskRunning(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress,
-  running: boolean
-): RuntimeWorkListResponse | null {
-  if (!runtimeWork) return null
-
-  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
-    ...workspace,
-    tasks: workspace.tasks.map(task => {
-      const taskAddress: RuntimeTaskAddress = {
-        deviceId: workspace.deviceId,
-        taskId: task.taskId,
-        workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-      }
-      if (!sameRuntimeTaskActivity(taskAddress, address) || task.running === running) return task
-      return { ...task, running }
-    }),
-  })
-
-  return {
-    ...runtimeWork,
-    projects: runtimeWork.projects.map(project => ({
-      ...project,
-      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
-    })),
-    chats: runtimeWork.chats.map(updateWorkspace),
-  }
-}
-
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
-  taskId: string
+  taskId: string,
+  deviceId?: string
 ): RuntimeTaskAddress | null {
   if (!runtimeWork) return null
 
@@ -656,6 +582,7 @@ function findRuntimeTaskAddressByTaskId(
   ]
 
   for (const workspace of workspaces) {
+    if (deviceId && workspace.deviceId !== deviceId) continue
     const task = workspace.tasks.find(task => task.taskId === taskId)
     if (!task) continue
 
@@ -664,6 +591,7 @@ function findRuntimeTaskAddressByTaskId(
       taskId,
       workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
       ...(task.taskId ? { taskId: task.taskId } : {}),
+      ...(task.threadId ? { threadId: task.threadId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
     }
     if (match && match.deviceId !== address.deviceId) {
@@ -681,10 +609,25 @@ function reconcileCurrentRuntimeTaskAddress(
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): RuntimeTaskAddress | null {
   if (!currentRuntimeTask) return null
+  const hydratedCurrentDeviceTask = findRuntimeTaskAddressByTaskId(
+    runtimeWork,
+    currentRuntimeTask.taskId,
+    currentRuntimeTask.deviceId
+  )
+  if (hydratedCurrentDeviceTask) {
+    return {
+      ...currentRuntimeTask,
+      ...(hydratedCurrentDeviceTask.threadId
+        ? { threadId: hydratedCurrentDeviceTask.threadId }
+        : {}),
+      ...(hydratedCurrentDeviceTask.runtimeHandle
+        ? { runtimeHandle: hydratedCurrentDeviceTask.runtimeHandle }
+        : {}),
+    }
+  }
   if (devices.some(device => device.device_id === currentRuntimeTask.deviceId)) {
     return currentRuntimeTask
   }
-
   return (
     findRuntimeTaskAddressByTaskId(runtimeWork, currentRuntimeTask.taskId) ?? currentRuntimeTask
   )
@@ -771,6 +714,11 @@ function upsertOpenedRuntimeWorkspace(
   }
   const normalizedDeviceId = deviceId.trim()
   const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspacePath)
+  if (
+    findRuntimeProjectByWorkspace(currentRuntimeWork, normalizedDeviceId, normalizedWorkspacePath)
+  ) {
+    return currentRuntimeWork
+  }
   const projectLabel = runtimeWorkspaceLabel(normalizedWorkspacePath, label)
   const nextWorkspace = runtimeWorkspaceFromOpenedWorkspace(
     normalizedDeviceId,
@@ -937,10 +885,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     }
     case 'lists_refreshed': {
       const devices = keepDevicesOnTransientEmpty(state.devices, action.devices)
-      const runtimeWork =
+      const mergedRuntimeWork =
         action.runtimeWork === undefined
           ? state.runtimeWork
           : mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
+      const runtimeWork = mergedRuntimeWork
       const refreshedState = {
         ...state,
         projects: action.projects,
@@ -965,6 +914,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             ? state.standaloneWorkspacePath
             : action.standaloneWorkspacePath,
       }
+      debugRuntimeSidebarState('reducer-lists-refreshed', {
+        incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork ?? null),
+        previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
+        mergedTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
+      })
       return refreshedState
     }
     case 'devices_refreshed': {
@@ -988,7 +942,16 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
     }
     case 'runtime_work_refreshed': {
-      const runtimeWork = mergeRuntimeWorkPreservingTaskOrder(state.runtimeWork, action.runtimeWork)
+      const mergedRuntimeWork = mergeRuntimeWorkPreservingTaskOrder(
+        state.runtimeWork,
+        action.runtimeWork
+      )
+      const runtimeWork = mergedRuntimeWork
+      debugRuntimeSidebarState('reducer-runtime-work-refreshed', {
+        incomingTaskIds: summarizeRuntimeWorkTaskIds(action.runtimeWork),
+        previousTaskIds: summarizeRuntimeWorkTaskIds(state.runtimeWork ?? null),
+        mergedTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
+      })
       return {
         ...state,
         runtimeWork,
@@ -1044,6 +1007,29 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
       }
+    case 'runtime_project_removed': {
+      const removedCurrentProject = state.currentProject?.id === action.projectId
+      const runtimeWork = state.runtimeWork
+        ? {
+            ...state.runtimeWork,
+            projects: state.runtimeWork.projects.filter(
+              project => runtimeProjectUiId(project.project) !== action.projectId
+            ),
+          }
+        : state.runtimeWork
+      return {
+        ...state,
+        runtimeWork: runtimeWork
+          ? { ...runtimeWork, totalTasks: countRuntimeWorkTasks(runtimeWork) }
+          : runtimeWork,
+        currentProject: removedCurrentProject ? null : state.currentProject,
+        selectedDeviceWorkspaceId: removedCurrentProject ? null : state.selectedDeviceWorkspaceId,
+        pendingProjectWorkspaceProjectId: removedCurrentProject
+          ? null
+          : state.pendingProjectWorkspaceProjectId,
+        currentRuntimeTask: removedCurrentProject ? null : state.currentRuntimeTask,
+      }
+    }
     case 'device_workspace_prepared':
       return {
         ...state,
@@ -1069,15 +1055,24 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         action.deviceId,
         action.workspacePath
       )
+      const selectedWorkspace = runtimeProject?.deviceWorkspaces.find(
+        workspace =>
+          workspace.deviceId === action.deviceId.trim() &&
+          normalizeRuntimeWorkspacePath(workspace.workspacePath) ===
+            normalizeRuntimeWorkspacePath(action.workspacePath)
+      )
       return {
         ...state,
         runtimeWork,
         currentProject: runtimeProject
           ? runtimeProjectToProject(runtimeProject)
           : state.currentProject,
-        selectedDeviceWorkspaceId: null,
+        selectedDeviceWorkspaceId: selectedWorkspace?.id ?? null,
         pendingProjectWorkspaceProjectId: null,
+        standaloneDeviceId: action.deviceId,
+        standaloneWorkspacePath: normalizeRuntimeWorkspacePath(action.workspacePath),
         currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey + 1,
       }
     }
     case 'project_workspace_selected':
@@ -1089,6 +1084,9 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.deviceWorkspaceId === null ? action.project.id : null,
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
+        standaloneChatKey: action.startFreshChat
+          ? state.standaloneChatKey + 1
+          : state.standaloneChatKey,
       }
     case 'project_updated':
       return {
@@ -1098,6 +1096,12 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         projects: state.projects.map(project =>
           project.id === action.project.id ? action.project : project
         ),
+      }
+    case 'project_removed':
+      return {
+        ...state,
+        currentProject: state.currentProject?.id === action.projectId ? null : state.currentProject,
+        projects: state.projects.filter(project => project.id !== action.projectId),
       }
     case 'project_cleared':
       return {
@@ -1160,19 +1164,12 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         ...state,
         runtimeWork: removeOptimisticRuntimeTask(state.runtimeWork, action.address),
       }
-    case 'runtime_task_started':
+    case 'runtime_tasks_archived':
       return {
         ...state,
-        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, true),
-        activeRuntimeTasks: upsertActiveRuntimeTask(state.activeRuntimeTasks, action.address),
-      }
-    case 'runtime_task_settled':
-      return {
-        ...state,
-        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, false),
-        activeRuntimeTasks: state.activeRuntimeTasks.filter(
-          address => !sameRuntimeTaskActivity(address, action.address)
-        ),
+        runtimeWork: state.runtimeWork
+          ? removeRuntimeTasks(state.runtimeWork, action.addresses)
+          : null,
       }
     case 'current_task_cleared':
       return {

@@ -76,6 +76,7 @@ export interface WorkbenchMessage<
   id: string
   taskId?: string
   subtaskId?: string
+  turnId?: string
   shellType?: string
   role: WorkbenchMessageRole
   content: string
@@ -154,6 +155,7 @@ export type WorkbenchMessageAction<
       type: 'assistant_done'
       messageId?: string
       subtaskId?: string
+      turnId?: string
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
@@ -207,7 +209,9 @@ export function reduceWorkbenchMessages<
         limitWorkbenchMessage
       )
     case 'user_added':
-      return [...state, action.message]
+      return normalizeUniqueWorkbenchMessages([...state, action.message]).map(
+        limitWorkbenchMessage
+      )
     case 'assistant_started':
       if (
         state.some((message) => isAssistantMessageForAction(message, action))
@@ -315,6 +319,7 @@ export function reduceWorkbenchMessages<
             createAssistantMessage<TAttachment, TFileChanges>({
               messageId: action.messageId,
               subtaskId: action.subtaskId,
+              turnId: action.turnId,
               content: action.content ?? '',
               status: 'done',
               blocks: finalizeProcessingBlocks(action.blocks, 'done'),
@@ -327,6 +332,7 @@ export function reduceWorkbenchMessages<
         isAssistantMessageForAction(message, action)
           ? limitWorkbenchMessage({
               ...clearMessageError(message),
+              turnId: action.turnId ?? message.turnId,
               content: action.content ?? message.content,
               streamTextOffset: undefined,
               // A completed response is authoritative. Do not retain a stream
@@ -519,7 +525,9 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
     MAX_LIVE_MESSAGE_CONTENT_CHARS,
     message.contentOriginalChars
   )
-  const blocks = message.blocks?.map(limitProcessingBlock)
+  const blocks = sortProcessingBlocksByCreatedAt(
+    message.blocks?.map(limitProcessingBlock)
+  )
   return {
     ...message,
     content: content.text,
@@ -561,6 +569,28 @@ function limitProcessingBlock<TFileChanges>(
   return block
 }
 
+function sortProcessingBlocksByCreatedAt<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
+): WorkbenchProcessingBlock<TFileChanges>[] | undefined {
+  if (!blocks) return undefined
+
+  return blocks
+    .map((block, index) => ({ block, index }))
+    .sort((left, right) => {
+      const leftCreatedAt = Number.isFinite(left.block.createdAt)
+        ? left.block.createdAt
+        : Number.POSITIVE_INFINITY
+      const rightCreatedAt = Number.isFinite(right.block.createdAt)
+        ? right.block.createdAt
+        : Number.POSITIVE_INFINITY
+      if (leftCreatedAt === rightCreatedAt) {
+        return left.index - right.index
+      }
+      return leftCreatedAt - rightCreatedAt
+    })
+    .map(({ block }) => block)
+}
+
 function limitToolBlock(block: WorkbenchToolBlock): WorkbenchToolBlock {
   if (typeof block.toolOutput !== 'string') return block
 
@@ -599,7 +629,7 @@ function limitTextContent(
   if (currentChars <= maxChars) {
     return {
       text: value,
-      truncated: originalChars > currentChars,
+      truncated: originalChars > maxChars && originalChars > currentChars,
       originalChars
     }
   }
@@ -757,6 +787,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   messageId,
   taskId,
   subtaskId,
+  turnId,
   shellType,
   content = '',
   status = 'streaming',
@@ -771,6 +802,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   messageId?: string
   taskId?: string
   subtaskId?: string
+  turnId?: string
   shellType?: string
   content?: string
   status?: WorkbenchMessageStatus
@@ -786,6 +818,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
     id: messageId ?? `assistant-${subtaskId ?? Date.now()}`,
     taskId,
     subtaskId,
+    turnId,
     shellType,
     role: 'assistant',
     content,
@@ -842,15 +875,23 @@ function createBlockCreatedMessage<TAttachment, TFileChanges>(
   >
 ): WorkbenchMessage<TAttachment, TFileChanges> {
   const subtaskId = action.subtaskId ?? message.subtaskId
+  const movesPendingContent = shouldMovePendingContentBeforeBlock(
+    message,
+    action.block
+  )
   const activeMessage = withActiveStreamState(
     message,
     isActiveBlockStatus(action.block.status)
   )
   return {
     ...activeMessage,
-    content: shouldMovePendingContentBeforeBlock(message, action.block)
-      ? ''
-      : message.content,
+    content: movesPendingContent ? '' : message.content,
+    ...(movesPendingContent && {
+      streamTextOffset: undefined,
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+      contentLoadRef: undefined
+    }),
     blocks: mergeProcessingBlock(
       subtaskId
         ? getBlocksBeforeIncomingBlock(message, subtaskId, action.block)
@@ -1067,7 +1108,10 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
   subtaskId: string,
   incomingBlock: WorkbenchProcessingBlock<TFileChanges>
 ): WorkbenchProcessingBlock<TFileChanges>[] {
-  const finalizedBlocks = finalizeOpenNarrativeBlocks(message.blocks)
+  const finalizedBlocks = finalizeOpenNarrativeBlocks(
+    message.blocks,
+    incomingBlock.createdAt
+  )
   if (!shouldMovePendingContentBeforeBlock(message, incomingBlock))
     return finalizedBlocks
 
@@ -1079,7 +1123,7 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
       type: 'text',
       content: message.content,
       status: 'done',
-      createdAt: Date.now()
+      createdAt: incomingBlock.createdAt
     }
   ]
 }
@@ -1096,7 +1140,8 @@ function getTextBlockCount(blocks: WorkbenchProcessingBlock[]): number {
 }
 
 function finalizeOpenNarrativeBlocks<TFileChanges>(
-  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined,
+  nextBlockCreatedAt: number
 ): WorkbenchProcessingBlock<TFileChanges>[] {
   return (blocks ?? []).map((block) => {
     if (
@@ -1108,6 +1153,7 @@ function finalizeOpenNarrativeBlocks<TFileChanges>(
       return {
         ...block,
         status: 'done' as const,
+        createdAt: Math.min(block.createdAt, nextBlockCreatedAt),
         completedAt: block.completedAt ?? Date.now()
       }
     }

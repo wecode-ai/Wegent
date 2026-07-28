@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
+import { saveStoredCloudConnection } from '@/features/cloud-connection/cloudConnectionStorage'
 
 vi.mock('@/features/auth/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -76,6 +77,10 @@ vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
 }))
 
+vi.mock('@/pages/SitesPage', () => ({
+  SitesPage: () => <div data-testid="sites-page">Sites</div>,
+}))
+
 function enableTauri() {
   Object.defineProperty(window, '__TAURI_INTERNALS__', {
     configurable: true,
@@ -131,6 +136,35 @@ describe('App center route', () => {
             configured: true,
             proxy_url_masked: 'http://127.0.0.1:7890',
           }
+        } else if (url.includes('/apps/installed')) {
+          payload = {
+            apps: [
+              {
+                id: 'wegent-sites',
+                slug: 'wegent-sites',
+                name: 'Wegent Sites',
+                description: 'Build and deploy Wegent Sites projects.',
+                icon_url: null,
+                runtime_name: 'Wegent Sites',
+                enabled: true,
+                callable: true,
+                connection: {
+                  status: 'connected',
+                  external_account_name: null,
+                  granted_scopes: [],
+                  expires_at: null,
+                },
+                tool_summaries: [
+                  {
+                    name: 'wegent-sites__create_site',
+                    title: 'Create Site',
+                    description: 'Create a site',
+                    raw_tool_name: 'create_site',
+                  },
+                ],
+              },
+            ],
+          }
         }
 
         return Promise.resolve({
@@ -161,7 +195,7 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
@@ -173,6 +207,28 @@ describe('App center route', () => {
     expect(screen.queryByText('Skills')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+  })
+
+  test('loads Agent from the connected cloud address', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://app.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-21T00:00:00.000Z',
+    })
+    window.history.pushState({}, '', '/app/wegent')
+
+    render(<App />)
+
+    expect(await screen.findByTestId('app-iframe-wegent')).toHaveAttribute(
+      'src',
+      'https://app.example.com'
+    )
   })
 
   test('does not render the global chrome titlebar on the workbench route', async () => {
@@ -200,11 +256,48 @@ describe('App center route', () => {
     render(<App />)
 
     await waitForStartupScreenToClose()
+    expect(screen.getByTestId('wework-dev-instance-trigger')).toHaveClass(
+      'h-8',
+      'w-8',
+      'rounded-full'
+    )
+    fireEvent.click(screen.getByTestId('wework-dev-instance-trigger'))
     expect(screen.getByTestId('wework-dev-instance-badge')).toHaveTextContent('Runtime task')
     fireEvent.click(screen.getByTestId('copy-wework-dev-port-button'))
     expect(writeText).toHaveBeenCalledWith('1420')
     fireEvent.click(screen.getByTestId('copy-wework-dev-parent-title-button'))
     expect(writeText).toHaveBeenCalledWith('Parent task')
+
+    fireEvent.click(screen.getByTestId('collapse-wework-dev-instance-button'))
+    expect(screen.getByTestId('wework-dev-instance-trigger')).toHaveClass(
+      'h-8',
+      'w-8',
+      'rounded-full'
+    )
+    expect(screen.getByTestId('wework-dev-instance-badge')).toHaveTextContent('Port')
+
+    const badge = screen.getByTestId('wework-dev-instance-badge')
+    vi.spyOn(badge, 'getBoundingClientRect').mockReturnValue({
+      left: 900,
+      top: 700,
+      width: 32,
+      height: 32,
+      right: 932,
+      bottom: 732,
+      x: 900,
+      y: 700,
+      toJSON: () => ({}),
+    })
+    const trigger = screen.getByTestId('wework-dev-instance-trigger')
+    fireEvent.pointerDown(trigger, { button: 0, clientX: 916, clientY: 716 })
+    fireEvent.pointerMove(window, { clientX: 816, clientY: 616 })
+    fireEvent.pointerUp(window)
+    fireEvent.click(trigger)
+    expect(badge).toHaveStyle({ left: '800px', top: '600px' })
+    expect(trigger).toHaveClass('rounded-full')
+
+    fireEvent.click(screen.getByTestId('wework-dev-instance-trigger'))
+    expect(screen.getByTestId('wework-dev-instance-trigger')).not.toHaveClass('rounded-full')
   })
 
   test('keeps the app center sidebar available on desktop app widths', async () => {
@@ -247,6 +340,27 @@ describe('App center route', () => {
     })
     expect(screen.queryByTestId('apps-sidebar-nav')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+  })
+
+  test('shows installed connector apps and opens Sites from Wegent Sites', async () => {
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('apps-nav-installed-apps'))
+
+    expect(await screen.findByTestId('installed-app-wegent-sites')).toHaveTextContent(
+      'Wegent Sites'
+    )
+    expect(screen.getByTestId('installed-app-wegent-sites')).toHaveTextContent('create_site')
+
+    fireEvent.click(screen.getByTestId('installed-app-open-sites'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/sites'))
+    expect(screen.getByTestId('sites-page')).toBeInTheDocument()
   })
 
   test('collapses the apps page header while scrolling the overview', async () => {

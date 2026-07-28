@@ -15,7 +15,16 @@ import {
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
 import { openLocalWorkspace } from '@/lib/local-terminal'
-import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/tauri/appPreferences'
+import {
+  RuntimeTaskLifecycleProvider,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
+
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
 
 vi.mock('@/lib/local-terminal', () => ({
   openLocalWorkspace: vi.fn(),
@@ -95,8 +104,14 @@ function renderSidebar(
   appUpdate?: Partial<AppUpdateContextValue>
 ) {
   const props: Parameters<typeof DesktopSidebar>[0] = createSidebarProps(overrides)
+  const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-test')
+  lifecycleStore.syncRuntimeWork(props.runtimeWork)
 
-  let tree = <DesktopSidebar {...props} />
+  let tree = (
+    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+      <DesktopSidebar {...props} />
+    </RuntimeTaskLifecycleProvider>
+  )
   if (appUpdate) {
     const value: AppUpdateContextValue = {
       availableUpdate: null,
@@ -136,6 +151,7 @@ function enableTauri() {
 
 describe('DesktopSidebar', () => {
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     localStorage.clear()
     enableTauri()
     Element.prototype.scrollIntoView = vi.fn()
@@ -686,9 +702,9 @@ describe('DesktopSidebar', () => {
       expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
     }
     expect(searchButton).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
-    expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
-    expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
-    expect(cloudButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
+    expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(cloudButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
     expect(newTaskIcon).toHaveClass('text-current')
     expect(cloudIcon).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     expect(projectsTitle).toHaveClass(
@@ -808,12 +824,68 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
 
     const detail = screen.getByTestId('sidebar-cloud-error-popover')
+    expect(detail.parentElement).toBe(document.body)
+    expect(detail).toHaveClass('fixed', 'z-system-popover', 'rounded-xl')
     expect(detail).toHaveTextContent('云端工作不可用')
     expect(detail).toHaveTextContent('云端设备: request timed out')
     expect(detail).toHaveTextContent('云端设备')
     expect(detail).toHaveTextContent('不可用')
     expect(detail).toHaveTextContent('云端任务列表')
     expect(detail).toHaveTextContent('可用')
+
+    await userEvent.click(document.body)
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
+  })
+
+  test('closes cloud work error details with Escape', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
+  })
+
+  test('closes cloud work error details when clicking outside', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable', runtimeWork: 'available' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
+
+    await userEvent.click(document.body)
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
+  })
+
+  test('does not close cloud work error details when clicking inside', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable', runtimeWork: 'available' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    const detail = screen.getByTestId('sidebar-cloud-error-popover')
+
+    await userEvent.click(detail)
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
   })
 
   test('does not open add-device guidance while cloud work checks are failing', async () => {
@@ -942,19 +1014,16 @@ describe('DesktopSidebar', () => {
   })
 
   test('shows Sites only while experimental features are enabled', async () => {
-    renderSidebar()
+    experimentalFeatures.enabled = false
+    const { unmount } = renderSidebar()
 
     expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, {
-          detail: { ...defaultAppPreferences, experimentalFeaturesEnabled: true },
-        })
-      )
-    })
+    unmount()
+    experimentalFeatures.enabled = true
+    renderSidebar()
 
-    expect(await screen.findByTestId('sites-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
@@ -2644,6 +2713,14 @@ describe('DesktopSidebar', () => {
     expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
   })
 
+  test('hides global IM notifications while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+
+    renderSidebar({ onToggleGlobalImNotification: vi.fn() })
+
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
+  })
+
   test('anchors the away reminder menu to the full-width account area', async () => {
     // Regression guard (POPOVER-CONTAINING-BLOCK-MISMATCH): the menu must portal
     // into the full-width account/settings container (group/account), not remain
@@ -3301,7 +3378,14 @@ describe('DesktopSidebar', () => {
       totalTasks: count,
     })
 
-    const view = renderSidebar({ runtimeWork: runtimeWorkWithTaskCount(6) })
+    const initialProps = createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(6) })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-growing-list-test')
+    lifecycleStore.syncRuntimeWork(initialProps.runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
 
     await userEvent.click(screen.getByTestId('project-item-button'))
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
@@ -3310,8 +3394,12 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('project-runtime-tasks-expand-7')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
 
+    const nextProps = createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(16) })
+    act(() => lifecycleStore.syncRuntimeWork(nextProps.runtimeWork))
     view.rerender(
-      <DesktopSidebar {...createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(16) })} />
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...nextProps} />
+      </RuntimeTaskLifecycleProvider>
     )
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)

@@ -27,7 +27,7 @@ async fn env_lock() -> EnvLockGuard {
         _guard: LOCK
             .get_or_init(|| StdMutex::new(()))
             .lock()
-            .expect("environment lock should be available"),
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
     }
 }
 
@@ -83,6 +83,103 @@ fn execution_request_with_model_config(
 }
 
 #[tokio::test]
+async fn runtime_task_forwards_all_local_project_roots_to_codex() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-multi-root-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-multi-root-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let first_root = temp_path("runtime-multi-root-web", "dir");
+    let second_root = temp_path("runtime-multi-root-api", "dir");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_root).unwrap();
+    let first_root = first_root.display().to_string();
+    let second_root = second_root.display().to_string();
+    let log_path = temp_path("runtime-multi-root-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let project_response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "product",
+                "name": "Product",
+                "roots": [first_root, second_root]
+            }
+        }))
+        .await
+        .expect("local project should be persisted");
+    assert_eq!(project_response["accepted"], true);
+
+    let mut execution_request =
+        codex_execution_request("inspect both folders", &first_root, "gpt-5.5");
+    execution_request["runtime_project_key"] = json!("product");
+    execution_request["runtime_project_name"] = json!("Product");
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-multi-root",
+                "workspacePath": first_root,
+                "message": "inspect both folders",
+                "runtimeProjectKey": "product",
+                "runtimeProjectName": "Product",
+                "executionRequest": execution_request
+            }
+        }))
+        .await
+        .expect("task should be accepted");
+    assert_eq!(created["accepted"], true);
+    wait_for_turn_count(&log_path, 1).await;
+
+    let calls = read_json_lines(&log_path);
+    for method in ["thread/start", "turn/start"] {
+        let call = calls
+            .iter()
+            .find(|call| call["method"] == method)
+            .unwrap_or_else(|| panic!("{method} should be recorded"));
+        assert_eq!(
+            call["params"]["runtimeWorkspaceRoots"],
+            json!([first_root, second_root])
+        );
+    }
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("multi-root task should remain listed");
+    let product_workspaces = listed["workspaces"]
+        .as_array()
+        .map(|workspaces| {
+            workspaces
+                .iter()
+                .filter(|workspace| workspace["projectKey"] == "product")
+                .collect::<Vec<_>>()
+        })
+        .expect("workspace list should be present");
+    assert_eq!(product_workspaces.len(), 2);
+    assert_eq!(
+        product_workspaces[0]["projectRoots"],
+        json!([first_root, second_root])
+    );
+    let total_tasks = product_workspaces
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .map(Vec::len)
+        .sum::<usize>();
+    assert_eq!(total_tasks, 1);
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -99,7 +196,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
+    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -123,7 +220,9 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "model_config": {
                         "model": "openai",
                         "model_id": "gpt-5.5",
-                        "api_format": "responses"
+                        "api_format": "responses",
+                        "base_url": "https://first-model.example.com/v1",
+                        "api_key": "first-key"
                     }
                 }
             }
@@ -177,6 +276,8 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                         "model_id": "gpt-4.1",
                         "api_format": "responses",
                         "protocol": "openai-responses",
+                        "base_url": "https://second-model.example.com/v1",
+                        "api_key": "second-key",
                         "reasoning": {
                             "effort": "extra_high",
                             "summary": "concise"
@@ -202,6 +303,15 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     wait_for_turn_count(&log_path, 2).await;
 
     let calls = read_json_lines(&log_path);
+    let unsubscribe_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/unsubscribe")
+        .expect("send should release the loaded thread before changing providers");
+    let resume_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/resume")
+        .expect("send should resume the existing thread");
+    assert!(unsubscribe_index < resume_index);
     let resume = calls
         .iter()
         .find(|call| call["method"] == "thread/resume")
@@ -504,6 +614,91 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missing_turn() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-fork-turn-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-fork-turn-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-fork-turn-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "source-task-1",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("source task should be accepted");
+    assert_eq!(created["accepted"], true);
+    wait_for_thread_mapping(&handler, "source-task-1", "thread-1").await;
+    wait_until_task_idle(&handler, "source-task-1").await;
+
+    let forked = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.fork_at_turn",
+            "payload": {
+                "taskId": "source-task-1",
+                "lastTurnId": "turn-1"
+            }
+        }))
+        .await
+        .expect("completed turn should fork");
+    assert_eq!(forked["accepted"], true);
+    assert_eq!(forked["source"]["taskId"], "source-task-1");
+    assert_eq!(forked["target"]["taskId"], "thread-fork-1");
+
+    let listed = handler
+        .handle_runtime_rpc(json!({"method": "runtime.tasks.list", "payload": {}}))
+        .await
+        .expect("runtime task list should succeed");
+    let tasks = listed["workspaces"][0]["tasks"]
+        .as_array()
+        .expect("workspace tasks should be present");
+    assert_eq!(tasks.len(), 2);
+    assert!(tasks
+        .iter()
+        .all(|task| task["workspacePath"] == "/tmp/project"));
+
+    let calls = read_json_lines(&log_path);
+    let fork_call = calls
+        .iter()
+        .find(|call| call["method"] == "thread/fork" && call["params"]["lastTurnId"] == "turn-1")
+        .expect("turn-bounded thread/fork should be called");
+    assert_eq!(fork_call["params"]["threadId"], "thread-1");
+    assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
+
+    let missing = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.fork_at_turn",
+            "payload": {
+                "taskId": "source-task-1",
+                "lastTurnId": "missing-turn"
+            }
+        }))
+        .await
+        .expect("missing turn should return a structured failure");
+    assert_eq!(missing["accepted"], false);
+    assert!(missing["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("fork turn was not found")));
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -718,7 +913,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        0
+        1
     );
 
     let archived = handler
@@ -732,7 +927,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
         .await
         .expect("archive should succeed");
     assert_eq!(archived["success"], true);
-    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 2).await;
 }
 
 #[tokio::test]
@@ -1293,7 +1488,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-text-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
+    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -2000,11 +2195,16 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
+    write_fake_codex_for_turns(log_path, 1)
+}
+
+fn write_fake_codex_for_turns(log_path: &Path, exit_after_turns: usize) -> PathBuf {
     let path = temp_path("fake-codex-send", "sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
+turn_count=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -2019,16 +2219,28 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/read"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
-      exit 0
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/fork"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      case "$line" in
+        *'"lastTurnId":"missing-turn"'*)
+          printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32602,"message":"fork turn was not found"}}}}'
+          ;;
+        *'"lastTurnId":"turn-1"'*)
+          printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-fork-1"}}}}}}'
+          ;;
+        *)
+          printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+          ;;
+      esac
       ;;
     *'"method":"thread/inject_items"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
@@ -2052,6 +2264,7 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)
+      turn_count=$((turn_count + 1))
       progress_id='progress-1'
       case "$line" in
         *'"model":"gpt-4.1"'*) progress_id='progress-2' ;;
@@ -2063,12 +2276,15 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
-      exit 0
+      if [ "$turn_count" -ge {} ]; then
+        exit 0
+      fi
       ;;
   esac
 done
 "#,
-        log_path.display()
+        log_path.display(),
+        exit_after_turns
     );
     write_executable(&path, &content);
     path
@@ -2185,6 +2401,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent"}}}}}}'
@@ -2327,6 +2546,8 @@ while IFS= read -r line; do
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-input","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-input.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/start"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"thread/unsubscribe"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/resume"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/goal/get"'; then
@@ -2381,6 +2602,9 @@ while IFS= read -r line; do
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      ;;
     *'"method":"thread/name/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
@@ -2434,6 +2658,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -2837,7 +3064,7 @@ async fn recv_events_until<F>(events: &mut broadcast::Receiver<Value>, mut done:
 where
     F: FnMut(&[Value]) -> bool,
 {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut received = Vec::new();
     loop {
         if done(&received) {

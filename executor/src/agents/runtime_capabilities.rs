@@ -1388,10 +1388,17 @@ fn subagent_file(bot: &Value) -> Option<(String, String)> {
         .get("system_prompt")
         .and_then(Value::as_str)
         .unwrap_or("");
+    let model = bot
+        .pointer("/agent_config/env/model_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| serde_json::to_string(value).unwrap_or_else(|_| "inherit".to_owned()))
+        .unwrap_or_else(|| "inherit".to_owned());
     Some((
         name.clone(),
         format!(
-            "---\nname: {name}\ndescription: \"{description}\"\nmodel: inherit\n---\n\n{system_prompt}\n"
+            "---\nname: {name}\ndescription: \"{description}\"\nmodel: {model}\n---\n\n{system_prompt}\n"
         ),
     ))
 }
@@ -1657,6 +1664,17 @@ fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
         return Vec::new();
     };
     let mut overrides = vec![format!("{key}.url={}", toml_value(url))];
+    if let Some(headers) = object.get("headers").and_then(Value::as_object) {
+        for (header_name, header_value) in headers {
+            if let Some(header_value) = header_value.as_str() {
+                overrides.push(format!(
+                    "{key}.http_headers.{}={}",
+                    toml_key_segment(header_name),
+                    toml_value(header_value)
+                ));
+            }
+        }
+    }
     for (source_key, target_key) in [
         ("bearer_token_env_var", "bearer_token_env_var"),
         ("bearerTokenEnvVar", "bearer_token_env_var"),
@@ -1847,6 +1865,39 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn coordinate_subagent_uses_its_resolved_model() {
+        let bot = json!({
+            "id": 106,
+            "name": "glm",
+            "description": "GLM worker",
+            "system_prompt": "You are the GLM worker.",
+            "agent_config": {
+                "env": {
+                    "model_id": "weibo-glm5.2"
+                }
+            }
+        });
+
+        let (name, content) = subagent_file(&bot).unwrap();
+
+        assert_eq!(name, "glm-106");
+        assert!(content.contains("model: \"weibo-glm5.2\""));
+    }
+
+    #[test]
+    fn coordinate_subagent_inherits_when_model_is_unconfigured() {
+        let bot = json!({
+            "id": 103,
+            "name": "worker",
+            "system_prompt": "You are a worker."
+        });
+
+        let (_, content) = subagent_file(&bot).unwrap();
+
+        assert!(content.contains("model: inherit"));
+    }
 
     struct EnvGuard {
         key: &'static str,

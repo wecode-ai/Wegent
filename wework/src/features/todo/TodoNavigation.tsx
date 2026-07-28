@@ -9,6 +9,7 @@ import {
   ListTodo,
   Plus,
   Search,
+  Settings2,
   UserRound,
 } from 'lucide-react'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
@@ -202,7 +203,7 @@ export function TodoSearchOverlay({
         <div className="min-h-0 overflow-y-auto p-2">
           {results.length === 0 ? (
             <div className="flex h-24 items-center justify-center text-xs text-[#929AA1]">
-              {t('todo.no_matching_items', '暂无符合条件的 TODO')}
+              {t('todo.no_matching_items', '暂无符合条件的任务')}
             </div>
           ) : (
             results.map(item => (
@@ -247,6 +248,7 @@ export function TodoSidebar({
   onSearch,
   onAddProject,
   onOpenProjects,
+  onConfigureWorkflow,
 }: {
   user: UserProfile | null
   projects: TodoProject[]
@@ -263,6 +265,7 @@ export function TodoSidebar({
   onSearch: () => void
   onAddProject: () => void
   onOpenProjects: () => void
+  onConfigureWorkflow: () => void
 }) {
   const { t } = useTranslation('common')
   const [projectActionsOpen, setProjectActionsOpen] = useState(false)
@@ -319,7 +322,7 @@ export function TodoSidebar({
           <SidebarAction
             testId="todo-sidebar-create"
             icon={Plus}
-            label={t('todo.create_action', '新建 TODO')}
+            label={t('todo.create_action', '新建任务')}
             onClick={onCreate}
           />
           <SidebarAction
@@ -418,6 +421,13 @@ export function TodoSidebar({
                     count={projectItemCount(selectedProject)}
                     active={activeView === 'work-items'}
                     onClick={() => onSelectView('work-items')}
+                  />
+                  <ProjectNav
+                    testId="todo-sidebar-workflow-settings"
+                    icon={Settings2}
+                    label={t('todo.workflow_settings', '工作流配置')}
+                    active={false}
+                    onClick={onConfigureWorkflow}
                   />
                 </>
               )}

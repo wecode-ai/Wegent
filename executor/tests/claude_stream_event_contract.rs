@@ -155,6 +155,43 @@ fn claude_user_tool_result_blocks_are_extracted_for_ui_tool_events() {
 }
 
 #[test]
+fn oversized_image_tool_result_omits_base64_and_completes_tool() {
+    let image_data = "a".repeat(1024 * 1024 + 1);
+    let line = serde_json::to_string(&json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "Read_0",
+                "content": [{
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": image_data
+                    }
+                }]
+            }]
+        }
+    }))
+    .unwrap();
+
+    let mut buffer = wegent_executor::stream::ClaudeStdoutJsonBuffer::default();
+    let event = buffer.push_line(&line, 1).unwrap().unwrap();
+    let tool_results = extract_claude_tool_results(&event);
+
+    assert_eq!(tool_results.len(), 1);
+    assert_eq!(tool_results[0].tool_use_id, "Read_0");
+    assert_eq!(tool_results[0].content, None);
+    assert!(!tool_results[0].is_error);
+    assert_eq!(
+        event["message"]["content"][0]["content"][0]["source"]["data"],
+        "[binary image data omitted]"
+    );
+}
+
+#[test]
 fn claude_skill_tool_load_result_is_extracted_for_ui_tool_events() {
     let tool_use_event = json!({
         "type": "assistant",

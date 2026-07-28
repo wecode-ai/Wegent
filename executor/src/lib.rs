@@ -10,6 +10,8 @@ pub mod callback;
 mod claude_session;
 mod codex_phase;
 pub mod config;
+mod connector_gateway;
+pub mod connector_mcp;
 pub mod emitter;
 pub mod envd;
 pub mod heartbeat;
@@ -27,6 +29,7 @@ pub mod runtime_work;
 pub mod server;
 pub mod services;
 pub mod stream;
+pub mod task_runtime;
 pub mod version;
 
 #[cfg(test)]

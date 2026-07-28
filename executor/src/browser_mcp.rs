@@ -39,6 +39,7 @@ async fn run_inner() -> Result<(), String> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(BRIDGE_CONNECT_TIMEOUT_SECONDS))
         .timeout(Duration::from_secs(BRIDGE_REQUEST_TIMEOUT_SECONDS))
+        .no_proxy()
         .build()
         .map_err(|error| format!("Failed to build embedded browser bridge client: {error}"))?;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();

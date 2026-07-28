@@ -95,6 +95,23 @@ def fake_im_session_cache(monkeypatch: pytest.MonkeyPatch) -> FakeIMSessionCache
     return cache
 
 
+@pytest.fixture(autouse=True)
+def test_sensitive_data_crypto_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    """Provide explicit test crypto config for sensitive-data encryption."""
+
+    from shared.utils import crypto
+
+    monkeypatch.setenv("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012")
+    monkeypatch.setenv("GIT_TOKEN_AES_IV", "1234567890123456")
+    crypto._aes_key = None
+    crypto._aes_iv = None
+    yield
+    crypto._aes_key = None
+    crypto._aes_iv = None
+
+
 def get_test_database_url(worker_id: str = "master") -> str:
     """
     Generate a unique database URL for each pytest-xdist worker.

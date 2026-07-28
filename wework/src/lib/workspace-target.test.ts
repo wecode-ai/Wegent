@@ -4,6 +4,7 @@ import {
   createLocalAttachmentWorkspaceTarget,
   createLocalFileWorkspaceTarget,
   resolveProjectRuntimeWorkspaceTarget,
+  resolveProjectRuntimeWorkspaceTargets,
   resolveRuntimeWorkspaceContext,
   resolveWorkspaceTarget,
 } from './workspace-target'
@@ -138,6 +139,67 @@ describe('resolveWorkspaceTarget', () => {
     })
   })
 
+  test('returns every available project workspace target for a multi-root project', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveProjectRuntimeWorkspaceTargets({
+        currentProject: project,
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 21,
+                  deviceId: 'local-device',
+                  workspacePath: '/repo/web',
+                  workspaceSource: 'local',
+                  available: true,
+                  tasks: [],
+                },
+                {
+                  id: 22,
+                  deviceId: 'local-device',
+                  workspacePath: '/repo/api',
+                  workspaceSource: 'local',
+                  available: true,
+                  tasks: [],
+                },
+                {
+                  id: 23,
+                  deviceId: 'offline-device',
+                  workspacePath: '/repo/offline',
+                  available: false,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        },
+      })
+    ).toEqual([
+      {
+        deviceId: 'local-device',
+        path: '/repo/web',
+        source: 'project',
+        workspaceSource: 'local',
+      },
+      {
+        deviceId: 'local-device',
+        path: '/repo/api',
+        source: 'project',
+        workspaceSource: 'local',
+      },
+    ])
+  })
+
   test('uses the only available project workspace when none is explicitly selected', () => {
     const project: ProjectWithTasks = {
       id: 12,
@@ -172,6 +234,45 @@ describe('resolveWorkspaceTarget', () => {
       deviceId: 'device-b',
       path: '/Users/me/Wegent',
       source: 'project',
+    })
+  })
+
+  test('keeps the remote host route for a merged project workspace', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveProjectRuntimeWorkspaceTarget({
+        currentProject: project,
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'local-device',
+                  remoteHostId: 'cloud-device',
+                  workspacePath: '/home/ubuntu/project-alpha',
+                  workspaceSource: 'remote',
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        },
+      })
+    ).toMatchObject({
+      deviceId: 'cloud-device',
+      path: '/home/ubuntu/project-alpha',
+      source: 'project',
+      workspaceSource: 'remote',
     })
   })
 
@@ -227,6 +328,61 @@ describe('resolveWorkspaceTarget', () => {
         path: '/workspace/worktrees/8/project-alpha',
         source: 'runtime',
         taskId: 'runtime-1',
+      },
+    })
+  })
+
+  test('keeps the remote host route for a merged historical task workspace', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'local-device',
+          workspacePath: '/home/ubuntu/project-alpha',
+          taskId: 'runtime-1',
+        },
+        projects: [project],
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'local-device',
+                  remoteHostId: 'cloud-device',
+                  workspacePath: '/home/ubuntu/project-alpha',
+                  workspaceSource: 'remote',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-1',
+                      workspacePath: '/home/ubuntu/project-alpha',
+                      title: 'Runtime task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        },
+      })
+    ).toEqual({
+      project,
+      workspaceTarget: {
+        deviceId: 'cloud-device',
+        path: '/home/ubuntu/project-alpha',
+        source: 'runtime',
+        taskId: 'runtime-1',
+        workspaceSource: 'remote',
       },
     })
   })

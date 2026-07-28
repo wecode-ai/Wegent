@@ -7,9 +7,10 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AnyHttpUrl, BaseModel
+from pydantic import AnyHttpUrl, BaseModel, Field
 
 SitePublishStatus = Literal["unpublished", "publishing", "published", "failed"]
+SiteNetwork = Literal["inner", "outer"]
 
 
 class SiteResponse(BaseModel):
@@ -37,3 +38,17 @@ class SiteListResponse(BaseModel):
     total: int
     offset: int
     limit: int
+    next_cursor: str | None = None
+
+
+class SiteNetworkUpdateRequest(BaseModel):
+    """Request to update one site network scope."""
+
+    network: SiteNetwork
+
+
+class SiteUpdateRequest(BaseModel):
+    """Request to update one site display name."""
+
+    sitename: str | None = Field(default=None, min_length=1, max_length=255)
+    name: str | None = Field(default=None, min_length=1, max_length=255)

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppearanceProvider } from './AppearanceProvider'
 import { darkPalette, lightPalette } from './presets'
 import { useAppearance } from './useAppearance'
-import { WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
+import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
 
 let mediaQueryMatches = false
 let mediaQueryListener: ((event: MediaQueryListEvent) => void) | null = null
@@ -181,6 +181,24 @@ describe('AppearanceProvider', () => {
 
     expect(screen.getByTestId('ui-font-size')).toHaveTextContent('14')
     expect(screen.getByTestId('code-font-size')).toHaveTextContent('12')
+  })
+
+  test('resets UI and code font sizes without changing other appearance settings', async () => {
+    render(
+      <AppearanceProvider>
+        <Harness />
+      </AppearanceProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('set-font-sizes'))
+    act(() => {
+      window.dispatchEvent(new CustomEvent(WEWORK_RESET_FONT_SIZE_EVENT))
+    })
+
+    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('14')
+    expect(screen.getByTestId('code-font-size')).toHaveTextContent('12')
+    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('14px')
+    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('12px')
   })
 
   test('keeps mobile drawer backgrounds opaque enough to hide page content', () => {

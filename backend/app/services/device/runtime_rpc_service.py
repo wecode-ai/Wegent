@@ -55,17 +55,6 @@ class RuntimeRpcService:
             raise RuntimeRpcError(f"Device '{device_id}' has no socket information")
 
         sio = get_sio()
-        if not sio.manager.is_connected(socket_id, LOCAL_EXECUTOR_NAMESPACE):
-            logger.warning(
-                "[RuntimeRpcService] Runtime RPC skipped stale socket: user_id=%s device_id=%s method=%s socket_id=%s",
-                user_id,
-                device_id,
-                method,
-                socket_id,
-            )
-            await device_service.set_device_offline(user_id, device_id)
-            raise RuntimeRpcError(f"Device '{device_id}' is disconnected")
-
         request = {"method": method, "payload": payload}
         started_at = time.perf_counter()
         logger.info(

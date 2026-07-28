@@ -219,11 +219,15 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public Socket.IO origin returned to Wework desktop clients.
+    WEGENT_SOCKET_URL: str = ""
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
-    # Optional upstream for the Sites service. Wework accesses it through Backend.
+    # Upstream Sites Platform base URL. Wework accesses it through Backend.
     SITES_API_BASE_URL: str = ""
+    # Optional bearer token for the upstream Sites Platform project API.
+    SITES_API_TOKEN: str = ""
 
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"
@@ -546,6 +550,8 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_ACCESS_KEY: str = ""
     ATTACHMENT_S3_SECRET_KEY: str = ""
     ATTACHMENT_S3_BUCKET: str = "attachments"
+    DELIVERY_S3_BUCKET: str = "wegent-deliveries"
+    DELIVERY_MAX_ASSET_SIZE_MB: int = 2048
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
 

@@ -13,14 +13,22 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | { action?: string; count?: number; device?: string }) => {
-      if (typeof options === 'string') return options
+    t: (
+      key: string,
+      options?: string | { action?: string; count?: number; device?: string; location?: string },
+      interpolation?: { model?: string }
+    ) => {
+      if (typeof options === 'string') {
+        return interpolation?.model ? options.replace('{{model}}', interpolation.model) : options
+      }
       if (key === 'workbench.code_comment_count') {
         return `${options?.count ?? 0} 个评论`
       }
       if (key === 'workbench.project_work_trigger_device_aria') {
         return `${options?.action ?? ''}，当前设备 ${options?.device ?? ''}`
       }
+      if (key === 'workbench.environment_cloud_device') return '云设备'
+      if (key === 'workbench.environment_local') return '本机'
       if (key === 'workbench.remove_code_comments') {
         return '移除代码评论'
       }
@@ -77,6 +85,13 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
     ...overrides,
   }
 }
+
+const REMOTE_WORKSPACE_TARGET = {
+  deviceId: 'remote-device',
+  path: '/workspace/project',
+  source: 'project',
+  workspaceSource: 'remote',
+} as const
 
 function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): ProjectWorkControls {
   const devices =
@@ -190,6 +205,27 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
+  })
+
+  test('keeps the desktop editor focused while submission is temporarily disabled', async () => {
+    const props = {
+      value: 'next draft',
+      onChange: vi.fn(),
+      onSubmit: vi.fn(),
+      disabled: false,
+      variant: 'desktop' as const,
+    }
+    const { rerender } = render(<ChatInput {...props} submitDisabled={false} />)
+    const editor = screen.getByTestId('chat-message-input')
+
+    editor.focus()
+    await waitFor(() => expect(editor).toHaveFocus())
+
+    rerender(<ChatInput {...props} submitDisabled />)
+
+    expect(editor).toHaveAttribute('contenteditable', 'true')
+    expect(editor).toHaveFocus()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
 
   test('does not move selection when an unfocused composer syncs its value', async () => {
@@ -398,6 +434,191 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
   })
 
+  test('distinguishes the active model from the next-turn model while streaming', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'local-model:second',
+      type: 'runtime',
+      displayName: 'Second Model',
+      isActive: true,
+    }
+
+    const projectChat = projectChatControls({
+      models: [activeModel, selectedModel],
+      activeModel,
+      selectedModel,
+    })
+    const { rerender } = render(
+      <ChatInput
+        value="换模型继续"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+        projectChat={projectChat}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Next · Second Model')
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+    expect(screen.getByTestId('guide-current-turn-option')).toHaveTextContent(
+      'Guide current response · First Model'
+    )
+    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent(
+      'Interrupt and use Second Model'
+    )
+
+    rerender(
+      <ChatInput
+        value="换模型继续"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming={false}
+        projectChat={projectChat}
+      />
+    )
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Second Model')
+    expect(screen.getByTestId('model-selector-button')).not.toHaveTextContent('Next')
+  })
+
+  test('warns before switching away from the model that owns the conversation context', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const targetModel: UnifiedModel = {
+      name: 'local-model:second',
+      type: 'runtime',
+      displayName: 'Second Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const setSelectedModel = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [activeModel, targetModel],
+          activeModel,
+          selectedModel: activeModel,
+          setSelectedModel,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-local-model:second'))
+
+    expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+      'Switching to Second Model may change how the existing context is understood.'
+    )
+    expect(setSelectedModel).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
+
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+    expect(setSelectedModel).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-local-model:second'))
+    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+  })
+
+  test('does not warn when selecting a model before a conversation has an active model', async () => {
+    const targetModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const setSelectedModel = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [targetModel],
+          selectedModel: null,
+          setSelectedModel,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-local-model:first'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+  })
+
+  test('does not warn when reselecting the model already chosen for the next turn', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'local-model:second',
+      type: 'runtime',
+      displayName: 'Second Model',
+      isActive: true,
+      config: { ui: { family: 'local' } },
+    }
+    const setSelectedModel = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [activeModel, selectedModel],
+          activeModel,
+          selectedModel,
+          setSelectedModel,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+    await userEvent.click(screen.getByTestId('model-option-local-model:second'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(selectedModel)
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {
@@ -457,6 +678,46 @@ describe('ChatInput', () => {
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
 
+  test('restores queued message text into the composer when editing', async () => {
+    function Harness() {
+      const [value, setValue] = useState('')
+      const [queuedMessages, setQueuedMessages] = useState<QueuedWorkbenchMessage[]>([
+        {
+          id: 'queued-1',
+          content: '先检查引导条里的文本',
+          status: 'queued',
+          createdAt: '2026-05-25T15:08:00.000+08:00',
+        },
+      ])
+
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          queuedMessages={queuedMessages}
+          onEditQueuedMessage={id => {
+            const message = queuedMessages.find(item => item.id === id)
+            if (!message) return
+            setValue(message.content)
+            setQueuedMessages(current => current.filter(item => item.id !== id))
+          }}
+        />
+      )
+    }
+
+    render(<Harness />)
+
+    await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('chat-message-input')).toHaveTextContent('先检查引导条里的文本')
+    )
+  })
+
   test('shows lightweight interrupt action while guidance is sending', async () => {
     const onInterruptAndSendQueuedMessage = vi.fn()
 
@@ -472,6 +733,7 @@ describe('ChatInput', () => {
             id: 'sending-guidance',
             content: '请停止等待并检查目录',
             status: 'sending',
+            deliveryMode: 'guidance',
             notice: '正在引导当前对话',
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
@@ -550,6 +812,7 @@ describe('ChatInput', () => {
             id: 'queued-guidance',
             content: '看 cpu',
             status: 'sending',
+            deliveryMode: 'guidance',
             notice: '正在引导当前对话',
             createdAt: '2026-05-25T15:09:00.000+08:00',
           },
@@ -723,7 +986,8 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'py-[14px]',
       'scrollbar-none',
-      'text-sm',
+      'text-chat',
+      'text-text-primary',
       'leading-5'
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
@@ -929,7 +1193,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('confirm-compact-context-button')).not.toBeInTheDocument()
   })
 
-  test('uploads pasted images from the desktop message textbox', () => {
+  test('uploads pasted images from the desktop message textbox', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
 
@@ -950,10 +1214,10 @@ describe('ChatInput', () => {
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([image])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
   })
 
-  test('uploads pasted documents from the desktop message textbox', () => {
+  test('uploads pasted documents for a remote desktop workspace', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const documentFile = new File(['document'], 'requirements.pdf', {
       type: 'application/pdf',
@@ -967,6 +1231,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({ handleFileSelect })}
+        workspaceTarget={REMOTE_WORKSPACE_TARGET}
       />
     )
 
@@ -976,7 +1241,7 @@ describe('ChatInput', () => {
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([documentFile]))
   })
 
   test('turns long pasted text from the desktop message textbox into a text attachment', async () => {
@@ -1011,10 +1276,10 @@ describe('ChatInput', () => {
     expect(await files[0].text()).toBe(longText)
   })
 
-  test('uploads dropped files from the desktop composer', () => {
+  test('uploads dropped images from the desktop composer', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
-    const documentFile = new File(['document'], 'drop-requirements.pdf', {
-      type: 'application/pdf',
+    const imageFile = new File(['image'], 'drop-preview.png', {
+      type: 'image/png',
     })
 
     render(
@@ -1031,11 +1296,35 @@ describe('ChatInput', () => {
     fireEvent.drop(screen.getByTestId('chat-message-input'), {
       dataTransfer: {
         types: ['Files'],
-        files: [documentFile],
+        files: [imageFile],
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([imageFile]))
+  })
+
+  test('highlights the desktop composer while files are dragged over it', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />
+    )
+
+    const composer = screen.getByTestId('project-chat-composer-form')
+    const dataTransfer = { types: ['Files'], dropEffect: 'none' }
+
+    fireEvent.dragEnter(composer, { dataTransfer })
+
+    expect(composer).toHaveClass('border-focus', 'ring-2', 'ring-focus/20')
+    expect(dataTransfer.dropEffect).toBe('copy')
+
+    fireEvent.dragLeave(composer, { dataTransfer, relatedTarget: document.body })
+
+    expect(composer).toHaveClass('border-border/45')
   })
 
   test('uploads pasted images from the fullscreen compact textbox', async () => {
@@ -1059,10 +1348,10 @@ describe('ChatInput', () => {
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([image])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
   })
 
-  test('uploads pasted documents from the fullscreen compact textbox', async () => {
+  test('uploads pasted documents from a remote fullscreen compact textbox', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const documentFile = new File(['document'], 'fullscreen-requirements.pdf', {
       type: 'application/pdf',
@@ -1075,6 +1364,7 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         projectChat={projectChatControls({ handleFileSelect })}
+        workspaceTarget={REMOTE_WORKSPACE_TARGET}
       />
     )
 
@@ -1085,7 +1375,7 @@ describe('ChatInput', () => {
       },
     })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([documentFile]))
   })
 
   test('turns long pasted text from the fullscreen compact textbox into a text attachment', async () => {
@@ -1181,16 +1471,8 @@ describe('ChatInput', () => {
     }
     const cloudModel: UnifiedModel = {
       ...model,
-      name: 'cloud:user:cloud-gpt-5.5',
+      name: 'cloud-gpt-5.5',
       displayName: '云端:gpt-5.5',
-      config: {
-        ...model.config,
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'cloud-gpt-5.5',
-          modelType: 'user',
-        },
-      },
     }
     const setSelectedModel = vi.fn()
     render(
@@ -1232,7 +1514,7 @@ describe('ChatInput', () => {
       'data-enter-animation',
       'main'
     )
-    expect(selectorButton).toHaveStyle({ width: '240px' })
+    expect(selectorButton).toHaveStyle({ width: 'var(--model-selector-width, auto)' })
     expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
@@ -1265,8 +1547,8 @@ describe('ChatInput', () => {
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
-    expect(modelOption.querySelectorAll('span')).toHaveLength(1)
-    expect(screen.getByTestId('model-option-cloud:user:cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
+    expect(modelOption.querySelectorAll('span')).toHaveLength(2)
+    expect(screen.getByTestId('model-option-cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
     expect(
       screen
         .getByTestId('model-control-menu-model')
@@ -2135,7 +2417,7 @@ describe('ChatInput', () => {
     expect(disabledOption).not.toBeDisabled()
     expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
     expect(disabledOption).toHaveAttribute('title', 'Incompatible with the current model protocol')
-    expect(disabledOption).toHaveTextContent('Incompatible with the current model protocol')
+    expect(disabledOption).not.toHaveTextContent('Incompatible with the current model protocol')
 
     await userEvent.click(disabledOption)
 
@@ -2144,6 +2426,77 @@ describe('ChatInput', () => {
       incompatibleModel,
       'Incompatible with the current model protocol'
     )
+  })
+
+  test('shows cross-provider model options as greyed and blocks selection', async () => {
+    const selectedModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        weworkModelKind: 'codex-official',
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+        },
+      },
+    }
+    const thirdPartyModel: UnifiedModel = {
+      name: 'kimi-k2.5',
+      type: 'runtime',
+      displayName: 'Kimi K2.5',
+      compatibilityDisabled: true,
+      compatibilityDisabledReason: 'provider_boundary_mismatch',
+      config: {
+        weworkModelKind: 'codex-provider',
+        ui: {
+          family: 'codex-provider',
+          modelLabel: 'Kimi K2.5',
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+    const onBlockedModelSelect = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [selectedModel, thirdPartyModel],
+          selectedModel,
+          activeModel: selectedModel,
+          selectedModelOptions: {},
+          setSelectedModel,
+          onBlockedModelSelect,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+
+    const disabledOption = screen.getByTestId('model-option-kimi-k2.5')
+    expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
+    expect(disabledOption).toHaveClass('cursor-not-allowed', 'text-text-muted')
+    expect(disabledOption).toHaveAttribute(
+      'title',
+      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
+    )
+    expect(disabledOption).not.toHaveTextContent(
+      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
+    )
+
+    await userEvent.click(disabledOption)
+
+    expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onBlockedModelSelect).toHaveBeenCalledWith(
+      thirdPartyModel,
+      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
+    )
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
   })
 
   test('keeps the model menu open after selecting a reasoning option', async () => {
@@ -2224,7 +2577,7 @@ describe('ChatInput', () => {
     expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
   })
 
-  test('flattens model families while keeping controls from the selected GPT model', async () => {
+  test('lists models by family in the second-level menu while keeping selected controls', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -2381,6 +2734,14 @@ describe('ChatInput', () => {
     expect(menu.getByText('设置 WeWork 将持续努力实现的目标')).toBeInTheDocument()
     expect(menu.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
     expect(menu.queryByText('插件')).not.toBeInTheDocument()
+    expect(screen.getByTestId('attach-files-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
+    expect(screen.getByTestId('set-plan-mode-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
 
     await userEvent.click(screen.getByTestId('set-plan-mode-button'))
 

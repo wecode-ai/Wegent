@@ -1,4 +1,5 @@
 {
+  "continue_in_new_task": "在新任务中继续",
   "message_navigation": {
     "label": "历史发言导航",
     "jump_to_message": "跳转到第 {{index}} 条发言",
@@ -16,6 +17,7 @@
     "running": "正在处理"
   },
   "tool_activity": {
+    "reconnecting": "连接中断，正在重连…",
     "summary_other": "调用 {{count}} 个工具",
     "mixed_summary_other": "{{toolSummary}}，编辑 {{count}} 个文件",
     "edit_summary_other": "编辑 {{count}} 个文件",
@@ -33,6 +35,9 @@
     "search_running": "正在搜索代码",
     "search_done": "搜索代码",
     "search_error": "搜索代码失败",
+    "image_view": "查看 {{filename}}",
+    "image_view_fallback": "查看图片",
+    "image_preview_alt": "工具查看的图片",
     "edit_action": "编辑文件",
     "create_action": "创建文件",
     "other_action": "调用工具",

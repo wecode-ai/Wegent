@@ -1,5 +1,6 @@
 import { AlertCircle, Cloud, Loader2, Settings } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { canUseForProjectCreation, isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo } from '@/types/api'
@@ -15,6 +16,10 @@ interface CloudConnectionSidebarButtonProps {
   onSelectCloudDevice: (deviceId: string) => void
   onAddDevice: () => void
 }
+
+const POPOVER_WIDTH = 288
+const POPOVER_GAP = 4
+const VIEWPORT_PADDING = 8
 
 function hostLabel(value?: string | null): string {
   if (!value) return ''
@@ -36,6 +41,9 @@ export function CloudConnectionSidebarButton({
   const cloud = useOptionalCloudConnection()
   const [open, setOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [popoverPosition, setPopoverPosition] = useState({ left: 0, top: 0 })
   const cloudWorkDevices = useMemo(
     () => devices.filter(device => isCloudDevice(device) || isRemoteDevice(device)),
     [devices]
@@ -119,9 +127,64 @@ export function CloudConnectionSidebarButton({
     if (!errorDetail) setDetailsOpen(false)
   }
 
+  useLayoutEffect(() => {
+    if (!detailsOpen) return
+
+    const updatePosition = () => {
+      const triggerRect = rootRef.current?.getBoundingClientRect()
+      if (!triggerRect) return
+      const popoverHeight = popoverRef.current?.getBoundingClientRect().height ?? 0
+      const maxLeft = Math.max(
+        VIEWPORT_PADDING,
+        window.innerWidth - POPOVER_WIDTH - VIEWPORT_PADDING
+      )
+      const left = Math.min(Math.max(triggerRect.left, VIEWPORT_PADDING), maxLeft)
+      const preferredTop = triggerRect.bottom + POPOVER_GAP
+      const top =
+        popoverHeight > 0 && preferredTop + popoverHeight > window.innerHeight - VIEWPORT_PADDING
+          ? Math.max(VIEWPORT_PADDING, triggerRect.top - POPOVER_GAP - popoverHeight)
+          : preferredTop
+      setPopoverPosition({ left, top })
+    }
+
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [detailsOpen, errorDetail])
+
+  useEffect(() => {
+    if (!detailsOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
+        setDetailsOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDetailsOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [detailsOpen])
+
   return (
     <>
-      <div className="group/cloud relative flex h-[30px] items-center rounded-[10px] hover:bg-[rgb(var(--color-sidebar-hover))]">
+      <div
+        ref={rootRef}
+        className="group/cloud relative flex h-[30px] items-center rounded-[10px] hover:bg-[rgb(var(--color-sidebar-hover))]"
+      >
         <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center">
           {cloudWorkSyncing ? (
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -135,6 +198,8 @@ export function CloudConnectionSidebarButton({
               }}
               title={t('workbench.cloud_work_error_details', '查看错误详情')}
               aria-label={t('workbench.cloud_work_error_details', '查看错误详情')}
+              aria-expanded={detailsOpen}
+              aria-controls={detailsOpen ? 'sidebar-cloud-error-popover' : undefined}
               className="flex h-6 w-6 items-center justify-center rounded-md text-red-500 hover:bg-red-500/10"
             >
               <AlertCircle className="h-4 w-4" />
@@ -174,7 +239,7 @@ export function CloudConnectionSidebarButton({
           }}
           title={statusTitle}
           className={cn(
-            'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] py-0 pl-0 pr-2 text-left text-sm font-normal leading-5 text-[rgb(var(--color-sidebar-text-primary))]',
+            'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] py-0 pl-0 pr-2 text-left text-base font-normal leading-5 text-[rgb(var(--color-sidebar-text-primary))]',
             (needsAttention || cloudWorkUnavailable) && 'text-red-500'
           )}
         >
@@ -213,10 +278,18 @@ export function CloudConnectionSidebarButton({
             <Settings className="h-3.5 w-3.5" />
           </button>
         )}
-        {detailsOpen && errorDetail && (
+      </div>
+      {detailsOpen &&
+        errorDetail &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
+            ref={popoverRef}
+            id="sidebar-cloud-error-popover"
             data-testid="sidebar-cloud-error-popover"
-            className="absolute left-0 top-9 z-30 w-72 rounded-lg border border-red-500/20 bg-popover p-3 text-xs text-text-primary shadow-[0_12px_36px_rgba(0,0,0,0.2)]"
+            role="status"
+            style={{ left: popoverPosition.left, top: popoverPosition.top }}
+            className="fixed z-system-popover max-h-[calc(100vh-16px)] w-72 overflow-y-auto rounded-xl border border-red-500/20 bg-popover p-3 text-xs text-text-primary shadow-lg ring-1 ring-black/5"
           >
             <div className="flex items-start gap-2">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
@@ -246,9 +319,9 @@ export function CloudConnectionSidebarButton({
                 ))}
               </div>
             )}
-          </div>
+          </div>,
+          document.body
         )}
-      </div>
       {open && (
         <CloudConnectionDialog
           open

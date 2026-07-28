@@ -20,7 +20,11 @@ import {
   isRequestUserInputBlock,
   type RequestUserInputBlock,
 } from '../requestUserInputMessages'
-import { ToolBlockItem } from './ToolBlockItem'
+import {
+  ToolBlockItem,
+  type FileEditDuration,
+  type FileEditDurationsByBlock,
+} from './ToolBlockItem'
 import {
   RequestUserInputCard,
   RequestUserInputSummary,
@@ -39,10 +43,12 @@ import {
   isWebSearchActivityGroup,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
+import { isImageViewToolName } from './toolBlockKinds'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 import { getDurationText, getWholeSecondsDurationText } from './processingDuration'
+import { getFileInputPaths, isFileEditToolName } from './toolBlockKinds'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 type ProcessingDisplayItem =
@@ -55,6 +61,7 @@ type ProcessingDisplayItem =
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
+  fileEditDurationBlocks?: ProcessingBlock[]
   isStreaming: boolean
   // Wall-clock epoch ms when the turn started (the assistant turn's
   // created_at). Used as the duration anchor so the elapsed time survives a
@@ -79,6 +86,7 @@ interface ToolBlocksDisplayProps {
 
 export function ToolBlocksDisplay({
   blocks,
+  fileEditDurationBlocks,
   isStreaming,
   startedAt,
   forceExpanded = false,
@@ -175,6 +183,10 @@ export function ToolBlocksDisplay({
         (item): item is ProcessingDisplayRow => item.type !== 'request_user_input'
       ),
     [displayItems]
+  )
+  const fileEditDurations = useMemo(
+    () => getFileEditDurations(fileEditDurationBlocks ?? blocks, rows),
+    [blocks, fileEditDurationBlocks, rows]
   )
   const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
   const hasRequestUserInput = displayItems.some(item => item.type === 'request_user_input')
@@ -294,6 +306,7 @@ export function ToolBlocksDisplay({
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onLoadFullTranscript={onLoadFullTranscript}
                 loadingFullTranscript={loadingFullTranscript}
+                fileEditDurations={fileEditDurations}
               />
             )
           })}
@@ -306,6 +319,7 @@ export function ToolBlocksDisplay({
       onOpenAssistantPlan,
       onLoadFullTranscript,
       loadingFullTranscript,
+      fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
       stateKey,
@@ -348,6 +362,8 @@ export function ToolBlocksDisplay({
             (processingPhase === 'live' || showInterToolThinking)
           }
           onOpenWorkspaceFile={onOpenWorkspaceFile}
+          fileEditDurations={fileEditDurations}
+          stateKey={stateKey}
         />
       ) : null}
     </>
@@ -476,10 +492,14 @@ function LiveProcessingPreview({
   rows,
   showThinking,
   onOpenWorkspaceFile,
+  fileEditDurations,
+  stateKey,
 }: {
   rows: ProcessingDisplayRow[]
   showThinking: boolean
   onOpenWorkspaceFile?: (path: string) => void
+  fileEditDurations: FileEditDurationsByBlock
+  stateKey?: string
 }) {
   const { t } = useTranslation('chat')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -506,7 +526,7 @@ function LiveProcessingPreview({
     const scrollArea = scrollRef.current
     if (!scrollArea) return
     scrollArea.scrollTop = scrollArea.scrollHeight
-  }, [rows.length])
+  }, [rows.length, showThinking])
 
   return (
     <div className="ml-2 min-w-0 border-l border-border pl-3" data-testid="processing-live-preview">
@@ -525,7 +545,9 @@ function LiveProcessingPreview({
             row={row}
             shimmer={isProcessingRowRunning(row) && index === rows.length - 1}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
+            fileEditDurations={fileEditDurations}
             onExpandedChange={updateExpandedRow}
+            stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
           />
         ))}
         {showThinking ? (
@@ -543,15 +565,19 @@ function LiveProcessingPreviewRow({
   shimmer,
   durationStartedAt,
   durationEndAt,
+  fileEditDurations,
   onOpenWorkspaceFile,
   onExpandedChange,
+  stateKey,
 }: {
   row: ProcessingDisplayRow
   shimmer: boolean
   durationStartedAt?: number
   durationEndAt?: number
+  fileEditDurations: FileEditDurationsByBlock
   onOpenWorkspaceFile?: (path: string) => void
   onExpandedChange: (rowId: string, expanded: boolean) => void
+  stateKey?: string
 }) {
   const handleExpandedChange = useCallback(
     (expanded: boolean) => onExpandedChange(row.id, expanded),
@@ -582,8 +608,10 @@ function LiveProcessingPreviewRow({
         shimmer={shimmer}
         durationStartedAt={durationStartedAt}
         durationEndAt={durationEndAt}
+        fileEditDurations={fileEditDurations}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         onExpandedChange={handleExpandedChange}
+        stateKey={stateKey}
       />
     )
   }
@@ -594,9 +622,79 @@ function LiveProcessingPreviewRow({
       shimmer={shimmer}
       durationStartedAt={durationStartedAt}
       durationEndAt={durationEndAt}
+      fileEditDurations={fileEditDurations}
       onExpandedChange={handleExpandedChange}
+      stateKey={stateKey}
     />
   )
+}
+
+function getFileEditDurations(
+  blocks: ProcessingBlock[],
+  rows: ProcessingDisplayRow[]
+): FileEditDurationsByBlock {
+  type FileEditActivity = FileEditDuration & {
+    path: string
+    isRunning: boolean
+  }
+  const edits: FileEditActivity[] = []
+  const sourceDurations = new Map<string, ReadonlyMap<string, FileEditDuration>>()
+  const durations = new Map<string, ReadonlyMap<string, FileEditDuration>>()
+
+  blocks.forEach(block => {
+    if (block.type === 'tool' && isFileEditToolName(block.toolName)) {
+      edits.push(
+        ...getFileInputPaths(block).map(path => ({
+          id: block.id,
+          path: normalizeActivityPath(path),
+          startedAt: block.createdAt,
+          completedAt: block.completedAt,
+          isRunning: block.status !== 'done' && block.status !== 'error',
+        }))
+      )
+      return
+    }
+    if (block.type !== 'file_changes') return
+
+    const blockDurations = new Map<string, FileEditDuration>()
+    block.fileChanges.files.forEach(file => {
+      const filePath = normalizeActivityPath(file.path)
+      const matches = edits.filter(
+        edit =>
+          edit.path === filePath ||
+          edit.path.endsWith(`/${filePath}`) ||
+          filePath.endsWith(`/${edit.path}`)
+      )
+      if (matches.length === 0) return
+      const durationMatch = matches.at(-1)
+      if (!durationMatch) return
+      blockDurations.set(file.path, {
+        id: durationMatch.id,
+        startedAt: durationMatch.startedAt,
+        ...(!durationMatch.isRunning && durationMatch.completedAt !== undefined
+          ? { completedAt: durationMatch.completedAt }
+          : {}),
+      })
+    })
+    if (blockDurations.size > 0) sourceDurations.set(block.id, blockDurations)
+  })
+
+  rows.forEach(row => {
+    if (row.type !== 'block' || row.block.type !== 'file_changes') return
+    const blockDurations = new Map<string, FileEditDuration>()
+    row.sourceBlockIds.forEach(sourceBlockId => {
+      sourceDurations.get(sourceBlockId)?.forEach((duration, path) => {
+        blockDurations.set(path, duration)
+      })
+    })
+    if (blockDurations.size > 0) durations.set(row.block.id, blockDurations)
+  })
+
+  return durations
+}
+
+function normalizeActivityPath(path: string): string {
+  return path.replaceAll('\\', '/').replace(/^\.\//, '')
 }
 
 function isProcessingRowRunning(row: ProcessingDisplayRow): boolean {
@@ -831,6 +929,12 @@ function ToolActivityDetails({
   return (
     <>
       {blocks.map(block => {
+        if (isImageViewToolName(block.toolName)) {
+          return (
+            <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+          )
+        }
+
         const item = getToolActivitySearchItem(block)
         if (item) {
           return <CodeSearchActivityRow key={item.id} label={item.label} />

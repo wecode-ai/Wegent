@@ -25,11 +25,13 @@ function getRightSplitChatMaxWidth(containerWidth: number) {
   return Math.max(RIGHT_SPLIT_CHAT_MIN_WIDTH, containerWidth - RIGHT_SPLIT_PANEL_COLLAPSE_WIDTH)
 }
 
-function getRightSplitChatDefaultWidth(containerWidth: number) {
+function getRightSplitChatDefaultWidth(containerWidth: number, defaultPanelWidth?: number) {
   if (containerWidth <= 0) return RIGHT_SPLIT_CHAT_DEFAULT_WIDTH
 
   return clamp(
-    RIGHT_SPLIT_CHAT_DEFAULT_WIDTH,
+    defaultPanelWidth === undefined
+      ? RIGHT_SPLIT_CHAT_DEFAULT_WIDTH
+      : containerWidth - defaultPanelWidth,
     RIGHT_SPLIT_CHAT_MIN_WIDTH,
     getRightSplitChatMaxWidth(containerWidth)
   )
@@ -38,11 +40,13 @@ function getRightSplitChatDefaultWidth(containerWidth: number) {
 interface ResizableRightSplitChatOptions {
   containerRef?: RefObject<HTMLElement | null>
   onCollapse?: () => void
+  defaultPanelWidth?: number
 }
 
 export function useResizableRightSplitChat({
   containerRef,
   onCollapse,
+  defaultPanelWidth,
 }: ResizableRightSplitChatOptions = {}) {
   const [width, setWidth] = useState(RIGHT_SPLIT_CHAT_DEFAULT_WIDTH)
   const [resizing, setResizing] = useState(false)
@@ -55,7 +59,9 @@ export function useResizableRightSplitChat({
 
     const applyDefaultWidth = () => {
       if (userSizedRef.current) return
-      setWidth(getRightSplitChatDefaultWidth(container.getBoundingClientRect().width))
+      setWidth(
+        getRightSplitChatDefaultWidth(container.getBoundingClientRect().width, defaultPanelWidth)
+      )
     }
 
     applyDefaultWidth()
@@ -64,7 +70,7 @@ export function useResizableRightSplitChat({
     const observer = new ResizeObserver(applyDefaultWidth)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [containerRef])
+  }, [containerRef, defaultPanelWidth])
 
   useEffect(() => {
     return () => {
@@ -102,7 +108,7 @@ export function useResizableRightSplitChat({
       const applyCollapse = () => {
         collapseFrameRef.current = null
         userSizedRef.current = false
-        setWidth(getRightSplitChatDefaultWidth(containerWidth))
+        setWidth(getRightSplitChatDefaultWidth(containerWidth, defaultPanelWidth))
         onCollapse?.()
       }
 

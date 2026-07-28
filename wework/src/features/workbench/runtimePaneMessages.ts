@@ -23,6 +23,8 @@ import { stripCodexUiDirectives } from '@/lib/codex-directives'
 import { mergeTurnFileChanges, normalizeTurnFileChanges } from './turnFileChanges'
 import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@wegent/chat-core'
 
+const RUNTIME_MESSAGE_CONTENT_TRUNCATION_THRESHOLD_CHARS = 200_000
+
 export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFileChangesSummary>
 
 export interface RuntimeTaskStreamHandlers {
@@ -144,6 +146,12 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onMessageAction({
         type: 'assistant_done',
         subtaskId: identity.subtaskId,
+        turnId:
+          typeof payload.result.turnId === 'string'
+            ? payload.result.turnId
+            : typeof payload.result.turn_id === 'string'
+              ? payload.result.turn_id
+              : undefined,
         content: doneContent(payload.result),
         blocks,
         fileChanges,
@@ -350,7 +358,37 @@ function normalizeToolName(toolName: string): string {
 export function runtimeMessagesToWorkbenchMessages(
   messages: NormalizedRuntimeMessage[]
 ): WorkbenchMessage[] {
-  return messages.map(runtimeMessageToWorkbenchMessage)
+  return collapseRetriedFailedTurns(messages.map(runtimeMessageToWorkbenchMessage))
+}
+
+function collapseRetriedFailedTurns(messages: WorkbenchMessage[]): WorkbenchMessage[] {
+  const collapsed: WorkbenchMessage[] = []
+  let latestUserId: string | null = null
+  let latestUserIndex = -1
+
+  for (const message of messages) {
+    if (message.role !== 'user') {
+      collapsed.push(message)
+      continue
+    }
+
+    const latestAttempt = collapsed.slice(latestUserIndex + 1)
+    const retriesLatestFailedTurn =
+      latestUserId === message.id &&
+      latestAttempt.some(
+        candidate => candidate.role === 'assistant' && candidate.status === 'failed'
+      )
+    if (retriesLatestFailedTurn) {
+      collapsed.splice(latestUserIndex + 1)
+      continue
+    }
+
+    latestUserId = message.id
+    latestUserIndex = collapsed.length
+    collapsed.push(message)
+  }
+
+  return collapsed
 }
 
 export function findFileChangesBySubtaskId(
@@ -469,12 +507,15 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     id: role === 'user' && clientMessageId ? clientMessageId : message.id,
     role,
     subtaskId,
+    turnId: message.turnId ?? message.turn_id ?? undefined,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
     contentTruncated: contentTruncated || undefined,
     contentOriginalChars: contentTruncated ? runtimeMessageOriginalChars(message) : undefined,
     runtimeMessageIndex,
     status,
     runtimeStatus,
+    error: message.error ?? undefined,
+    errorType: message.errorType ?? message.error_type ?? undefined,
     source,
     attachments: message.attachments,
     runtimeGoalRequest: normalizeRuntimeGoalRequest(message),
@@ -493,7 +534,9 @@ function hasTruncatedRuntimeContent(message: NormalizedRuntimeMessage): boolean 
 
   const originalChars = runtimeMessageOriginalChars(message)
   return (
-    originalChars !== undefined && originalChars > runtimeContentCharacterCount(message.content)
+    originalChars !== undefined &&
+    originalChars > RUNTIME_MESSAGE_CONTENT_TRUNCATION_THRESHOLD_CHARS &&
+    originalChars > runtimeContentCharacterCount(message.content)
   )
 }
 
@@ -584,9 +627,9 @@ function normalizeRuntimeGoalRequest(message: NormalizedRuntimeMessage): boolean
 }
 
 function runtimeMessageSubtaskId(message: NormalizedRuntimeMessage): string | undefined {
-  return typeof message.subtaskId === 'string' && message.subtaskId.trim()
-    ? message.subtaskId
-    : undefined
+  const subtaskId = message.subtaskId
+  if (typeof subtaskId === 'number') return String(subtaskId)
+  return typeof subtaskId === 'string' && subtaskId.trim() ? subtaskId : undefined
 }
 
 function warnInvalidRuntimeTranscriptIdentity(
@@ -646,7 +689,6 @@ function isRuntimeStreamingStatus(status: string): boolean {
     status === 'running' ||
     status === 'inprogress' ||
     status === 'in_progress' ||
-    status === 'active' ||
     status === 'busy' ||
     status === 'pending'
   )

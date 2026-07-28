@@ -18,6 +18,8 @@ export interface CloudConnectionRuntimeConfig {
 }
 
 export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
+  socketBaseUrlOverride?: string
+  webUrl?: string
   token: string
   tokenExpiresAt: number | null
   user: User
@@ -25,6 +27,8 @@ export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
 }
 
 export interface CloudConnectionSnapshot extends Partial<CloudConnectionRuntimeConfig> {
+  socketBaseUrlOverride?: string
+  webUrl?: string
   status: CloudConnectionStatus
   token: string | null
   tokenExpiresAt: number | null
@@ -43,6 +47,19 @@ function ensureProtocol(value: string): string {
     return trimmed
   }
   return `http://${trimmed}`
+}
+
+function normalizeSocketBaseUrl(value: string): string {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('Socket URL is invalid')
+  }
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) {
+    throw new Error('Socket URL is invalid')
+  }
+  return trimTrailingSlash(url.toString())
 }
 
 function normalizeBackendUrlPath(pathname: string): {
@@ -71,7 +88,10 @@ function normalizeBackendUrlPath(pathname: string): {
   }
 }
 
-export function normalizeCloudBackendUrl(input: string): CloudConnectionRuntimeConfig {
+export function normalizeCloudBackendUrl(
+  input: string,
+  socketBaseUrlOverride?: string
+): CloudConnectionRuntimeConfig {
   const value = input.trim()
   if (!value) {
     throw new Error('Backend URL is required')
@@ -88,11 +108,11 @@ export function normalizeCloudBackendUrl(input: string): CloudConnectionRuntimeC
   const origin = url.origin
   const backendUrl = trimTrailingSlash(`${origin}${backendPath}`)
   const apiBaseUrl = trimTrailingSlash(`${origin}${apiPath}`)
-
+  const socketBaseUrl = socketBaseUrlOverride?.trim()
   return {
     backendUrl,
     apiBaseUrl,
-    socketBaseUrl: backendUrl || origin,
+    socketBaseUrl: socketBaseUrl ? normalizeSocketBaseUrl(socketBaseUrl) : backendUrl || origin,
     socketPath: DEFAULT_SOCKET_PATH,
   }
 }
@@ -128,6 +148,8 @@ export function readStoredCloudConnection(): StoredCloudConnection | null {
       typeof parsed.apiBaseUrl !== 'string' ||
       typeof parsed.socketBaseUrl !== 'string' ||
       typeof parsed.socketPath !== 'string' ||
+      (parsed.socketBaseUrlOverride !== undefined &&
+        typeof parsed.socketBaseUrlOverride !== 'string') ||
       typeof parsed.token !== 'string' ||
       !parsed.user ||
       typeof parsed.user !== 'object' ||

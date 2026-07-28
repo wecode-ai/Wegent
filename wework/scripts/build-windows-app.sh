@@ -138,10 +138,8 @@ fi
 
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
-DEFAULT_SOCKET_BASE_URL="${WEGENT_SOCKET_URL:-$BACKEND_BASE_URL}"
 
-export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$BACKEND_BASE_URL/api}"
-export VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL:-$DEFAULT_SOCKET_BASE_URL}"
+export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$BACKEND_BASE_URL}"
 configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
 
 echo "Building WeWork Windows app"
@@ -151,8 +149,8 @@ echo "  WINDOWS_BUILD_TARGET=$WINDOWS_BUILD_TARGET"
 echo "  TAURI_BUNDLES=${TAURI_BUNDLES:-<default>}"
 echo "  RELEASE_DEVTOOLS=${RELEASE_DEVTOOLS:-0}"
 echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
-echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
-echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
+echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
@@ -171,6 +169,11 @@ RUSTFLAGS="-C target-feature=+crt-static" cargo xwin build --"$BUILD_PROFILE" --
 mkdir -p "$SIDE_CAR_DIR"
 cp "$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/$BUILD_PROFILE/$EXECUTOR_BINARY_NAME" "$SIDE_CAR_DIR/$SIDE_CAR_NAME"
 
+# Tauri's build.rs looks for the sidecar in executor/dist/ before falling back
+# to wework/src-tauri/binaries/, so keep the two locations in sync.
+mkdir -p "$EXECUTOR_DIR/dist"
+cp "$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/$BUILD_PROFILE/$EXECUTOR_BINARY_NAME" "$EXECUTOR_DIR/dist/$EXECUTOR_BINARY_NAME"
+
 cd "$WEWORK_DIR"
 CONFIG_OVERRIDE=""
 cleanup() {
@@ -188,7 +191,7 @@ if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
 fi
 if [ -n "$BRAND_CONFIG" ] || [ "$RELEASE_DEVTOOLS" = "1" ]; then
-  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.XXXXXX.json")"
+  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.json.XXXXXX")"
   wework_prepare_brand_config "$WEWORK_DIR" "$BRAND_CONFIG" "${RELEASE_DEVTOOLS:-0}" "$CONFIG_OVERRIDE"
   if [ -f "$CONFIG_OVERRIDE.namespace" ]; then
     export WEWORK_EXECUTOR_NAMESPACE="$(<"$CONFIG_OVERRIDE.namespace")"

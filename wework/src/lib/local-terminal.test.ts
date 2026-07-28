@@ -7,6 +7,7 @@ import {
   isLocalTerminalAvailable,
   listenLocalTerminalExit,
   listenLocalTerminalOutput,
+  getLocalPathKind,
   localPathExists,
   openLocalFile,
   openLocalWorkspace,
@@ -143,6 +144,25 @@ describe('local-terminal', () => {
 
     await expect(localPathExists('/Users/me/project')).resolves.toBe(false)
     expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  test('reads local path kinds through the native app', async () => {
+    setNavigatorValue(
+      'userAgent',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
+    )
+    setNavigatorValue('platform', 'MacIntel')
+    setNavigatorValue('maxTouchPoints', 0)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    invokeMock.mockResolvedValue('directory')
+
+    await expect(getLocalPathKind(' /Users/me/tmp ')).resolves.toBe('directory')
+    expect(invokeMock).toHaveBeenCalledWith('get_local_path_kind', {
+      path: '/Users/me/tmp',
+    })
   })
 
   test('starts an embedded local terminal session through the native app', async () => {

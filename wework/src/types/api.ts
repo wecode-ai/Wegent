@@ -287,8 +287,13 @@ export interface NormalizedRuntimeMessage {
   content_original_chars?: number | null
   messageIndex?: number | null
   message_index?: number | null
-  subtaskId?: string | null
+  subtaskId?: string | number | null
+  turnId?: string | null
+  turn_id?: string | null
   status?: string | null
+  error?: string | null
+  errorType?: string | null
+  error_type?: string | null
   createdAt?: string | null
   completedAt?: string | number | null
   completed_at?: string | number | null
@@ -354,10 +359,14 @@ export interface RuntimeTaskSummary {
   updatedAt?: string | number | null
   completedAt?: string | number | null
   running?: boolean
+  continuable?: boolean
+  threadStatus?: 'notLoaded' | 'idle' | 'systemError' | 'active' | string
+  turnStatus?: 'inProgress' | 'completed' | 'interrupted' | 'failed' | null
   pinned?: boolean
   pinnedOrder?: number | null
   sidebarOrder?: number | null
   status?: string | null
+  goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null
@@ -693,6 +702,24 @@ export interface RuntimeWorkspaceOpenRequest {
   label?: string | null
 }
 
+export interface RuntimeLocalProjectUpsertRequest {
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+}
+
+export interface RuntimeLocalProjectUpsertResponse {
+  accepted: boolean
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+  error?: string | null
+}
+
 export interface RuntimeWorkspaceRenameRequest {
   deviceId: string
   projectKey?: string | null
@@ -1014,6 +1041,9 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  runtimeProjectKey?: string
+  runtimeProjectName?: string
+  runtimeWorkspaceRoots?: string[]
   taskId?: string
   teamId: number
   runtime: RuntimeName
@@ -1031,6 +1061,9 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
+  deliveryId?: string
+  cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface RuntimeTaskCreateResponse {
@@ -1051,6 +1084,8 @@ export interface RuntimeTaskForkTarget {
 export interface RuntimeTaskForkRequest {
   source: RuntimeTaskAddress
   target: RuntimeTaskForkTarget
+  lastTurnId?: string
+  title?: string
 }
 
 export interface RuntimeTaskForkResponse {
@@ -1178,6 +1213,7 @@ export interface LocalDeviceApp {
   isEnabled?: boolean
   pluginDisplayNames?: string[]
   source?: 'codex-app' | string
+  skillPath?: string | null
 }
 
 export interface SkillDirectoryMove {
@@ -2026,6 +2062,7 @@ export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
   | 'unavailable'
+  | 'provider_boundary_mismatch'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {

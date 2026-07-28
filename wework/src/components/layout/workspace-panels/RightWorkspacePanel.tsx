@@ -84,6 +84,7 @@ interface RightWorkspacePanelProps {
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
   fileWorkspaceTarget?: WorkspaceTarget | null
+  fileWorkspaceTargets?: WorkspaceTarget[]
   preferLocalTerminal?: boolean
   terminalContextTitle?: string | null
   workspaceSessionApi?: WorkspaceSessionApi
@@ -98,6 +99,7 @@ interface RightWorkspacePanelProps {
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
+  onSelectFileWorkspaceTarget?: (target: WorkspaceTarget) => void
   onSelectReview: () => void
   onSelectTerminal: () => void
   onSelectBrowser: () => void
@@ -121,6 +123,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   devices,
   workspaceTarget,
   fileWorkspaceTarget = workspaceTarget,
+  fileWorkspaceTargets,
   preferLocalTerminal = false,
   terminalContextTitle,
   workspaceSessionApi,
@@ -135,6 +138,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   canOpenReview,
   reviewViewOptions,
   onAddCodeComment,
+  onSelectFileWorkspaceTarget,
   onSelectReview,
   onSelectTerminal,
   onSelectBrowser,
@@ -393,9 +397,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                   : 'empty'
               }
               target={fileWorkspaceTarget}
+              workspaceTargets={fileWorkspaceTargets}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               onAddCodeComment={onAddCodeComment}
+              onSelectWorkspaceTarget={onSelectFileWorkspaceTarget}
             />
           )
         )}

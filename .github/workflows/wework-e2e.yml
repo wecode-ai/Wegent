@@ -4,39 +4,57 @@ on:
   push:
     branches:
       - main
-      - master
-      - develop
-    paths:
-      - ".github/workflows/wework-e2e.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "packages/chat-core/**"
-      - "wework/**"
   pull_request:
     branches:
       - main
-      - master
-      - develop
-    paths:
-      - ".github/workflows/wework-e2e.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "packages/chat-core/**"
-      - "wework/**"
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
   workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name || 'code' }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect Wework E2E Changes
+    runs-on: ubuntu-latest
+    outputs:
+      wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+        run: |
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            .github/scripts/classify-ci-changes.sh --all
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+              .github/scripts/classify-ci-changes.sh
+          fi
+
   wework-e2e:
     name: Wework E2E
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -100,9 +118,24 @@ jobs:
           retention-days: 7
 
   wework-desktop-e2e:
-    name: Wework Desktop E2E
+    name: Wework Desktop E2E (${{ matrix.name }})
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: plugins
+            name: Plugins
+            command: e2e:desktop:plugins
+          - id: core
+            name: Core
+            command: e2e:desktop
+          - id: cloud
+            name: Cloud
+            command: e2e:desktop:cloud
 
     steps:
       - name: Checkout code
@@ -118,7 +151,79 @@ jobs:
             libwebkit2gtk-4.1-dev \
             imagemagick \
             librsvg2-dev \
+            redis-server \
             xvfb
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            wework/src-tauri/target
+          key: ${{ runner.os }}-wework-desktop-e2e-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-desktop-e2e-
+
+      - name: Prepare real Codex binary
+        working-directory: ./wework
+        run: pnpm run prepare:codex
+
+      - name: Run Wework desktop ${{ matrix.name }} E2E
+        env:
+          CI: true
+          CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+        run: |
+          test -x "$CODEX_BIN"
+          xvfb-run -a --server-args="-screen 0 1280x720x24" \
+            pnpm --filter wework ${{ matrix.command }}
+
+      - name: Upload Wework desktop E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-${{ matrix.id }}-e2e-diagnostics
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/executor-home/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  wework-desktop-memory-e2e:
+    name: Wework Desktop Memory E2E
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')))
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -144,27 +249,32 @@ jobs:
             ~/.cargo/git
             executor/target
             wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-desktop-memory-e2e-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-
+            ${{ runner.os }}-${{ runner.arch }}-wework-desktop-memory-e2e-
 
       - name: Prepare real Codex binary
         working-directory: ./wework
-        run: pnpm run prepare:codex
+        run: |
+          pnpm run prepare:codex
+          codex_bin="$(find "$PWD/src-tauri/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
+          test -n "$codex_bin"
+          echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
 
-      - name: Run Wework desktop task-flow E2E
+      - name: Run Wework desktop memory E2E
         env:
           CI: true
-          CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
         run: |
           test -x "$CODEX_BIN"
-          xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop
+          pnpm --filter wework e2e:desktop:memory
 
-      - name: Upload Wework desktop E2E diagnostics
+      - name: Upload Wework desktop memory diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wework-desktop-e2e-diagnostics
-          path: wework/test-results/desktop-e2e/
+          name: wework-desktop-memory-e2e-diagnostics
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7

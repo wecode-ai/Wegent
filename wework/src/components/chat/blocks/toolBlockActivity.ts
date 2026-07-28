@@ -13,7 +13,7 @@ import {
 } from './toolBlockKinds'
 
 export type ProcessingDisplayRow =
-  | { type: 'block'; id: string; block: ProcessingBlock }
+  | { type: 'block'; id: string; block: ProcessingBlock; sourceBlockIds: string[] }
   | { type: 'activity_group'; id: string; blocks: ToolBlock[]; label: string }
 
 export type ToolActivityKind =
@@ -48,6 +48,7 @@ const SEARCH_TOOL_HINTS = ['search', 'grep', 'glob']
 const SEARCH_COMMANDS = new Set(['rg', 'grep', 'find', 'fd', 'ls', 'tree', 'ag', 'ack'])
 const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'file'])
 const HIDDEN_ACTIVITY_TOOLS = new Set(['write_stdin', 'functions.write_stdin'])
+const RECONNECTING_TOOL_NAME = 'runtime_reconnecting'
 
 export function buildProcessingDisplayRows(
   blocks: ProcessingBlock[],
@@ -87,7 +88,12 @@ export function buildProcessingDisplayRows(
       consecutiveFileChanges.length === 1
         ? consecutiveFileChanges[0]
         : mergeConsecutiveFileChanges(consecutiveFileChanges)
-    rows.push({ type: 'block', id: block.id, block })
+    rows.push({
+      type: 'block',
+      id: block.id,
+      block,
+      sourceBlockIds: consecutiveFileChanges.map(sourceBlock => sourceBlock.id),
+    })
     consecutiveFileChanges = []
   }
 
@@ -95,7 +101,7 @@ export function buildProcessingDisplayRows(
     if (block.type === 'tool' && isContextCompactionToolName(block.toolName)) {
       flushCompletedTools()
       flushFileChanges()
-      rows.push({ type: 'block', id: block.id, block })
+      rows.push({ type: 'block', id: block.id, block, sourceBlockIds: [block.id] })
       continue
     }
 
@@ -121,7 +127,7 @@ export function buildProcessingDisplayRows(
 
     flushCompletedTools()
     flushFileChanges()
-    rows.push({ type: 'block', id: block.id, block })
+    rows.push({ type: 'block', id: block.id, block, sourceBlockIds: [block.id] })
   }
 
   flushCompletedTools()
@@ -147,7 +153,8 @@ function mergeConsecutiveFileChanges(blocks: FileChangesBlock[]): FileChangesBlo
 
   return {
     ...latest,
-    id: `file-changes-${first.id}-${latest.id}`,
+    id: `file-changes-${first.id}`,
+    createdAt: Math.min(...blocks.map(block => block.createdAt)),
     fileChanges: {
       ...latest.fileChanges,
       artifact_id: summaries.map(summary => summary.artifact_id).join(':'),
@@ -639,7 +646,11 @@ function isRedundantPatchApplyBlock(block: ProcessingBlock): boolean {
 }
 
 function isHiddenToolActivityBlock(block: ProcessingBlock): boolean {
-  return block.type === 'tool' && HIDDEN_ACTIVITY_TOOLS.has(block.toolName.toLowerCase())
+  return (
+    block.type === 'tool' &&
+    (HIDDEN_ACTIVITY_TOOLS.has(block.toolName.toLowerCase()) ||
+      (block.toolName === RECONNECTING_TOOL_NAME && isCompletedToolBlock(block)))
+  )
 }
 
 export function isWebSearchToolName(name: string): boolean {

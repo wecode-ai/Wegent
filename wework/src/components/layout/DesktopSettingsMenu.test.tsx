@@ -82,12 +82,21 @@ describe('DesktopSettingsMenu', () => {
     expect(mockCheckNow).toHaveBeenCalledTimes(1)
   })
 
+  test('uses subdued regular text for normal menu actions', () => {
+    renderMenu()
+
+    expect(screen.getByTestId('settings-menu-button')).toHaveClass(
+      'font-normal',
+      'text-text-primary'
+    )
+  })
+
   test('does not render the old account or quota summary row', () => {
     renderMenu()
 
     expect(screen.queryByTestId('settings-account-group')).not.toBeInTheDocument()
     expect(screen.queryByTestId('account-menu-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('Codex 额度')).not.toBeInTheDocument()
+    expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
   })
 
   test('hides logout in local-first app runtime', () => {

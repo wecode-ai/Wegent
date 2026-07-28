@@ -6,7 +6,16 @@ const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/downlo
 export type MarkdownLinkTarget =
   | { kind: 'external' }
   | { kind: 'none' }
-  | { kind: 'file'; path: string; lineStart?: number; lineEnd?: number }
+  | {
+      kind: 'file'
+      path: string
+      lineStart?: number
+      lineEnd?: number
+      isDirectory?: boolean
+    }
+
+const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i
+const LOCAL_TAURI_PATH_PREFIXES = ['/Users/', '/Volumes/', '/private/', '/tmp/', '/var/']
 
 // Assistant responses frequently reference repository files with relative or
 // absolute filesystem paths. Rendering those as plain anchors makes the browser
@@ -21,11 +30,40 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
   if (!value) return { kind: 'none' }
   if (/^(https?|mailto|tel):/i.test(value)) return { kind: 'external' }
   if (value.startsWith('#')) return { kind: 'none' }
+  if (value.startsWith('folder://')) {
+    try {
+      return {
+        kind: 'file',
+        path: decodeURIComponent(value.slice('folder://'.length)),
+        isDirectory: true,
+      }
+    } catch {
+      return { kind: 'none' }
+    }
+  }
+  const localTauriPath = localPathFromTauriUrl(value)
+  if (localTauriPath) {
+    return { kind: 'file', ...splitMarkdownFileLineSuffix(localTauriPath) }
+  }
   if (value.startsWith('file://')) {
     return { kind: 'file', ...splitMarkdownFileLineSuffix(localPathFromMarkdownImageSrc(value)) }
   }
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return { kind: 'external' }
   return { kind: 'file', ...splitMarkdownFileLineSuffix(value) }
+}
+
+export function isHtmlFilePath(path: string): boolean {
+  return HTML_FILE_PATTERN.test(path.split(/[?#]/, 1)[0])
+}
+
+export function localHtmlBrowserUrl(path: string): string | null {
+  if (!isHtmlFilePath(path) || typeof convertFileSrc !== 'function') return null
+
+  try {
+    return convertFileSrc(path)
+  } catch {
+    return null
+  }
 }
 
 export function splitMarkdownFileLineSuffix(path: string): {
@@ -69,6 +107,21 @@ export function localPathFromMarkdownImageSrc(src: string): string {
     return pathname.match(/^\/[a-zA-Z]:\//) ? pathname.slice(1) : pathname
   } catch {
     return src
+  }
+}
+
+function localPathFromTauriUrl(value: string): string | null {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'tauri:' || url.hostname !== 'localhost') return null
+
+    const pathname = decodeURIComponent(url.pathname)
+    if (LOCAL_TAURI_PATH_PREFIXES.some(prefix => pathname.startsWith(prefix))) {
+      return pathname
+    }
+    return /^\/[a-zA-Z]:\//.test(pathname) ? pathname.slice(1) : null
+  } catch {
+    return null
   }
 }
 

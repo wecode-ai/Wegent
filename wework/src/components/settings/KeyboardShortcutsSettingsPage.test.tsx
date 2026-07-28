@@ -31,5 +31,6 @@ describe('KeyboardShortcutsSettingsPage', () => {
     )
     expect(screen.getByTestId('keyboard-shortcut-row-increaseFontSize')).toHaveTextContent('⌘ +')
     expect(screen.getByTestId('keyboard-shortcut-row-decreaseFontSize')).toHaveTextContent('⌘ −')
+    expect(screen.getByTestId('keyboard-shortcut-row-resetFontSize')).toHaveTextContent('⌘ 0')
   })
 })

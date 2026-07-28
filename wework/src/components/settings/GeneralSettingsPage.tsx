@@ -210,6 +210,12 @@ export function GeneralSettingsPage() {
             description: t('workbench.general_settings_show_main_window_on_launch_description'),
           })}
           {renderSwitchRow({
+            preferenceKey: 'systemDragEnabled',
+            testId: 'general-system-drag-toggle',
+            label: t('workbench.general_settings_system_drag'),
+            description: t('workbench.general_settings_system_drag_description'),
+          })}
+          {renderSwitchRow({
             preferenceKey: 'experimentalFeaturesEnabled',
             testId: 'general-experimental-features-toggle',
             label: t('workbench.general_settings_experimental_features'),
@@ -238,6 +244,14 @@ export function GeneralSettingsPage() {
             description: preferences.closeToTrayEnabled
               ? t('workbench.general_settings_background_description')
               : t('workbench.general_settings_background_disabled_description'),
+          })}
+          {renderSwitchRow({
+            preferenceKey: 'preventSleepWhileTasksRunning',
+            testId: 'general-prevent-sleep-while-tasks-running-toggle',
+            label: t('workbench.general_settings_prevent_sleep_while_tasks_running'),
+            description: t(
+              'workbench.general_settings_prevent_sleep_while_tasks_running_description'
+            ),
           })}
           {renderSwitchRow({
             preferenceKey: 'taskCompletionNotificationsEnabled',

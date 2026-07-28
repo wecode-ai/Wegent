@@ -1,4 +1,5 @@
 import { createDeviceApi } from '@/api/devices'
+import { createDeliveryApi } from '@/api/deliveries'
 import {
   createExecutorClientFromApis,
   type ExecutorClient,
@@ -7,6 +8,7 @@ import {
 import { createGitApi } from '@/api/git'
 import { createImSessionApi } from '@/api/imSessions'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { createCloudProjectSpaceApi } from '@/api/hybrid/cloudProjectSpaceApi'
 import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createModelApi } from '@/api/models'
@@ -16,6 +18,7 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
@@ -24,18 +27,29 @@ import type {
   DeviceInfo,
   ProjectDeviceSessionResponse,
   RuntimeWorkListResponse,
+  User,
 } from '@/types/api'
-import type { DeviceSessionResponse, VncConfigResponse } from '@/types/devices'
+import type { DeviceSessionResponse } from '@/types/devices'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
+import type { createExternalIssueApi } from '@/api/local/localDelivery'
 
 export interface WorkspaceSessionApi {
   startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
   startProjectCodeServer: (projectId: number) => Promise<ProjectDeviceSessionResponse>
   startDeviceTerminal: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
   startDeviceCodeServer: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
-  getDeviceVncConfig: (deviceId: string) => Promise<VncConfigResponse>
   createRemoteTerminalClient: RemoteTerminalClientFactory
+}
+
+export type ProjectSpaceLocation = 'local' | 'cloud'
+export type DeliveryApi = ReturnType<typeof createDeliveryApi>
+export type ExternalIssueApi = ReturnType<typeof createExternalIssueApi>
+
+export interface ProjectSpaceApis {
+  local?: DeliveryApi
+  cloud?: DeliveryApi
+  defaultLocation: ProjectSpaceLocation
 }
 
 export interface WorkbenchServices {
@@ -69,6 +83,9 @@ export interface WorkbenchServices {
       typeof createDeviceApi
     >['createDockerRemoteDeviceCommand']
   }
+  deliveryApi?: DeliveryApi
+  externalIssueApi?: ExternalIssueApi
+  projectSpaceApis?: ProjectSpaceApis
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   attachmentApi?: {
@@ -95,6 +112,7 @@ interface CloudConnectionServicesSnapshot {
   socketBaseUrl?: string
   socketPath?: string
   token: string | null
+  user?: User
 }
 
 export function createExecutorClientForWorkbenchServices(
@@ -134,10 +152,27 @@ export function createDefaultWorkbenchServices(
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
+        user: cloudConnection.user,
       })
     }
-    return createLocalAppServices()
+    return createLocalAppServices({ user: cloudConnection?.user })
   }
 
-  return createBackendWorkbenchServices()
+  const cloudServices = createBackendWorkbenchServices()
+  if (!isTauriRuntime()) return cloudServices
+
+  const localServices = createLocalAppServices({ user: cloudConnection?.user })
+  const cloudProjectSpaceApi = createCloudProjectSpaceApi(
+    cloudServices.deliveryApi!,
+    localServices.externalIssueApi!
+  )
+  return {
+    ...cloudServices,
+    externalIssueApi: localServices.externalIssueApi,
+    projectSpaceApis: {
+      local: localServices.deliveryApi,
+      cloud: cloudProjectSpaceApi,
+      defaultLocation: 'cloud',
+    },
+  }
 }

@@ -22,6 +22,48 @@ describe('parseGitShortStat', () => {
     })
   })
 
+  test('detects a non-git workspace without depending on localized stderr', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: false,
+      stdout: '',
+      error: 'Command failed',
+      stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 4,
+        name: 'plain-cloud-workspace',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'cloud',
+            deviceId: 'device-456',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/plain-cloud-workspace',
+          },
+        },
+      }
+    )
+
+    expect(info).toMatchObject({
+      isGitRepository: false,
+      deviceId: 'device-456',
+      workspacePath: '/workspace/plain-cloud-workspace',
+    })
+    expect(info.error).toBeUndefined()
+    expect(executeCommand).toHaveBeenCalledWith('device-456', {
+      command_key: 'git_is_worktree',
+      path: '/workspace/plain-cloud-workspace',
+      args: ['/workspace/plain-cloud-workspace'],
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+  })
+
   test('defaults missing additions and deletions to zero', () => {
     expect(parseGitShortStat('')).toEqual({ additions: '+0', deletions: '-0' })
   })
@@ -202,6 +244,7 @@ describe('loadProjectEnvironment', () => {
       executionTarget: 'cloud',
       deviceId: 'device-123',
       workspacePath: '/workspace/Wegent',
+      isGitRepository: true,
       branchName: 'human/narwhal-20260528-073440',
       additions: '+8',
       deletions: '-3',
@@ -371,9 +414,60 @@ describe('loadProjectEnvironment', () => {
       additions: '+0',
       deletions: '-0',
       executionTarget: 'local',
+      isGitRepository: false,
       deviceId: 'device-123',
       workspacePath: '/workspace/plain-workspace',
     })
+  })
+
+  test('preserves git command errors when the workspace is a repository', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'fatal: failed to read git metadata',
+        })
+      }
+      if (data.command_key === 'git_is_worktree') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'true\n',
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 5,
+        name: 'broken-repository',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/broken-repository',
+          },
+        },
+      }
+    )
+
+    expect(info).toMatchObject({
+      deviceId: 'device-123',
+      workspacePath: '/workspace/broken-repository',
+      error: 'fatal: failed to read git metadata',
+    })
+    expect(info.isGitRepository).toBeUndefined()
   })
 
   test('deduplicates repeated environment loads for the same project briefly', async () => {

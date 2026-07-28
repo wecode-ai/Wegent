@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from typing import Any
 
 import pytest
@@ -12,28 +13,25 @@ from app.core.config import settings
 SITES_API_BASE_URL = "https://sites.example.test"
 
 
-def _site(**overrides: Any) -> dict[str, Any]:
-    site = {
-        "siteid": "site-1",
-        "taskid": "task-1",
-        "username": "testuser",
-        "name": "Product site",
-        "slug": "product-site",
-        "internal_url": "http://site-1.internal.test",
-        "external_url": None,
-        "publish_status": "unpublished",
-        "last_publish_error": None,
-        "thumbnail_url": "https://sites.example.test/default-thumbnail.png",
+def _project(**overrides: Any) -> dict[str, Any]:
+    project = {
+        "id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "network": "inner",
+        "title": "Product site",
+        "url": "https://product.inner.test",
+        "snapshot": "https://sites.example.test/default-thumbnail.png",
         "created_at": "2026-07-15T08:00:00Z",
-        "updated_at": "2026-07-15T08:00:00Z",
-        "published_at": None,
     }
-    site.update(overrides)
-    return site
+    project.update(overrides)
+    return project
 
 
 def _authorization(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _json_body(request) -> dict[str, Any]:
+    return json.loads(request.content.decode("utf-8"))
 
 
 def test_list_sites_requires_authentication(
@@ -42,7 +40,7 @@ def test_list_sites_requires_authentication(
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
 
-    response = test_client.get("/api/v1/sites")
+    response = test_client.get("/api/sites")
 
     assert response.status_code == 401
 
@@ -55,7 +53,7 @@ def test_list_sites_returns_not_available_when_upstream_is_not_configured(
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", "")
 
     response = test_client.get(
-        "/api/v1/sites",
+        "/api/sites",
         headers=_authorization(test_token),
     )
 
@@ -63,7 +61,53 @@ def test_list_sites_returns_not_available_when_upstream_is_not_configured(
     assert response.json()["detail"]["code"] == "sites_not_available"
 
 
-def test_list_sites_injects_authenticated_username(
+def test_list_sites_searches_platform_projects_with_authenticated_username(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    monkeypatch.setattr(settings, "SITES_API_TOKEN", "platform-token")
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/search"
+            "?username=testuser&limit=100&sitename=product"
+        ),
+        json={"items": [_project()], "next_cursor": None},
+    )
+
+    response = test_client.get(
+        "/api/sites",
+        params={"q": "product", "offset": 0, "limit": 10},
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0] == {
+        "siteid": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "taskid": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "username": "testuser",
+        "name": "Product site",
+        "slug": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "internal_url": "https://product.inner.test/",
+        "external_url": None,
+        "publish_status": "unpublished",
+        "last_publish_error": None,
+        "thumbnail_url": "https://sites.example.test/default-thumbnail.png",
+        "created_at": "2026-07-15T08:00:00Z",
+        "updated_at": "2026-07-15T08:00:00Z",
+        "published_at": None,
+    }
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["authorization"] == "Bearer platform-token"
+    assert request.url.params["username"] == "testuser"
+    assert request.url.params["sitename"] == "product"
+
+
+def test_list_sites_fetches_until_offset_page_is_resolved(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -73,25 +117,46 @@ def test_list_sites_injects_authenticated_username(
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/sites"
-            "?username=testuser&q=product&offset=20&limit=10"
+            f"{SITES_API_BASE_URL}/api/v1/projects/search"
+            "?username=testuser&limit=100"
         ),
-        json={"items": [_site()], "total": 1, "offset": 20, "limit": 10},
+        json={"items": [], "next_cursor": "page-1"},
+    )
+    for page in range(1, 11):
+        httpx_mock.add_response(
+            method="GET",
+            url=(
+                f"{SITES_API_BASE_URL}/api/v1/projects/search"
+                f"?username=testuser&limit=100&cursor=page-{page}"
+            ),
+            json={"items": [], "next_cursor": f"page-{page + 1}"},
+        )
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/search"
+            "?username=testuser&limit=100&cursor=page-11"
+        ),
+        json={"items": [_project()], "next_cursor": None},
     )
 
     response = test_client.get(
-        "/api/v1/sites",
-        params={"q": "product", "offset": 20, "limit": 10},
+        "/api/sites",
+        params={"offset": 0, "limit": 1},
         headers=_authorization(test_token),
     )
 
     assert response.status_code == 200
-    assert response.json()["items"][0]["username"] == "testuser"
-    request = httpx_mock.get_requests()[0]
-    assert request.url.params["username"] == "testuser"
+    body = response.json()
+    assert [item["siteid"] for item in body["items"]] == [
+        "prj_01K0A0BCDEFGHJKMNPQRSTVWXY"
+    ]
+    assert body["total"] == 1
+    assert body["next_cursor"] is None
+    assert len(httpx_mock.get_requests()) == 12
 
 
-def test_publish_site_checks_ownership_before_publishing(
+def test_list_sites_next_cursor_uses_next_offset(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -100,30 +165,68 @@ def test_publish_site_checks_ownership_before_publishing(
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
         method="GET",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1",
-        json=_site(),
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/search"
+            "?username=testuser&limit=100"
+        ),
+        json={
+            "items": [
+                _project(id="prj_first"),
+                _project(id="prj_second", title="Second site"),
+            ],
+            "next_cursor": None,
+        },
     )
+
+    response = test_client.get(
+        "/api/sites",
+        params={"offset": 0, "limit": 1},
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["siteid"] for item in body["items"]] == ["prj_first"]
+    assert body["total"] == 2
+    assert body["next_cursor"] == "1"
+
+
+def test_publish_site_sets_network_to_outer(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    monkeypatch.setattr(settings, "SITES_API_TOKEN", "platform-token")
     httpx_mock.add_response(
         method="POST",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1/publish",
-        json=_site(
-            external_url="https://product-site.example.test",
-            publish_status="published",
-            published_at="2026-07-15T08:10:00Z",
+        url=f"{SITES_API_BASE_URL}/api/v1/projects/deploy/network",
+        json=_project(
+            network="outer",
+            url="https://product.example.test",
         ),
     )
 
     response = test_client.post(
-        "/api/v1/sites/site-1/publish",
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/publish",
         headers=_authorization(test_token),
     )
 
     assert response.status_code == 200
-    assert response.json()["publish_status"] == "published"
-    assert [request.method for request in httpx_mock.get_requests()] == ["GET", "POST"]
+    body = response.json()
+    assert body["publish_status"] == "published"
+    assert body["external_url"] == "https://product.example.test/"
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["authorization"] == "Bearer platform-token"
+    assert _json_body(request) == {
+        "username": "testuser",
+        "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "network": "outer",
+    }
 
 
-def test_delete_site_hides_a_site_owned_by_another_user(
+def test_update_site_network_proxies_platform_network_update(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -131,22 +234,27 @@ def test_delete_site_hides_a_site_owned_by_another_user(
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
-        method="GET",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1",
-        json=_site(username="another-user"),
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/api/v1/projects/deploy/network",
+        json=_project(network="inner"),
     )
 
-    response = test_client.delete(
-        "/api/v1/sites/site-1",
+    response = test_client.put(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/network",
+        json={"network": "inner"},
         headers=_authorization(test_token),
     )
 
-    assert response.status_code == 404
-    assert response.json()["detail"]["code"] == "site_not_found"
-    assert len(httpx_mock.get_requests()) == 1
+    assert response.status_code == 200
+    assert response.json()["publish_status"] == "unpublished"
+    assert _json_body(httpx_mock.get_requests()[0]) == {
+        "username": "testuser",
+        "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "network": "inner",
+    }
 
 
-def test_delete_site_removes_owned_site(
+def test_update_site_name_proxies_platform_name_update(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -154,20 +262,47 @@ def test_delete_site_removes_owned_site(
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
-        method="GET",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1",
-        json=_site(),
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/api/v1/projects/update",
+        json=_project(title="Renamed site"),
     )
+
+    response = test_client.put(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        json={"sitename": "Renamed site"},
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Renamed site"
+    assert _json_body(httpx_mock.get_requests()[0]) == {
+        "username": "testuser",
+        "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "sitename": "Renamed site",
+    }
+
+
+def test_delete_site_removes_owned_platform_project(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
-        method="DELETE",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1",
-        status_code=204,
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/api/v1/projects/del",
+        json={"deleted": True},
     )
 
     response = test_client.delete(
-        "/api/v1/sites/site-1",
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         headers=_authorization(test_token),
     )
 
     assert response.status_code == 204
     assert response.content == b""
+    assert _json_body(httpx_mock.get_requests()[0]) == {
+        "username": "testuser",
+        "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+    }

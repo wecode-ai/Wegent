@@ -14,6 +14,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+pub(crate) mod codex_model_catalog;
+mod codex_responses_proxy_transform;
 mod config;
 pub(crate) mod local_model_proxy;
 
@@ -88,7 +90,8 @@ where
         .route("/init", post(envd_init))
         .route("/envs", get(envd_envs))
         .route("/v1/responses", post(openai_responses::<R>))
-        .route(local_model_proxy::ROUTE, post(local_model_proxy::handle))
+        .route(codex_model_catalog::ROUTE, get(codex_model_catalog::handle))
+        .route(local_model_proxy::ROUTE, local_model_proxy::route())
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))

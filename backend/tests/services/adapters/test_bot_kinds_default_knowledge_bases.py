@@ -6,11 +6,21 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 from fastapi import HTTPException
 
 from app.models.kind import Kind
 from app.schemas.bot import BotCreate, BotUpdate
 from app.services.adapters.bot_kinds import BotKindsService
+
+
+@pytest.fixture(autouse=True)
+def allow_direct_knowledge_base_access():
+    with patch(
+        "app.services.adapters.bot_kinds.KnowledgeService.can_directly_access_knowledge_base",
+        return_value=True,
+    ):
+        yield
 
 
 def test_bot_create_schema_preserves_default_knowledge_base_refs():
@@ -24,6 +34,22 @@ def test_bot_create_schema_preserves_default_knowledge_base_refs():
     assert payload.model_dump()["default_knowledge_base_refs"] == [
         {"id": 101, "name": "Product Docs"}
     ]
+
+
+def test_default_knowledge_base_binding_requires_direct_access():
+    service = BotKindsService(Kind)
+
+    with patch(
+        "app.services.adapters.bot_kinds.KnowledgeService.can_directly_access_knowledge_base",
+        return_value=False,
+    ):
+        with pytest.raises(HTTPException, match="not directly accessible"):
+            service._validate_default_knowledge_bases(
+                Mock(),
+                [SimpleNamespace(id=101, name="Hidden Docs")],
+                user_id=7,
+                namespace="default",
+            )
 
 
 def test_create_with_user_writes_default_knowledge_bases_into_ghost_spec():

@@ -14,6 +14,7 @@ from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
     DocumentSourceType,
@@ -26,8 +27,19 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.schemas.namespace import GroupRole
+from app.services.knowledge import knowledge_visibility_query
 from app.services.knowledge.folder_service import KnowledgeFolderService
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_service import (
+    ExternalKnowledgeBaseListFilters,
+    KnowledgeService,
+)
+from app.services.knowledge.knowledge_visibility_query import (
+    get_acl_accessible_knowledge_base_ids,
+    get_directly_accessible_knowledge_base_ids,
+)
+from app.services.knowledge.task_knowledge_base_service import (
+    TaskKnowledgeBaseService,
+)
 from app.services.share import knowledge_share_service
 
 
@@ -109,9 +121,10 @@ def _add_kb_member(
     role: ResourceRole,
     invited_by_user_id: int,
     status: str = MemberStatus.APPROVED.value,
+    resource_type: str = "KnowledgeBase",
 ) -> ResourceMember:
     member = ResourceMember(
-        resource_type="KnowledgeBase",
+        resource_type=resource_type,
         resource_id=knowledge_base_id,
         entity_type="user",
         entity_id=str(user.id),
@@ -167,6 +180,44 @@ def test_developer_can_create_organization_knowledge_base(test_db: Session) -> N
 
 
 @pytest.mark.unit
+def test_public_agent_acl_access_only_allows_organization_knowledge_bases(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "public-agent-kb-owner")
+    group_namespace = _create_namespace(test_db, owner, "public-agent-group")
+    organization_namespace = _create_namespace(
+        test_db,
+        owner,
+        "public-agent-organization",
+        level="organization",
+    )
+    _add_member(test_db, group_namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, organization_namespace, owner, GroupRole.Owner, owner.id)
+    group_kb_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="group-kb", namespace=group_namespace.name),
+    )
+    organization_kb_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="organization-kb",
+            namespace=organization_namespace.name,
+            direct_access_requirement="edit",
+        ),
+    )
+
+    accessible_ids = get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=0,
+        candidate_ids=[group_kb_id, organization_kb_id],
+    )
+
+    assert accessible_ids == {organization_kb_id}
+
+
+@pytest.mark.unit
 def test_all_scope_does_not_duplicate_organization_knowledge_base(
     test_db: Session,
 ) -> None:
@@ -190,6 +241,602 @@ def test_all_scope_does_not_duplicate_organization_knowledge_base(
 
     matching_ids = [kb.id for kb in knowledge_bases if kb.id == knowledge_base_id]
     assert matching_ids == [knowledge_base_id]
+
+
+@pytest.mark.unit
+def test_edit_direct_access_requirement_hides_kb_from_reporter(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "hidden-owner")
+    reporter = _create_user(test_db, "hidden-reporter")
+    namespace = _create_namespace(test_db, owner, "hidden-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="hidden-kb",
+            namespace=namespace.name,
+            direct_access_requirement="edit",
+        ),
+    )
+
+    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        reporter.id,
+    )
+    listed_ids = {
+        kb.id
+        for kb in KnowledgeService.list_knowledge_bases(
+            test_db,
+            reporter.id,
+            ResourceScope.ALL,
+        )
+    }
+
+    assert knowledge_base is not None
+    assert has_access is False
+    assert knowledge_base_id not in listed_ids
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("requirement", "member_role", "expected_access"),
+    [
+        ("read", GroupRole.Reporter, True),
+        ("edit", GroupRole.Reporter, False),
+        ("edit", GroupRole.Developer, True),
+    ],
+)
+def test_single_and_paginated_direct_access_policies_match(
+    test_db: Session,
+    requirement: str,
+    member_role: GroupRole,
+    expected_access: bool,
+) -> None:
+    suffix = f"{requirement}-{member_role.value}"
+    owner = _create_user(test_db, f"policy-contract-owner-{suffix}")
+    member = _create_user(test_db, f"policy-contract-member-{suffix}")
+    namespace = _create_namespace(test_db, owner, f"policy-contract-{suffix}")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, member, member_role, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name=f"policy-contract-kb-{suffix}",
+            namespace=namespace.name,
+            direct_access_requirement=requirement,
+        ),
+    )
+
+    _, single_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        member.id,
+    )
+    page, _ = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        member.id,
+        ResourceScope.ALL,
+    )
+
+    assert single_access is expected_access
+    assert (knowledge_base_id in {kb.id for kb in page}) is expected_access
+
+
+@pytest.mark.unit
+def test_task_binding_is_scoped_to_the_task(test_db: Session) -> None:
+    owner = _create_user(test_db, "task-binding-owner")
+    member = _create_user(test_db, "task-binding-member")
+    outsider = _create_user(test_db, "task-binding-outsider")
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="task-binding-kb",
+            direct_access_requirement="read",
+        ),
+    )
+    task = TaskResource(
+        user_id=member.id,
+        kind="Task",
+        name="task-binding-chat",
+        namespace="default",
+        json={
+            "kind": "Task",
+            "spec": {
+                "is_group_chat": True,
+                "knowledgeBaseRefs": [
+                    {"id": knowledge_base_id, "name": "task-binding-kb"}
+                ],
+            },
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+        is_group_chat=True,
+    )
+    test_db.add(task)
+    test_db.commit()
+    test_db.refresh(task)
+
+    _, single_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        member.id,
+    )
+    direct_ids = get_directly_accessible_knowledge_base_ids(
+        test_db,
+        user_id=member.id,
+        candidate_ids=[knowledge_base_id],
+    )
+    acl_ids = get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=member.id,
+        candidate_ids=[knowledge_base_id],
+    )
+    page, _ = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        member.id,
+        ResourceScope.ALL,
+    )
+    legacy_list = KnowledgeService.list_knowledge_bases(
+        test_db,
+        member.id,
+        ResourceScope.PERSONAL,
+    )
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, member.id)
+    task_service = TaskKnowledgeBaseService()
+    member_task_ids = task_service.get_bound_knowledge_base_ids(
+        test_db,
+        task.id,
+        user_id=member.id,
+    )
+    outsider_task_ids = task_service.get_bound_knowledge_base_ids(
+        test_db,
+        task.id,
+        user_id=outsider.id,
+    )
+
+    assert single_access is False
+    assert direct_ids == set()
+    assert acl_ids == set()
+    assert knowledge_base_id not in {kb.id for kb in page}
+    assert knowledge_base_id not in {kb.id for kb in legacy_list}
+    assert knowledge_base_id not in {kb.id for kb in grouped.personal.shared_with_me}
+    assert member_task_ids == [knowledge_base_id]
+    assert outsider_task_ids == []
+
+
+@pytest.mark.unit
+def test_acl_access_ignores_direct_visibility_requirement(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "agent-owner")
+    reporter = _create_user(test_db, "agent-reporter")
+    namespace = _create_namespace(test_db, owner, "agent-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="agent-kb",
+            namespace=namespace.name,
+            direct_access_requirement="edit",
+        ),
+    )
+
+    direct_ids = get_directly_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+    acl_ids = get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert direct_ids == set()
+    assert acl_ids == {knowledge_base_id}
+
+
+@pytest.mark.unit
+def test_acl_access_denies_restricted_group_member(test_db: Session) -> None:
+    owner = _create_user(test_db, "restricted-group-owner")
+    restricted = _create_user(test_db, "restricted-group-member")
+    namespace = _create_namespace(test_db, owner, "restricted-agent-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(
+        test_db,
+        namespace,
+        restricted,
+        GroupRole.RestrictedAnalyst,
+        owner.id,
+    )
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="restricted-group-kb", namespace=namespace.name),
+    )
+
+    acl_ids = get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=restricted.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert acl_ids == set()
+
+
+@pytest.mark.unit
+def test_acl_access_denies_direct_restriction_over_other_grants(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "restricted-direct-owner")
+    reporter = _create_user(test_db, "restricted-direct-member")
+    namespace = _create_namespace(test_db, owner, "restricted-direct-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="restricted-direct-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        reporter,
+        ResourceRole.RestrictedAnalyst,
+        owner.id,
+    )
+
+    acl_ids = get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert acl_ids == set()
+
+
+@pytest.mark.unit
+def test_acl_access_denies_legacy_restricted_member(test_db: Session) -> None:
+    owner = _create_user(test_db, "legacy-restricted-owner")
+    reporter = _create_user(test_db, "legacy-restricted-member")
+    namespace = _create_namespace(test_db, owner, "legacy-restricted-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="legacy-restricted-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        reporter,
+        ResourceRole.RestrictedAnalyst,
+        owner.id,
+        status="APPROVED",
+        resource_type="KNOWLEDGE_BASE",
+    )
+
+    acl_ids = get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert acl_ids == set()
+
+
+@pytest.mark.unit
+def test_acl_access_allows_legacy_reporter_member(test_db: Session) -> None:
+    owner = _create_user(test_db, "legacy-reporter-owner")
+    reporter = _create_user(test_db, "legacy-reporter-member")
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="legacy-reporter-kb",
+            namespace="default",
+            direct_access_requirement="edit",
+        ),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        reporter,
+        ResourceRole.Reporter,
+        owner.id,
+        status="APPROVED",
+        resource_type="KNOWLEDGE_BASE",
+    )
+
+    acl_ids = get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert acl_ids == {knowledge_base_id}
+
+
+@pytest.mark.unit
+def test_updating_direct_access_requirement_immediately_hides_kb_from_reporter(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "updated-policy-owner")
+    reporter = _create_user(test_db, "updated-policy-reporter")
+    namespace = _create_namespace(test_db, owner, "updated-policy-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="updated-policy-kb",
+            namespace=namespace.name,
+            direct_access_requirement="read",
+        ),
+    )
+
+    _, initially_has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        reporter.id,
+    )
+    assert initially_has_access is True
+
+    updated = KnowledgeService.update_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeBaseUpdate(direct_access_requirement="edit"),
+    )
+
+    assert updated is not None
+    assert updated.json["spec"]["directAccessRequirement"] == "edit"
+    _, updated_has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        reporter.id,
+    )
+    paginated_ids, total = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        reporter.id,
+        ResourceScope.ALL,
+        offset=0,
+        limit=50,
+    )
+
+    assert updated_has_access is False
+    assert knowledge_base_id not in {kb.id for kb in paginated_ids}
+    assert total == 0
+
+
+@pytest.mark.unit
+def test_share_info_remains_available_to_first_time_visitor(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "share-info-owner")
+    visitor = _create_user(test_db, "share-info-visitor")
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="share-info-kb",
+            direct_access_requirement="edit",
+        ),
+    )
+
+    share_info = knowledge_share_service.get_kb_share_info(
+        test_db,
+        knowledge_base_id,
+        visitor.id,
+    )
+    permission_sources = knowledge_share_service.get_my_permission_sources(
+        test_db,
+        knowledge_base_id,
+        visitor.id,
+    )
+
+    assert share_info.name == "share-info-kb"
+    assert share_info.my_permission.has_access is False
+    assert permission_sources.has_access is False
+    assert permission_sources.sources == []
+
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        visitor,
+        ResourceRole.Reporter,
+        owner.id,
+    )
+
+    reporter_share_info = knowledge_share_service.get_kb_share_info(
+        test_db,
+        knowledge_base_id,
+        visitor.id,
+    )
+    reporter_permission_sources = knowledge_share_service.get_my_permission_sources(
+        test_db,
+        knowledge_base_id,
+        visitor.id,
+    )
+
+    assert reporter_share_info.name == "share-info-kb"
+    assert reporter_share_info.my_permission.has_access is False
+    assert reporter_permission_sources.has_access is False
+    assert reporter_permission_sources.effective_role == ResourceRole.Reporter.value
+
+
+@pytest.mark.unit
+def test_paginated_lists_do_not_materialize_all_entity_authorized_kbs(
+    test_db: Session,
+) -> None:
+    user = _create_user(test_db, "permission-context-user")
+    collect_external_roles = (
+        knowledge_visibility_query.collect_external_entity_member_roles
+    )
+
+    with (
+        patch.object(
+            knowledge_visibility_query,
+            "collect_entity_authorized_kbs",
+        ) as collect_all,
+        patch.object(
+            knowledge_visibility_query,
+            "collect_external_entity_member_roles",
+            wraps=collect_external_roles,
+        ) as collect_external,
+    ):
+        KnowledgeService.list_knowledge_bases_paginated(
+            test_db,
+            user.id,
+            ResourceScope.ALL,
+            offset=0,
+            limit=50,
+        )
+
+    collect_all.assert_not_called()
+    assert collect_external.call_count == 1
+
+    with (
+        patch.object(
+            knowledge_visibility_query,
+            "collect_entity_authorized_kbs",
+        ) as collect_all,
+        patch.object(
+            knowledge_visibility_query,
+            "collect_external_entity_member_roles",
+            wraps=collect_external_roles,
+        ) as collect_external,
+    ):
+        KnowledgeService.list_external_knowledge_bases(
+            test_db,
+            user_id=user.id,
+            filters=ExternalKnowledgeBaseListFilters(scope=ResourceScope.ALL),
+        )
+
+    collect_all.assert_not_called()
+    assert collect_external.call_count == 1
+
+
+@pytest.mark.unit
+def test_paginated_list_applies_namespace_entity_role_in_sql(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "entity-policy-owner")
+    member = _create_user(test_db, "entity-policy-member")
+    namespace = _create_namespace(test_db, owner, "entity-policy-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, member, GroupRole.Reporter, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="entity-policy-kb",
+            direct_access_requirement="edit",
+        ),
+    )
+    entity_member = ResourceMember.create(
+        resource_type="KnowledgeBase",
+        resource_id=knowledge_base_id,
+        entity_type="namespace",
+        entity_id=str(namespace.id),
+        role=ResourceRole.Reporter.value,
+        status=MemberStatus.APPROVED.value,
+        invited_by_user_id=owner.id,
+    )
+    test_db.add(entity_member)
+    test_db.commit()
+
+    hidden, hidden_total = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        member.id,
+        ResourceScope.ALL,
+    )
+
+    assert hidden_total == 0
+    assert knowledge_base_id not in {kb.id for kb in hidden}
+
+    entity_member.role = ResourceRole.Developer.value
+    test_db.commit()
+    visible, visible_total = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        member.id,
+        ResourceScope.ALL,
+    )
+
+    assert visible_total == 1
+    assert [kb.id for kb in visible] == [knowledge_base_id]
+
+
+@pytest.mark.unit
+def test_edit_direct_access_requirement_allows_developer(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "editable-owner")
+    developer = _create_user(test_db, "editable-developer")
+    namespace = _create_namespace(test_db, owner, "editable-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="editable-kb",
+            namespace=namespace.name,
+            direct_access_requirement="edit",
+        ),
+    )
+
+    _, has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        developer.id,
+    )
+    listed_ids = {
+        kb.id
+        for kb in KnowledgeService.list_knowledge_bases(
+            test_db,
+            developer.id,
+            ResourceScope.ALL,
+        )
+    }
+
+    assert has_access is True
+    assert knowledge_base_id in listed_ids
+
+
+@pytest.mark.unit
+def test_unknown_direct_access_requirement_fails_closed(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "invalid-policy-owner")
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="invalid-policy-kb"),
+    )
+    knowledge_base = _get_kind(test_db, knowledge_base_id)
+    knowledge_base.json["spec"]["directAccessRequirement"] = "unknown"
+    test_db.commit()
+
+    _, has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+    )
+
+    assert has_access is False
 
 
 @pytest.mark.unit

@@ -29,6 +29,8 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 
 - Design verification cases as a QA test plan before running them. For every changed behavior, cover the preconditions, environment and test data, exact steps, expected results, negative and recovery paths, and cleanup. Record the actual result and retain reproducible evidence for failures and critical-path success.
 - Changes to a core user flow must add or update automated E2E regression coverage in the same change. Treat task creation and launch, agent interaction, local-runtime lifecycle, permissions, and failure recovery as core flows when they are affected.
+- Add Wework E2E regression cases under `e2e/desktop/` and integrate them with the existing desktop runner so the GitHub desktop E2E jobs execute them. Do not place desktop regressions behind standalone local-only entry points.
+- Reuse the existing `e2e:desktop` command and its established CI variants. Do not add a package script or GitHub Actions command for each scenario; extend the desktop runner or its scenario discovery instead. Add a new command only when the test requires a genuinely different CI environment or job boundary.
 - E2E coverage complements, but never replaces, verification in the real Tauri application.
 
 ## Real desktop verification
@@ -50,6 +52,7 @@ pnpm --filter wework ai:verify stop --session <session-path>
 ```
 
 - `start` waits for the WebView, creates an isolated executor home, links local Codex authentication only for that session, and gives the app its own stdio-managed executor child.
+- Use `start --codex-home-initialization true` to verify the first-run Codex migration flow with a session-local native Codex home and synthetic authentication; it does not read or modify personal Codex credentials.
 - Session files and credentials are secrets: never print their contents. Always stop the session; it removes the auth link and terminates the isolated process group.
 - Begin with `snapshot`, use existing `data-testid` selectors, and assert a visible text or stable element after each critical action.
 - Execute the complete QA test plan in the isolated Tauri session, including the primary path, relevant boundary and error cases, and recovery. Document the environment, cases run, actual results, and evidence in the change handoff or pull request.

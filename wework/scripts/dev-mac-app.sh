@@ -53,6 +53,8 @@ Environment:
                         Set to 1 to use the normal executor home in debug builds.
   WEWORK_MALLOC_STACK_LOGGING
                         Set to 1 to enable macOS malloc stack logging for WebKit diagnostics.
+  WEWORK_DISABLE_BACKGROUND_THROTTLING
+                        Set to 1 to keep the macOS WebView active while hidden.
   MACOS_BUILD_TARGET    Default macOS Rust/Tauri target when --target is not provided.
 
 Examples:
@@ -254,22 +256,15 @@ export VITE_WEWORK_PARENT_PROJECT="${WEWORK_PARENT_PROJECT:-}"
 export VITE_WEWORK_PARENT_WORKSPACE="${WEWORK_PARENT_WORKSPACE:-}"
 
 export SKIP_FONT_DOWNLOAD="${SKIP_FONT_DOWNLOAD:-1}"
-export VITE_API_PROXY_TARGET="$(wework_normalize_api_proxy_target "${VITE_API_PROXY_TARGET:-$BACKEND_BASE_URL}")"
-export VITE_SOCKET_PROXY_TARGET="${VITE_SOCKET_PROXY_TARGET:-${WEGENT_SOCKET_URL:-$VITE_API_PROXY_TARGET}}"
+export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$BACKEND_BASE_URL}"
 if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
   WEWORK_EXECUTOR_SIDECAR="$WEWORK_DIR/scripts/dev-executor-sidecar.sh"
 fi
 export WEWORK_EXECUTOR_SIDECAR
 
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
-  export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$BACKEND_BASE_URL/api}"
-  export VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL:-${WEGENT_SOCKET_URL:-$BACKEND_BASE_URL}}"
-  export VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
   BEFORE_DEV_COMMAND="pnpm run build && pnpm exec vite preview --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
 else
-  export VITE_API_BASE_URL="/api"
-  export VITE_SOCKET_BASE_URL="http://localhost:$WEWORK_PORT"
-  export VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
   BEFORE_DEV_COMMAND="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
 fi
 install_wegent_sccache_with_homebrew
@@ -282,6 +277,8 @@ WEWORK_PORT_VALUE="$WEWORK_PORT" \
 BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
 WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
 WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
+WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE="${WEWORK_DISABLE_BACKGROUND_THROTTLING:-0}" \
+WEWORK_DIR_VALUE="$WEWORK_DIR" \
 TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
 python3 - <<'PY'
 import json
@@ -297,6 +294,17 @@ config = {
 app_identifier = os.environ["WEWORK_APP_IDENTIFIER_VALUE"].strip()
 if app_identifier:
     config["identifier"] = app_identifier
+
+if os.environ["WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE"] == "1":
+    with open(
+        os.path.join(os.environ["WEWORK_DIR_VALUE"], "src-tauri", "tauri.conf.json"),
+        encoding="utf-8",
+    ) as handle:
+        base_config = json.load(handle)
+    windows = base_config["app"]["windows"]
+    for window in windows:
+        window["backgroundThrottling"] = "disabled"
+    config["app"] = {"windows": windows}
 
 if os.environ["WEWORK_RELEASE_UI_VALUE"] != "true":
     config["bundle"] = {
@@ -319,11 +327,8 @@ echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
 echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
 echo "  WEWORK_APP_IDENTIFIER=${WEWORK_APP_IDENTIFIER:-io.wecode.wework}"
 echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
-echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
-echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
-echo "  VITE_SOCKET_PATH=$VITE_SOCKET_PATH"
-echo "  VITE_API_PROXY_TARGET=$VITE_API_PROXY_TARGET"
-echo "  VITE_SOCKET_PROXY_TARGET=$VITE_SOCKET_PROXY_TARGET"
+echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
+echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
 echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
 echo "  WEWORK_SHARED_EXECUTOR_HOME=${WEWORK_SHARED_EXECUTOR_HOME:-0}"
 echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
