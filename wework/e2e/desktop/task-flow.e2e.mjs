@@ -542,6 +542,9 @@ async function verifyBackgroundGuidanceNavigation({
     testId.startsWith('runtime-local-task-row-')
   )
   assert.ok(runningTaskRowTestId, 'The streaming task row identity was not found')
+  const sourceUserMessageCountBeforeGuidance = Number(
+    await control.command('getElementCount', '[data-testid="message-user"]')
+  )
 
   await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
   await control.command('click', '[data-testid="send-mode-menu-button"]')
@@ -565,18 +568,70 @@ async function verifyBackgroundGuidanceNavigation({
   await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
-    'The active guidance leaked into the other conversation'
+    snapshot =>
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.text.includes(BACKGROUND_GUIDANCE),
+    'The pending guidance leaked into the other conversation'
   )
   await control.command('press', 'body', { key: 'Escape' })
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
   await captureVerificationScreenshot(control, 'guidance-background-02-other-task.png')
+
+  await ensureTaskRowVisible(control, runningTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: BACKGROUND_GUIDANCE,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const pendingRestoredSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('conversation-queue-panel') &&
+      snapshot.text.includes(BACKGROUND_GUIDANCE) &&
+      (snapshot.text.includes('引导中') || snapshot.text.includes('Guiding')),
+    'The unapplied guidance was not restored when the user returned to its source conversation'
+  )
+  assert.equal(
+    countTextOccurrences(pendingRestoredSnapshot.text, BACKGROUND_GUIDANCE),
+    1,
+    'Restoring the unapplied guidance duplicated it in the source conversation'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="message-user"]')),
+    sourceUserMessageCountBeforeGuidance,
+    'The unapplied guidance was prematurely rendered as a user message'
+  )
+  await captureVerificationScreenshot(control, 'guidance-background-03-pending-restored.png')
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.text.includes(BACKGROUND_GUIDANCE),
+    'The restored pending guidance leaked after the user left its source conversation'
+  )
+  await captureVerificationScreenshot(control, 'guidance-background-04-waiting-in-background.png')
 
   control.releaseInitialToolExecution()
   await withTimeout(
     control.awaitScenarioRequestCount('initial', 2),
     UI_TIMEOUT_MS,
     'The guided background task did not continue after its tool completed'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.text.includes(BACKGROUND_GUIDANCE),
+    'The applied background guidance appeared in the conversation the user was viewing'
   )
 
   await ensureTaskRowVisible(control, runningTaskRowTestId)
@@ -595,7 +650,59 @@ async function verifyBackgroundGuidanceNavigation({
       !snapshot.text.includes('Guiding'),
     'The applied background guidance remained stuck in its sending state'
   )
-  await captureVerificationScreenshot(control, 'guidance-background-03-applied.png')
+  const appliedUserMessageCount = Number(
+    await control.command('getElementCount', '[data-testid="message-user"]')
+  )
+  assert.equal(
+    appliedUserMessageCount,
+    sourceUserMessageCountBeforeGuidance + 1,
+    'The applied guidance did not add exactly one user message to the source conversation'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    '',
+    'The applied guidance was unexpectedly restored into the composer'
+  )
+  await captureVerificationScreenshot(control, 'guidance-background-05-applied.png')
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.text.includes(BACKGROUND_GUIDANCE),
+    'The settled guidance leaked after the user left its source conversation again'
+  )
+  await captureVerificationScreenshot(control, 'guidance-background-06-left-again.png')
+
+  await ensureTaskRowVisible(control, runningTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const restoredSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(BACKGROUND_GUIDANCE) &&
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.text.includes('引导中') &&
+      !snapshot.text.includes('Guiding'),
+    'The settled guidance did not remain stable after reopening its source conversation'
+  )
+  assert.ok(
+    restoredSnapshot.text.includes(BACKGROUND_GUIDANCE),
+    'Reopening the source conversation lost the applied guidance'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="message-user"]')),
+    appliedUserMessageCount,
+    'Reopening the source conversation duplicated the applied user message'
+  )
+  await captureVerificationScreenshot(control, 'guidance-background-07-restored.png')
 }
 
 async function startPausedQueueCase({ composerSelector, control, initialPrompt, queuedPrompts }) {
