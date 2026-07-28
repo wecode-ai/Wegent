@@ -526,6 +526,14 @@ fn env_flag_enabled(key: &str) -> bool {
 }
 
 #[cfg(desktop)]
+const E2E_BACKGROUND_WINDOW_ENV: &str = "WEWORK_E2E_BACKGROUND_WINDOW";
+
+#[cfg(desktop)]
+fn should_activate_main_window() -> bool {
+    !env_flag_enabled(E2E_BACKGROUND_WINDOW_ENV)
+}
+
+#[cfg(desktop)]
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppPreferences {
@@ -2443,6 +2451,9 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 fn set_dock_icon_visible<R: tauri::Runtime>(app: &tauri::AppHandle<R>, visible: bool) {
     #[cfg(target_os = "macos")]
     {
+        if visible && !should_activate_main_window() {
+            return;
+        }
         let state = app.state::<MainWindowLifecycleState>();
         if state.dock_icon_visible.swap(visible, Ordering::SeqCst) == visible {
             return;
@@ -2545,9 +2556,11 @@ fn create_main_window<R: tauri::Runtime>(
             let _ = window.set_fullscreen(true);
         }
     }
-    let _ = window.show();
-    set_dock_icon_visible(app, true);
-    let _ = window.set_focus();
+    if should_activate_main_window() {
+        let _ = window.show();
+        set_dock_icon_visible(app, true);
+        let _ = window.set_focus();
+    }
     Ok(())
 }
 
@@ -2557,10 +2570,12 @@ pub(crate) fn ensure_main_window<R: tauri::Runtime>(
     action: Option<MainWindowOpenAction>,
 ) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        set_dock_icon_visible(app, true);
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        if should_activate_main_window() {
+            let _ = window.unminimize();
+            let _ = window.show();
+            set_dock_icon_visible(app, true);
+            let _ = window.set_focus();
+        }
         if let Some(action) = action {
             emit_main_window_open_action(app, action);
         }
@@ -4301,6 +4316,14 @@ pub fn run() {
                 std::process::id(),
                 get_app_log_directory(app.handle().clone()).unwrap_or_else(|error| error)
             );
+
+            #[cfg(all(desktop, target_os = "macos"))]
+            if !should_activate_main_window() {
+                app.handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Prohibited)?;
+                app.handle().hide()?;
+                set_dock_icon_visible(app.handle(), false);
+            }
 
             #[cfg(desktop)]
             setup_system_tray(app)?;
