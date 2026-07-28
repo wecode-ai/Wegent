@@ -576,6 +576,9 @@ async function verifyQueuedFollowUpNavigation({ composerSelector, control, proje
   await captureVerificationScreenshot(control, 'queue-navigation-02-other-conversation.png')
 
   await ensureTaskRowVisible(control, runningTaskRowTestId)
+  const taskOrderBeforeRestore = JSON.parse(
+    await control.command('snapshot', '[data-testid="sidebar-worklists-scroll"]')
+  ).testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
   await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -583,6 +586,14 @@ async function verifyQueuedFollowUpNavigation({ composerSelector, control, proje
     text: QUEUED_FOLLOW_UP,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const taskOrderAfterRestore = JSON.parse(
+    await control.command('snapshot', '[data-testid="sidebar-worklists-scroll"]')
+  ).testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+  assert.deepEqual(
+    taskOrderAfterRestore,
+    taskOrderBeforeRestore,
+    'Opening a streaming task changed the sidebar task order before its turn completed'
+  )
   await captureVerificationScreenshot(control, 'queue-navigation-03-source-restored.png')
 
   await control.command('click', '[data-testid^="queue-cancel-button-"]')
