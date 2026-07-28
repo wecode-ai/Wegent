@@ -131,6 +131,11 @@ class ChatService(ChatInterface):
         if kb_meta_prompt and kb_meta_prompt not in parts:
             parts.append(kb_meta_prompt)
 
+        # History-backtracking nudge (only set once compaction has dropped detail).
+        backtrack_hint = getattr(ctx_result, "backtrack_hint", "")
+        if backtrack_hint:
+            parts.append(backtrack_hint)
+
         return "\n\n".join(parts) if parts else ""
 
     @trace_async(

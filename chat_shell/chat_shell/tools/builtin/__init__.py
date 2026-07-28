@@ -7,6 +7,10 @@
 from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
+from .history_backtrack import (
+    ListHistoryTool,
+    ReadSubtaskTool,
+)
 from .knowledge_base import KnowledgeBaseTool, ScopedKnowledgeBaseTool
 from .knowledge_listing import (
     KbHeadTool,
@@ -23,6 +27,8 @@ __all__ = [
     "WebSearchTool",
     "ReadAttachmentTool",
     "ReadAttachmentInput",
+    "ListHistoryTool",
+    "ReadSubtaskTool",
     "KnowledgeBaseTool",
     "ScopedKnowledgeBaseTool",
     "KbLsTool",
