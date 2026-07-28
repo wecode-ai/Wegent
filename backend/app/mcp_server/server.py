@@ -69,18 +69,6 @@ PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
 PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
 SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
-DELIVERY_MCP_MOUNT_PATH = "/mcp/delivery"
-DELIVERY_MCP_TRANSPORT_PATH = "/sse"
-PROJECT_SPACE_PROTOCOL = "wegent.project-space"
-PROJECT_SPACE_PROTOCOL_VERSION = 1
-PROJECT_SPACE_CAPABILITIES = {
-    "projects.read": True,
-    "projects.create": True,
-    "todos.read": True,
-    "todos.write": True,
-    "files.read": True,
-    "deliveries.read": True,
-}
 
 
 @dataclass(frozen=True)
@@ -538,82 +526,6 @@ def ensure_subscription_tools_registered() -> None:
     _register_subscription_tools()
 
 
-# ============== Delivery MCP Server ==============
-
-delivery_mcp_server = FastMCP(
-    "wegent_delivery",
-    stateless_http=True,
-    json_response=True,
-    streamable_http_path="/",
-    transport_security=_build_transport_security_settings(),
-)
-_delivery_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
-    contextvars.ContextVar("_delivery_request_token_info", default=None)
-)
-_delivery_tools_registered = False
-
-
-def ensure_delivery_tools_registered() -> None:
-    """Register the project-space tools and addressable cloud resources."""
-    global _delivery_tools_registered
-    if _delivery_tools_registered:
-        return
-    from app.mcp_server.tool_registry import register_tools_to_server
-    from app.mcp_server.tools import delivery  # noqa: F401
-
-    count = register_tools_to_server(delivery_mcp_server, "delivery")
-    delivery_mcp_server.resource(
-        "cloud://projects",
-        name="Wegent project spaces",
-        description="Every project space accessible to the authenticated user.",
-        mime_type="application/json",
-    )(_read_cloud_projects_resource)
-    delivery_mcp_server.resource(
-        "cloud://projects/{project_id}",
-        name="Wegent project space",
-        description="A project space with its shared workspace and board items.",
-        mime_type="application/json",
-    )(_read_cloud_project_resource)
-    delivery_mcp_server.resource(
-        "cloud://projects/{project_id}/{resource_type}/{resource_id}",
-        name="Wegent project-space object",
-        description="A task, file, or delivery in a project space.",
-        mime_type="application/json",
-    )(_read_cloud_object_resource)
-    logger.info("[MCP:Delivery] Registered %s tools", count)
-    _delivery_tools_registered = True
-
-
-def _delivery_resource_token() -> MCPAuthInfo:
-    token_info = get_token_info_from_context()
-    if token_info is None:
-        raise PermissionError("Authentication required")
-    return token_info
-
-
-def _serialize_delivery_resource(reference: str) -> str:
-    from app.mcp_server.tools.delivery import resolve_cloud_reference
-
-    result = resolve_cloud_reference(reference, _delivery_resource_token())
-    return json.dumps(result, ensure_ascii=False, default=str)
-
-
-def _read_cloud_projects_resource() -> str:
-    return _serialize_delivery_resource("cloud://projects")
-
-
-def _read_cloud_project_resource(project_id: str) -> str:
-    return _serialize_delivery_resource(f"cloud://projects/{project_id}")
-
-
-def _read_cloud_object_resource(
-    project_id: str, resource_type: str, resource_id: str
-) -> str:
-    return _serialize_delivery_resource(
-        f"cloud://projects/{project_id}/{resource_type}/{resource_id}"
-    )
-
-
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -671,25 +583,12 @@ _SUBSCRIPTION_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
-_DELIVERY_MCP_SPEC = McpAppSpec(
-    name="delivery",
-    service_name="wegent_delivery",
-    mount_path=DELIVERY_MCP_MOUNT_PATH,
-    transport_path=DELIVERY_MCP_TRANSPORT_PATH,
-    server=delivery_mcp_server,
-    token_context=_delivery_request_token_info,
-    log_prefix="Delivery",
-    include_root_metadata=True,
-    allow_user_token=True,
-)
-
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
-    _DELIVERY_MCP_SPEC,
 )
 
 MCP_CONTEXT_SERVER_NAMES = frozenset(
@@ -698,7 +597,6 @@ MCP_CONTEXT_SERVER_NAMES = frozenset(
         "interactive_form_question",
         "prompt_optimization",
         "subscription",
-        "delivery",
     }
 )
 
@@ -712,14 +610,6 @@ def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
             "health": f"{spec.mount_path}/health",
         },
     }
-    if spec.name == "delivery":
-        metadata.update(
-            {
-                "protocol": PROJECT_SPACE_PROTOCOL,
-                "protocolVersion": PROJECT_SPACE_PROTOCOL_VERSION,
-                "capabilities": PROJECT_SPACE_CAPABILITIES,
-            }
-        )
     return metadata
 
 
@@ -742,8 +632,6 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_prompt_optimization_tools_registered()
     elif spec.name == "subscription":
         ensure_subscription_tools_registered()
-    elif spec.name == "delivery":
-        ensure_delivery_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:

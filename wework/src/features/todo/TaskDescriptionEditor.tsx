@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
 import TaskItem from '@tiptap/extension-task-item'
@@ -13,6 +13,7 @@ import { normalizeTaskDescription } from './taskDescription'
 interface TaskDescriptionEditorProps {
   value: string
   onChange: (markdown: string) => void
+  onPasteFiles?: (files: File[]) => void
 }
 
 interface ToolbarButtonProps {
@@ -47,13 +48,17 @@ function ToolbarButton({ label, testId, active = false, onClick, children }: Too
   )
 }
 
-export function TaskDescriptionEditor({ value, onChange }: TaskDescriptionEditorProps) {
+export function TaskDescriptionEditor({
+  value,
+  onChange,
+  onPasteFiles,
+}: TaskDescriptionEditorProps) {
   const editor = useEditor({
     immediatelyRender: false,
     content: normalizeTaskDescription(value),
     extensions: [
       StarterKit,
-      Link.configure({ openOnClick: false, autolink: true }),
+      Link.configure({ openOnClick: false, autolink: true, protocols: ['wegent'] }),
       Placeholder.configure({ placeholder: '添加任务描述，输入 / 使用 Markdown…' }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -65,9 +70,16 @@ export function TaskDescriptionEditor({ value, onChange }: TaskDescriptionEditor
       }),
     ],
     editorProps: {
+      handlePaste: (_view, event) => {
+        const files = Array.from(event.clipboardData?.files ?? [])
+        if (!files.length || !onPasteFiles) return false
+        event.preventDefault()
+        onPasteFiles(files)
+        return true
+      },
       attributes: {
         class:
-          'tiptap prose prose-sm max-w-none min-h-48 text-text-primary outline-none prose-headings:text-text-primary prose-p:text-text-primary prose-strong:text-text-primary prose-code:text-text-primary prose-blockquote:text-text-secondary',
+          'tiptap prose prose-sm max-w-none min-h-48 text-text-primary outline-none prose-headings:text-text-primary prose-p:text-text-primary prose-strong:text-text-primary prose-code:text-text-primary prose-blockquote:text-text-secondary prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-300',
         'data-testid': 'cloud-todo-detail-description',
         'aria-label': '任务描述',
       },
@@ -77,6 +89,12 @@ export function TaskDescriptionEditor({ value, onChange }: TaskDescriptionEditor
       onChange(markdown.getMarkdown())
     },
   })
+
+  useEffect(() => {
+    if (!editor) return
+    const markdown = (editor.storage.markdown as MarkdownStorage).getMarkdown()
+    if (markdown !== value) editor.commands.setContent(normalizeTaskDescription(value), false)
+  }, [editor, value])
 
   const state = useEditorState({
     editor,

@@ -324,11 +324,14 @@ jobs:
           chmod 0755 dist/wegent-executor
           dist/wegent-executor --version
 
-      - name: Prepare bundled Codex
+      - name: Prepare bundled sidecars
         working-directory: wework
         env:
           WEWORK_CODEX_TARGET: ${{ matrix.rust_target }}
-        run: pnpm run prepare:codex
+          WEWORK_DWS_TARGET: ${{ matrix.rust_target }}
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Sync Wework version files
         working-directory: wework
@@ -608,11 +611,14 @@ jobs:
           Copy-Item target/x86_64-pc-windows-msvc/release/wegent-executor.exe ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe
           & ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe --version
 
-      - name: Prepare bundled Codex
+      - name: Prepare bundled sidecars
         working-directory: wework
         env:
           WEWORK_CODEX_TARGET: x86_64-pc-windows-msvc
-        run: pnpm run prepare:codex
+          WEWORK_DWS_TARGET: x86_64-pc-windows-msvc
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Build Wework app bundle
         shell: pwsh

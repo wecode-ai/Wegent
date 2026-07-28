@@ -9,6 +9,7 @@ import {
   ListChecks,
   Monitor,
   ScrollText,
+  Send,
   ShieldAlert,
   Loader2,
   X,
@@ -51,10 +52,26 @@ interface FeedbackPreviewResult {
   finalFileName: string
 }
 
+interface FeedbackSubmitResult {
+  report_id: string
+  item_id: string
+  duplicate: boolean
+}
+
+interface FeedbackApi {
+  submit(input: {
+    stagingId: string
+    title: string
+    description: string
+    context: Record<string, unknown>
+  }): Promise<FeedbackSubmitResult>
+}
+
 interface TaskFeedbackDialogProps {
   open: boolean
   hasActiveTask: boolean
   getTaskContext: () => Promise<Record<string, unknown>>
+  feedbackApi?: FeedbackApi
   onClose: () => void
 }
 
@@ -101,6 +118,7 @@ export function TaskFeedbackDialog({
   open,
   hasActiveTask,
   getTaskContext,
+  feedbackApi,
   onClose,
 }: TaskFeedbackDialogProps) {
   if (!open) return null
@@ -108,6 +126,7 @@ export function TaskFeedbackDialog({
     <TaskFeedbackDialogContent
       hasActiveTask={hasActiveTask}
       getTaskContext={getTaskContext}
+      feedbackApi={feedbackApi}
       onClose={onClose}
     />
   )
@@ -116,6 +135,7 @@ export function TaskFeedbackDialog({
 function TaskFeedbackDialogContent({
   hasActiveTask,
   getTaskContext,
+  feedbackApi,
   onClose,
 }: Omit<TaskFeedbackDialogProps, 'open'>) {
   const { t, i18n } = useTranslation('common')
@@ -127,6 +147,8 @@ function TaskFeedbackDialogContent({
   const [phase, setPhase] = useState<DialogPhase>('configure')
   const [preview, setPreview] = useState<FeedbackPreviewResult | null>(null)
   const [result, setResult] = useState<FeedbackExportResult | null>(null)
+  const [submitted, setSubmitted] = useState<FeedbackSubmitResult | null>(null)
+  const [previewContext, setPreviewContext] = useState<Record<string, unknown>>({})
   const [expandedCategory, setExpandedCategory] = useState<FeedbackCategory | null>(null)
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -191,6 +213,7 @@ function TaskFeedbackDialogContent({
         },
       })
       setPreview(prepared)
+      setPreviewContext(taskContext ?? {})
       setPhase('preview')
     } catch (caughtError) {
       setError(
@@ -224,9 +247,39 @@ function TaskFeedbackDialogContent({
     }
   }
 
+  const submitFeedback = async () => {
+    if (!preview || !feedbackApi) return
+    setExporting(true)
+    setError(null)
+    try {
+      const task = previewContext.task
+      const taskTitle =
+        task && typeof task === 'object' && 'title' in task && typeof task.title === 'string'
+          ? task.title
+          : ''
+      const response = await feedbackApi.submit({
+        stagingId: preview.stagingId,
+        title: note.trim().split('\n')[0] || taskTitle || t('workbench.feedback_default_title'),
+        description: note.trim(),
+        context: previewContext,
+      })
+      setSubmitted(response)
+      setPhase('done')
+    } catch {
+      setError(
+        t('workbench.feedback_contact_developer_with_report', {
+          reportId: preview.reportId,
+        })
+      )
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const backToConfigure = async () => {
     await discardPreview()
     setPreview(null)
+    setPreviewContext({})
     setExpandedCategory(null)
     setExpandedEntry(null)
     setPhase('configure')
@@ -383,7 +436,20 @@ function TaskFeedbackDialogContent({
           </button>
         </div>
 
-        {phase === 'done' && result ? (
+        {phase === 'done' && submitted ? (
+          <div className="mt-6 shrink-0">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Check className="h-4 w-4 text-success" />
+              {t('workbench.feedback_submitted')}
+            </div>
+            <p className="mt-2 text-sm text-text-secondary">
+              {t('workbench.feedback_board_item')}: {submitted.item_id}
+            </p>
+            <p className="mt-1 text-xs text-text-secondary">
+              {t('workbench.feedback_report_id')}: {submitted.report_id}
+            </p>
+          </div>
+        ) : phase === 'done' && result ? (
           <div className="mt-6 shrink-0">
             <div className="flex items-center gap-2 text-sm font-medium">
               <Check className="h-4 w-4 text-success" />
@@ -522,20 +588,33 @@ function TaskFeedbackDialogContent({
               {t('workbench.feedback_preview')}
             </button>
           ) : phase === 'preview' ? (
-            <button
-              type="button"
-              data-testid="task-feedback-confirm-button"
-              disabled={exporting}
-              onClick={() => void confirmExport()}
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
-            >
-              {exporting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
+            <>
+              <button
+                type="button"
+                data-testid="task-feedback-confirm-button"
+                disabled={exporting}
+                onClick={() => void confirmExport()}
+                className="inline-flex h-9 items-center gap-2 rounded-md bg-muted px-3 text-sm font-medium hover:bg-muted/80 disabled:opacity-50"
+              >
                 <FileArchive className="h-4 w-4" />
-              )}
-              {t('workbench.feedback_confirm_export')}
-            </button>
+                {t('workbench.feedback_confirm_export')}
+              </button>
+              <button
+                type="button"
+                data-testid="task-feedback-submit-button"
+                disabled={exporting || !feedbackApi}
+                onClick={() => void submitFeedback()}
+                className="inline-flex h-9 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
+                title={!feedbackApi ? t('workbench.feedback_channel_unavailable') : undefined}
+              >
+                {exporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                {t('workbench.feedback_submit')}
+              </button>
+            </>
           ) : null}
         </div>
       </div>

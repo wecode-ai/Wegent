@@ -863,6 +863,12 @@ function ProjectSendProbe() {
       </button>
       <button
         type="button"
+        onClick={() => void paneSession.send(undefined, { cloudProjectId: '841738010351776815' })}
+      >
+        send with project space
+      </button>
+      <button
+        type="button"
         onClick={() => {
           const address = {
             deviceId: 'device-1',
@@ -3296,7 +3302,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('creates a runtime task for a new project message', async () => {
+  test('creates a runtime task scoped to the selected project space', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -3342,7 +3348,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
     await userEvent.click(screen.getByText('select project'))
     await userEvent.click(screen.getByText('set input'))
-    await userEvent.click(screen.getByText('send'))
+    await userEvent.click(screen.getByText('send with project space'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
@@ -3351,6 +3357,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         teamId: 2,
         message: '修复 CI',
+        cloudProjectId: '841738010351776815',
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')

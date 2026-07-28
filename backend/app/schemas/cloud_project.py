@@ -21,7 +21,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
 
 SnowflakeId = Annotated[str, BeforeValidator(str)]
-TaskProvider = Literal["local", "github", "gitlab"]
+TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
 ProjectVisibility = Literal["private", "public"]
 
 
@@ -40,6 +40,20 @@ def normalize_provider_config(
     config = dict(provider_config)
     if task_provider == "local":
         return {}
+    if task_provider == "dingtalk_aitable":
+        if "credential" in config:
+            raise ValueError("encrypted provider credentials cannot be supplied")
+        for key in ("base_id", "table_id"):
+            value = config.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"provider_config.{key} is required")
+            config[key] = value.strip()
+        if "token" in config:
+            raise ValueError("DingTalk authentication is managed by the local Executor")
+        mapping = config.get("board_mapping")
+        if mapping is not None and not isinstance(mapping, dict):
+            raise ValueError("provider_config.board_mapping must be an object")
+        return config
     repository = config.get("repository")
     if not isinstance(repository, str) or not repository.strip():
         raise ValueError("provider_config.repository is required")
@@ -117,7 +131,10 @@ class CloudProjectResponse(BaseModel):
     name: str
     description: str
     project_store: Literal["backend"] = "backend"
-    task_provider: TaskProvider = "local"
+    # Responses must remain forward-compatible with provider kinds written by
+    # newer services. Request schemas stay strict so this service only creates
+    # provider kinds it can operate.
+    task_provider: str = "local"
     provider_config: dict[str, object] = Field(default_factory=dict)
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
