@@ -6,6 +6,7 @@ import {
   type ExecutorTransportKind,
 } from '@/api/executorAccess'
 import { createGitApi } from '@/api/git'
+import { createFeedbackApi } from '@/api/feedback'
 import { createImSessionApi } from '@/api/imSessions'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { createCloudProjectSpaceApi } from '@/api/hybrid/cloudProjectSpaceApi'
@@ -84,6 +85,7 @@ export interface WorkbenchServices {
     >['createDockerRemoteDeviceCommand']
   }
   deliveryApi?: DeliveryApi
+  feedbackApi?: ReturnType<typeof createFeedbackApi>
   externalIssueApi?: ExternalIssueApi
   projectSpaceApis?: ProjectSpaceApis
   imSessionApi?: ReturnType<typeof createImSessionApi>

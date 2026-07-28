@@ -2644,6 +2644,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         />
         <TaskFeedbackDialog
           open={feedbackDialogOpen}
+          feedbackApi={services?.feedbackApi}
           onClose={() => setFeedbackDialogOpen(false)}
           getTaskContext={async () => {
             const messages = await paneSession.loadFullTranscriptForExport()

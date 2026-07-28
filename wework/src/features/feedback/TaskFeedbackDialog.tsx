@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { Check, FileArchive, Loader2, X } from 'lucide-react'
+import { Check, CircleAlert, FileArchive, Loader2, Send, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -18,9 +18,26 @@ interface FeedbackExportResult {
   path: string
 }
 
+interface FeedbackSubmitResult {
+  report_id: string
+  item_id: string
+  duplicate: boolean
+}
+
+interface FeedbackApi {
+  submit(input: {
+    reportId: string
+    title: string
+    description: string
+    context: Record<string, unknown>
+    bundlePath: string
+  }): Promise<FeedbackSubmitResult>
+}
+
 interface TaskFeedbackDialogProps {
   open: boolean
   getTaskContext: () => Promise<Record<string, unknown>>
+  feedbackApi?: FeedbackApi
   onClose: () => void
 }
 
@@ -31,13 +48,25 @@ const initialSelection: FeedbackSelection = {
   systemInfo: true,
 }
 
-export function TaskFeedbackDialog({ open, getTaskContext, onClose }: TaskFeedbackDialogProps) {
+export function TaskFeedbackDialog({
+  open,
+  getTaskContext,
+  feedbackApi,
+  onClose,
+}: TaskFeedbackDialogProps) {
   if (!open) return null
-  return <TaskFeedbackDialogContent getTaskContext={getTaskContext} onClose={onClose} />
+  return (
+    <TaskFeedbackDialogContent
+      getTaskContext={getTaskContext}
+      feedbackApi={feedbackApi}
+      onClose={onClose}
+    />
+  )
 }
 
 function TaskFeedbackDialogContent({
   getTaskContext,
+  feedbackApi,
   onClose,
 }: Omit<TaskFeedbackDialogProps, 'open'>) {
   const { t } = useTranslation('common')
@@ -47,49 +76,101 @@ function TaskFeedbackDialogContent({
   const [capturingScreenshot, setCapturingScreenshot] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<FeedbackExportResult | null>(null)
+  const [submitted, setSubmitted] = useState<FeedbackSubmitResult | null>(null)
+  const [pendingBundle, setPendingBundle] = useState<{
+    exported: FeedbackExportResult
+    context: Record<string, unknown>
+  } | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const hasSelection = Object.values(selection).some(Boolean)
 
-  useEscapeKey(exporting ? () => undefined : onClose)
+  const closeDialog = () => {
+    if (pendingBundle) {
+      void invoke('discard_feedback_bundle', { path: pendingBundle.exported.path })
+    }
+    onClose()
+  }
+
+  useEscapeKey(exporting ? () => undefined : closeDialog)
+
+  const createBundle = async (saveToDownloads: boolean) => {
+    const taskContext = selection.taskInfo ? await getTaskContext() : {}
+    let screenshotDataUrl: string | null = null
+    if (selection.screenshot) {
+      const overlay = overlayRef.current
+      overlay?.style.setProperty('visibility', 'hidden')
+      setCapturingScreenshot(true)
+      await waitForScreenshotPaint()
+      try {
+        screenshotDataUrl = await invoke<string>('capture_main_webview')
+      } catch {
+        screenshotDataUrl = null
+      } finally {
+        overlay?.style.removeProperty('visibility')
+        setCapturingScreenshot(false)
+      }
+    }
+    const exported = await invoke<FeedbackExportResult>('export_feedback_bundle', {
+      request: {
+        destination: null,
+        includeRuntimeLogs: selection.runtimeLogs,
+        includeTaskInfo: selection.taskInfo,
+        includeScreenshot: selection.screenshot,
+        includeSystemInfo: selection.systemInfo,
+        note,
+        taskContext: selection.taskInfo ? taskContext : null,
+        screenshotDataUrl,
+        saveToDownloads,
+      },
+    })
+    return { exported, context: taskContext }
+  }
 
   const exportBundle = async () => {
     setExporting(true)
     setError(null)
     try {
-      const taskContext = selection.taskInfo ? await getTaskContext() : null
-      let screenshotDataUrl: string | null = null
-      if (selection.screenshot) {
-        const overlay = overlayRef.current
-        overlay?.style.setProperty('visibility', 'hidden')
-        setCapturingScreenshot(true)
-        await waitForScreenshotPaint()
-        try {
-          screenshotDataUrl = await invoke<string>('capture_main_webview')
-        } catch {
-          screenshotDataUrl = null
-        } finally {
-          overlay?.style.removeProperty('visibility')
-          setCapturingScreenshot(false)
-        }
-      }
-      const exported = await invoke<FeedbackExportResult>('export_feedback_bundle', {
-        request: {
-          destination: null,
-          includeRuntimeLogs: selection.runtimeLogs,
-          includeTaskInfo: selection.taskInfo,
-          includeScreenshot: selection.screenshot,
-          includeSystemInfo: selection.systemInfo,
-          note,
-          taskContext,
-          screenshotDataUrl,
-        },
-      })
-      setResult(exported)
+      const bundle = await createBundle(true)
+      setResult(bundle.exported)
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
           ? caughtError.message
           : String(caughtError || t('workbench.feedback_export_failed'))
+      )
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const submitFeedback = async () => {
+    setExporting(true)
+    setError(null)
+    let reportId = pendingBundle?.exported.reportId ?? null
+    try {
+      if (!feedbackApi) throw new Error(t('workbench.feedback_channel_unavailable'))
+      const bundle = pendingBundle ?? (await createBundle(false))
+      reportId = bundle.exported.reportId
+      setPendingBundle(bundle)
+      const task = bundle.context.task
+      const taskTitle =
+        task && typeof task === 'object' && 'title' in task && typeof task.title === 'string'
+          ? task.title
+          : ''
+      const response = await feedbackApi.submit({
+        reportId: bundle.exported.reportId,
+        title: note.trim().split('\n')[0] || taskTitle || t('workbench.feedback_default_title'),
+        description: note.trim(),
+        context: bundle.context,
+        bundlePath: bundle.exported.path,
+      })
+      setSubmitted(response)
+      setPendingBundle(null)
+    } catch {
+      setError(
+        reportId
+          ? t('workbench.feedback_contact_developer_with_report', { reportId })
+          : t('workbench.feedback_contact_developer')
       )
     } finally {
       setExporting(false)
@@ -124,7 +205,7 @@ function TaskFeedbackDialogContent({
           <button
             type="button"
             data-testid="task-feedback-close-button"
-            onClick={onClose}
+            onClick={closeDialog}
             disabled={exporting}
             className="flex h-8 min-w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
             aria-label={t('workbench.close_dialog')}
@@ -133,7 +214,20 @@ function TaskFeedbackDialogContent({
           </button>
         </div>
 
-        {result ? (
+        {submitted ? (
+          <div className="mt-6">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Check className="h-4 w-4 text-success" />
+              {t('workbench.feedback_submitted')}
+            </div>
+            <p className="mt-2 text-sm text-text-secondary">
+              {t('workbench.feedback_board_item')}: {submitted.item_id}
+            </p>
+            <p className="mt-1 text-xs text-text-secondary">
+              {t('workbench.feedback_report_id')}: {submitted.report_id}
+            </p>
+          </div>
+        ) : result ? (
           <div className="mt-6">
             <div className="flex items-center gap-2 text-sm font-medium">
               <Check className="h-4 w-4 text-success" />
@@ -163,9 +257,10 @@ function TaskFeedbackDialogContent({
                     data-testid={`task-feedback-${key}-checkbox`}
                     type="checkbox"
                     checked={selection[key]}
-                    onChange={event =>
+                    onChange={event => {
+                      setPendingBundle(null)
                       setSelection(current => ({ ...current, [key]: event.target.checked }))
-                    }
+                    }}
                     className="mt-0.5 h-4 w-4 accent-current"
                   />
                   <span className="min-w-0">
@@ -182,40 +277,67 @@ function TaskFeedbackDialogContent({
               <textarea
                 data-testid="task-feedback-note"
                 value={note}
-                onChange={event => setNote(event.target.value)}
+                onChange={event => {
+                  setPendingBundle(null)
+                  setNote(event.target.value)
+                }}
                 placeholder={t('workbench.feedback_note_placeholder')}
                 rows={3}
                 className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
               />
             </label>
+            <p className="mt-3 text-xs text-text-secondary">
+              {t('workbench.feedback_privacy_notice')}
+            </p>
           </>
         )}
 
-        {error ? <p className="mt-3 text-xs text-red-500">{error}</p> : null}
+        {error ? (
+          <div
+            data-testid="task-feedback-error"
+            role="status"
+            className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs text-text-secondary"
+          >
+            <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : null}
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
             data-testid="task-feedback-cancel-button"
-            onClick={onClose}
+            onClick={closeDialog}
             disabled={exporting}
             className="h-9 rounded-md px-3 text-sm font-medium hover:bg-muted"
           >
-            {result ? t('workbench.feedback_close') : t('workbench.cancel')}
+            {result || submitted ? t('workbench.feedback_close') : t('workbench.cancel')}
           </button>
-          {!result ? (
+          {!result && !submitted ? (
             <button
               type="button"
               data-testid="task-feedback-export-button"
               disabled={!hasSelection || exporting}
               onClick={() => void exportBundle()}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-muted px-3 text-sm font-medium hover:bg-muted/80 disabled:opacity-50"
+            >
+              <FileArchive className="h-4 w-4" />
+              {t('workbench.feedback_export_only')}
+            </button>
+          ) : null}
+          {!result && !submitted ? (
+            <button
+              type="button"
+              data-testid="task-feedback-submit-button"
+              disabled={!hasSelection || exporting}
+              onClick={() => void submitFeedback()}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
             >
               {exporting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <FileArchive className="h-4 w-4" />
+                <Send className="h-4 w-4" />
               )}
-              {t('workbench.feedback_export')}
+              {t('workbench.feedback_submit')}
             </button>
           ) : null}
         </div>

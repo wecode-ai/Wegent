@@ -13,10 +13,13 @@ import {
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   CircleUserRound,
   Cloud,
+  Copy,
+  Ellipsis,
   GitBranch,
   HardDrive,
   ListTodo,
@@ -41,6 +44,7 @@ import type {
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type {
@@ -690,6 +694,7 @@ export function CloudTodoWorkspace({
   onRunTodo,
   onOpenRuntimeTask,
 }: CloudTodoWorkspaceProps) {
+  const { t } = useTranslation('common')
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
     return {
@@ -743,6 +748,30 @@ export function CloudTodoWorkspace({
   const [loading, setLoading] = useState(true)
   const [boardError, setBoardError] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null)
+  const [projectMenuId, setProjectMenuId] = useState<string | null>(null)
+  useEffect(() => {
+    if (projectMenuId === null) return
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (
+        event.target instanceof Element &&
+        !event.target.closest('[data-cloud-project-menu-root]')
+      ) {
+        setProjectMenuId(null)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProjectMenuId(null)
+    }
+
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [projectMenuId])
   // Applies a freshly fetched board snapshot. `boardError` distinguishes a
   // loaded-but-empty project (renders empty columns) from a failed fetch
   // (renders the skeleton plus the error banner instead of an empty board).
@@ -1111,28 +1140,78 @@ export function CloudTodoWorkspace({
             {projects.map(project => {
               const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
               return (
-                <button
+                <div
                   key={project.id}
-                  type="button"
-                  onClick={() => {
-                    selectProject(project.id)
-                    setRootView('projects')
-                    setProjectView('board')
-                    setSelectedItem(null)
-                  }}
+                  data-cloud-project-menu-root
                   className={cn(
-                    'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
+                    'group relative flex h-8 w-full items-center rounded-lg px-1 text-sm',
                     rootView === 'projects' && selectedProjectId === project.id
                       ? 'bg-muted font-medium text-text-primary'
                       : 'text-text-secondary hover:bg-muted/60'
                   )}
                 >
-                  <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                  <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                  <button
+                    type="button"
+                    data-testid={`cloud-sidebar-project-${project.id}`}
+                    onClick={() => {
+                      selectProject(project.id)
+                      setRootView('projects')
+                      setProjectView('board')
+                      setSelectedItem(null)
+                    }}
+                    className="flex h-full min-w-0 flex-1 items-center gap-3 rounded-md px-2 text-sm"
+                  >
+                    <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                    <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                  </button>
                   {projectCounts[project.id] ? (
-                    <span className="text-xs text-text-muted">{projectCounts[project.id]}</span>
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center text-xs text-text-muted group-hover:hidden">
+                      {projectCounts[project.id]}
+                    </span>
                   ) : null}
-                </button>
+                  <button
+                    type="button"
+                    data-testid={`cloud-sidebar-project-more-${project.id}`}
+                    onClick={() => {
+                      setProjectMenuId(current => (current === project.id ? null : project.id))
+                    }}
+                    className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-background hover:text-text-primary focus:flex group-hover:flex"
+                    aria-expanded={projectMenuId === project.id}
+                    aria-label={t('todo.project_actions', '项目操作')}
+                  >
+                    <Ellipsis className="h-3.5 w-3.5" />
+                  </button>
+                  {projectMenuId === project.id ? (
+                    <div
+                      data-testid={`cloud-sidebar-project-menu-${project.id}`}
+                      role="menu"
+                      className="absolute right-0 top-8 z-30 w-36 rounded-lg border border-border bg-background p-1 shadow-md"
+                    >
+                      <button
+                        type="button"
+                        data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
+                        onClick={() => {
+                          void copyTextToClipboard(String(project.id)).then(() => {
+                            setCopiedProjectId(project.id)
+                            window.setTimeout(() => setCopiedProjectId(null), 2000)
+                          })
+                          setProjectMenuId(null)
+                        }}
+                        role="menuitem"
+                        className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                      >
+                        {copiedProjectId === project.id ? (
+                          <Check className="h-3.5 w-3.5 text-green-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                        {copiedProjectId === project.id
+                          ? t('todo.project_id_copied', '项目 ID 已复制')
+                          : t('todo.copy_project_id', '复制项目 ID')}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               )
             })}
           </div>

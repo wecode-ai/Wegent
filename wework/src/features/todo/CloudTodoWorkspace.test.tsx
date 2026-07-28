@@ -381,6 +381,37 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByText('自动加入')).toBeInTheDocument()
   })
 
+  it('copies the cloud project ID before or after opening the project', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-copy-id-11'))
+    expect(writeText).toHaveBeenLastCalledWith('11')
+
+    await userEvent.click(screen.getByTestId('cloud-sidebar-project-11'))
+    await userEvent.click(screen.getByTestId('cloud-sidebar-project-more-11'))
+    expect(screen.getByTestId('cloud-sidebar-project-menu-11')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-header'))
+    expect(screen.queryByTestId('cloud-sidebar-project-menu-11')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-sidebar-project-more-11'))
+    await userEvent.click(screen.getByTestId('cloud-sidebar-copy-project-id-11'))
+
+    expect(writeText).toHaveBeenLastCalledWith('11')
+    expect(screen.queryByTestId('cloud-sidebar-project-menu-11')).not.toBeInTheDocument()
+  })
+
   it('manually adds a project member as a TODO collaborator', async () => {
     const workbenchServices = services()
     render(

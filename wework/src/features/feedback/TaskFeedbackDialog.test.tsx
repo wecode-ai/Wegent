@@ -53,6 +53,77 @@ describe('TaskFeedbackDialog', () => {
     })
 
     expect(screen.getByTestId('task-feedback-export-button')).toBeDisabled()
+    expect(screen.getByTestId('task-feedback-submit-button')).toBeDisabled()
+  })
+
+  test('submits the selected diagnostics and shows the board item', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview') {
+        return Promise.resolve('data:image/png;base64,aGVsbG8=')
+      }
+      if (command === 'export_feedback_bundle') {
+        return Promise.resolve({ reportId: 'WF-2', path: '/tmp/wework-feedback-WF-2.zip' })
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    const feedbackApi = {
+      submit: vi.fn().mockResolvedValue({
+        report_id: 'WF-2',
+        item_id: 'FEEDBACK-2',
+        duplicate: false,
+      }),
+    }
+    render(
+      <TaskFeedbackDialog
+        open
+        feedbackApi={feedbackApi}
+        getTaskContext={async () => ({ task: { title: 'Broken task' } })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Cannot send messages' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-submit-button'))
+
+    await waitFor(() => expect(feedbackApi.submit).toHaveBeenCalledOnce())
+    expect(feedbackApi.submit).toHaveBeenCalledWith({
+      reportId: 'WF-2',
+      title: 'Cannot send messages',
+      description: 'Cannot send messages',
+      context: { task: { title: 'Broken task' } },
+      bundlePath: '/tmp/wework-feedback-WF-2.zip',
+    })
+    expect(screen.getByText(/FEEDBACK-2/)).toBeInTheDocument()
+  })
+
+  test('asks the user to contact developers without exposing the submit error', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview') return Promise.resolve(null)
+      if (command === 'export_feedback_bundle') {
+        return Promise.resolve({ reportId: 'WF-ERROR', path: '/tmp/feedback.zip' })
+      }
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    const feedbackApi = {
+      submit: vi.fn().mockRejectedValue(new Error('MinIO connection refused')),
+    }
+    render(
+      <TaskFeedbackDialog
+        open
+        feedbackApi={feedbackApi}
+        getTaskContext={async () => ({})}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-submit-button'))
+
+    const message = await screen.findByTestId('task-feedback-error')
+    expect(message).toHaveTextContent('workbench.feedback_contact_developer_with_report')
+    expect(message).not.toHaveTextContent('MinIO connection refused')
+    expect(message).not.toHaveClass('text-red-500')
   })
 
   test('hides the dialog while capturing and exports the complete task context', async () => {

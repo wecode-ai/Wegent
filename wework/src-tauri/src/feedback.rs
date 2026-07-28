@@ -23,6 +23,8 @@ pub struct FeedbackExportRequest {
     note: String,
     task_context: Option<serde_json::Value>,
     screenshot_data_url: Option<String>,
+    #[serde(default = "default_true")]
+    save_to_downloads: bool,
 }
 
 #[derive(Serialize)]
@@ -30,6 +32,30 @@ pub struct FeedbackExportRequest {
 pub struct FeedbackExportResult {
     report_id: String,
     path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackSubmitRequest {
+    api_url: String,
+    access_token: String,
+    report_id: String,
+    title: String,
+    description: String,
+    context: serde_json::Value,
+    bundle_path: String,
+    #[serde(default)]
+    delete_after_submit: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct FeedbackSubmitResult {
+    report_id: String,
+    project_id: String,
+    item_id: String,
+    created_by_user_id: i64,
+    duplicate: bool,
 }
 
 #[derive(Serialize)]
@@ -61,11 +87,22 @@ pub fn export_feedback_bundle(
     let report_id = format!("WF-{:X}", created_at.as_millis());
     let destination = match request.destination.as_deref().map(str::trim) {
         Some(path) if !path.is_empty() => PathBuf::from(path),
-        _ => app
+        _ if request.save_to_downloads => app
             .path()
             .download_dir()
             .map_err(|error| format!("Failed to locate the downloads directory: {error}"))?
             .join(format!("wework-feedback-{report_id}.zip")),
+        _ => {
+            let directory = app
+                .path()
+                .app_cache_dir()
+                .map_err(|error| format!("Failed to locate the cache directory: {error}"))?
+                .join("feedback");
+            fs::create_dir_all(&directory)
+                .map_err(|error| format!("Failed to prepare feedback cache: {error}"))?;
+            discard_cached_feedback_bundles(&directory);
+            directory.join(format!("wework-feedback-{report_id}.zip"))
+        }
     };
 
     let file = File::create(&destination)
@@ -183,6 +220,109 @@ pub fn export_feedback_bundle(
         report_id,
         path: destination.to_string_lossy().to_string(),
     })
+}
+
+#[tauri::command(async)]
+pub async fn submit_feedback_bundle(
+    request: FeedbackSubmitRequest,
+) -> Result<FeedbackSubmitResult, String> {
+    tauri::async_runtime::spawn_blocking(move || submit_feedback_bundle_blocking(request))
+        .await
+        .map_err(|error| format!("Failed to join feedback submission: {error}"))?
+}
+
+#[tauri::command]
+pub fn discard_feedback_bundle(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let cache_directory = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| format!("Failed to locate the cache directory: {error}"))?
+        .join("feedback");
+    let candidate = PathBuf::from(path);
+    if candidate.parent() != Some(cache_directory.as_path()) {
+        return Err("Feedback bundle is outside the feedback cache".to_string());
+    }
+    match fs::remove_file(candidate) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Failed to discard feedback bundle: {error}")),
+    }
+}
+
+fn submit_feedback_bundle_blocking(
+    request: FeedbackSubmitRequest,
+) -> Result<FeedbackSubmitResult, String> {
+    let api_url = request.api_url.trim();
+    if !(api_url.starts_with("https://") || api_url.starts_with("http://")) {
+        return Err("Feedback API URL must use HTTP or HTTPS".to_string());
+    }
+    if request.access_token.trim().is_empty() {
+        return Err("Feedback authentication is unavailable".to_string());
+    }
+    let path = PathBuf::from(&request.bundle_path);
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| value.starts_with("wework-feedback-") && value.ends_with(".zip"))
+        .ok_or_else(|| "Invalid feedback bundle path".to_string())?;
+    let bundle = reqwest::blocking::multipart::Part::file(&path)
+        .map_err(|error| format!("Failed to open feedback bundle: {error}"))?
+        .file_name(filename.to_string())
+        .mime_str("application/zip")
+        .map_err(|error| format!("Failed to prepare feedback bundle: {error}"))?;
+    let form = reqwest::blocking::multipart::Form::new()
+        .text("report_id", request.report_id)
+        .text("title", request.title)
+        .text("description", request.description)
+        .text("context", request.context.to_string())
+        .part("bundle", bundle);
+    let response = reqwest::blocking::Client::new()
+        .post(api_url)
+        .bearer_auth(request.access_token)
+        .multipart(form)
+        .send()
+        .map_err(|error| format!("Failed to submit feedback: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let message = response
+            .json::<serde_json::Value>()
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("detail")
+                    .and_then(|detail| detail.as_str())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| format!("Feedback submission failed with HTTP {status}"));
+        return Err(message);
+    }
+    let result = response
+        .json::<FeedbackSubmitResult>()
+        .map_err(|error| format!("Invalid feedback response: {error}"))?;
+    if request.delete_after_submit {
+        let _ = fs::remove_file(path);
+    }
+    Ok(result)
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn discard_cached_feedback_bundles(directory: &Path) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_feedback_bundle = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.starts_with("wework-feedback-") && value.ends_with(".zip"));
+        if is_feedback_bundle {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 struct IncompleteArchive {
