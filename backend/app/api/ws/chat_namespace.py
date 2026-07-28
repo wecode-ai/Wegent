@@ -95,6 +95,52 @@ from shared.telemetry.context import (
 logger = logging.getLogger(__name__)
 
 
+def _apply_artifact_node_scope(
+    *,
+    db: Session,
+    user: User,
+    payload: ChatSendPayload,
+) -> None:
+    """Replace client-selected sources with the validated Artifact source scope."""
+    if payload.artifact_context is None:
+        return
+    if payload.task_type != "knowledge" or payload.knowledge_base_id is None:
+        raise ValueError("Artifact node questions require a knowledge base task")
+
+    from app.api.ws.events import ContextItem
+    from app.services.knowledge.artifact_repository import (
+        KnowledgeArtifactRepository,
+    )
+    from app.services.knowledge.artifact_service import ArtifactService
+
+    artifact_context = payload.artifact_context
+    service = ArtifactService(
+        db,
+        user,
+        KnowledgeArtifactRepository(db),
+    )
+    _, document_ids = service.resolve_mind_map_node(
+        payload.knowledge_base_id,
+        artifact_context.artifact_id,
+        artifact_context.node_id,
+    )
+
+    knowledge_base_id = payload.knowledge_base_id
+    payload.attachment_id = None
+    payload.attachment_ids = None
+    payload.contexts = [
+        ContextItem(
+            type="knowledge_base",
+            data={
+                "knowledge_id": knowledge_base_id,
+                "name": f"Knowledge Base {knowledge_base_id}",
+                "document_ids": document_ids,
+                "scope_restricted": True,
+            },
+        )
+    ]
+
+
 async def _finalize_failed_ai_trigger(
     *,
     task_id: int,
@@ -738,6 +784,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                         "error": form_validation.error,
                         "message": form_validation.message,
                     }
+
+            _apply_artifact_node_scope(
+                db=db,
+                user=user,
+                payload=payload,
+            )
 
             # Get task JSON for group chat check
             task_json = {}
