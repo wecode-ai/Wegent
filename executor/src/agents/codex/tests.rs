@@ -117,6 +117,56 @@ fn persistent_app_server_enables_deferred_mcp_tool_search() {
     assert!(!config
         .config_overrides
         .contains(&"features.tool_search_always_defer_mcp_tools=false".to_owned()));
+    assert!(config
+        .config_overrides
+        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+}
+
+#[test]
+fn initialize_params_does_not_advertise_openai_form_elicitation_extension() {
+    let params = initialize_params();
+
+    assert_eq!(params["capabilities"]["experimentalApi"], true);
+    assert!(params["capabilities"]
+        .get("mcpServerOpenaiFormElicitation")
+        .is_none());
+}
+
+#[test]
+fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
+    let params = json!({
+        "serverName": "wegent-sites",
+        "mode": "form",
+        "message": "请选择内网访问范围。",
+        "requestedSchema": {
+            "type": "object",
+            "properties": {
+                "audience": {
+                    "type": "string",
+                    "title": "访问范围",
+                    "description": "请选择站点发布到内网后的访问范围。",
+                    "enum": ["all", "owner", "custom"],
+                    "enumNames": ["所有人", "仅自己", "指定人"]
+                }
+            },
+            "required": ["audience"]
+        }
+    });
+
+    let payload = mcp_server_elicitation_request_user_input_params(&params)
+        .expect("enum + enumNames form should map to request_user_input payload");
+
+    assert_eq!(payload["itemId"], "mcp_server_elicitation");
+    assert_eq!(payload["questions"][0]["id"], "audience");
+    assert_eq!(payload["questions"][0]["header"], "访问范围");
+    assert_eq!(
+        payload["questions"][0]["options"],
+        json!([
+            {"label": "所有人", "description": "all"},
+            {"label": "仅自己", "description": "owner"},
+            {"label": "指定人", "description": "custom"}
+        ])
+    );
 }
 
 #[test]
@@ -274,6 +324,9 @@ fn codex_launch_config_enables_streaming_patch_updates() {
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
 }
 
 #[test]
@@ -1254,8 +1307,33 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
+        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
+    let request = ExecutionRequest::default();
+    let mut launch_config = CodexLaunchConfig::default();
+    launch_config
+        .config_overrides
+        .push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+
+    let thread_start = thread_start_params(&request, &launch_config);
+    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+
+    for params in [thread_start, thread_resume, thread_fork] {
+        assert_eq!(
+            params["config"]["features.tool_call_mcp_elicitation"],
+            false
+        );
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
     }
 }
 

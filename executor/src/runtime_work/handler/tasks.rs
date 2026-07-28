@@ -14,6 +14,21 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| runtime_session_id_from_link(&source))
             .ok_or_else(|| AppIpcError::new("bad_request", "source task session is not ready"))?;
         let Some(last_turn_id) = resolve_codex_turn_id(&source, &requested_turn_id) else {
+            let mapping_keys = source
+                .runtime_handle
+                .get("turnIdsBySubtask")
+                .and_then(Value::as_object)
+                .map(|mappings| mappings.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            log_executor_event(
+                "runtime task fork rejected",
+                &[
+                    ("reason", "turn_not_found".to_owned()),
+                    ("local_task_id", source.local_task_id.clone()),
+                    ("requested_turn_id", requested_turn_id.clone()),
+                    ("mapping_keys", mapping_keys.join(",")),
+                ],
+            );
             return Ok(json!({
                 "success": false,
                 "accepted": false,
@@ -515,10 +530,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<String, String> {
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
-        params.insert(
-            "approvalPolicy".to_owned(),
-            Value::String("never".to_owned()),
-        );
+        params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
         params.insert("excludeTurns".to_owned(), Value::Bool(true));
         if !link.workspace_path.trim().is_empty() {
             params.insert("cwd".to_owned(), Value::String(link.workspace_path.clone()));
@@ -721,5 +733,23 @@ pub(super) fn resolve_codex_turn_id(
     {
         return Some(requested_turn_id.to_owned());
     }
+    if let Some(turn_id) = synthetic_transcript_turn_id_base(requested_turn_id) {
+        if mappings.is_some_and(|mappings| {
+            mappings
+                .values()
+                .any(|mapped_turn_id| mapped_turn_id.as_str() == Some(turn_id))
+        }) || is_codex_thread_id(turn_id)
+        {
+            return Some(turn_id.to_owned());
+        }
+    }
     None
+}
+
+fn synthetic_transcript_turn_id_base(value: &str) -> Option<&str> {
+    let (turn_id, segment) = value.rsplit_once('-')?;
+    if segment.parse::<usize>().is_err() || !is_codex_thread_id(turn_id) {
+        return None;
+    }
+    Some(turn_id)
 }

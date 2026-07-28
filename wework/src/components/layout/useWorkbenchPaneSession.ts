@@ -2690,15 +2690,19 @@ export function reconcileRuntimeConversationMessages(
   transcriptRunning: boolean
 ): WorkbenchMessage[] {
   if (transcriptMessages.length === 0) return cachedMessages
-  if (!transcriptRunning && hasSettledAssistantMessage(transcriptMessages)) {
-    return preserveSettledRuntimeBlocks(transcriptMessages, cachedMessages)
+  if (transcriptRunning) {
+    return hasUnsettledRuntimePaneState(cachedMessages) ? cachedMessages : transcriptMessages
   }
-  if (!hasUnsettledRuntimePaneState(cachedMessages)) return transcriptMessages
-  if (!hasUnsettledRuntimePaneState(transcriptMessages)) return cachedMessages
 
-  return runtimeMessageContentWeight(cachedMessages) >
-    runtimeMessageContentWeight(transcriptMessages)
-    ? cachedMessages
+  const latestCachedTurnIdentity = latestRuntimeTurnIdentity(cachedMessages)
+  if (
+    latestCachedTurnIdentity &&
+    !hasSettledAssistantForTurn(transcriptMessages, latestCachedTurnIdentity)
+  ) {
+    return cachedMessages
+  }
+  return hasSettledAssistantMessage(transcriptMessages)
+    ? preserveSettledRuntimeBlocks(transcriptMessages, cachedMessages)
     : transcriptMessages
 }
 
@@ -2746,14 +2750,6 @@ function mergeSettledRuntimeBlocks(
     ...settledCachedBlocks.map(block => transcriptById.get(block.id) ?? block),
     ...transcriptBlocks.filter(block => !cachedIds.has(block.id)),
   ]
-}
-
-function runtimeMessageContentWeight(messages: WorkbenchMessage[]): number {
-  return messages.reduce(
-    (total, message) =>
-      total + message.content.length + JSON.stringify(message.blocks ?? []).length,
-    0
-  )
 }
 
 function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -2901,6 +2897,11 @@ export function transcriptSettlesLatestSeededTurn(
   transcriptMessages: WorkbenchMessage[],
   seededMessages: WorkbenchMessage[]
 ): boolean {
+  const latestSeededTurnIdentity = latestRuntimeTurnIdentity(seededMessages)
+  if (latestSeededTurnIdentity) {
+    return hasSettledAssistantForTurn(transcriptMessages, latestSeededTurnIdentity)
+  }
+
   const latestSeededUser = [...seededMessages].reverse().find(message => message.role === 'user')
   if (!latestSeededUser) return hasSettledAssistantMessage(transcriptMessages)
 
@@ -2913,6 +2914,34 @@ export function transcriptSettlesLatestSeededTurn(
   return transcriptMessages
     .slice(latestMatchingUserIndex + 1)
     .some(message => message.role === 'assistant' && message.status !== 'streaming')
+}
+
+function latestRuntimeTurnIdentity(messages: WorkbenchMessage[]): ReadonlySet<string> | null {
+  const latestMessage = messages.at(-1)
+  if (!latestMessage) return null
+  const identity = runtimeMessageTurnIdentity(latestMessage)
+  return identity.size > 0 ? identity : null
+}
+
+function runtimeMessageTurnIdentity(message: WorkbenchMessage): ReadonlySet<string> {
+  return new Set(
+    [message.turnId, message.subtaskId]
+      .filter(value => value !== undefined && value !== null)
+      .map(value => String(value))
+  )
+}
+
+function hasSettledAssistantForTurn(
+  messages: WorkbenchMessage[],
+  turnIdentity: ReadonlySet<string>
+): boolean {
+  return messages.some(
+    message =>
+      message.role === 'assistant' &&
+      message.status !== 'streaming' &&
+      message.status !== 'pending' &&
+      [...runtimeMessageTurnIdentity(message)].some(identity => turnIdentity.has(identity))
+  )
 }
 
 function markRuntimeSubagentsSettled(current: RuntimeSubagentStatus[]): RuntimeSubagentStatus[] {
