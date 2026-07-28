@@ -323,6 +323,21 @@ fn function_tool_profile_enables_responses_tool_conversion() {
 }
 
 #[test]
+fn explicit_upstream_uses_configured_max_output_tokens() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "moonshot-kimi-k3",
+            "upstream_api_format": "anthropic-messages",
+            "max_output_tokens": 96_000
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert_eq!(upstream.max_output_tokens, Some(96_000));
+}
+
+#[test]
 fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
     let request = ExecutionRequest {
         model_config: json!({
@@ -574,6 +589,26 @@ fn codex_launch_config_forwards_web_search_mode() {
     assert_eq!(config.get("web_search"), Some(&json!("disabled")));
     assert_eq!(config.get("features.image_generation"), Some(&json!(false)));
     assert_eq!(config.get("model_context_window"), Some(&json!(128000)));
+}
+
+#[test]
+fn codex_launch_config_defaults_context_window_to_256k() {
+    let request = ExecutionRequest {
+        prompt: Value::String("create a file".to_owned()),
+        model_config: json!({
+            "model_id": "moonshot-kimi-k3",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config = build_codex_launch_config(&request);
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert_eq!(config.get("model_context_window"), Some(&json!(262_144)));
 }
 
 #[test]

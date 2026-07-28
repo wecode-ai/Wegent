@@ -1274,7 +1274,8 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
-        weworkCloudModelContextWindow: '128000',
+        weworkCloudModelContextWindow: '1048576',
+        weworkCloudModelMaxOutputTokens: '96000',
       },
     })
 
@@ -1288,7 +1289,8 @@ describe('createLocalAppServices', () => {
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
-        model_context_window: 128000,
+        model_context_window: 1048576,
+        max_output_tokens: 96000,
         codex_responses_compat_proxy: true,
         default_headers: {
           'X-Wegent-Model-Type': 'user',
