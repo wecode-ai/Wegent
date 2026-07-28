@@ -14,6 +14,10 @@ vi.mock('@/components/layout/WindowFrameControls', () => ({
   WindowFrameControls: () => <div data-testid="window-frame-controls">FrameControls</div>,
 }))
 
+vi.mock('@/features/feedback/TaskFeedbackDialog', () => ({
+  TaskFeedbackDialog: () => <div data-testid="task-feedback-dialog">FeedbackDialog</div>,
+}))
+
 const mockTabs: AppTab[] = [
   { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
   {
@@ -207,6 +211,16 @@ describe('ChromeTitlebar', () => {
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
     expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
     expect(screen.queryByTestId('macos-traffic-light-spacer')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('topnav-feedback-button')).not.toBeInTheDocument()
+    disableTauri()
+  })
+
+  test('shows feedback button in Tauri runtime on macOS', () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableTauri()
+    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
+    expect(screen.getByTestId('topnav-feedback-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('window-frame-controls')).not.toBeInTheDocument()
     disableTauri()
   })
 

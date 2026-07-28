@@ -1732,13 +1732,12 @@ fn disk_usage_bytes(path: &Path) -> Option<ByteUsage> {
 
     let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide_path.push(0);
-    let mut free_bytes_available = 0u64;
     let mut total_bytes = 0u64;
     let mut total_free_bytes = 0u64;
     let ok = unsafe {
         GetDiskFreeSpaceExW(
             wide_path.as_ptr(),
-            &mut free_bytes_available,
+            std::ptr::null_mut(),
             &mut total_bytes,
             &mut total_free_bytes,
         )
@@ -1748,7 +1747,7 @@ fn disk_usage_bytes(path: &Path) -> Option<ByteUsage> {
     }
     Some(ByteUsage {
         total: total_bytes,
-        used: total_bytes.saturating_sub(free_bytes_available),
+        used: total_bytes.saturating_sub(total_free_bytes),
     })
 }
 

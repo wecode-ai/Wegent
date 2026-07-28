@@ -74,7 +74,7 @@ import { WindowFrameControls } from './WindowFrameControls'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import { getLocalPathKind } from '@/lib/local-terminal'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
@@ -2049,8 +2049,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageCircle />
     </button>
   ) : undefined
+  const platform = getPlatform()
   const feedbackButton =
-    currentRuntimeTask && isTauri ? (
+    isTauri && platform === 'mac' ? (
       <button
         type="button"
         data-testid="task-feedback-button"
@@ -2079,7 +2080,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {windowsEnvironmentInfoAction}
     </>
   )
-  const platform = getPlatform()
   const topRightActions = isTauri ? (
     platform === 'win' ? null : (
       <>{panelChromeActions}</>
@@ -2109,17 +2109,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           />
           <DesktopAppSwitcher
             activeApp="wework"
-            onNavigate={app =>
-              navigateTo(
-                app === 'wework'
-                  ? '/'
-                  : app === 'todo'
-                    ? '/todo'
-                    : app === 'wegent'
-                      ? '/app/wegent'
-                      : '/apps'
-              )
-            }
+            onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
           />
         </div>
       )}

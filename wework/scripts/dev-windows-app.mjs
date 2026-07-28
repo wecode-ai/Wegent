@@ -16,7 +16,7 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:net'
 import os from 'node:os'
-import { delimiter, dirname, join, resolve, basename } from 'node:path'
+import { delimiter, dirname, join, resolve, basename, isAbsolute } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
@@ -369,7 +369,8 @@ function configureCargoTargetDir(projectDir, cacheName) {
   }
 
   if (process.env.CARGO_TARGET_DIR && process.env.WEGENT_CARGO_TARGET_DIR_AUTO !== '1') {
-    const targetDir = resolve(process.env.CARGO_TARGET_DIR)
+    const preset = process.env.CARGO_TARGET_DIR
+    const targetDir = isAbsolute(preset) ? resolve(preset) : resolve(EXECUTOR_DIR, preset)
     configureSccache(projectDir, targetDir)
     return targetDir
   }
@@ -522,7 +523,7 @@ async function main() {
   const initialIsolation = args.executorIsolation ?? process.env.WEWORK_EXECUTOR_ISOLATION_OVERRIDE
   process.env.WEWORK_EXECUTOR_ISOLATION_OVERRIDE = initialIsolation ?? 'false'
 
-  if (process.env.WEWORK_SHARED_EXECUTOR_HOME === '1') {
+  if (args.executorIsolation === null && process.env.WEWORK_SHARED_EXECUTOR_HOME === '1') {
     process.env.WEWORK_EXECUTOR_ISOLATION_OVERRIDE = 'false'
   }
 

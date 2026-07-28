@@ -11,6 +11,7 @@ import {
   DECREASE_FONT_SIZE_COMMAND,
   RESET_FONT_SIZE_COMMAND,
   KEYBINDINGS_CHANGED_EVENT,
+  OPEN_SEARCH_COMMAND,
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
@@ -31,6 +32,10 @@ const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
   [OPEN_SETTINGS_COMMAND]: {
     label: 'keyboard_shortcuts_open_settings',
     description: 'keyboard_shortcuts_open_settings_description',
+  },
+  [OPEN_SEARCH_COMMAND]: {
+    label: 'keyboard_shortcuts_open_search',
+    description: 'keyboard_shortcuts_open_search_description',
   },
   [GO_BACK_COMMAND]: {
     label: 'keyboard_shortcuts_go_back',
@@ -68,6 +73,7 @@ const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
 
 function commandFallback(command: string): string {
   if (command === OPEN_SETTINGS_COMMAND) return '打开设置'
+  if (command === OPEN_SEARCH_COMMAND) return '打开搜索'
   if (command === GO_BACK_COMMAND) return '返回'
   if (command === GO_FORWARD_COMMAND) return '前进'
   if (command === TOGGLE_SIDEBAR_COMMAND) return '切换边栏'
@@ -81,6 +87,7 @@ function commandFallback(command: string): string {
 
 function commandDescriptionFallback(command: string): string {
   if (command === OPEN_SETTINGS_COMMAND) return '打开设置页面'
+  if (command === OPEN_SEARCH_COMMAND) return '打开搜索面板'
   if (command === GO_BACK_COMMAND) return '返回导航历史'
   if (command === GO_FORWARD_COMMAND) return '前进导航历史'
   if (command === TOGGLE_SIDEBAR_COMMAND) return '显示或隐藏边栏'

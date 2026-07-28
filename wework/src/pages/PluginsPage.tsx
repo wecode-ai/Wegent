@@ -13,7 +13,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
@@ -167,17 +167,7 @@ export function PluginsPage() {
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
         activeApp="wework"
-        onNavigate={app =>
-          navigateTo(
-            app === 'wework'
-              ? '/'
-              : app === 'todo'
-                ? '/todo'
-                : app === 'wegent'
-                  ? '/app/wegent'
-                  : '/apps'
-          )
-        }
+        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
       />
       <div className="flex flex-1 overflow-hidden">
         {!isMobile && (

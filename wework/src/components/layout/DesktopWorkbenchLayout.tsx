@@ -10,7 +10,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { isSettingsRoute, navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -664,17 +664,7 @@ export function DesktopWorkbenchLayout() {
         />
         <DesktopAppSwitcher
           activeApp={activeApp}
-          onNavigate={app =>
-            navigateTo(
-              app === 'wework'
-                ? '/'
-                : app === 'todo'
-                  ? '/todo'
-                  : app === 'wegent'
-                    ? '/app/wegent'
-                    : '/apps'
-            )
-          }
+          onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
         />
       </div>
       <div

@@ -18,7 +18,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { queuePluginReferenceTrial, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { localPathExists } from '@/lib/local-terminal'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
+import { buildRuntimeTaskRoute, navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { InstalledPlugin, LocalDeviceSkill, RuntimeTaskAddress } from '@/types/api'
@@ -270,17 +270,7 @@ export function SitesPage() {
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
         activeApp="wework"
-        onNavigate={app =>
-          navigateTo(
-            app === 'wework'
-              ? '/'
-              : app === 'todo'
-                ? '/todo'
-                : app === 'wegent'
-                  ? '/app/wegent'
-                  : '/apps'
-          )
-        }
+        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
       />
       <div className="flex flex-1 overflow-hidden">
         {!isMobile && (

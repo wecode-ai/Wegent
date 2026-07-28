@@ -988,6 +988,8 @@
     "keyboard_shortcuts_open_terminal_description": "Show or hide the bottom panel",
     "keyboard_shortcuts_open_settings": "Open settings",
     "keyboard_shortcuts_open_settings_description": "Open the settings page",
+    "keyboard_shortcuts_open_search": "Open search",
+    "keyboard_shortcuts_open_search_description": "Open the search panel",
     "keyboard_shortcuts_go_back": "Go back",
     "keyboard_shortcuts_go_back_description": "Go back in navigation history",
     "keyboard_shortcuts_go_forward": "Go forward",
@@ -1822,6 +1824,12 @@
     "attachment_remove_failed": "Failed to remove attachment",
     "uploading": "Uploading…",
     "running": "Running…",
-    "executor_required": "Select an employee or AI agent before running"
+    "executor_required": "Select an employee or AI agent before running",
+    "window": {
+      "minimize": "Minimize",
+      "maximize": "Maximize",
+      "restore": "Restore",
+      "close": "Close"
+    }
   }
 }

@@ -41,9 +41,11 @@ import type {
   ProjectSpaceLocation,
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { getPlatform } from '@/lib/platform'
+import { getActiveKeybinding, OPEN_SEARCH_COMMAND } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
+import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import type {
   Attachment,
   ProjectWithTasks,
@@ -96,9 +98,7 @@ interface CloudTodoWorkspaceProps {
 }
 
 function navigateToApp(app: DesktopAppKey) {
-  navigateTo(
-    app === 'wework' ? '/' : app === 'todo' ? '/todo' : app === 'wegent' ? '/app/wegent' : '/apps'
-  )
+  navigateTo(resolveDesktopAppRoute(app))
 }
 
 const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
@@ -960,40 +960,30 @@ export function CloudTodoWorkspace({
         >
           <div className="flex h-full w-[248px] flex-col">
             {platform !== 'win' && (
-              <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
-            )}
-            {platform !== 'win' && (
-              <div
-                data-testid="cloud-todo-sidebar-chrome-controls"
-                className="relative z-10 ml-[92px] flex h-[38px] shrink-0 items-center gap-1"
-              >
-                <DesktopWindowControls
-                  sidebarCollapsed={false}
-                  onToggleSidebar={() => setSidebarCollapsed(true)}
-                  className="gap-1"
-                  toggleTestId="cloud-todo-collapse-sidebar"
-                />
-                <DesktopAppSwitcher
-                  activeApp="todo"
-                  onNavigate={app =>
-                    navigateTo(
-                      app === 'wework'
-                        ? '/'
-                        : app === 'todo'
-                          ? '/todo'
-                          : app === 'wegent'
-                            ? '/app/wegent'
-                            : '/apps'
-                    )
-                  }
-                  testIds={{
-                    wework: 'cloud-todo-app-wework',
-                    todo: 'cloud-todo-app-current',
-                    apps: 'cloud-todo-app-apps',
-                    wegent: 'cloud-todo-app-wegent',
-                  }}
-                />
-              </div>
+              <>
+                <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+                <div
+                  data-testid="cloud-todo-sidebar-chrome-controls"
+                  className="relative z-10 ml-[92px] flex h-[38px] shrink-0 items-center gap-1"
+                >
+                  <DesktopWindowControls
+                    sidebarCollapsed={false}
+                    onToggleSidebar={() => setSidebarCollapsed(true)}
+                    className="gap-1"
+                    toggleTestId="cloud-todo-collapse-sidebar"
+                  />
+                  <DesktopAppSwitcher
+                    activeApp="todo"
+                    onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
+                    testIds={{
+                      wework: 'cloud-todo-app-wework',
+                      todo: 'cloud-todo-app-current',
+                      apps: 'cloud-todo-app-apps',
+                      wegent: 'cloud-todo-app-wegent',
+                    }}
+                  />
+                </div>
+              </>
             )}
             <nav className="space-y-1 px-2">
               <button
@@ -1032,9 +1022,10 @@ export function CloudTodoWorkspace({
                 className="flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted/60"
               >
                 <Search className="h-4 w-4" /> 搜索
-                <span className="ml-auto rounded-md border border-border bg-background px-1.5 text-xs leading-5 text-text-muted">
-                  ⌘K
-                </span>
+                <KeyboardShortcut
+                  value={getActiveKeybinding(OPEN_SEARCH_COMMAND) ?? 'Command+K'}
+                  className="ml-auto h-5 border border-border bg-background px-1.5 text-xs leading-5 text-text-muted"
+                />
               </button>
             </nav>
             {searchOpen && (
@@ -1115,17 +1106,7 @@ export function CloudTodoWorkspace({
               />
               <DesktopAppSwitcher
                 activeApp="todo"
-                onNavigate={app =>
-                  navigateTo(
-                    app === 'wework'
-                      ? '/'
-                      : app === 'todo'
-                        ? '/todo'
-                        : app === 'wegent'
-                          ? '/app/wegent'
-                          : '/apps'
-                  )
-                }
+                onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
                 testIds={{
                   wework: 'cloud-todo-collapsed-app-wework',
                   todo: 'cloud-todo-collapsed-app-current',

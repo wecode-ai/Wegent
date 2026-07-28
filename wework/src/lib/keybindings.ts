@@ -4,6 +4,7 @@ import { getPlatform } from './platform'
 
 export const OPEN_TERMINAL_COMMAND = 'openTerminal'
 export const OPEN_SETTINGS_COMMAND = 'openSettings'
+export const OPEN_SEARCH_COMMAND = 'openSearch'
 export const GO_BACK_COMMAND = 'goBack'
 export const GO_FORWARD_COMMAND = 'goForward'
 export const TOGGLE_SIDEBAR_COMMAND = 'toggleSidebar'
@@ -42,6 +43,10 @@ export const DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
     defaultKey: 'Command+,',
   },
   {
+    command: OPEN_SEARCH_COMMAND,
+    defaultKey: 'Command+K',
+  },
+  {
     command: GO_BACK_COMMAND,
     defaultKey: 'Command+[',
     secondaryKeys: ['Mouse Back'],
@@ -77,46 +82,11 @@ export const DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
   },
 ]
 
-const WIN_DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
-  {
-    command: OPEN_TERMINAL_COMMAND,
-    defaultKey: 'Control+J',
-  },
-  {
-    command: OPEN_SETTINGS_COMMAND,
-    defaultKey: 'Control+,',
-  },
-  {
-    command: GO_BACK_COMMAND,
-    defaultKey: 'Control+[',
-    secondaryKeys: ['Mouse Back'],
-  },
-  {
-    command: GO_FORWARD_COMMAND,
-    defaultKey: 'Control+]',
-    secondaryKeys: ['Mouse Forward'],
-  },
-  {
-    command: TOGGLE_SIDEBAR_COMMAND,
-    defaultKey: 'Control+B',
-  },
-  {
-    command: TOGGLE_SIDE_PANEL_COMMAND,
-    defaultKey: 'Alt+Control+B',
-  },
-  {
-    command: TOGGLE_MODEL_SELECTOR_COMMAND,
-    defaultKey: 'Control+Shift+M',
-  },
-  {
-    command: INCREASE_FONT_SIZE_COMMAND,
-    defaultKey: 'Control+Plus',
-  },
-  {
-    command: DECREASE_FONT_SIZE_COMMAND,
-    defaultKey: 'Control+Minus',
-  },
-]
+const WIN_DEFAULT_KEYBINDINGS: KeybindingCommand[] = DEFAULT_KEYBINDINGS.map(item => ({
+  ...item,
+  defaultKey: item.defaultKey.replace('Command', 'Control'),
+  secondaryKeys: item.secondaryKeys,
+}))
 
 export function getDefaultKeybindings(platform = getPlatform()): KeybindingCommand[] {
   return platform === 'win' ? WIN_DEFAULT_KEYBINDINGS : DEFAULT_KEYBINDINGS
@@ -129,7 +99,10 @@ export function mergeKeybindings(
   platform = getPlatform()
 ): Record<string, string | null> {
   const merged = new Map<string, string | null>(
-    getDefaultKeybindings(platform).map(item => [item.command, normalizeKeybinding(item.defaultKey)])
+    getDefaultKeybindings(platform).map(item => [
+      item.command,
+      normalizeKeybinding(item.defaultKey),
+    ])
   )
   overrides.forEach(item => {
     if (!item.command) return

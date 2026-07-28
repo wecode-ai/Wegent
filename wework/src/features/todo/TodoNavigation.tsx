@@ -16,7 +16,7 @@ import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { useTranslation } from '@/hooks/useTranslation'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type { ProjectWithTasks, RuntimeDeviceWorkspace, User as UserProfile } from '@/types/api'
 import type { TodoDetailItem } from './TodoDetailPanel'
@@ -298,17 +298,7 @@ export function TodoSidebar({
           />
           <DesktopAppSwitcher
             activeApp="todo"
-            onNavigate={app =>
-              navigateTo(
-                app === 'wework'
-                  ? '/'
-                  : app === 'todo'
-                    ? '/todo'
-                    : app === 'wegent'
-                      ? '/app/wegent'
-                      : '/apps'
-              )
-            }
+            onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
             testIds={{
               wework: 'todo-app-wework',
               todo: 'todo-app-current',

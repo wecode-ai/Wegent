@@ -28,6 +28,7 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
+import { setActiveKeybindings } from '@/lib/keybindings'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
@@ -555,6 +556,7 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
       value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
     })
+    setActiveKeybindings([])
     tauriMenuMocks.getCurrentWindow.mockReturnValue({
       label: 'main',
       startDragging: vi.fn(),

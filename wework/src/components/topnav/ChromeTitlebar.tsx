@@ -11,7 +11,11 @@ import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
-import type { ReactNode } from 'react'
+import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import { useTranslation } from '@/hooks/useTranslation'
+import { MessageSquareWarning } from 'lucide-react'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
+import { useState, type ReactNode } from 'react'
 
 interface ChromeTitlebarProps {
   tabs: AppTab[]
@@ -110,6 +114,7 @@ export function ChromeTitlebar({
       >
         {isTauri && <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />}
       </div>
+      {isTauri && platform === 'mac' && <TopnavFeedbackButton />}
       {isTauri && <TitlebarExtensionSlot />}
       <div
         data-testid="titlebar-right-workspace-zone"
@@ -154,10 +159,38 @@ export function ChromeTitlebar({
 
       {/* Windows: custom window frame controls */}
       {isTauri && platform === 'win' && (
-        <div className="relative z-chrome w-[138px] shrink-0 self-stretch" data-tauri-drag-region={false}>
+        <div
+          className="relative z-chrome w-[138px] shrink-0 self-stretch"
+          data-tauri-drag-region={false}
+        >
           <WindowFrameControls className="h-full justify-end" />
         </div>
       )}
     </div>
+  )
+}
+
+function TopnavFeedbackButton() {
+  const { t } = useTranslation('common')
+  const [open, setOpen] = useState(false)
+
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="topnav-feedback-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.feedback_button')}
+        title={t('workbench.feedback_button')}
+        onClick={() => setOpen(true)}
+      >
+        <MessageSquareWarning className="h-4 w-4" />
+      </button>
+      <TaskFeedbackDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        getTaskContext={() => Promise.resolve({})}
+      />
+    </>
   )
 }
