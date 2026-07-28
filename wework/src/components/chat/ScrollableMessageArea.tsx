@@ -249,6 +249,7 @@ function ScrollableMessagePaneContent({
   const restoringScrollKeyRef = useRef<string | null>(null)
   const followingBottomKeyRef = useRef<string | null>(null)
   const userScrollPausedAutoFollowRef = useRef(false)
+  const userScrollIntentRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
   const lastScrollTopRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
@@ -739,20 +740,43 @@ function ScrollableMessagePaneContent({
     scrollToBottom('smooth', { saveSnapshot: true })
   }
 
+  const markUserScrollIntent = useCallback(() => {
+    userScrollIntentRef.current = true
+  }, [])
+
   const handleScroll = useCallback(() => {
+    const userInitiated = userScrollIntentRef.current
+    userScrollIntentRef.current = false
+    if (restoringScrollKeyRef.current === currentScrollKey) {
+      if (!userInitiated) {
+        updateScrollState({ skipSave: true })
+        return
+      }
+      clearScheduledScrolls()
+    }
     updateScrollState({ forceSave: true })
     if (userScrollPausedAutoFollowRef.current) {
       captureUserViewportAnchor()
     }
-  }, [captureUserViewportAnchor, updateScrollState])
+  }, [captureUserViewportAnchor, clearScheduledScrolls, currentScrollKey, updateScrollState])
 
   useEffect(() => {
     const externalScroller = externalScrollRef?.current
     if (!externalScroller || externalScroller === internalScrollRef.current) return
 
     externalScroller.addEventListener('scroll', handleScroll)
-    return () => externalScroller.removeEventListener('scroll', handleScroll)
-  }, [externalScrollRef, handleScroll])
+    externalScroller.addEventListener('wheel', markUserScrollIntent)
+    externalScroller.addEventListener('pointerdown', markUserScrollIntent)
+    externalScroller.addEventListener('touchstart', markUserScrollIntent)
+    externalScroller.addEventListener('keydown', markUserScrollIntent)
+    return () => {
+      externalScroller.removeEventListener('scroll', handleScroll)
+      externalScroller.removeEventListener('wheel', markUserScrollIntent)
+      externalScroller.removeEventListener('pointerdown', markUserScrollIntent)
+      externalScroller.removeEventListener('touchstart', markUserScrollIntent)
+      externalScroller.removeEventListener('keydown', markUserScrollIntent)
+    }
+  }, [externalScrollRef, handleScroll, markUserScrollIntent])
 
   const scrollToBottomButton = showScrollButton ? (
     <button
@@ -801,6 +825,10 @@ function ScrollableMessagePaneContent({
           scrollerClassName
         )}
         onScroll={handleScroll}
+        onWheel={markUserScrollIntent}
+        onPointerDown={markUserScrollIntent}
+        onTouchStart={markUserScrollIntent}
+        onKeyDown={markUserScrollIntent}
       >
         <div
           ref={contentRef}

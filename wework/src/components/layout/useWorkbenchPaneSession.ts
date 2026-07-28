@@ -2671,7 +2671,7 @@ export function reconcileRuntimeConversationMessages(
 ): WorkbenchMessage[] {
   if (transcriptMessages.length === 0) return cachedMessages
   if (!transcriptRunning && hasSettledAssistantMessage(transcriptMessages)) {
-    return transcriptMessages
+    return preserveSettledRuntimeBlocks(transcriptMessages, cachedMessages)
   }
   if (!hasUnsettledRuntimePaneState(cachedMessages)) return transcriptMessages
   if (!hasUnsettledRuntimePaneState(transcriptMessages)) return cachedMessages
@@ -2680,6 +2680,52 @@ export function reconcileRuntimeConversationMessages(
     runtimeMessageContentWeight(transcriptMessages)
     ? cachedMessages
     : transcriptMessages
+}
+
+function preserveSettledRuntimeBlocks(
+  transcriptMessages: WorkbenchMessage[],
+  cachedMessages: WorkbenchMessage[]
+): WorkbenchMessage[] {
+  const cachedAssistants = cachedMessages.filter(message => message.role === 'assistant')
+  const restoredSubtaskIds = new Set<string>()
+  let changed = false
+  const messages = transcriptMessages.map(message => {
+    if (message.role !== 'assistant' || !message.subtaskId) return message
+    if (restoredSubtaskIds.has(message.subtaskId)) return message
+    const cachedMessage = cachedAssistants.find(
+      candidate => candidate.subtaskId === message.subtaskId
+    )
+    if (!cachedMessage) return message
+    restoredSubtaskIds.add(message.subtaskId)
+    const blocks = mergeSettledRuntimeBlocks(message.blocks, cachedMessage?.blocks)
+    if (blocks === message.blocks) return message
+    changed = true
+    return { ...message, blocks }
+  })
+  return changed ? messages : transcriptMessages
+}
+
+function mergeSettledRuntimeBlocks(
+  transcriptBlocks: WorkbenchMessage['blocks'],
+  cachedBlocks: WorkbenchMessage['blocks']
+): WorkbenchMessage['blocks'] {
+  const settledCachedBlocks = cachedBlocks?.filter(
+    block =>
+      (block.type === 'tool' || block.type === 'file_changes') &&
+      (block.status === 'done' || block.status === 'error')
+  )
+  if (!settledCachedBlocks?.length) return transcriptBlocks
+  if (!transcriptBlocks?.length) return settledCachedBlocks
+
+  const transcriptById = new Map(transcriptBlocks.map(block => [block.id, block]))
+  const cachedIds = new Set(settledCachedBlocks.map(block => block.id))
+  const hasMissingCachedBlock = settledCachedBlocks.some(block => !transcriptById.has(block.id))
+  if (!hasMissingCachedBlock) return transcriptBlocks
+
+  return [
+    ...settledCachedBlocks.map(block => transcriptById.get(block.id) ?? block),
+    ...transcriptBlocks.filter(block => !cachedIds.has(block.id)),
+  ]
 }
 
 function runtimeMessageContentWeight(messages: WorkbenchMessage[]): number {

@@ -1010,10 +1010,11 @@ fn active_local_task_skips_global_notification_route() {
     let event = event_rx
         .try_recv()
         .expect("idle route should emit notification");
-    assert_eq!(event["event"], "response.output_text.delta");
+    assert_eq!(event["event"], "response.block.created");
     assert_eq!(event["payload"]["taskId"], local_task_id);
     assert_eq!(event["payload"]["subtaskId"], "runtime-subtask-1");
-    assert_eq!(event["payload"]["data"]["delta"], "Hi");
+    assert_eq!(event["payload"]["data"]["block"]["type"], "text");
+    assert_eq!(event["payload"]["data"]["block"]["content"], "Hi");
 
     let _ = fs::remove_file(index_path);
 }
