@@ -2674,11 +2674,62 @@ export function reconcileRuntimeConversationMessages(
     return hasUnsettledRuntimePaneState(cachedMessages) ? cachedMessages : transcriptMessages
   }
 
-  const latestCachedTurnId = latestRuntimeTurnId(cachedMessages)
-  if (latestCachedTurnId && !hasSettledAssistantForTurn(transcriptMessages, latestCachedTurnId)) {
+  const latestCachedTurnIdentity = latestRuntimeTurnIdentity(cachedMessages)
+  if (
+    latestCachedTurnIdentity &&
+    !hasSettledAssistantForTurn(transcriptMessages, latestCachedTurnIdentity)
+  ) {
     return cachedMessages
   }
-  return transcriptMessages
+  return hasSettledAssistantMessage(transcriptMessages)
+    ? preserveSettledRuntimeBlocks(transcriptMessages, cachedMessages)
+    : transcriptMessages
+}
+
+function preserveSettledRuntimeBlocks(
+  transcriptMessages: WorkbenchMessage[],
+  cachedMessages: WorkbenchMessage[]
+): WorkbenchMessage[] {
+  const cachedAssistants = cachedMessages.filter(message => message.role === 'assistant')
+  const restoredSubtaskIds = new Set<string>()
+  let changed = false
+  const messages = transcriptMessages.map(message => {
+    if (message.role !== 'assistant' || !message.subtaskId) return message
+    if (restoredSubtaskIds.has(message.subtaskId)) return message
+    const cachedMessage = cachedAssistants.find(
+      candidate => candidate.subtaskId === message.subtaskId
+    )
+    if (!cachedMessage) return message
+    restoredSubtaskIds.add(message.subtaskId)
+    const blocks = mergeSettledRuntimeBlocks(message.blocks, cachedMessage?.blocks)
+    if (blocks === message.blocks) return message
+    changed = true
+    return { ...message, blocks }
+  })
+  return changed ? messages : transcriptMessages
+}
+
+function mergeSettledRuntimeBlocks(
+  transcriptBlocks: WorkbenchMessage['blocks'],
+  cachedBlocks: WorkbenchMessage['blocks']
+): WorkbenchMessage['blocks'] {
+  const settledCachedBlocks = cachedBlocks?.filter(
+    block =>
+      (block.type === 'tool' || block.type === 'file_changes') &&
+      (block.status === 'done' || block.status === 'error')
+  )
+  if (!settledCachedBlocks?.length) return transcriptBlocks
+  if (!transcriptBlocks?.length) return settledCachedBlocks
+
+  const transcriptById = new Map(transcriptBlocks.map(block => [block.id, block]))
+  const cachedIds = new Set(settledCachedBlocks.map(block => block.id))
+  const hasMissingCachedBlock = settledCachedBlocks.some(block => !transcriptById.has(block.id))
+  if (!hasMissingCachedBlock) return transcriptBlocks
+
+  return [
+    ...settledCachedBlocks.map(block => transcriptById.get(block.id) ?? block),
+    ...transcriptBlocks.filter(block => !cachedIds.has(block.id)),
+  ]
 }
 
 function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -2826,9 +2877,9 @@ export function transcriptSettlesLatestSeededTurn(
   transcriptMessages: WorkbenchMessage[],
   seededMessages: WorkbenchMessage[]
 ): boolean {
-  const latestSeededTurnId = latestRuntimeTurnId(seededMessages)
-  if (latestSeededTurnId) {
-    return hasSettledAssistantForTurn(transcriptMessages, latestSeededTurnId)
+  const latestSeededTurnIdentity = latestRuntimeTurnIdentity(seededMessages)
+  if (latestSeededTurnIdentity) {
+    return hasSettledAssistantForTurn(transcriptMessages, latestSeededTurnIdentity)
   }
 
   const latestSeededUser = [...seededMessages].reverse().find(message => message.role === 'user')
@@ -2845,17 +2896,30 @@ export function transcriptSettlesLatestSeededTurn(
     .some(message => message.role === 'assistant' && message.status !== 'streaming')
 }
 
-function latestRuntimeTurnId(messages: WorkbenchMessage[]): string | null {
-  return [...messages].reverse().find(message => message.turnId)?.turnId ?? null
+function latestRuntimeTurnIdentity(messages: WorkbenchMessage[]): ReadonlySet<string> | null {
+  const latestMessage = [...messages].reverse().find(message => message.turnId || message.subtaskId)
+  if (!latestMessage) return null
+  return runtimeMessageTurnIdentity(latestMessage)
 }
 
-function hasSettledAssistantForTurn(messages: WorkbenchMessage[], turnId: string): boolean {
+function runtimeMessageTurnIdentity(message: WorkbenchMessage): ReadonlySet<string> {
+  return new Set(
+    [message.turnId, message.subtaskId].filter(
+      (value): value is string => value !== undefined && value !== null
+    )
+  )
+}
+
+function hasSettledAssistantForTurn(
+  messages: WorkbenchMessage[],
+  turnIdentity: ReadonlySet<string>
+): boolean {
   return messages.some(
     message =>
       message.role === 'assistant' &&
-      message.turnId === turnId &&
       message.status !== 'streaming' &&
-      message.status !== 'pending'
+      message.status !== 'pending' &&
+      [...runtimeMessageTurnIdentity(message)].some(identity => turnIdentity.has(identity))
   )
 }
 

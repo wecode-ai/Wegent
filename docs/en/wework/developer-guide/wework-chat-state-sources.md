@@ -61,6 +61,30 @@ must ignore the completed snapshot to avoid duplicate text. Temporary chats
 use ephemeral threads and cannot depend on `thread/read(includeTurns)` to
 recover live text that was dropped.
 
+After a task settles in the background, reopening its pane may initially load
+a stale transcript that contains only an older turn. `useWorkbenchPaneSession`
+must compare the latest cached turn identity with settled assistant identities
+from the transcript. A turn identity includes both `turnId` and normalized
+`subtaskId`. The cache remains authoritative until the transcript settles the
+same turn; only then does the transcript become authoritative. Content length,
+block count, or any other content-weight heuristic must not determine recency.
+
+A work-list refresh may also immediately reload the completed transcript. That
+transcript owns the final text, message status, and file changes, but Codex
+`thread/read` may temporarily omit tool items that already completed in the
+live stream. The `assistant_done` ingress normalizes the live message's
+`subtaskId` to its canonical `turnId`. After switching to the matching
+transcript turn, `useWorkbenchPaneSession` keeps the transcript's authoritative
+fields while restoring live tool blocks whose status is `done` or `error` and
+whose block id is absent from the transcript. It must not restore `pending` or
+`streaming` blocks, which would make a completed task appear active again.
+
+A single Codex turn can be split into multiple assistant messages by tool
+calls or mid-turn guidance. Each message must have a distinct message `id`
+while retaining the same canonical `turnId`. Turn-level actions such as fork
+and rollback must use the canonical turn ID persisted by Codex, never a
+UI-only segmented message ID.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
