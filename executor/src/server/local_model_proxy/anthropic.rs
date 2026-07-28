@@ -459,6 +459,38 @@ mod tests {
     }
 
     #[test]
+    fn keeps_assistant_text_and_tool_use_in_one_anthropic_message() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "Inspect it"}]},
+                {"role": "assistant", "content": [{"type": "output_text", "text": "I will inspect it."}]},
+                {"type": "function_call", "call_id": "call_1", "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "/workspace"}
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "exec_command",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"][0]["type"], "text");
+        assert_eq!(messages[1]["content"][0]["text"], "I will inspect it.");
+        assert_eq!(messages[1]["content"][1]["type"], "tool_use");
+        assert_eq!(messages[1]["content"][1]["name"], "exec_command");
+        assert_eq!(messages[2]["content"][0]["type"], "tool_result");
+        assert!(!messages
+            .windows(2)
+            .any(|pair| pair[0]["role"] == "assistant" && pair[1]["role"] == "assistant"));
+    }
+
+    #[test]
     fn flattens_namespace_tools_for_anthropic_messages() {
         let input = json!({
             "model": "kimi-for-coding",

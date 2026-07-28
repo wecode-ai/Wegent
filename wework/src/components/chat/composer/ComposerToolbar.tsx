@@ -186,6 +186,7 @@ export function ComposerToolbar({
                   icon: Clock3,
                   testId: 'send-after-turn-option',
                   onSelect: () => onSubmit(),
+                  shortcut: 'Enter',
                 },
                 {
                   label:
@@ -201,6 +202,7 @@ export function ComposerToolbar({
                   icon: CornerDownRight,
                   testId: 'guide-current-turn-option',
                   onSelect: () => onSubmit({ guideWhenBusy: true }),
+                  shortcut: 'Command+Enter',
                 },
                 {
                   label:
@@ -216,6 +218,7 @@ export function ComposerToolbar({
                   icon: Zap,
                   testId: 'interrupt-and-send-option',
                   onSelect: () => onSubmit({ interruptWhenBusy: true }),
+                  shortcut: 'Command+Shift+Enter',
                 },
               ]}
             />

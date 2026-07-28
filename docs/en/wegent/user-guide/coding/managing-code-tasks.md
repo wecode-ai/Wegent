@@ -188,6 +188,14 @@ While a Wework task is running, you can choose among three send modes:
 
 After entering a message, use the down arrow on the right side of the send button to open the menu. The clock means wait for the current response, the turning arrow means guide the current response, and the lightning bolt means interrupt and send immediately. Interrupting does not roll back file changes or other tool side effects that already occurred. Regular queued messages remain queued.
 
+The queue sends messages from top to bottom. When several messages are queued, drag the handle on the left of a message to reorder the list with live feedback. Stopping the current response also pauses the queue instead of immediately sending the next message. Selecting **Continue sending** restores the guidance state and sends the first queued message immediately.
+
+If you submit new composer text while the queue is paused, Wework asks how to handle the existing queue:
+
+- **Keep and continue**: sends the new composer message first, then continues the preserved queue; the composer is cleared after submission.
+- **Clear queue**: removes the existing queue and sends only the new composer message.
+- **Cancel**: sends nothing and preserves both the composer and the queue.
+
 ---
 
 ## Advanced Features
