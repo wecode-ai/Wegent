@@ -2,10 +2,30 @@ import type { ComponentType, MouseEvent } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MoreHorizontal } from 'lucide-react'
+import { KeyboardShortcut } from './KeyboardShortcut'
 
 const MENU_GAP = 8
 const VIEWPORT_PADDING = 8
 const MIN_MENU_WIDTH = 176
+const SHORTCUT_MODIFIER_ALIASES: Record<string, string> = {
+  Cmd: 'Command',
+  Meta: 'Command',
+  Ctrl: 'Control',
+  Option: 'Alt',
+}
+
+function formatActionMenuShortcut(shortcut: string): string {
+  const parts = shortcut
+    .split('+')
+    .map(part => part.trim())
+    .filter(Boolean)
+  if (parts.length === 0) return ''
+  const key = parts[parts.length - 1]
+  const modifiers = ['Control', 'Alt', 'Shift', 'Command'].filter(modifier =>
+    parts.slice(0, -1).some(part => (SHORTCUT_MODIFIER_ALIASES[part] ?? part) === modifier)
+  )
+  return [...modifiers, key].join('+')
+}
 
 export interface ActionMenuItem {
   label: string
@@ -14,6 +34,7 @@ export interface ActionMenuItem {
   testId: string
   danger?: boolean
   disabled?: boolean
+  shortcut?: string
 }
 
 interface ActionMenuProps {
@@ -215,6 +236,12 @@ export function ActionMenu({
               >
                 <item.icon className="h-4 w-4 shrink-0" />
                 <span className="truncate">{item.label}</span>
+                {item.shortcut ? (
+                  <KeyboardShortcut
+                    value={formatActionMenuShortcut(item.shortcut)}
+                    className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
+                  />
+                ) : null}
               </button>
             ))}
           </div>,
