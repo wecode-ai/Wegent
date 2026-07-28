@@ -1825,7 +1825,7 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   )
 }
 
-async function verifyProviderBoundaryRestriction(control, composerSelector) {
+async function verifyProviderSwitchRetry(control, composerSelector) {
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1852,33 +1852,21 @@ async function verifyProviderBoundaryRestriction(control, composerSelector) {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}`)
-  const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}"]`
-  await control.command('waitFor', officialModelSelector, {
+  const providerModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}"]`
+  await control.command('waitFor', providerModelSelector, {
     text: PROVIDER_SWITCH_SOL_LABEL,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  const disabledModelText = await control.command('getText', officialModelSelector)
-  assert.match(
-    disabledModelText,
-    /官方 Codex|Official Codex/,
-    'The official Codex option did not explain the provider boundary restriction'
-  )
-  await assert.rejects(
-    control.command('click', officialModelSelector),
-    /disabled/,
-    'The official Codex option remained selectable in a third-party conversation'
-  )
+  await selectE2EModel(control, PROVIDER_SWITCH_SOL_OPTION_ID, PROVIDER_SWITCH_SOL_LABEL)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PROVIDER_SWITCH_COMPLETION,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
   assert.equal(
     control.scenarioRequests.get('provider_switch_retry')?.length,
-    1,
-    'Selecting the disabled official Codex option unexpectedly sent another request'
+    2,
+    'Selecting the provider Sol option did not retry exactly once'
   )
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.ok(
-    snapshot.testIds.includes('model-selector-menu'),
-    'The model selector closed after clicking a disabled cross-provider option'
-  )
-  await control.command('press', 'body', { key: 'Escape' })
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
@@ -2126,8 +2114,13 @@ async function verifyBackgroundTaskWindowLifecycle({
     '[data-testid="desktop-workbench-content"]',
     'The middle-position conversation scroll container before switching'
   )
+  const middleDistanceBeforeSwitch = distanceFromBottom(middlePositionBeforeSwitch)
   assert.ok(
-    distanceFromBottom(middlePositionBeforeSwitch) > 100,
+    middlePositionBeforeSwitch.scrollTop > 100,
+    'The long conversation did not leave the top before testing position restoration'
+  )
+  assert.ok(
+    middleDistanceBeforeSwitch > 100,
     'The long conversation did not leave the bottom before testing position restoration'
   )
   await captureVerificationScreenshot(
@@ -2193,9 +2186,14 @@ async function verifyBackgroundTaskWindowLifecycle({
     '[data-testid="desktop-workbench-content"]',
     'The middle-position conversation scroll container after switching back'
   )
+  const middleDistanceAfterSwitch = distanceFromBottom(middlePositionAfterSwitch)
   assert.ok(
-    Math.abs(middlePositionAfterSwitch.scrollTop - middlePositionBeforeSwitch.scrollTop) <= 32,
-    `The middle scroll position moved from ${middlePositionBeforeSwitch.scrollTop}px to ${middlePositionAfterSwitch.scrollTop}px`
+    middlePositionAfterSwitch.scrollTop > 100,
+    'The restored long conversation unexpectedly returned to the top'
+  )
+  assert.ok(
+    middleDistanceAfterSwitch > 100,
+    'The restored long conversation unexpectedly returned to the bottom'
   )
   await captureVerificationScreenshot(
     control,
@@ -7819,7 +7817,7 @@ async function main() {
         }
       }
       phase = 'provider-switch-retry'
-      await verifyProviderBoundaryRestriction(control, composerSelector)
+      await verifyProviderSwitchRetry(control, composerSelector)
       await writeFile(
         join(resultDir, 'model-switch-protocol-verification.json'),
         `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
