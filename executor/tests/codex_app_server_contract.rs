@@ -289,8 +289,14 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
     );
     assert_eq!(messages[0]["env"]["HTTP_PROXY"], "socks5://127.0.0.1:7890");
     assert_eq!(messages[0]["env"]["HTTPS_PROXY"], "socks5://127.0.0.1:7890");
-    assert_eq!(messages[0]["env"]["NO_PROXY"], "localhost,.internal");
-    assert_eq!(messages[0]["env"]["no_proxy"], "localhost,.internal");
+    assert_eq!(
+        messages[0]["env"]["NO_PROXY"],
+        "localhost,.internal,127.0.0.1,::1,host.docker.internal"
+    );
+    assert_eq!(
+        messages[0]["env"]["no_proxy"],
+        "localhost,.internal,127.0.0.1,::1,host.docker.internal"
+    );
     assert_eq!(messages[3]["params"]["modelProvider"], "openai");
 }
 

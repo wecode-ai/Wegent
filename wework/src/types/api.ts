@@ -2076,6 +2076,8 @@ export interface UnifiedModel {
   displayName?: string | null
   provider?: string | null
   modelId?: string | null
+  contextWindow?: number | null
+  maxOutputTokens?: number | null
   namespace?: string
   resourceUserId?: number
   config?: Record<string, unknown>

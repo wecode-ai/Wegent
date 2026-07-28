@@ -236,6 +236,25 @@ Phase 2a 让**最后的权威 LangGraph state** 成为唯一收口的唯一来�
 不在 Phase 2a 范围（推迟）：让非 `COMPLETED` 终止（FAILED / CANCELLED）携带并持久化
 `messages_chain`，以及放宽检查点定位以识别它们。
 
+## Phase 2b（已评估搁置）
+
+Phase 2b 原计划让 FAILED / CANCELLED 终止也携带并落库 `messages_chain`。经评估后**主动搁置**，
+理由如下：
+
+- **性质是"省 token 优化"，不是"弥补数据丢失"。** 失败时用户已看到的 partial 回复经
+  `collect_completed_result(status="FAILED")` 从流式 blocks 重建进 `result.value`，reload
+  仍能看到；真正缺失的只是失败轮的结构化 `messages_chain`。而 compaction 只改运行时上下文、
+  **从不改写更早 subtask 的记录**，所以续聊会重新加载全量原始历史并重压一次——代价是一次重复
+  压缩的 token，而非用户可见内容丢失。
+- **触发面窄。** 需 (同一轮内发生 compaction) ∩ (该轮以 FAILED 收尾)，交集小。
+- **成本/风险不成比例。** 打通失败链需改 SSE `error` 终止事件契约（`error` 事件先于
+  `response.completed` 终止 SSE 读取循环，且 `_status_updated` 会拦截后续更新），blast radius
+  覆盖 SSE / WebSocket / HTTP callback 三种 transport。
+
+**若将来要做，更省的方向：** 不要把 chain 从 error 终止事件里艰难打通，而是在 **compaction
+发生的那一刻就把 summary 落成独立持久化记录**（而非等 turn 结束），使其对任何结束态天然免疫。
+重启条件：telemetry 显示失败重压 churn 可观，或届时正好要动 compaction 持久化结构。
+
 ## 实现落点
 
 下列模块是后续维护最值得先看的入口：

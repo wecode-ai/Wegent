@@ -628,6 +628,7 @@
       "description": "Wework 正在请求连接此云端工作台。授权后，本地 Wework 将可以读取你的云端模型、设备和运行时配置。",
       "cloud_label": "云端",
       "account_label": "账号",
+      "switch_account": "切换账号",
       "cancel": "取消",
       "approve": "授权",
       "authorization_failed": "授权失败"
