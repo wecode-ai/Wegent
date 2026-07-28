@@ -75,6 +75,7 @@ import type { UnifiedMessage } from '@wegent/chat-core'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
+import { removeTaskQueryParams } from '@/features/tasks/utils/task-query-params'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -1076,13 +1077,14 @@ function ChatAreaContent({
   const consumedExternalDraftRef = useRef<string | null>(null)
   const applyExternalDraft = useCallback(
     (request: KnowledgeCapabilityDraftRequest) => {
-      const nextParams = new URLSearchParams(searchParamsString)
-      nextParams.delete('taskId')
-      nextParams.delete('task_id')
-      nextParams.delete('taskid')
-      const nextSearch = nextParams.toString()
-
-      router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname)
+      const url = new URL(window.location.href)
+      if (removeTaskQueryParams(url.searchParams)) {
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${url.pathname}${url.search}${url.hash}`
+        )
+      }
       selectTask(null)
       hasInitializedTeamRef.current = false
       lastSyncedTaskIdRef.current = null
@@ -1099,13 +1101,10 @@ function ChatAreaContent({
     [
       applyQuickPhraseToInput,
       clearQuickPresetAttachments,
-      pathname,
       resetAttachment,
       resetContexts,
       resetSelectedSkills,
       restoreDefaultTeam,
-      router,
-      searchParamsString,
       selectTask,
     ]
   )

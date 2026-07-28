@@ -352,6 +352,7 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
 
 describe('ChatArea queue message handler mounting', () => {
   beforeEach(() => {
+    window.history.replaceState({}, '', '/chat')
     streamHandlersMock = { ...defaultStreamHandlers }
     selectedTaskDetailMock = null
     mockTaskInputMessage = ''
@@ -513,6 +514,7 @@ describe('ChatArea queue message handler mounting', () => {
 
   it('opens a new task draft without sending an external capability request', async () => {
     const onExternalDraftConsumed = jest.fn()
+    const replaceStateSpy = jest.spyOn(window.history, 'replaceState')
 
     render(
       <ChatArea
@@ -536,6 +538,8 @@ describe('ChatArea queue message handler mounting', () => {
     expect(mockResetContexts).toHaveBeenCalledTimes(1)
     expect(mockResetSkills).toHaveBeenCalledTimes(1)
     expect(mockRestoreDefaultTeam).toHaveBeenCalledTimes(1)
+    expect(replaceStateSpy).not.toHaveBeenCalled()
+    expect(mockRouterReplace).not.toHaveBeenCalled()
     expect(defaultStreamHandlers.handleSendMessage).not.toHaveBeenCalled()
     expect(onExternalDraftConsumed).toHaveBeenCalledWith('presentation-1')
     await waitFor(() => {
@@ -543,12 +547,19 @@ describe('ChatArea queue message handler mounting', () => {
         expect.objectContaining({ focusInputAtEndSignal: 1 })
       )
     })
+    replaceStateSpy.mockRestore()
   })
 
   it('clears every task id alias while preserving unrelated query parameters', async () => {
+    window.history.replaceState(
+      { marker: 'knowledge-task' },
+      '',
+      '/chat?taskId=41&task_id=42&taskid=43&view=notebook&source=knowledge#section'
+    )
     mockSearchParams = new URLSearchParams(
       'taskId=41&task_id=42&taskid=43&view=notebook&source=knowledge'
     )
+    const replaceStateSpy = jest.spyOn(window.history, 'replaceState')
     selectedTaskDetailMock = {
       id: 41,
       status: 'COMPLETED',
@@ -570,9 +581,19 @@ describe('ChatArea queue message handler mounting', () => {
     )
 
     await waitFor(() => {
-      expect(mockRouterReplace).toHaveBeenCalledWith('/chat?view=notebook&source=knowledge')
       expect(mockSelectTask).toHaveBeenCalledWith(null)
+      expect(mockSetTaskInputMessage).toHaveBeenCalledWith('请根据当前选中的知识库文档生成PPT')
     })
+    expect(replaceStateSpy).toHaveBeenCalledWith(
+      { marker: 'knowledge-task' },
+      '',
+      '/chat?view=notebook&source=knowledge#section'
+    )
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe(
+      '/chat?view=notebook&source=knowledge#section'
+    )
+    expect(mockRouterReplace).not.toHaveBeenCalled()
+    replaceStateSpy.mockRestore()
   })
 
   it('keeps the current task and draft when starting a PPT draft is cancelled', () => {
@@ -608,6 +629,7 @@ describe('ChatArea queue message handler mounting', () => {
     mockSelectedContexts = [{ id: 12, name: '其他知识库', type: 'knowledge_base' }]
     mockSelectedSkills = [{ name: 'other-skill', namespace: 'default', is_public: false }]
     mockSearchParams = new URLSearchParams('taskId=42')
+    window.history.replaceState({}, '', '/chat?taskId=42')
 
     render(
       <ChatArea
@@ -627,13 +649,14 @@ describe('ChatArea queue message handler mounting', () => {
     fireEvent.click(screen.getByTestId('knowledge-draft-confirm'))
 
     await waitFor(() => {
-      expect(mockRouterReplace).toHaveBeenCalledWith('/chat')
       expect(mockSelectTask).toHaveBeenCalledWith(null)
       expect(mockResetAttachment).toHaveBeenCalledTimes(1)
       expect(mockResetContexts).toHaveBeenCalledTimes(1)
       expect(mockResetSkills).toHaveBeenCalledTimes(1)
       expect(mockSetTaskInputMessage).toHaveBeenCalledWith('请根据当前选中的知识库文档生成PPT')
     })
+    expect(window.location.pathname + window.location.search).toBe('/chat')
+    expect(mockRouterReplace).not.toHaveBeenCalled()
     expect(defaultStreamHandlers.handleSendMessage).not.toHaveBeenCalled()
   })
 
