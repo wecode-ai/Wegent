@@ -47,6 +47,9 @@ const UNSENT_FIRST_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_FIRST_TASK_DRAFT'
 const UNSENT_SECOND_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_SECOND_TASK_DRAFT'
 const WINDOW_LIFECYCLE_PROMPT =
   'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE: keep this response running until released.'
+const WINDOW_LIFECYCLE_HISTORY_PROMPT =
+  'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_HISTORY: preserve this earlier user message.'
+const WINDOW_LIFECYCLE_HISTORY_RESPONSE = 'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_HISTORY_COMPLETE'
 const WINDOW_LIFECYCLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_COMPLETE'
 const WINDOW_LIFECYCLE_SCROLL_MARKER = 'WEWORK_DESKTOP_E2E_SCROLL_POSITION_MARKER'
 const GOAL_IDLE_PROMPT =
@@ -263,6 +266,7 @@ const RUNNING_FORK_ONLY = process.argv.includes('--running-fork-only')
 const SIDE_CHAT_ONLY = process.argv.includes('--side-chat-only')
 const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
 const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
+const WINDOW_LIFECYCLE_ONLY = process.argv.includes('--window-lifecycle-only')
 const TURN_NAVIGATION_ONLY = process.argv.includes('--turn-navigation-only')
 const ATTACHMENT_ONLY = process.argv.includes('--attachment-only')
 const PASTED_WORKSPACE_PATHS_ONLY = process.argv.includes('--pasted-workspace-paths-only')
@@ -2576,6 +2580,105 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
 }
 
+async function verifyStreamingMessageRecoveryAfterWindowReopen({
+  appIdentifier,
+  composerSelector,
+  control,
+}) {
+  control.resetWindowLifecycleResponse()
+  control.setScenario('window_lifecycle')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  control.setScenario('window_lifecycle_history')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    WINDOW_LIFECYCLE_HISTORY_PROMPT,
+    'window_lifecycle_history'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: WINDOW_LIFECYCLE_HISTORY_RESPONSE,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  control.setScenario('window_lifecycle')
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    WINDOW_LIFECYCLE_PROMPT,
+    'window_lifecycle'
+  )
+  await withTimeout(
+    control.awaitWindowLifecycleResponseStarted(),
+    UI_TIMEOUT_MS,
+    'Timed out waiting for the message-recovery stream to start'
+  )
+  const runningTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-running-')),
+    'The running task was not available before message-recovery window close'
+  )
+  const runningTaskTestId = runningTaskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-running-')
+  )
+  assert.ok(runningTaskTestId, 'The message-recovery running task indicator was not found')
+  const taskRowTestId = runningTaskTestId.replace(
+    'runtime-local-task-running-',
+    'runtime-local-task-row-'
+  )
+
+  if (process.platform === 'darwin') {
+    const readyCountBeforeClose = control.readyCount
+    await control.command('closeMainWindowToTray', 'body')
+    await reactivateMacApplication(appIdentifier)
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeClose),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The Wework WebView did not reconnect for streaming message recovery'
+    )
+  }
+
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: WINDOW_LIFECYCLE_PROMPT,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: WINDOW_LIFECYCLE_HISTORY_PROMPT,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: WINDOW_LIFECYCLE_HISTORY_RESPONSE,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(control, 'window-message-recovery-after-reopen.png')
+  control.releaseWindowLifecycleResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+}
+
 async function attachAndSendOnlyFile(control, composerSelector) {
   await control.command('dropFile', composerSelector, {
     filename: ATTACHMENT_ONLY_FILENAME,
@@ -4050,12 +4153,7 @@ class DesktopE2EServer {
     this.reconnectCompletionRelease = new Promise(resolvePromise => {
       this.releaseReconnectCompletion = resolvePromise
     })
-    this.windowLifecycleRelease = new Promise(resolvePromise => {
-      this.releaseWindowLifecycle = resolvePromise
-    })
-    this.windowLifecycleResponseStarted = new Promise(resolvePromise => {
-      this.resolveWindowLifecycleResponseStarted = resolvePromise
-    })
+    this.resetWindowLifecycleResponse()
     this.runningForkFollowUpRelease = new Promise(resolvePromise => {
       this.releaseRunningForkFollowUp = resolvePromise
     })
@@ -4220,6 +4318,7 @@ class DesktopE2EServer {
         'fork_follow_up',
         'request_user_input',
         'window_lifecycle',
+        'window_lifecycle_history',
         'goal_idle',
         'goal_restart',
         'turn_navigation',
@@ -4300,6 +4399,15 @@ class DesktopE2EServer {
   releaseRequestUserInputResponse() {
     this.releaseRequestUserInput()
     return this.guard(this.requestUserInputResponseWritten)
+  }
+
+  resetWindowLifecycleResponse() {
+    this.windowLifecycleRelease = new Promise(resolvePromise => {
+      this.releaseWindowLifecycle = resolvePromise
+    })
+    this.windowLifecycleResponseStarted = new Promise(resolvePromise => {
+      this.resolveWindowLifecycleResponseStarted = resolvePromise
+    })
   }
 
   awaitReconnectResponseStarted() {
@@ -5066,6 +5174,20 @@ class DesktopE2EServer {
           responseCompleted(responseId),
         ])
       )
+      return
+    }
+
+    if (this.scenario === 'window_lifecycle_history') {
+      this.recordScenarioRequest('window_lifecycle_history', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(WINDOW_LIFECYCLE_HISTORY_PROMPT),
+        'The real Codex request did not contain the window-lifecycle history prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(WINDOW_LIFECYCLE_HISTORY_RESPONSE),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -7428,6 +7550,17 @@ async function main() {
       return
     }
 
+    if (WINDOW_LIFECYCLE_ONLY) {
+      phase = 'window-lifecycle-only'
+      await verifyStreamingMessageRecoveryAfterWindowReopen({
+        appIdentifier,
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      console.log(`Wework desktop window-lifecycle E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (TURN_NAVIGATION_ONLY) {
       phase = 'turn-navigation-only'
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -8739,6 +8872,13 @@ async function main() {
       phase = 'desktop-extension-scenario'
       await desktopScenario.verify(control)
     }
+
+    phase = 'streaming-message-recovery-after-window-reopen'
+    await verifyStreamingMessageRecoveryAfterWindowReopen({
+      appIdentifier,
+      composerSelector,
+      control,
+    })
 
     await writeFile(
       join(resultDir, 'model-requests.json'),

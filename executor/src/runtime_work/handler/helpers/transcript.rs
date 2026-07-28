@@ -183,7 +183,7 @@ fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_message
             merge_missing_user_message_metadata(&mut messages[index], &message);
             continue;
         }
-        messages.push(message);
+        insert_message_by_created_at(messages, message);
     }
 }
 
@@ -228,18 +228,31 @@ fn append_missing_cached_failed_assistant_messages(
         if let Some(subtask_id) = subtask_id {
             assistant_subtask_ids.insert(subtask_id);
         }
-        let Some(created_at) = message_created_at_ms(&message) else {
-            messages.push(message);
-            continue;
-        };
-        if let Some(index) = messages.iter().position(|existing| {
-            message_created_at_ms(existing).is_some_and(|existing_at| existing_at > created_at)
-        }) {
-            messages.insert(index, message);
-        } else {
-            messages.push(message);
-        }
+        insert_message_by_created_at(messages, message);
     }
+}
+
+fn insert_message_by_created_at(messages: &mut Vec<Value>, message: Value) {
+    let Some(created_at) = message_created_at_ms(&message) else {
+        messages.push(message);
+        return;
+    };
+    if let Some(index) = messages.iter().position(|existing| {
+        message_created_at_ms(existing).is_some_and(|existing_at| existing_at > created_at)
+    }) {
+        messages.insert(index, message);
+    } else {
+        messages.push(message);
+    }
+}
+
+fn runtime_transcript_uses_cached_user_messages(
+    local_execution_running: bool,
+    local_link: Option<&RuntimeTaskLink>,
+) -> bool {
+    local_execution_running
+        || local_link
+            .is_some_and(|link| link.status.eq_ignore_ascii_case("failed"))
 }
 
 fn message_subtask_id(message: &Value) -> Option<String> {

@@ -447,6 +447,46 @@ fn transcript_appends_cached_user_message_missing_from_failed_provider_turn() {
 }
 
 #[test]
+fn transcript_inserts_cached_user_message_before_active_provider_output() {
+    let mut provider_messages = vec![json!({
+        "id": "assistant-active",
+        "role": "assistant",
+        "content": "",
+        "status": "streaming",
+        "createdAt": 2000,
+        "blocks": [{"type": "thinking", "status": "streaming"}]
+    })];
+    let cached_messages = vec![json!({
+        "id": "cached-user",
+        "role": "user",
+        "content": "restore this prompt",
+        "createdAt": 1000
+    })];
+
+    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(provider_messages.len(), 2);
+    assert_eq!(provider_messages[0]["id"], "cached-user");
+    assert_eq!(provider_messages[1]["id"], "assistant-active");
+}
+
+#[test]
+fn active_execution_restores_cached_users_even_when_persisted_running_is_stale() {
+    let mut link = RuntimeTaskLink::default();
+    link.running = false;
+    link.status = "active".to_owned();
+
+    assert!(runtime_transcript_uses_cached_user_messages(
+        true,
+        Some(&link)
+    ));
+    assert!(!runtime_transcript_uses_cached_user_messages(
+        false,
+        Some(&link)
+    ));
+}
+
+#[test]
 fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
     let mut provider_messages = vec![
         json!({"id": "user-1", "role": "user", "content": "same"}),
