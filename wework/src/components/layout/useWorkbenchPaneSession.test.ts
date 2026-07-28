@@ -109,11 +109,11 @@ describe('reconcileRuntimeConversationMessages', () => {
 
   test('does not borrow an older cached turn identity for an identity-less latest response', () => {
     const cached = [
-      message({ id: 'older-assistant', turnId: 'turn-1', content: 'Earlier response' }),
+      message({ id: 'older-assistant', subtaskId: 'turn-1', content: 'Earlier response' }),
       message({ id: 'latest-assistant', content: 'Latest response without runtime identity' }),
     ]
     const transcript = [
-      message({ id: 'server-assistant', turnId: 'turn-2', content: 'Settled server response' }),
+      message({ id: 'server-assistant', subtaskId: 'turn-2', content: 'Settled server response' }),
     ]
 
     expect(reconcileRuntimeConversationMessages(transcript, cached, false)).toBe(transcript)
