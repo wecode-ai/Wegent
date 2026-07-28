@@ -92,6 +92,8 @@ const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after
 const RETRY_FAILURE_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'
 const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context window."
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
+const RATE_LIMIT_PROMPT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT: recover from one model 429.'
+const RATE_LIMIT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT_COMPLETE'
 const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
@@ -276,6 +278,7 @@ const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY ===
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only')
 const RETRY_ONLY = process.argv.includes('--retry-only')
+const RATE_LIMIT_ONLY = process.argv.includes('--rate-limit-only')
 const RUNNING_FORK_ONLY = process.argv.includes('--running-fork-only')
 const SIDE_CHAT_ONLY = process.argv.includes('--side-chat-only')
 const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
@@ -3254,6 +3257,37 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
   )
 }
 
+async function verifyRateLimitRecovery({ composerSelector, control }) {
+  control.setScenario('rate_limit')
+  await sendPromptUntilScenarioRequest(control, composerSelector, RATE_LIMIT_PROMPT, 'rate_limit')
+  await withTimeout(
+    control.awaitScenarioRequestCount('rate_limit', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The local model proxy did not retry the rate-limited request'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: RATE_LIMIT_COMPLETION_TEXT, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  const recoveredSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    recoveredSnapshot.testIds.includes('assistant-error-card'),
+    false,
+    'The recovered rate-limit request rendered an assistant error'
+  )
+  assert.equal(
+    control.scenarioRequests.get('rate_limit')?.length,
+    2,
+    'The rate-limit recovery did not issue exactly one retry'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'rate-limit-01-recovered.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
 function createSse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 }
@@ -4430,6 +4464,7 @@ class DesktopE2EServer {
         'cancellation',
         'queue_management',
         'retry',
+        'rate_limit',
         'reconnect',
         'checkpoint_task',
         'fresh_chat',
@@ -5540,6 +5575,26 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(RETRY_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'rate_limit') {
+      this.recordScenarioRequest('rate_limit', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(RATE_LIMIT_PROMPT),
+        'The real Codex request did not contain the rate-limit prompt'
+      )
+      const rateLimitRequests = this.scenarioRequests.get('rate_limit') ?? []
+      if (rateLimitRequests.length === 1) {
+        response.setHeader('Retry-After', '0')
+        json(response, 429, { error: { message: 'Desktop E2E intentional rate limit' } })
+        return
+      }
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(RATE_LIMIT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -7626,6 +7681,21 @@ async function main() {
       return
     }
 
+    if (RATE_LIMIT_ONLY) {
+      phase = 'rate-limit-recovery'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await verifyRateLimitRecovery({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      console.log(`Wework desktop rate-limit E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (GOAL_IDLE_ONLY) {
       phase = 'goal-idle-state-lifecycle'
       await verifyActiveGoalIdleUnreadLifecycle({
@@ -8684,6 +8754,9 @@ async function main() {
 
       phase = 'retry'
       await verifyRetryFailureRestoration(control, composerSelector)
+
+      phase = 'rate-limit-recovery'
+      await verifyRateLimitRecovery({ composerSelector, control })
 
       phase = 'reconnect'
       await verifyReconnectRecovery({ composerSelector, control })
