@@ -145,6 +145,22 @@ def test_read_subtask_user_returns_prompt(internal_chat_client, monkeypatch):
     assert body["blocks"] is None
 
 
+def test_read_subtask_rejects_deleted(internal_chat_client, monkeypatch):
+    _patch_task(monkeypatch)
+    deleted = _subtask(4, SubtaskRole.ASSISTANT, result={"value": "gone"})
+    deleted.status = SubtaskStatus.DELETE
+    monkeypatch.setattr(
+        chat_storage.subtask_store,
+        "get_by_id",
+        lambda db, *, subtask_id, owner_user_id=None: deleted,
+        raising=False,
+    )
+
+    resp = internal_chat_client.get("/internal/chat/history/task-2/subtasks/4")
+
+    assert resp.status_code == 404
+
+
 def test_read_subtask_rejects_foreign_task(internal_chat_client, monkeypatch):
     _patch_task(monkeypatch)
     foreign = _subtask(9, SubtaskRole.ASSISTANT, task_id=999, result={"value": "x"})

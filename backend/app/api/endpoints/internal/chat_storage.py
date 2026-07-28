@@ -35,6 +35,10 @@ from app.models.user import User
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.chat.compaction_checkpoint import resolve_history_subtasks
 from app.services.chat.guidance_queue import guidance_queue
+from app.services.chat.subtask_history import (
+    list_subtask_summaries,
+    read_subtask_record,
+)
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
@@ -944,22 +948,6 @@ async def get_chat_history(
     return HistoryResponse(session_id=session_id, messages=messages)
 
 
-_SUBTASK_PREVIEW_CHARS = 200
-
-
-def _subtask_primary_text(subtask: Subtask) -> str:
-    """Un-compacted plain text of a subtask, for preview and size.
-
-    Deliberately reads the raw record (prompt / result.value), not the
-    compaction-scoped history flatten, so previews reflect the original turn.
-    """
-    if subtask.role == SubtaskRole.USER:
-        return subtask.prompt or ""
-    result = subtask.result if isinstance(subtask.result, dict) else {}
-    value = result.get("value")
-    return value if isinstance(value, str) else ""
-
-
 class SubtaskSummary(BaseModel):
     """One-line summary of a history subtask for AI backtracking."""
 
@@ -1011,24 +999,11 @@ async def list_history_subtasks(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    subtasks = subtask_store.list_new_messages_since(
-        db, task_id=task_id, owner_user_id=task.user_id
+    summaries = list_subtask_summaries(db, task_id=task_id, user_id=task.user_id)
+    return SubtaskListResponse(
+        session_id=session_id,
+        subtasks=[SubtaskSummary(**s) for s in summaries],
     )
-    summaries = []
-    for st in subtasks:
-        if st.status == SubtaskStatus.DELETE:
-            continue
-        text = _subtask_primary_text(st)
-        summaries.append(
-            SubtaskSummary(
-                id=st.id,
-                role=st.role.value.lower(),
-                status=st.status.value,
-                char_count=len(text),
-                preview=text[:_SUBTASK_PREVIEW_CHARS],
-            )
-        )
-    return SubtaskListResponse(session_id=session_id, subtasks=summaries)
 
 
 @router.get(
@@ -1050,29 +1025,12 @@ async def read_history_subtask(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    subtask = subtask_store.get_by_id(
-        db, subtask_id=subtask_id, owner_user_id=task.user_id
+    record = read_subtask_record(
+        db, task_id=task_id, subtask_id=subtask_id, user_id=task.user_id
     )
-    # Owner filter alone is not enough: a same-user subtask in a different task
-    # must not be readable through this session. Enforce task ownership too.
-    if subtask is None or subtask.task_id != task_id:
+    if record is None:
         raise HTTPException(status_code=404, detail="Subtask not found in this session")
-
-    role = subtask.role.value.lower()
-    status = subtask.status.value
-    if subtask.role == SubtaskRole.USER:
-        return SubtaskRecordResponse(
-            id=subtask.id, role=role, status=status, prompt=subtask.prompt or ""
-        )
-    result = subtask.result if isinstance(subtask.result, dict) else {}
-    return SubtaskRecordResponse(
-        id=subtask.id,
-        role=role,
-        status=status,
-        blocks=result.get("blocks"),
-        messages_chain=result.get("messages_chain"),
-        value=result.get("value"),
-    )
+    return SubtaskRecordResponse(**record)
 
 
 class AttachmentTextResponse(BaseModel):

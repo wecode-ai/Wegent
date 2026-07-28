@@ -21,8 +21,6 @@ from typing import Any
 
 from chat_shell.history.loader import _get_remote_history_store, _is_http_mode
 
-_PREVIEW_CHARS = 200
-
 
 class SubtaskRecordNotAvailable(Exception):
     """Raised when a subtask cannot be read (missing or out of scope)."""
@@ -47,81 +45,40 @@ async def fetch_subtask_record(*, task_id: int, subtask_id: int) -> dict[str, An
     return await asyncio.to_thread(_read_local, task_id, subtask_id)
 
 
-def _primary_text(subtask: Any) -> str:
-    """Un-compacted plain text of a subtask (matches the backend endpoint)."""
-    from app.models.subtask import SubtaskRole
-
-    if subtask.role == SubtaskRole.USER:
-        return subtask.prompt or ""
-    result = subtask.result if isinstance(subtask.result, dict) else {}
-    value = result.get("value")
-    return value if isinstance(value, str) else ""
-
-
 def _list_local(task_id: int) -> list[dict[str, Any]]:
-    """Package-mode summary list with the same scoping as the endpoint."""
+    """Package-mode summary list — delegates to the shared backend service."""
     from app.db.session import SessionLocal
-    from app.models.subtask import Subtask, SubtaskStatus
+    from app.services.chat.subtask_history import list_subtask_summaries
+    from app.stores.tasks import task_store
 
     db = SessionLocal()
     try:
-        rows = (
-            db.query(Subtask)
-            .filter(Subtask.task_id == task_id)
-            .order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
-            .all()
-        )
-        summaries = []
-        for st in rows:
-            if st.status == SubtaskStatus.DELETE:
-                continue
-            text = _primary_text(st)
-            summaries.append(
-                {
-                    "id": st.id,
-                    "role": st.role.value.lower(),
-                    "status": st.status.value,
-                    "char_count": len(text),
-                    "preview": text[:_PREVIEW_CHARS],
-                }
-            )
-        return summaries
+        task = task_store.get_by_id(db, task_id=task_id)
+        if task is None:
+            return []
+        return list_subtask_summaries(db, task_id=task_id, user_id=task.user_id)
     finally:
         db.close()
 
 
 def _read_local(task_id: int, subtask_id: int) -> dict[str, Any]:
-    """Package-mode raw record read, scoped to the task."""
+    """Package-mode raw record read — delegates to the shared backend service."""
     from app.db.session import SessionLocal
-    from app.models.subtask import Subtask, SubtaskRole
+    from app.services.chat.subtask_history import read_subtask_record
+    from app.stores.tasks import task_store
 
     db = SessionLocal()
     try:
-        subtask = (
-            db.query(Subtask)
-            .filter(Subtask.id == subtask_id, Subtask.task_id == task_id)
-            .first()
+        task = task_store.get_by_id(db, task_id=task_id)
+        record = (
+            read_subtask_record(
+                db, task_id=task_id, subtask_id=subtask_id, user_id=task.user_id
+            )
+            if task is not None
+            else None
         )
-        if subtask is None:
+        if record is None:
             raise SubtaskRecordNotAvailable("Subtask not found in this session")
-
-        role = subtask.role.value.lower()
-        status = subtask.status.value
-        if subtask.role == SubtaskRole.USER:
-            return {
-                "id": subtask.id,
-                "role": role,
-                "status": status,
-                "prompt": subtask.prompt or "",
-            }
-        result = subtask.result if isinstance(subtask.result, dict) else {}
-        return {
-            "id": subtask.id,
-            "role": role,
-            "status": status,
-            "blocks": result.get("blocks"),
-            "messages_chain": result.get("messages_chain"),
-            "value": result.get("value"),
-        }
+        return record
     finally:
         db.close()

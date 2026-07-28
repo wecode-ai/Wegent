@@ -25,6 +25,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
 from chat_shell.compression.token_counter import TokenCounter
+from chat_shell.core.config import settings
 from chat_shell.history.subtask_records import (
     SubtaskRecordNotAvailable,
     fetch_history_subtasks,
@@ -33,10 +34,17 @@ from chat_shell.history.subtask_records import (
 
 logger = logging.getLogger(__name__)
 
-# Aligned with the tool-output budget so a page stays within what the
-# request-level guard allows (no re-truncation that would break paging).
-DEFAULT_PAGE_TOKEN_LIMIT = 15000
 DEFAULT_LIST_PAGE_SIZE = 50
+# A page must land strictly under the request-level tool-output guard limit, or
+# the guard re-truncates the JSON tail and breaks block-boundary paging. Derive
+# the budget from that single source of truth minus a buffer for the JSON
+# envelope (and tokenizer variance), so the two can never drift apart.
+_PAGE_TOKEN_SELF_BUFFER = 1024
+
+
+def _page_token_budget() -> int:
+    """Per-page token budget: the guard limit minus the envelope self-buffer."""
+    return max(1, settings.TOOL_OUTPUT_TOKEN_LIMIT - _PAGE_TOKEN_SELF_BUFFER)
 
 
 def _render_block(block: dict[str, Any]) -> str:
@@ -167,7 +175,6 @@ class ReadSubtaskTool(BaseTool):
 
     task_id: int
     token_counter: TokenCounter
-    page_token_limit: int = DEFAULT_PAGE_TOKEN_LIMIT
     max_calls: int = 30
     _call_count: int = PrivateAttr(default=0)
 
@@ -202,7 +209,9 @@ class ReadSubtaskTool(BaseTool):
             )
 
         blocks = _record_to_blocks(record)
-        budget = max_tokens if max_tokens > 0 else self.page_token_limit
+        # Never exceed the guard limit (minus buffer); an override only shrinks it.
+        budget_cap = _page_token_budget()
+        budget = min(max_tokens, budget_cap) if max_tokens > 0 else budget_cap
         cursor = max(0, cursor)
 
         page_parts: list[str] = []

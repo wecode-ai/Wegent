@@ -38,6 +38,7 @@ class ChatContextResult:
         extra_tools: All tools including builtin tools (LoadSkillTool, WebSearchTool, etc.)
         system_prompt: System prompt (may be updated by KB tools)
         kb_meta_prompt: Knowledge base meta prompt (dynamic, injected via dynamic_context)
+        backtrack_hint: History-backtracking nudge (dynamic, injected via dynamic_context)
         mcp_clients: MCP clients for cleanup
     """
 
@@ -45,6 +46,7 @@ class ChatContextResult:
     extra_tools: list = field(default_factory=list)
     system_prompt: str = ""
     kb_meta_prompt: str = ""
+    backtrack_hint: str = ""
     mcp_clients: list = field(default_factory=list)
 
 
@@ -57,10 +59,8 @@ _DOCUMENT_ATTACHMENT = re.compile(r"\[Attachment:")
 
 
 _HISTORY_BACKTRACK_HINT = (
-    "\n\nSome earlier turns have been summarized out of your current context to "
-    "save space. If you need details you no longer see verbatim, call "
-    "`list_history` to find the relevant turn, then `read_subtask` to read its "
-    "full original content."
+    "Earlier turns were summarized out of your context — use `list_history` and "
+    "`read_subtask` to recover their original detail when you need it."
 )
 
 
@@ -301,14 +301,19 @@ class ChatContext:
                 system_prompt = kb_result.enhanced_system_prompt
             kb_meta_prompt = kb_result.kb_meta_prompt
 
-            # Point the model at the backtracking tools only when compaction has
-            # actually dropped detail and the tools were registered.
-            if (
-                had_compaction
-                and self._request.enable_tools
-                and not settings.DISABLE_SUMMARY_COMPACT
-            ):
-                system_prompt = f"{system_prompt}{_HISTORY_BACKTRACK_HINT}"
+            # Nudge the model toward the backtracking tools only when compaction
+            # has actually dropped detail AND the tools were registered. Delivered
+            # via dynamic_context (message channel), never the system prompt, so
+            # the cacheable prefix stays stable across turns.
+            backtrack_hint = (
+                _HISTORY_BACKTRACK_HINT
+                if (
+                    had_compaction
+                    and self._request.enable_tools
+                    and self._backtrack_tools_enabled()
+                )
+                else ""
+            )
 
             # Track MCP clients for cleanup (both from MCP servers and skills)
             _, mcp_clients = mcp_result
@@ -329,6 +334,7 @@ class ChatContext:
                 extra_tools=extra_tools,
                 system_prompt=system_prompt,
                 kb_meta_prompt=kb_meta_prompt,
+                backtrack_hint=backtrack_hint,
                 mcp_clients=all_mcp_clients,
             )
 
@@ -841,6 +847,17 @@ class ChatContext:
         except Exception as e:
             logger.warning("[CHAT_CONTEXT] Failed to close MCP client: %s", e)
 
+    def _backtrack_tools_enabled(self) -> bool:
+        """Whether history-backtracking tools apply: summary compaction is active.
+
+        Mirrors the exact condition under which the summary compactor is created
+        (chat_service), so the tools/hint follow compaction rather than drifting.
+        """
+        return (
+            settings.MESSAGE_COMPRESSION_ENABLED
+            and not settings.DISABLE_SUMMARY_COMPACT
+        )
+
     def _build_extra_tools(
         self,
         kb_result,
@@ -964,7 +981,7 @@ class ChatContext:
         # Add history-backtracking tools when context governance (summary
         # compaction) is on, so the model can page back into detail that
         # compaction summarized away. Task-scoped and read-only.
-        if not settings.DISABLE_SUMMARY_COMPACT:
+        if self._backtrack_tools_enabled():
             from chat_shell.compression.token_counter import TokenCounter
             from chat_shell.tools.builtin import ListHistoryTool, ReadSubtaskTool
 
