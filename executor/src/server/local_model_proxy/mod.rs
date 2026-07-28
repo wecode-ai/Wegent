@@ -17,7 +17,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     pin::Pin,
     sync::{Mutex, OnceLock},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use axum::{
@@ -39,6 +39,15 @@ pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
+const RATE_LIMIT_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_secs(1),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+    Duration::from_secs(60),
+];
+const MAX_RATE_LIMIT_RETRIES: u32 = RATE_LIMIT_RETRY_DELAYS.len() as u32;
+const MAX_RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 pub(crate) fn route<S>() -> MethodRouter<S>
 where
@@ -301,32 +310,19 @@ async fn handle_for_token(
         ],
     );
 
-    let client = proxy_client(upstream.proxy_url.as_deref())?;
-    let mut request = client
-        .post(request_url)
-        .bearer_auth(&upstream.api_key)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
-        .body(request_body);
-    if upstream.api_format == "anthropic-messages" {
-        request = request
-            .header("x-api-key", upstream.api_key)
-            .header("anthropic-version", "2023-06-01");
-    }
-    if let Some(user_agent) = headers
+    let user_agent = headers
         .get(header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
-    {
-        request = request.header(reqwest::header::USER_AGENT, user_agent);
-    }
-    for (key, value) in upstream.default_headers {
-        request = request.header(key, value);
-    }
-
-    let upstream_response = request.send().await.map_err(|error| HttpError {
-        status: StatusCode::BAD_GATEWAY,
-        detail: format!("Local model proxy request failed: {error}"),
-    })?;
+        .map(str::to_owned);
+    let client = proxy_client(upstream.proxy_url.as_deref())?;
+    let upstream_response = send_upstream_request_with_rate_limit_retry(
+        &client,
+        &upstream,
+        &request_url,
+        &request_body,
+        user_agent.as_deref(),
+    )
+    .await?;
     let status = upstream_response.status();
     if status.is_success() {
         commit_model_request(&token, &model_routing);
@@ -1013,6 +1009,101 @@ fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
         })
 }
 
+async fn send_upstream_request_with_rate_limit_retry(
+    client: &reqwest::Client,
+    upstream: &LocalModelProxyUpstream,
+    request_url: &str,
+    request_body: &[u8],
+    user_agent: Option<&str>,
+) -> Result<reqwest::Response, HttpError> {
+    for retry_count in 0..=MAX_RATE_LIMIT_RETRIES {
+        let response =
+            build_upstream_request(client, upstream, request_url, request_body, user_agent)
+                .send()
+                .await
+                .map_err(|error| HttpError {
+                    status: StatusCode::BAD_GATEWAY,
+                    detail: format!("Local model proxy request failed: {error}"),
+                })?;
+        if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
+            || retry_count == MAX_RATE_LIMIT_RETRIES
+        {
+            return Ok(response);
+        }
+
+        let delay = rate_limit_retry_delay(response.headers(), retry_count);
+        log_executor_event(
+            "local model proxy rate limited; retrying",
+            &[
+                ("api_format", upstream.api_format.clone()),
+                ("retry", (retry_count + 1).to_string()),
+                ("max_retries", MAX_RATE_LIMIT_RETRIES.to_string()),
+                ("delay_ms", delay.as_millis().to_string()),
+            ],
+        );
+        tokio::time::sleep(delay).await;
+    }
+
+    unreachable!("rate limit retry loop always returns a response")
+}
+
+fn build_upstream_request(
+    client: &reqwest::Client,
+    upstream: &LocalModelProxyUpstream,
+    request_url: &str,
+    request_body: &[u8],
+    user_agent: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let mut request = client
+        .post(request_url)
+        .bearer_auth(&upstream.api_key)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .body(request_body.to_vec());
+    if upstream.api_format == "anthropic-messages" {
+        request = request
+            .header("x-api-key", &upstream.api_key)
+            .header("anthropic-version", "2023-06-01");
+    }
+    if let Some(user_agent) = user_agent {
+        request = request.header(reqwest::header::USER_AGENT, user_agent);
+    }
+    for (key, value) in &upstream.default_headers {
+        request = request.header(key, value);
+    }
+    request
+}
+
+fn rate_limit_retry_delay(headers: &reqwest::header::HeaderMap, retry_count: u32) -> Duration {
+    let retry_after = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_retry_after);
+    retry_after
+        .unwrap_or_else(|| configured_rate_limit_delay(retry_count))
+        .min(MAX_RATE_LIMIT_RETRY_DELAY)
+}
+
+fn parse_retry_after(value: &str) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let retry_at = httpdate::parse_http_date(value).ok()?;
+    Some(
+        retry_at
+            .duration_since(SystemTime::now())
+            .unwrap_or(Duration::ZERO),
+    )
+}
+
+fn configured_rate_limit_delay(retry_count: u32) -> Duration {
+    RATE_LIMIT_RETRY_DELAYS
+        .get(retry_count as usize)
+        .copied()
+        .unwrap_or(MAX_RATE_LIMIT_RETRY_DELAY)
+}
+
 fn safe_url(value: &str) -> String {
     reqwest::Url::parse(value)
         .ok()
@@ -1452,7 +1543,13 @@ fn ensure_usage_detail(usage: &mut Map<String, Value>, details_key: &str, field:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, fs, sync::Arc};
+    use std::{
+        env, fs,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
 
     use axum::{body::to_bytes, routing::post, Json, Router};
     use serde_json::json;
@@ -1833,6 +1930,40 @@ mod tests {
     #[test]
     fn proxy_client_rejects_invalid_url() {
         assert!(proxy_client(Some("not a proxy url")).is_err());
+    }
+
+    #[test]
+    fn rate_limit_retry_delay_uses_retry_after_and_caps_large_values() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("2"),
+        );
+        assert_eq!(rate_limit_retry_delay(&headers, 0), Duration::from_secs(2));
+
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("120"),
+        );
+        assert_eq!(
+            rate_limit_retry_delay(&headers, 0),
+            MAX_RATE_LIMIT_RETRY_DELAY
+        );
+    }
+
+    #[test]
+    fn rate_limit_retry_delay_falls_back_to_configured_backoff_sequence() {
+        let headers = reqwest::header::HeaderMap::new();
+
+        let delays = (0..MAX_RATE_LIMIT_RETRIES)
+            .map(|retry_count| rate_limit_retry_delay(&headers, retry_count))
+            .collect::<Vec<_>>();
+
+        assert_eq!(delays, RATE_LIMIT_RETRY_DELAYS);
+        assert_eq!(
+            rate_limit_retry_delay(&headers, 20),
+            Duration::from_secs(60)
+        );
     }
 
     #[test]
@@ -2297,6 +2428,140 @@ mod tests {
             .await
             .expect("response body");
         assert!(String::from_utf8_lossy(&body).contains("tools are unsupported"));
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn retries_rate_limited_model_requests_until_success() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn({
+            let request_count = request_count.clone();
+            async move {
+                axum::serve(
+                    listener,
+                    Router::new().route(
+                        "/chat/completions",
+                        post(move || {
+                            let request_count = request_count.clone();
+                            async move {
+                                if request_count.fetch_add(1, Ordering::SeqCst) < 2 {
+                                    return (
+                                        StatusCode::TOO_MANY_REQUESTS,
+                                        [(header::RETRY_AFTER, "0")],
+                                        Json(json!({"error": {"message": "rate limited"}})),
+                                    );
+                                }
+                                (
+                                    StatusCode::OK,
+                                    [(header::RETRY_AFTER, "0")],
+                                    Json(json!({"choices": [{"message": {"content": "hi"}}]})),
+                                )
+                            }
+                        }),
+                    ),
+                )
+                .await
+                .expect("upstream server");
+            }
+        });
+        let token = register(
+            "rate-limit-retry-success",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/chat/completions")),
+                api_format: "openai-chat-completions".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let response = handle(
+            proxy_headers(&token),
+            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
+        )
+        .await
+        .expect("proxy response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(request_count.load(Ordering::SeqCst), 3);
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn returns_last_rate_limit_response_after_retry_budget_is_exhausted() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn({
+            let request_count = request_count.clone();
+            async move {
+                axum::serve(
+                    listener,
+                    Router::new().route(
+                        "/responses",
+                        post(move || {
+                            request_count.fetch_add(1, Ordering::SeqCst);
+                            async {
+                                (
+                                    StatusCode::TOO_MANY_REQUESTS,
+                                    [(header::RETRY_AFTER, "0")],
+                                    Json(json!({"error": {"message": "still rate limited"}})),
+                                )
+                            }
+                        }),
+                    ),
+                )
+                .await
+                .expect("upstream server");
+            }
+        });
+        let token = register(
+            "rate-limit-retry-exhausted",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/responses")),
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let response = handle(
+            proxy_headers(&token),
+            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
+        )
+        .await
+        .expect("proxy response");
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            (MAX_RATE_LIMIT_RETRIES + 1) as usize
+        );
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        assert!(String::from_utf8_lossy(&body).contains("still rate limited"));
 
         unregister(&token);
         server.abort();
