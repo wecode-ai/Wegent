@@ -267,9 +267,23 @@ export function WorkbenchProvider({
   const consumeQueuedPluginTrial = useCallback(() => {
     const trial = consumePluginTrial()
     if (!trial) return
-    const nextStandaloneChatKey = state.currentRuntimeTask
-      ? state.standaloneChatKey
-      : state.standaloneChatKey + 1
+    if (state.currentRuntimeTask) {
+      const currentScopeKey = getProjectChatScopeKey({
+        currentRuntimeTask: state.currentRuntimeTask,
+        standaloneChatKey: state.standaloneChatKey,
+      })
+      setDraftInputByScope(current => ({ ...current, [currentScopeKey]: trial.input }))
+      setTrialTemplatesByScope(current => ({ ...current, [currentScopeKey]: trial.templates }))
+      navigateTo('/')
+      window.dispatchEvent(
+        new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
+          detail: { expectedValue: trial.input },
+        })
+      )
+      return
+    }
+
+    const nextStandaloneChatKey = state.standaloneChatKey + 1
     const nextScopeKey = getProjectChatScopeKey({
       currentRuntimeTask: null,
       standaloneChatKey: nextStandaloneChatKey,
@@ -282,7 +296,7 @@ export function WorkbenchProvider({
         state.standaloneDeviceId
       ),
       standaloneWorkspacePath: null,
-      startFreshChat: !state.currentRuntimeTask,
+      startFreshChat: true,
     })
     setDraftInputByScope(current => ({ ...current, [nextScopeKey]: trial.input }))
     setTrialTemplatesByScope(current => ({ ...current, [nextScopeKey]: trial.templates }))

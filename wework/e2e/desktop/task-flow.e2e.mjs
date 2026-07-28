@@ -1474,6 +1474,13 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
 }
 
 async function verifyPluginLifecycle(control, marketplacePath) {
+  const activeTaskBeforePluginTrial = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
+    'The plugin lifecycle requires an active conversation'
+  )
+  const activeTaskId = activeTaskBeforePluginTrial.workbench.currentRuntimeTask.taskId
+
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1549,6 +1556,11 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     'Trying the installed plugin did not place its reference in the composer',
     UI_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
+  )
+  await waitForWorkbenchTask(
+    control,
+    activeTaskId,
+    'Trying the installed plugin did not reuse the active conversation'
   )
   await captureVerificationScreenshot(control, 'plugins-03-used-in-chat.png')
 

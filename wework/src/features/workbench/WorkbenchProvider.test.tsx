@@ -7112,6 +7112,34 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
+  test('hydrates queued plugin trial input into the current runtime task', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+
+    await userEvent.click(await screen.findByText('open project runtime task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-a'
+      )
+    )
+    const standaloneChatKey = screen.getByTestId('standalone-chat-key').textContent
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@OpenAI Bundled) ',
+        pluginName: 'Documents',
+      })
+    )
+    window.dispatchEvent(new Event('wework:plugin-trial-queued'))
+
+    await waitFor(() => expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents'))
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+      'device-1:runtime-a'
+    )
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(standaloneChatKey ?? '')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
   test('sends a follow-up message after setting a goal in an existing runtime task', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
       accepted: true,
