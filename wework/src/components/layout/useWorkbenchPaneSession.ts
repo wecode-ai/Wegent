@@ -64,6 +64,7 @@ import {
   cacheRuntimeConversationMessages,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
+  discardRuntimeConversationGuidance,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
@@ -837,6 +838,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           setQueuedMessages(messages =>
             messages.filter(message => message.id !== guidanceMessage.id)
           )
+          discardRuntimeConversationGuidance(address, guidanceMessage.id)
           return
         }
         appendGuidanceLocalUserMessage(guidanceMessage.content, guidanceMessage.attachments, {

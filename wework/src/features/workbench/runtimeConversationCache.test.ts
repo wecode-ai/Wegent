@@ -7,6 +7,7 @@ import {
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  discardRuntimeConversationGuidance,
   dispatchRuntimeConversationQueueEvent,
   evictRuntimeConversation,
   getConversationScrollSnapshot,
@@ -209,6 +210,40 @@ describe('runtimeConversationCache', () => {
     expect(
       getRuntimeConversationMessages(address).filter(message => message.id === payload.guidanceId)
     ).toHaveLength(1)
+  })
+
+  test('discards only the cached guidance message when its application is interrupted', () => {
+    cacheRuntimeConversationMessages(address, [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'working',
+        status: 'streaming',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+    ])
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'client-guidance-1',
+        content: 'follow the updated direction',
+        status: 'sending',
+        deliveryMode: 'guidance',
+        createdAt: '2026-07-27T00:00:01.000Z',
+      },
+    ])
+
+    const settled = settleRuntimeConversationGuidance(address, {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      guidanceId: 'runtime-guidance-1',
+      message: 'follow the updated direction',
+      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+    })
+    discardRuntimeConversationGuidance(address, settled?.id ?? '')
+
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
+      { id: 'assistant-1', role: 'assistant' },
+    ])
   })
 
   test('bounds cached transcripts when many conversations are opened', () => {

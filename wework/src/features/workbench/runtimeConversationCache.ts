@@ -131,6 +131,21 @@ export function settleRuntimeConversationGuidance(
   return guidanceMessage
 }
 
+export function discardRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  guidanceId: string
+) {
+  const key = runtimeConversationKey(address)
+  const messages = messagesByConversation.get(key)
+  if (!messages) return
+
+  const nextMessages = messages.filter(
+    message => message.id !== guidanceId || message.runtimeGuidance !== true
+  )
+  if (nextMessages.length === messages.length) return
+  cacheBoundedEntry(messagesByConversation, key, nextMessages)
+}
+
 export function reduceRuntimeConversationQueue(
   messages: RuntimePaneQueuedMessage[],
   event: RuntimeConversationQueueEvent
