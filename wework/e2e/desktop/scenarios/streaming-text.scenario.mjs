@@ -18,7 +18,7 @@ const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
-const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] p[data-scroll-anchor]:nth-of-type(13)`
+const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"] p[data-scroll-anchor]:nth-of-type(13)`
 const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   if (index === 11) {
     return `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
@@ -500,6 +500,12 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await capture(control, 'streaming-text-00-ready-to-send.png')
+      const finalContentCountBeforeStreaming = Number(
+        await control.command(
+          'getElementCount',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+        )
+      )
       await control.command('pasteFile', COMPOSER_SELECTOR, {
         filename: ATTACHMENT_FILENAME,
         mimeType: 'image/png',
@@ -529,24 +535,25 @@ export function createDesktopScenario({
       )
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
-      )
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
-        { text: '正在思考', timeoutMs: uiTimeoutMs }
       )
       const streamingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
       assert.ok(
         streamingSnapshot.text.includes(MARKER),
-        'The assistant text after the streaming tool call lost its prefix'
+        'The process text after the streaming tool call lost its prefix'
       )
-      assert.ok(
-        streamingSnapshot.text.indexOf(MARKER) < streamingSnapshot.text.lastIndexOf('正在思考'),
-        'The thinking indicator was not rendered below the partial assistant response'
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+          )
+        ),
+        finalContentCountBeforeStreaming,
+        'Ambiguous streaming text was rendered as final assistant content'
       )
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
       const pinnedBeforeSwitch = await waitForBottom(
@@ -565,7 +572,7 @@ export function createDesktopScenario({
       })
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       await new Promise(resolve => setTimeout(resolve, 1_500))
@@ -659,7 +666,7 @@ export function createDesktopScenario({
       releaseAppend()
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
         { text: APPEND_MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       const scrollerAfterAppend = await getSingleElementMetrics(
@@ -688,12 +695,31 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
         { stableMs: 750, timeoutMs: uiTimeoutMs }
       )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
       const completedSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
       assert.ok(
         completedSnapshot.text.includes(MARKER),
         'The completed response lost its streamed text'
+      )
+      assert.ok(
+        completedSnapshot.testIds.includes('assistant-message-content'),
+        'The completed response did not promote ambiguous text to final assistant content'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+          )
+        ),
+        finalContentCountBeforeStreaming + 1,
+        'Turn completion did not add exactly one final assistant content block'
       )
       assert.ok(
         !completedSnapshot.testIds.includes('thinking-indicator'),
