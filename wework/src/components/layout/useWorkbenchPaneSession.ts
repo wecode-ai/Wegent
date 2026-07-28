@@ -2670,24 +2670,15 @@ export function reconcileRuntimeConversationMessages(
   transcriptRunning: boolean
 ): WorkbenchMessage[] {
   if (transcriptMessages.length === 0) return cachedMessages
-  if (!transcriptRunning && hasSettledAssistantMessage(transcriptMessages)) {
-    return transcriptMessages
+  if (transcriptRunning) {
+    return hasUnsettledRuntimePaneState(cachedMessages) ? cachedMessages : transcriptMessages
   }
-  if (!hasUnsettledRuntimePaneState(cachedMessages)) return transcriptMessages
-  if (!hasUnsettledRuntimePaneState(transcriptMessages)) return cachedMessages
 
-  return runtimeMessageContentWeight(cachedMessages) >
-    runtimeMessageContentWeight(transcriptMessages)
-    ? cachedMessages
-    : transcriptMessages
-}
-
-function runtimeMessageContentWeight(messages: WorkbenchMessage[]): number {
-  return messages.reduce(
-    (total, message) =>
-      total + message.content.length + JSON.stringify(message.blocks ?? []).length,
-    0
-  )
+  const latestCachedTurnId = latestRuntimeTurnId(cachedMessages)
+  if (latestCachedTurnId && !hasSettledAssistantForTurn(transcriptMessages, latestCachedTurnId)) {
+    return cachedMessages
+  }
+  return transcriptMessages
 }
 
 function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -2835,6 +2826,11 @@ export function transcriptSettlesLatestSeededTurn(
   transcriptMessages: WorkbenchMessage[],
   seededMessages: WorkbenchMessage[]
 ): boolean {
+  const latestSeededTurnId = latestRuntimeTurnId(seededMessages)
+  if (latestSeededTurnId) {
+    return hasSettledAssistantForTurn(transcriptMessages, latestSeededTurnId)
+  }
+
   const latestSeededUser = [...seededMessages].reverse().find(message => message.role === 'user')
   if (!latestSeededUser) return hasSettledAssistantMessage(transcriptMessages)
 
@@ -2847,6 +2843,20 @@ export function transcriptSettlesLatestSeededTurn(
   return transcriptMessages
     .slice(latestMatchingUserIndex + 1)
     .some(message => message.role === 'assistant' && message.status !== 'streaming')
+}
+
+function latestRuntimeTurnId(messages: WorkbenchMessage[]): string | null {
+  return [...messages].reverse().find(message => message.turnId)?.turnId ?? null
+}
+
+function hasSettledAssistantForTurn(messages: WorkbenchMessage[], turnId: string): boolean {
+  return messages.some(
+    message =>
+      message.role === 'assistant' &&
+      message.turnId === turnId &&
+      message.status !== 'streaming' &&
+      message.status !== 'pending'
+  )
 }
 
 function markRuntimeSubagentsSettled(current: RuntimeSubagentStatus[]): RuntimeSubagentStatus[] {
