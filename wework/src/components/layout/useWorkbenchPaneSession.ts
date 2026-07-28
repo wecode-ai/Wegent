@@ -2710,7 +2710,9 @@ function mergeSettledRuntimeBlocks(
   cachedBlocks: WorkbenchMessage['blocks']
 ): WorkbenchMessage['blocks'] {
   const settledCachedBlocks = cachedBlocks?.filter(
-    block => block.status === 'done' || block.status === 'error'
+    block =>
+      (block.type === 'tool' || block.type === 'file_changes') &&
+      (block.status === 'done' || block.status === 'error')
   )
   if (!settledCachedBlocks?.length) return transcriptBlocks
   if (!transcriptBlocks?.length) return settledCachedBlocks

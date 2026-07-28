@@ -99,6 +99,24 @@ describe('reconcileRuntimeConversationMessages', () => {
             status: 'done',
           },
           {
+            id: 'thinking-1',
+            type: 'thinking',
+            content: 'Internal reasoning',
+            status: 'done',
+          },
+          {
+            id: 'text-1',
+            type: 'text',
+            content: 'Complete response',
+            status: 'done',
+          },
+          {
+            id: 'plan-1',
+            type: 'plan',
+            content: 'Completed plan',
+            status: 'done',
+          },
+          {
             id: 'file-changes-1',
             type: 'file_changes',
             status: 'streaming',
