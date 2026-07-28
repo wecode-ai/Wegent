@@ -120,6 +120,7 @@ import {
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
+  supportsKimiDynamicTools,
 } from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -140,7 +141,6 @@ const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
 const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max']
 const KIMI_K3_DEFAULT_REASONING_EFFORT = 'low'
-const KIMI_DYNAMIC_TOOL_MODEL_IDS = new Set(['k3', 'k3-256k', 'kimi-k3'])
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -698,7 +698,7 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
 function localModelSupportsKimiDynamicTools(config: LocalModelConfig): boolean {
   return (
     (config.providerProfileId === 'kimi-coding' || config.providerProfileId === 'kimi') &&
-    KIMI_DYNAMIC_TOOL_MODEL_IDS.has(config.modelId.trim().toLowerCase())
+    supportsKimiDynamicTools(config.modelId)
   )
 }
 

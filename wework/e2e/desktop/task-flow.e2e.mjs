@@ -257,6 +257,14 @@ const KIMI_LOCAL_MODEL_PROTOCOL_MATRIX_CASES = KIMI_MODEL_PROTOCOL_MATRIX_CASES.
 const KIMI_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = KIMI_MODEL_PROTOCOL_MATRIX_CASES.filter(
   model => model.source === 'cloud'
 )
+assert.ok(
+  KIMI_LOCAL_MODEL_PROTOCOL_MATRIX_CASES.length > 0,
+  'The local Kimi K3 E2E matrix must contain at least one case'
+)
+assert.ok(
+  KIMI_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.length > 0,
+  'The cloud Kimi K3 E2E matrix must contain at least one case'
+)
 const HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
   model => model.source === 'local'
 )

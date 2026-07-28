@@ -180,6 +180,8 @@ pub(super) fn responses_to_chat_with_options(
 }
 
 fn supports_kimi_dynamic_tools(body: &Value) -> bool {
+    // Keep this compatibility fallback aligned with
+    // wework/src/features/workbench/runtimeModelSelection.ts.
     matches!(
         body.get("model")
             .and_then(Value::as_str)
@@ -2129,7 +2131,16 @@ fn normalize_arguments(arguments: &str) -> String {
 }
 
 fn parse_arguments_value(arguments: &str) -> Value {
-    serde_json::from_str(arguments).unwrap_or_else(|_| json!({}))
+    serde_json::from_str(arguments).unwrap_or_else(|error| {
+        log_executor_event(
+            "local model proxy tool search arguments unparsable",
+            &[
+                ("error", error.to_string()),
+                ("arguments_bytes", arguments.len().to_string()),
+            ],
+        );
+        json!({})
+    })
 }
 
 fn responses_usage(usage: Option<&Value>) -> Value {
