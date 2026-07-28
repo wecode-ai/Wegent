@@ -185,6 +185,7 @@ fn text_value(value: Option<&Value>) -> String {
 struct AnthropicStreamState<S> {
     stream: Pin<Box<S>>,
     pending: String,
+    pending_utf8: Vec<u8>,
     output: VecDeque<Result<Bytes, std::io::Error>>,
     response_id: String,
     model: String,
@@ -203,6 +204,7 @@ where
     let state = AnthropicStreamState {
         stream: Box::pin(stream),
         pending: String::new(),
+        pending_utf8: Vec::new(),
         output: VecDeque::new(),
         response_id: "msg_wework_anthropic".to_owned(),
         model: String::new(),
@@ -282,7 +284,13 @@ where
             }
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
-                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    if let Err(error) = super::append_stream_utf8(
+                        &mut state.pending,
+                        &mut state.pending_utf8,
+                        &bytes,
+                    ) {
+                        return Some((Err(error), state));
+                    }
                     while let Some(block) = take_sse_block(&mut state.pending) {
                         state.handle_block(&block);
                     }
@@ -290,7 +298,12 @@ where
                 Some(Err(error)) => {
                     return Some((Err(std::io::Error::other(error.to_string())), state));
                 }
-                None => return None,
+                None => {
+                    if let Err(error) = super::finish_stream_utf8(&state.pending_utf8) {
+                        return Some((Err(error), state));
+                    }
+                    return None;
+                }
             }
         }
     })
@@ -570,6 +583,48 @@ mod tests {
         assert!(output.contains("response.output_text.delta"));
         assert!(output.contains("response.custom_tool_call_input.done"));
         assert!(output.contains("\"input_tokens\":10"));
+    }
+
+    #[tokio::test]
+    async fn preserves_utf8_text_split_across_upstream_chunks() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{"input_tokens":1}}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"实现成本主要在 UI。"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        ];
+        let payload = events
+            .into_iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>()
+            .into_bytes();
+        let target = "在".as_bytes();
+        let target_offset = payload
+            .windows(target.len())
+            .position(|window| window == target)
+            .expect("payload should contain the target character");
+        let chunks = vec![
+            payload[..target_offset + 1].to_vec(),
+            payload[target_offset + 1..target_offset + 2].to_vec(),
+            payload[target_offset + 2..].to_vec(),
+        ];
+        let source = futures_util::stream::iter(
+            chunks
+                .into_iter()
+                .map(|chunk| Ok::<_, std::io::Error>(Bytes::from(chunk))),
+        );
+
+        let output = anthropic_sse_to_responses(source, ToolContext::default())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| {
+                String::from_utf8(bytes.to_vec()).expect("converted stream should be UTF-8")
+            })
+            .collect::<String>();
+
+        assert!(output.contains("实现成本主要在 UI。"));
+        assert!(!output.contains('\u{fffd}'));
     }
 
     #[tokio::test]

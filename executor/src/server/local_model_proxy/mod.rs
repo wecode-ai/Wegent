@@ -999,6 +999,7 @@ fn safe_url(value: &str) -> String {
 struct ResponsesStreamState<S> {
     stream: Pin<Box<S>>,
     pending: String,
+    pending_utf8: Vec<u8>,
     output: VecDeque<Result<Bytes, std::io::Error>>,
     source_done: bool,
     terminal_seen: bool,
@@ -1016,6 +1017,7 @@ where
     let state = ResponsesStreamState {
         stream: Box::pin(stream),
         pending: String::new(),
+        pending_utf8: Vec::new(),
         output: VecDeque::new(),
         source_done: false,
         terminal_seen: false,
@@ -1040,7 +1042,13 @@ where
             }
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
-                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    if let Err(error) =
+                        append_stream_utf8(&mut state.pending, &mut state.pending_utf8, &bytes)
+                    {
+                        state.source_done = true;
+                        state.terminal_seen = true;
+                        return Some((Ok(responses_failed_event(&error.to_string())), state));
+                    }
                     while let Some(event) = take_sse_block(&mut state.pending) {
                         state.terminal_seen |= is_responses_terminal_event(&event);
                         let normalized = if state.expanded_browser_tools.is_empty() {
@@ -1063,6 +1071,10 @@ where
                 }
                 None => {
                     state.source_done = true;
+                    if let Err(error) = finish_stream_utf8(&state.pending_utf8) {
+                        state.terminal_seen = true;
+                        return Some((Ok(responses_failed_event(&error.to_string())), state));
+                    }
                     if !state.pending.trim().is_empty() {
                         let trailing = std::mem::take(&mut state.pending);
                         let trailing = trailing.trim_end();
@@ -1273,6 +1285,48 @@ pub(super) fn take_sse_block(buffer: &mut String) -> Option<String> {
     let block = buffer[..index].to_owned();
     buffer.drain(..index + delimiter_len);
     Some(block)
+}
+
+pub(super) fn append_stream_utf8(
+    buffer: &mut String,
+    pending_utf8: &mut Vec<u8>,
+    chunk: &[u8],
+) -> Result<(), std::io::Error> {
+    pending_utf8.extend_from_slice(chunk);
+    match std::str::from_utf8(pending_utf8) {
+        Ok(text) => {
+            buffer.push_str(text);
+            pending_utf8.clear();
+            Ok(())
+        }
+        Err(error) => {
+            let valid_up_to = error.valid_up_to();
+            let error_len = error.error_len();
+            if valid_up_to > 0 {
+                let valid = std::str::from_utf8(&pending_utf8[..valid_up_to])
+                    .expect("UTF-8 validator should identify a valid prefix");
+                buffer.push_str(valid);
+                pending_utf8.drain(..valid_up_to);
+            }
+            if error_len.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Upstream stream contains invalid UTF-8",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+pub(super) fn finish_stream_utf8(pending_utf8: &[u8]) -> Result<(), std::io::Error> {
+    if pending_utf8.is_empty() {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::UnexpectedEof,
+        "Upstream stream ended with an incomplete UTF-8 sequence",
+    ))
 }
 
 fn normalize_responses_event(event: &str) -> String {
@@ -1705,6 +1759,33 @@ mod tests {
     fn leaves_non_completed_events_unchanged() {
         let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
         assert_eq!(normalize_responses_event(event), event);
+    }
+
+    #[test]
+    fn buffers_incomplete_utf8_until_the_next_stream_chunk() {
+        let mut buffer = String::new();
+        let mut pending_utf8 = Vec::new();
+
+        for byte in "在".as_bytes() {
+            append_stream_utf8(&mut buffer, &mut pending_utf8, &[*byte])
+                .expect("split UTF-8 should remain valid");
+        }
+
+        finish_stream_utf8(&pending_utf8).expect("all UTF-8 bytes should be consumed");
+        assert_eq!(buffer, "在");
+    }
+
+    #[test]
+    fn rejects_an_incomplete_utf8_sequence_at_stream_end() {
+        let mut buffer = String::new();
+        let mut pending_utf8 = Vec::new();
+        append_stream_utf8(&mut buffer, &mut pending_utf8, &["在".as_bytes()[0]])
+            .expect("an incomplete trailing sequence should be buffered");
+
+        let error = finish_stream_utf8(&pending_utf8).expect_err("stream should be incomplete");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(buffer.is_empty());
     }
 
     async fn collect_responses_stream<S, E>(stream: S) -> String
