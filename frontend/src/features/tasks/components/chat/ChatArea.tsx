@@ -263,6 +263,8 @@ function ChatAreaContent({
     useState(false)
   const [pendingQuickPhrase, setPendingQuickPhrase] = useState<string | null>(null)
   const [isQuickPhraseOverwriteOpen, setIsQuickPhraseOverwriteOpen] = useState(false)
+  const [pendingExternalDraft, setPendingExternalDraft] =
+    useState<KnowledgeCapabilityDraftRequest | null>(null)
   const [focusInputAtEndSignal, setFocusInputAtEndSignal] = useState(0)
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
@@ -885,6 +887,9 @@ function ChatAreaContent({
   const setTaskInputMessage = chatState.setTaskInputMessage
   const setSelectedContexts = chatState.setSelectedContexts
   const resetAttachment = chatState.resetAttachment
+  const resetContexts = chatState.resetContexts
+  const restoreDefaultTeam = chatState.restoreDefaultTeam
+  const resetSelectedSkills = skillSelector.resetSkills
   const addExistingAttachment = chatState.addExistingAttachment
   const handleFileSelect = chatState.handleFileSelect
   const handleAttachmentRemove = chatState.handleAttachmentRemove
@@ -1069,6 +1074,42 @@ function ChatAreaContent({
   }, [externalPromptRequest, onExternalPromptConsumed, sendOrConfirmPendingReplacement])
 
   const consumedExternalDraftRef = useRef<string | null>(null)
+  const applyExternalDraft = useCallback(
+    (request: KnowledgeCapabilityDraftRequest) => {
+      const nextParams = new URLSearchParams(searchParamsString)
+      nextParams.delete('taskId')
+      nextParams.delete('task_id')
+      nextParams.delete('taskid')
+      const nextSearch = nextParams.toString()
+
+      router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname)
+      selectTask(null)
+      hasInitializedTeamRef.current = false
+      lastSyncedTaskIdRef.current = null
+
+      void clearQuickPresetAttachments().catch(error => {
+        console.error('Failed to clear quick preset attachments:', error)
+      })
+      resetAttachment()
+      resetContexts()
+      resetSelectedSkills()
+      restoreDefaultTeam()
+      applyQuickPhraseToInput(request.message)
+    },
+    [
+      applyQuickPhraseToInput,
+      clearQuickPresetAttachments,
+      pathname,
+      resetAttachment,
+      resetContexts,
+      resetSelectedSkills,
+      restoreDefaultTeam,
+      router,
+      searchParamsString,
+      selectTask,
+    ]
+  )
+
   useEffect(() => {
     if (
       !externalDraftRequest ||
@@ -1077,10 +1118,37 @@ function ChatAreaContent({
       return
     }
     consumedExternalDraftRef.current = externalDraftRequest.requestId
-    selectTask(null)
-    handleQuickPhraseSelect(externalDraftRequest.message)
     onExternalDraftConsumed?.(externalDraftRequest.requestId)
-  }, [externalDraftRequest, handleQuickPhraseSelect, onExternalDraftConsumed, selectTask])
+
+    const hasDirtyDraft =
+      chatState.taskInputMessage.trim().length > 0 ||
+      chatState.attachmentState.attachments.length > 0 ||
+      chatState.selectedContexts.length > 0 ||
+      skillSelector.selectedSkills.length > 0
+
+    if (hasDirtyDraft) {
+      setPendingExternalDraft(externalDraftRequest)
+      return
+    }
+
+    void applyExternalDraft(externalDraftRequest)
+  }, [
+    applyExternalDraft,
+    chatState.attachmentState.attachments.length,
+    chatState.selectedContexts.length,
+    chatState.taskInputMessage,
+    externalDraftRequest,
+    onExternalDraftConsumed,
+    skillSelector.selectedSkills.length,
+  ])
+
+  const handleConfirmExternalDraft = useCallback(() => {
+    if (!pendingExternalDraft) return
+
+    const request = pendingExternalDraft
+    setPendingExternalDraft(null)
+    void applyExternalDraft(request)
+  }, [applyExternalDraft, pendingExternalDraft])
 
   const handleConfirmPendingFormReplacement = useCallback(async () => {
     if (
@@ -1973,6 +2041,35 @@ function ChatAreaContent({
               className="bg-primary text-white hover:bg-primary/90"
             >
               {t('quick_launch.overwrite_confirm_action')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={pendingExternalDraft !== null}
+        onOpenChange={open => {
+          if (!open) {
+            setPendingExternalDraft(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="w-[420px] max-w-[calc(100vw-32px)] rounded-2xl border-border bg-base">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('knowledge_draft.confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('knowledge_draft.confirm_description')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="knowledge-draft-cancel">
+              {t('knowledge_draft.confirm_cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="knowledge-draft-confirm"
+              onClick={handleConfirmExternalDraft}
+              className="bg-primary text-white hover:bg-primary/90"
+            >
+              {t('knowledge_draft.confirm_action')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

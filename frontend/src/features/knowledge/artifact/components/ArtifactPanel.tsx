@@ -122,7 +122,7 @@ export function ArtifactPanel({
             type="button"
             className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
             onClick={onCreatePptDraft}
-            disabled={effectiveAvailableDocumentCount === 0}
+            disabled={availableDocumentCount === 0}
             data-testid="artifact-type-presentation"
           >
             <div className="flex w-full items-center justify-between">

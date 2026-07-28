@@ -14,6 +14,11 @@ const mockHandleAttachmentRemove = jest.fn()
 const mockHandleTeamChange = jest.fn()
 const mockSetSelectedDeviceId = jest.fn()
 const mockSelectTask = jest.fn()
+const mockRouterReplace = jest.fn()
+const mockResetAttachment = jest.fn()
+const mockResetContexts = jest.fn()
+const mockResetSkills = jest.fn()
+const mockRestoreDefaultTeam = jest.fn()
 
 const defaultStreamHandlers = {
   pendingTaskId: null,
@@ -41,6 +46,9 @@ let streamHandlersMock = { ...defaultStreamHandlers }
 let selectedTaskDetailMock: TaskDetail | null = null
 let mockTaskInputMessage = ''
 let mockSearchParams: URLSearchParams | undefined = new URLSearchParams()
+let mockAttachments: Array<{ id: number }> = []
+let mockSelectedContexts: Array<{ id: number; name: string; type: string }> = []
+let mockSelectedSkills: Array<{ name: string; namespace: string; is_public: boolean }> = []
 const mockSetTaskInputMessage = jest.fn()
 let chatStatusIndicatorMock = {
   enabled: false,
@@ -54,7 +62,7 @@ const mockMessagesArea = jest.fn((_: Record<string, unknown>) => (
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => mockSearchParams,
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: mockRouterReplace }),
   usePathname: () => '/chat',
 }))
 
@@ -83,7 +91,7 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
     handleTeamChange: mockHandleTeamChange,
     findDefaultTeamForMode: jest.fn(),
     defaultTeam: null,
-    restoreDefaultTeam: jest.fn(),
+    restoreDefaultTeam: mockRestoreDefaultTeam,
     isUsingDefaultTeam: false,
     selectedModel: null,
     setSelectedModel: jest.fn(),
@@ -111,13 +119,17 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
     externalApiParams: {},
     handleExternalApiParamsChange: jest.fn(),
     handleAppModeChange: jest.fn(),
-    attachmentState: { attachments: [], uploadingFiles: new Map(), errors: new Map() },
-    resetAttachment: jest.fn(),
+    attachmentState: {
+      attachments: mockAttachments,
+      uploadingFiles: new Map(),
+      errors: new Map(),
+    },
+    resetAttachment: mockResetAttachment,
     isAttachmentReadyToSend: true,
     shouldHideToolbarStatus: false,
     shouldHideChatInput: false,
-    selectedContexts: [],
-    resetContexts: jest.fn(),
+    selectedContexts: mockSelectedContexts,
+    resetContexts: mockResetContexts,
     setSelectedContexts: jest.fn(),
     addExistingAttachment: mockAddExistingAttachment,
     handleFileSelect: mockHandleFileSelect,
@@ -320,9 +332,11 @@ jest.mock('@/features/tasks/hooks/useSkillSelector', () => ({
     availableSkills: [],
     teamSkillNames: [],
     preloadedSkillNames: [],
-    selectedSkillNames: [],
-    selectedSkills: [],
+    selectedSkillNames: mockSelectedSkills.map(skill => skill.name),
+    selectedSkills: mockSelectedSkills,
     toggleSkill: jest.fn(),
+    resetSkills: mockResetSkills,
+    setSelectedSkillNames: jest.fn(),
   }),
 }))
 jest.mock('@/features/tasks/hooks/useModelSelection', () => ({
@@ -342,6 +356,9 @@ describe('ChatArea queue message handler mounting', () => {
     selectedTaskDetailMock = null
     mockTaskInputMessage = ''
     mockSearchParams = new URLSearchParams()
+    mockAttachments = []
+    mockSelectedContexts = []
+    mockSelectedSkills = []
     chatStatusIndicatorMock = {
       enabled: false,
       display: null,
@@ -357,6 +374,11 @@ describe('ChatArea queue message handler mounting', () => {
     mockHandleTeamChange.mockClear()
     mockSetSelectedDeviceId.mockClear()
     mockSelectTask.mockClear()
+    mockRouterReplace.mockClear()
+    mockResetAttachment.mockClear()
+    mockResetContexts.mockClear()
+    mockResetSkills.mockClear()
+    mockRestoreDefaultTeam.mockClear()
     ;(
       userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }
     ).prepareQuickLaunchPreset.mockReset()
@@ -506,8 +528,14 @@ describe('ChatArea queue message handler mounting', () => {
       />
     )
 
-    expect(mockSelectTask).toHaveBeenCalledWith(null)
-    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('请根据当前选中的知识库文档生成PPT')
+    await waitFor(() => {
+      expect(mockSelectTask).toHaveBeenCalledWith(null)
+      expect(mockSetTaskInputMessage).toHaveBeenCalledWith('请根据当前选中的知识库文档生成PPT')
+    })
+    expect(mockResetAttachment).toHaveBeenCalledTimes(1)
+    expect(mockResetContexts).toHaveBeenCalledTimes(1)
+    expect(mockResetSkills).toHaveBeenCalledTimes(1)
+    expect(mockRestoreDefaultTeam).toHaveBeenCalledTimes(1)
     expect(defaultStreamHandlers.handleSendMessage).not.toHaveBeenCalled()
     expect(onExternalDraftConsumed).toHaveBeenCalledWith('presentation-1')
     await waitFor(() => {
@@ -517,7 +545,99 @@ describe('ChatArea queue message handler mounting', () => {
     })
   })
 
-  it('consumes the same external draft request only once', () => {
+  it('clears every task id alias while preserving unrelated query parameters', async () => {
+    mockSearchParams = new URLSearchParams(
+      'taskId=41&task_id=42&taskid=43&view=notebook&source=knowledge'
+    )
+    selectedTaskDetailMock = {
+      id: 41,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    render(
+      <ChatArea
+        teams={[]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        showRepositorySelector={false}
+        externalDraftRequest={{
+          requestId: 'presentation-with-task',
+          message: '请根据当前选中的知识库文档生成PPT',
+        }}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockRouterReplace).toHaveBeenCalledWith('/chat?view=notebook&source=knowledge')
+      expect(mockSelectTask).toHaveBeenCalledWith(null)
+    })
+  })
+
+  it('keeps the current task and draft when starting a PPT draft is cancelled', () => {
+    mockTaskInputMessage = '尚未发送的内容'
+    mockSearchParams = new URLSearchParams('taskId=42')
+
+    render(
+      <ChatArea
+        teams={[]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        showRepositorySelector={false}
+        externalDraftRequest={{
+          requestId: 'presentation-cancel',
+          message: '请根据当前选中的知识库文档生成PPT',
+        }}
+      />
+    )
+
+    expect(screen.getByText('knowledge_draft.confirm_title')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('knowledge-draft-cancel'))
+
+    expect(mockRouterReplace).not.toHaveBeenCalled()
+    expect(mockSelectTask).not.toHaveBeenCalled()
+    expect(mockResetAttachment).not.toHaveBeenCalled()
+    expect(mockResetContexts).not.toHaveBeenCalled()
+    expect(mockResetSkills).not.toHaveBeenCalled()
+    expect(mockSetTaskInputMessage).not.toHaveBeenCalled()
+  })
+
+  it('clears the existing composer state after confirming a new PPT draft', async () => {
+    mockAttachments = [{ id: 101 }]
+    mockSelectedContexts = [{ id: 12, name: '其他知识库', type: 'knowledge_base' }]
+    mockSelectedSkills = [{ name: 'other-skill', namespace: 'default', is_public: false }]
+    mockSearchParams = new URLSearchParams('taskId=42')
+
+    render(
+      <ChatArea
+        teams={[]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        showRepositorySelector={false}
+        externalDraftRequest={{
+          requestId: 'presentation-confirm',
+          message: '请根据当前选中的知识库文档生成PPT',
+        }}
+      />
+    )
+
+    expect(screen.getByText('knowledge_draft.confirm_title')).toBeInTheDocument()
+    expect(mockSelectTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('knowledge-draft-confirm'))
+
+    await waitFor(() => {
+      expect(mockRouterReplace).toHaveBeenCalledWith('/chat')
+      expect(mockSelectTask).toHaveBeenCalledWith(null)
+      expect(mockResetAttachment).toHaveBeenCalledTimes(1)
+      expect(mockResetContexts).toHaveBeenCalledTimes(1)
+      expect(mockResetSkills).toHaveBeenCalledTimes(1)
+      expect(mockSetTaskInputMessage).toHaveBeenCalledWith('请根据当前选中的知识库文档生成PPT')
+    })
+    expect(defaultStreamHandlers.handleSendMessage).not.toHaveBeenCalled()
+  })
+
+  it('consumes the same external draft request only once', async () => {
     const onExternalDraftConsumed = jest.fn()
     const request = {
       requestId: 'presentation-1',
@@ -547,6 +667,9 @@ describe('ChatArea queue message handler mounting', () => {
 
     expect(mockSelectTask).toHaveBeenCalledTimes(1)
     expect(onExternalDraftConsumed).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(mockSetTaskInputMessage).toHaveBeenCalledWith('请根据当前选中的知识库文档生成PPT')
+    })
   })
 
   it('asks before overwriting existing input with a quick phrase', async () => {

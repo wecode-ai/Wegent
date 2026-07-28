@@ -289,6 +289,34 @@ describe('ArtifactPanel AI Workshop', () => {
     expect(screen.getByTestId('artifact-type-presentation')).toBeDisabled()
   })
 
+  it('keeps the personal PPT task available when artifact source status is unknown', () => {
+    ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
+      items: [],
+      canManage: false,
+      availableDocumentCount: null,
+      processingDocumentCount: 0,
+      isLoading: false,
+      error: new Error('artifact list unavailable'),
+      create: createMock,
+      rename: jest.fn(),
+      retry: jest.fn(),
+      remove: jest.fn(),
+      refresh: jest.fn(),
+    })
+
+    render(
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('artifact-type-presentation'))
+    expect(createPptDraftMock).toHaveBeenCalledTimes(1)
+  })
+
   it('routes viewer deletion through the shared alert dialog', async () => {
     ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
       items: [
