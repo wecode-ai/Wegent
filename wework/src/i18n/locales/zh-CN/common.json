@@ -773,6 +773,8 @@
     "plugins_previous_page": "上一页",
     "plugins_next_page": "下一页",
     "plugins_install": "安装",
+    "plugins_retry_install": "重试安装",
+    "plugins_syncing_installation": "同步中...",
     "plugins_installed": "已安装",
     "plugins_login_required": "安装插件需要登录 Wegent 账户。是否前往登录？",
     "plugins_uninstall": "卸载",

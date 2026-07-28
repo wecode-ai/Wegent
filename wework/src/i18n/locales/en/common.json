@@ -770,6 +770,8 @@
     "plugins_previous_page": "Previous",
     "plugins_next_page": "Next",
     "plugins_install": "Install",
+    "plugins_retry_install": "Retry install",
+    "plugins_syncing_installation": "Syncing...",
     "plugins_installed": "Installed",
     "plugins_login_required": "Installing plugins requires a Wegent account. Go to login?",
     "plugins_uninstall": "Uninstall",

@@ -593,6 +593,8 @@ function mockSystemSkillsFetch() {
         payload = providersResponse
       } else if (url.includes('/mcp-providers')) {
         payload = providersResponse
+      } else if (url.includes('/plugins/marketplace')) {
+        payload = { items: [] }
       } else if (url.includes('/plugins/installed')) {
         payload = { items: [] }
       } else {
@@ -944,9 +946,11 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
-    expect(await screen.findByTestId('plugins-cloud-marketplace-unavailable')).toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-search-input')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-installed-strip')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
+      'Wework 云端市场'
+    )
+    expect(screen.getByTestId('plugins-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-installed-strip')).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'MCP' })).not.toBeInTheDocument()
   })
@@ -1006,9 +1010,11 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-    expect(await screen.findByTestId('plugins-cloud-marketplace-unavailable')).toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-create-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-marketplace-selector')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
+      'Wework 云端市场'
+    )
+    expect(screen.getByTestId('plugins-create-button')).toHaveClass('h-11', 'w-11')
+    expect(screen.getByTestId('plugins-marketplace-selector')).toBeInTheDocument()
   })
 
   test('opens plugins from the mobile settings menu', async () => {
@@ -1100,43 +1106,16 @@ describe('App plugins route', () => {
     )
   })
 
-  test('creates custom MCPs from management page', async () => {
+  test('opens the unified plugin creator from management', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
     renderApp()
 
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
-    await userEvent.click(screen.getByTestId('plugins-create-mcp-option'))
-    fireEvent.change(screen.getByTestId('custom-mcp-name-input'), {
-      target: { value: 'local-docs' },
-    })
-    fireEvent.change(screen.getByTestId('custom-mcp-display-name-input'), {
-      target: { value: 'Local Docs' },
-    })
-    fireEvent.change(screen.getByTestId('custom-mcp-url-input'), {
-      target: { value: 'https://mcp.example.com/local' },
-    })
-    await userEvent.click(screen.getByTestId('custom-mcp-submit-button'))
+    await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
 
-    await userEvent.click(await screen.findByRole('tab', { name: 'MCP 2' }))
-    expect(await screen.findByText('Local Docs')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/mcps/custom',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          name: 'local-docs',
-          displayName: 'Local Docs',
-          description: '',
-          server: {
-            type: 'streamable-http',
-            url: 'https://mcp.example.com/local',
-            base_url: 'https://mcp.example.com/local',
-          },
-          enabled: true,
-        }),
-      })
-    )
+    expect(await screen.findByTestId('plugin-create-workspace')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/plugins/create')
   })
 
   test('configures provider token and installs provider MCPs', async () => {
@@ -1235,21 +1214,21 @@ describe('App plugins route', () => {
     )
   })
 
-  test('opens the single-Skill plugin creator from management', async () => {
+  test('does not expose legacy MCP and Skill creation shortcuts', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
     renderApp()
 
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
-    expect(screen.getByTestId('plugins-create-skill-option')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-create-mcp-option')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugins-create-skill-option'))
+    expect(screen.queryByTestId('plugins-create-skill-option')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-create-mcp-option')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
 
     expect(await screen.findByTestId('plugin-create-workspace')).toBeInTheDocument()
-    expect(screen.getByText('你想创建一个什么技能？')).toBeInTheDocument()
+    expect(screen.getByText('我们应该在 Wegent 中构建什么？')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-create-prompt-input')).toHaveAttribute(
       'placeholder',
-      '描述技能要完成的工作'
+      'Plugin Creator'
     )
     expect(fetch).not.toHaveBeenCalledWith('/api/v1/kinds/skills/upload', expect.anything())
   })

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
@@ -53,7 +54,14 @@ from app.services.plugin_package_scanner import (
     PluginPackageScanError,
     scan_plugin_package,
 )
-from app.services.plugin_package_storage import plugin_package_storage
+from app.services.plugin_package_storage import (
+    PluginPackageStorageError,
+    plugin_package_storage,
+)
+from app.services.plugin_upstream_adapter import (
+    AdaptedUpstreamPackage,
+    adapt_upstream_package,
+)
 from app.services.plugin_upstream_fetch import (
     UpstreamFetchError,
     fetch_upstream_package,
@@ -77,6 +85,9 @@ class PublishedRelease:
 
 class PluginMarketplaceService:
     """Own the cloud marketplace while leaving runtime installation to Codex."""
+
+    def __init__(self) -> None:
+        self._resolved_interface_cache: dict[str, dict[str, Any]] = {}
 
     def enrich_installed_list(
         self,
@@ -845,6 +856,54 @@ class PluginMarketplaceService:
         db.refresh(upstream)
         return self._upstream_item(upstream)
 
+    def configure_existing_upstream(
+        self,
+        db: Session,
+        *,
+        slug: str,
+        marketplace_name: str,
+        remote_plugin_id: str,
+        upstream_url: str,
+        license_info: str,
+        sync_policy: str = "auto_after_scan",
+    ) -> PluginUpstreamItem:
+        """Attach a reviewed mirror to an existing controlled catalog plugin."""
+        validate_upstream_url(upstream_url)
+        plugin = db.query(Plugin).filter(Plugin.slug == slug).with_for_update().first()
+        if not plugin:
+            raise HTTPException(status_code=404, detail="Plugin not found")
+        controlled_sources = {("native", "wework"), ("mirror", "codex")}
+        if (
+            plugin.owner_user_id is not None
+            or (plugin.source_type, plugin.source_provider) not in controlled_sources
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Plugin slug is owned by a different publisher",
+            )
+
+        plugin.source_type = "mirror"
+        plugin.source_provider = "codex"
+        upstream = (
+            db.query(PluginUpstream)
+            .filter(PluginUpstream.plugin_id == plugin.id)
+            .with_for_update()
+            .first()
+        )
+        if not upstream:
+            upstream = PluginUpstream(plugin_id=plugin.id)
+            db.add(upstream)
+        upstream.provider = "codex"
+        upstream.marketplace_name = marketplace_name
+        upstream.remote_plugin_id = remote_plugin_id
+        upstream.upstream_url = upstream_url
+        upstream.license_info = license_info
+        upstream.sync_enabled = True
+        upstream.sync_policy = sync_policy
+        db.commit()
+        db.refresh(upstream)
+        return self._upstream_item(upstream)
+
     def list_upstreams(self, db: Session) -> PluginUpstreamListResponse:
         rows = db.query(PluginUpstream).order_by(PluginUpstream.id.desc()).all()
         return PluginUpstreamListResponse(
@@ -861,6 +920,14 @@ class PluginMarketplaceService:
             package = self._select_upstream_plugin_package(
                 package, upstream.remote_plugin_id
             )
+            self._scan_package(package)
+            adapted = adapt_upstream_package(
+                provider=upstream.provider,
+                marketplace_name=upstream.marketplace_name,
+                remote_plugin_id=upstream.remote_plugin_id,
+                package=package,
+            )
+            package = adapted.package
             parsed = claude_plugin_parser.parse_package(package)
             version = parsed.version
             if not version:
@@ -886,8 +953,25 @@ class PluginMarketplaceService:
                 else None
             )
             is_newer = not latest or Version(version) > Version(latest.version)
-            if not existing and is_newer:
-                self._publish_mirrored_release(db, upstream, parsed, package)
+            if existing:
+                self._verify_existing_upstream_release(existing, package)
+            elif is_newer:
+                if upstream.sync_policy == "review_required":
+                    self._stage_mirrored_release(
+                        db,
+                        upstream,
+                        parsed,
+                        package,
+                        adapted=adapted,
+                    )
+                else:
+                    self._publish_mirrored_release(
+                        db,
+                        upstream,
+                        parsed,
+                        package,
+                        adapted=adapted,
+                    )
             upstream.last_synced_at = datetime.now()
             upstream.last_error = None
             db.commit()
@@ -914,7 +998,15 @@ class PluginMarketplaceService:
                 db.rollback()
         return results
 
-    def _publish_mirrored_release(self, db, upstream, parsed, package: bytes) -> None:
+    def _publish_mirrored_release(
+        self,
+        db,
+        upstream,
+        parsed,
+        package: bytes,
+        *,
+        adapted: AdaptedUpstreamPackage,
+    ) -> None:
         plugin = db.get(Plugin, upstream.plugin_id)
         if not plugin:
             raise ValueError("Upstream plugin identity is missing")
@@ -925,14 +1017,128 @@ class PluginMarketplaceService:
             package=package,
             parsed=parsed,
             security_report=security_report,
-            provenance={
-                "kind": "upstream",
-                "provider": upstream.provider,
-                "marketplace": upstream.marketplace_name,
-                "remotePluginId": upstream.remote_plugin_id,
-                "upstreamUrl": upstream.upstream_url,
-            },
+            provenance=self._upstream_provenance(upstream, adapted),
         )
+
+    def _stage_mirrored_release(
+        self,
+        db: Session,
+        upstream: PluginUpstream,
+        parsed: PluginUploadInfo,
+        package: bytes,
+        *,
+        adapted: AdaptedUpstreamPackage,
+    ) -> None:
+        """Store a scanned mirror candidate without changing the catalog latest."""
+        plugin = db.get(Plugin, upstream.plugin_id)
+        if not plugin or not parsed.version:
+            raise ValueError("Upstream plugin identity or version is missing")
+        security_report = self._scan_package(package)
+        digest = hashlib.sha256(package).hexdigest()
+        interface = (
+            parsed.interface.model_dump(exclude_none=True) if parsed.interface else {}
+        )
+        release = PluginRelease(
+            plugin_id=plugin.id,
+            version=parsed.version,
+            manifest_json=parsed.manifest,
+            interface_json=interface,
+            storage_key="pending",
+            sha256=digest,
+            size_bytes=len(package),
+            status="processing",
+            scan_status="passed",
+            scan_report_json=self._scan_report(
+                parsed,
+                security_report,
+                provenance=self._upstream_provenance(upstream, adapted),
+            ),
+        )
+        db.add(release)
+        db.flush()
+        object_key = self._storage_key(plugin.id, release.id, digest)
+        release.storage_key = object_key
+        object_created = False
+        try:
+            object_created = plugin_package_storage.put_immutable(object_key, package)
+            db.add(
+                PluginSubmission(
+                    plugin_id=plugin.id,
+                    release_id=release.id,
+                    submitter_user_id=0,
+                    status="pending",
+                )
+            )
+            if plugin.status != "published":
+                plugin.status = "pending_review"
+            db.flush()
+        except Exception:
+            db.rollback()
+            if object_created:
+                try:
+                    plugin_package_storage.delete(object_key)
+                except Exception:
+                    pass
+            raise
+
+    def _upstream_provenance(
+        self,
+        upstream: PluginUpstream,
+        adapted: AdaptedUpstreamPackage,
+    ) -> dict[str, Any]:
+        return {
+            "kind": "upstream",
+            "provider": upstream.provider,
+            "marketplace": upstream.marketplace_name,
+            "remotePluginId": upstream.remote_plugin_id,
+            "upstreamUrl": upstream.upstream_url,
+            **(
+                {
+                    "adapter": adapted.adapter,
+                    "adapterVersion": adapted.adapter_version,
+                    "upstreamVersion": adapted.upstream_version,
+                }
+                if adapted.adapter
+                else {}
+            ),
+        }
+
+    def _verify_existing_upstream_release(
+        self, release: PluginRelease, package: bytes
+    ) -> None:
+        """Reject mutable upstream content published under an existing version."""
+        if release.sha256 == hashlib.sha256(package).hexdigest():
+            return
+        existing_package = plugin_package_storage.get(release.storage_key)
+        ignored_paths = {"UPSTREAM.md", "upstream.lock.json"}
+        if self._package_tree_digest(
+            existing_package, ignored_paths=ignored_paths
+        ) != self._package_tree_digest(package, ignored_paths=ignored_paths):
+            raise ValueError(
+                f"Upstream version {release.version} changed content without "
+                "a version bump"
+            )
+
+    def _package_tree_digest(self, package: bytes, *, ignored_paths: set[str]) -> str:
+        digest = hashlib.sha256()
+        with zipfile.ZipFile(BytesIO(package)) as archive:
+            for member in sorted(archive.infolist(), key=lambda item: item.filename):
+                if member.is_dir() or member.filename in ignored_paths:
+                    continue
+                digest.update(member.filename.encode("utf-8"))
+                digest.update(b"\0")
+                content = archive.read(member)
+                if member.filename.endswith(".py"):
+                    try:
+                        content = ast.dump(
+                            ast.parse(content.decode("utf-8")),
+                            include_attributes=False,
+                        ).encode("utf-8")
+                    except (SyntaxError, UnicodeDecodeError):
+                        pass
+                digest.update(content)
+                digest.update(b"\0")
+        return digest.hexdigest()
 
     def _select_upstream_plugin_package(
         self, package: bytes, remote_plugin_id: str
@@ -965,7 +1171,13 @@ class PluginMarketplaceService:
                             continue
                         relative = member.filename[len(root) :]
                         if relative:
-                            selected.writestr(relative, archive.read(member))
+                            copied = zipfile.ZipInfo(relative, member.date_time)
+                            copied.create_system = member.create_system
+                            copied.external_attr = member.external_attr
+                            copied.internal_attr = member.internal_attr
+                            copied.flag_bits = member.flag_bits
+                            copied.compress_type = zipfile.ZIP_DEFLATED
+                            selected.writestr(copied, archive.read(member))
                 return output.getvalue()
         except zipfile.BadZipFile:
             return package
@@ -1016,7 +1228,7 @@ class PluginMarketplaceService:
             enabled=(
                 bool(installed_spec.get("enabled")) if installed_for_device else False
             ),
-            interface=release.interface_json or plugin.interface_json or None,
+            interface=self._marketplace_interface(release, plugin),
             components=scan_report.get("components") or {},
             manifest=release.manifest_json or {},
             ownerUserId=plugin.owner_user_id or 0,
@@ -1031,6 +1243,37 @@ class PluginMarketplaceService:
                 self._device_installation_item(device_row) if device_row else None
             ),
         )
+
+    def _marketplace_interface(
+        self,
+        release: PluginRelease,
+        plugin: Plugin,
+    ) -> dict[str, Any] | None:
+        interface = release.interface_json or plugin.interface_json or {}
+        asset_values = (
+            interface.get("composerIcon"),
+            interface.get("logo"),
+            interface.get("logoDark"),
+        )
+        if not any(
+            isinstance(value, str) and value.startswith(("./", "assets/"))
+            for value in asset_values
+        ):
+            return interface or None
+        cache_key = release.sha256 or release.storage_key
+        cached = self._resolved_interface_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            package = plugin_package_storage.get(release.storage_key)
+            resolved = claude_plugin_parser.resolve_interface_assets(
+                package,
+                interface,
+            )
+        except (PluginPackageStorageError, HTTPException, ValueError):
+            return interface or None
+        self._resolved_interface_cache[cache_key] = resolved
+        return resolved or None
 
     def _installed_item_id(self, item: InstalledPlugin) -> int | None:
         value = (item.metadata.get("labels") or {}).get("id")
@@ -1399,6 +1642,7 @@ class PluginMarketplaceService:
             upstreamUrl=upstream.upstream_url,
             licenseInfo=upstream.license_info,
             syncEnabled=upstream.sync_enabled,
+            syncPolicy=upstream.sync_policy,
             lastSeenVersion=upstream.last_seen_version,
             lastCheckedAt=upstream.last_checked_at,
             lastSyncedAt=upstream.last_synced_at,

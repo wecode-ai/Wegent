@@ -404,23 +404,39 @@ impl GlobalCapabilityStore {
 
         let marketplace_json_path = marketplace_dir.join(".claude-plugin/marketplace.json");
         let mut marketplace = read_json_or_default(&marketplace_json_path, || json!({}))?;
-        let root = ensure_root_object(&mut marketplace);
-        let plugins = root
-            .entry("plugins")
-            .or_insert_with(|| Value::Array(Vec::new()));
-        let plugins = plugins.as_array_mut().ok_or_else(|| {
-            CapabilitySyncError::invalid_payload("Marketplace plugins must be an array")
-        })?;
-        plugins.retain(|plugin| {
-            plugin.get("name").and_then(Value::as_str) != Some(spec.name.as_str())
-        });
-        plugins.push(json!({
-            "description": "",
-            "name": spec.name,
-            "source": format!("./plugins/{}", plugin_codex_link_name(spec)),
-            "version": spec.version,
-        }));
-        write_json(&marketplace_json_path, &marketplace)
+        upsert_marketplace_plugin(
+            &mut marketplace,
+            &spec.name,
+            json!({
+                "description": "",
+                "name": spec.name,
+                "source": format!("./plugins/{}", plugin_codex_link_name(spec)),
+                "version": spec.version,
+            }),
+        )?;
+        write_json(&marketplace_json_path, &marketplace)?;
+
+        let codex_marketplace_path = marketplace_dir.join(".agents/plugins/marketplace.json");
+        let mut codex_marketplace = read_json_or_default(&codex_marketplace_path, || json!({}))?;
+        let root = ensure_root_object(&mut codex_marketplace);
+        root.insert("name".to_owned(), json!(spec.marketplace));
+        root.insert("interface".to_owned(), json!({"displayName": "Wegent"}));
+        upsert_marketplace_plugin(
+            &mut codex_marketplace,
+            &spec.name,
+            json!({
+                "name": spec.name,
+                "source": {
+                    "source": "local",
+                    "path": format!("./plugins/{}", plugin_codex_link_name(spec)),
+                },
+                "policy": {
+                    "installation": "AVAILABLE",
+                    "authentication": "ON_INSTALL",
+                },
+            }),
+        )?;
+        write_json(&codex_marketplace_path, &codex_marketplace)
     }
 
     fn record_app_server_plugin(
@@ -446,8 +462,11 @@ impl GlobalCapabilityStore {
         );
     }
 
-    fn plugin_marketplace_path(&self, marketplace: &str) -> PathBuf {
-        self.plugins_dir.join("marketplaces").join(marketplace)
+    fn plugin_marketplace_manifest_path(&self, marketplace: &str) -> PathBuf {
+        self.plugins_dir
+            .join("marketplaces")
+            .join(marketplace)
+            .join(".agents/plugins/marketplace.json")
     }
 
     fn skill_store_path(&self, spec: &SkillSyncSpec) -> PathBuf {
@@ -735,8 +754,13 @@ where
             }
             if let Some(runtime) = &self.plugin_runtime {
                 self.store.install_marketplace_metadata(spec, &store_path)?;
-                let marketplace_path = self.store.plugin_marketplace_path(&spec.marketplace);
-                if let Err(error) = runtime.install_plugin(spec, &marketplace_path).await {
+                let marketplace_manifest_path = self
+                    .store
+                    .plugin_marketplace_manifest_path(&spec.marketplace);
+                if let Err(error) = runtime
+                    .install_plugin(spec, &marketplace_manifest_path)
+                    .await
+                {
                     if let Some(backup) = backup_path.as_ref() {
                         let _ = remove_existing_path(&store_path);
                         let _ = copy_dir_recursive(backup, &store_path);
@@ -767,8 +791,12 @@ where
 
         if let Some(runtime) = &self.plugin_runtime {
             self.store.install_marketplace_metadata(spec, &store_path)?;
-            let marketplace_path = self.store.plugin_marketplace_path(&spec.marketplace);
-            runtime.install_plugin(spec, &marketplace_path).await?;
+            let marketplace_manifest_path = self
+                .store
+                .plugin_marketplace_manifest_path(&spec.marketplace);
+            runtime
+                .install_plugin(spec, &marketplace_manifest_path)
+                .await?;
             self.store
                 .record_app_server_plugin(spec, &store_path, manifest);
         } else {

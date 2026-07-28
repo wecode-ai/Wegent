@@ -19,6 +19,7 @@ from app.models.plugin_marketplace import (
     Plugin,
     PluginDeviceInstallation,
     PluginRelease,
+    PluginSubmission,
     PluginUpstream,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -69,6 +70,34 @@ def _plugin_zip(
             "skills/review/SKILL.md",
             "---\nname: review\ndescription: Review a merge request\n---\n",
         )
+    return output.getvalue()
+
+
+def _github_upstream_zip(
+    version: str = "0.1.6", *, skill_body: str = "# GitHub"
+) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            json.dumps(
+                {
+                    "name": "github",
+                    "version": version,
+                    "description": "GitHub workflows",
+                    "apps": ["app_123"],
+                    "mcpServers": {"github": {"command": "legacy"}},
+                    "interface": {"displayName": "GitHub"},
+                }
+            ),
+        )
+        archive.writestr(".app.json", "{}")
+        archive.writestr(".mcp.json", "{}")
+        archive.writestr("assets/logo.png", b"png")
+        archive.writestr("skills/github/SKILL.md", skill_body)
+        archive.writestr("skills/gh-address-comments/LICENSE.txt", "MIT")
+        archive.writestr("skills/gh-fix-ci/LICENSE.txt", "MIT")
+        archive.writestr("skills/yeet/LICENSE.txt", "MIT")
     return output.getvalue()
 
 
@@ -1109,6 +1138,147 @@ def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):
     with pytest.raises(RuntimeError, match="upstream unavailable"):
         service.sync_upstream(test_db, upstream_id=upstream.id)
     assert test_db.get(PluginUpstream, upstream.id).last_error == "upstream unavailable"
+
+
+def test_upstream_content_digest_ignores_python_formatting_only_changes():
+    service = PluginMarketplaceService()
+
+    def package(source: str) -> bytes:
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as archive:
+            archive.writestr("scripts/check.py", source)
+        return output.getvalue()
+
+    compact = package("result = call(1, 2, 3)\n")
+    wrapped = package("result = call(\n    1,\n    2,\n    3,\n)\n")
+
+    assert service._package_tree_digest(
+        compact, ignored_paths=set()
+    ) == service._package_tree_digest(wrapped, ignored_paths=set())
+
+
+def test_configure_existing_github_plugin_as_a_mirror(test_db, monkeypatch):
+    plugin = Plugin(
+        slug="github",
+        name="github",
+        display_name="GitHub",
+        source_type="native",
+        source_provider="wework",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+    )
+    test_db.add(plugin)
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+    service = PluginMarketplaceService()
+
+    first = service.configure_existing_upstream(
+        test_db,
+        slug="github",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        sync_policy="review_required",
+    )
+    second = service.configure_existing_upstream(
+        test_db,
+        slug="github",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        sync_policy="review_required",
+    )
+
+    test_db.refresh(plugin)
+    assert plugin.source_type == "mirror"
+    assert plugin.source_provider == "codex"
+    assert first.id == second.id
+    assert first.syncEnabled is True
+    assert first.syncPolicy == "review_required"
+    assert test_db.query(PluginUpstream).count() == 1
+    assert test_db.get(PluginUpstream, first.id).sync_policy == "review_required"
+
+
+def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monkeypatch):
+    service = PluginMarketplaceService()
+    stored_packages: dict[str, bytes] = {}
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+    upstream = service.create_upstream(
+        test_db,
+        request=PluginUpstreamCreateRequest(
+            slug="github",
+            displayName="GitHub",
+            marketplaceName="openai/plugins",
+            remotePluginId="github",
+            upstreamUrl="https://github.com/openai/plugins/archive/main.zip",
+        ),
+    )
+    upstream_row = test_db.get(PluginUpstream, upstream.id)
+    upstream_row.sync_policy = "review_required"
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.fetch_upstream_package",
+        lambda url: _github_upstream_zip(),
+    )
+    _mock_package_storage(monkeypatch, stored_packages)
+
+    result = service.sync_upstream(test_db, upstream_id=upstream.id)
+
+    assert result.lastSeenVersion == "0.1.6+wegent.2"
+    plugin = test_db.get(Plugin, upstream.pluginId)
+    assert plugin.latest_release_id is None
+    release = (
+        test_db.query(PluginRelease).filter(PluginRelease.plugin_id == plugin.id).one()
+    )
+    submission = (
+        test_db.query(PluginSubmission)
+        .filter(PluginSubmission.release_id == release.id)
+        .one()
+    )
+    assert release.status == "processing"
+    assert submission.status == "pending"
+    assert release.version == "0.1.6+wegent.2"
+    provenance = release.scan_report_json["provenance"]
+    assert provenance["kind"] == "upstream"
+    assert provenance["adapter"] == "openai-github"
+    assert provenance["adapterVersion"] == "2"
+    assert provenance["upstreamVersion"] == "0.1.6"
+    with zipfile.ZipFile(io.BytesIO(stored_packages[release.storage_key])) as archive:
+        manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
+        assert manifest["connectors"] == [
+            {"slug": "github", "authPolicy": "on_install"}
+        ]
+        assert "apps" not in manifest
+        assert ".mcp.json" not in archive.namelist()
+
+    service.sync_upstream(test_db, upstream_id=upstream.id)
+    assert test_db.query(PluginRelease).count() == 1
+
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.fetch_upstream_package",
+        lambda url: _github_upstream_zip(skill_body="# Changed without a bump"),
+    )
+    with pytest.raises(ValueError, match="changed content without a version bump"):
+        service.sync_upstream(test_db, upstream_id=upstream.id)
+
+    reviewed = service.review_submission(
+        test_db,
+        reviewer_user_id=1,
+        submission_id=submission.id,
+        approved=True,
+        note="Reviewed adapter and scan report",
+    )
+    assert reviewed.status == "approved"
+    assert test_db.get(Plugin, plugin.id).latest_release_id == release.id
 
 
 def test_legacy_marketplace_migration_is_idempotent(test_db, test_user, monkeypatch):

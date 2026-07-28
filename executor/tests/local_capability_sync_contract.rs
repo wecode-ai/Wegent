@@ -452,11 +452,15 @@ async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_auth
         &[
             format!(
                 "install:gitlab:{}",
-                plugins_dir.join("marketplaces/wegent").display()
+                plugins_dir
+                    .join("marketplaces/wegent/.agents/plugins/marketplace.json")
+                    .display()
             ),
             format!(
                 "install:github:{}",
-                plugins_dir.join("marketplaces/wegent").display()
+                plugins_dir
+                    .join("marketplaces/wegent/.agents/plugins/marketplace.json")
+                    .display()
             ),
         ]
     );
@@ -482,6 +486,37 @@ async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_auth
                 "version": "2.0.0"
             }
         ])
+    );
+    assert_eq!(
+        read_json(plugins_dir.join("marketplaces/wegent/.agents/plugins/marketplace.json")),
+        json!({
+            "name": "wegent",
+            "interface": {"displayName": "Wegent"},
+            "plugins": [
+                {
+                    "name": "gitlab",
+                    "source": {
+                        "source": "local",
+                        "path": "./plugins/gitlab-wegent"
+                    },
+                    "policy": {
+                        "installation": "AVAILABLE",
+                        "authentication": "ON_INSTALL"
+                    }
+                },
+                {
+                    "name": "github",
+                    "source": {
+                        "source": "local",
+                        "path": "./plugins/github-wegent"
+                    },
+                    "policy": {
+                        "installation": "AVAILABLE",
+                        "authentication": "ON_INSTALL"
+                    }
+                }
+            ]
+        })
     );
 
     handler

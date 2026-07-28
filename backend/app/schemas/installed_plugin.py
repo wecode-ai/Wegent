@@ -351,6 +351,7 @@ class PluginUpstreamItem(BaseModel):
     upstreamUrl: str
     licenseInfo: str
     syncEnabled: bool
+    syncPolicy: Literal["auto_after_scan", "review_required"]
     lastSeenVersion: Optional[str] = None
     lastCheckedAt: Optional[datetime] = None
     lastSyncedAt: Optional[datetime] = None

@@ -292,6 +292,22 @@ function toMarketplaceInstalledPluginItem(item: PluginMarketplaceItem): Installe
   return toInstalledPluginItem(raw)
 }
 
+function withMarketplaceListingInterface(
+  installed: InstalledPluginItem,
+  marketplaceItem: PluginMarketplaceItem
+): InstalledPluginItem {
+  return {
+    ...installed,
+    raw: {
+      ...installed.raw,
+      spec: {
+        ...installed.raw.spec,
+        interface: marketplaceItem.interface,
+      },
+    },
+  }
+}
+
 function serverConfigFromCustomForm(form: CustomMcpFormState): InstalledMCPServerConfig {
   if (form.type === 'stdio') {
     return {
@@ -358,6 +374,13 @@ function localMarketplaceKey(id: string): string {
 
 function cloudMarketplaceKey(): string {
   return 'cloud:default'
+}
+
+function currentDeviceInstallation(
+  plugin: InstalledPlugin,
+  deviceId: string
+): NonNullable<PluginMarketplaceItem['currentDeviceInstallation']> | null {
+  return plugin.status.devices?.find(device => device.deviceId === deviceId) ?? null
 }
 
 function toMarketplaceOptions(
@@ -537,6 +560,8 @@ function PluginMarketplaceRow({
   isInstalling,
   installLabel,
   installingLabel,
+  retryLabel,
+  syncingLabel,
   tryLabel,
   updateLabel,
   uninstallLabel,
@@ -550,6 +575,8 @@ function PluginMarketplaceRow({
   isInstalling: boolean
   installLabel: string
   installingLabel: string
+  retryLabel: string
+  syncingLabel: string
   tryLabel: string
   updateLabel: string
   uninstallLabel: string
@@ -560,8 +587,23 @@ function PluginMarketplaceRow({
 }) {
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
   const logo = resolvePluginAssetUrl(item.interface?.logo || item.interface?.composerIcon)
-  // 只有登录后才显示 installed 状态
+  // Only authenticated devices may expose the installed action.
   const showInstalledState = isLoggedIn && item.installed
+  const deviceState = item.currentDeviceInstallation?.state
+  const showFailedState = deviceState === 'failed'
+  const showSyncingState =
+    deviceState === 'pending' ||
+    deviceState === 'downloading' ||
+    deviceState === 'installing' ||
+    deviceState === 'uninstalling'
+  const actionPending = isInstalling || showSyncingState
+  const actionLabel = showInstalledState
+    ? tryLabel
+    : showFailedState
+      ? retryLabel
+      : showSyncingState
+        ? syncingLabel
+        : installLabel
   return (
     <article
       role="button"
@@ -608,26 +650,23 @@ function PluginMarketplaceRow({
         <button
           type="button"
           data-testid={`${testIdPrefix}plugin-marketplace-install-${item.id}`}
-          disabled={isInstalling}
-          aria-label={
-            showInstalledState
-              ? `${tryLabel} ${item.displayName || item.name}`
-              : `${installLabel} ${item.displayName || item.name}`
-          }
-          title={showInstalledState ? tryLabel : installLabel}
+          disabled={actionPending}
+          aria-label={`${actionLabel} ${item.displayName || item.name}`}
+          title={actionLabel}
           className={[
             'flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary transition-all hover:bg-surface hover:text-text-primary active:scale-95',
-            isInstalling ? 'cursor-wait opacity-70' : '',
+            actionPending ? 'cursor-wait opacity-70' : '',
+            showFailedState ? 'text-red-600' : '',
           ].join(' ')}
           onClick={event => {
             event.stopPropagation()
             onInstall()
           }}
         >
-          {isInstalling ? (
+          {actionPending ? (
             <>
               <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
-              <span className="sr-only">{installingLabel}</span>
+              <span className="sr-only">{isInstalling ? installingLabel : syncingLabel}</span>
             </>
           ) : showInstalledState && item.updateAvailable ? (
             <>
@@ -640,6 +679,11 @@ function PluginMarketplaceRow({
                 ▷
               </span>
               <span className="sr-only">{tryLabel}</span>
+            </>
+          ) : showFailedState ? (
+            <>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">{retryLabel}</span>
             </>
           ) : (
             <>
@@ -1407,6 +1451,12 @@ export function PluginsWorkspace({
     request
       .then(plugin => {
         const installed = toInstalledPluginItem(plugin)
+        const deviceInstallation =
+          selectedMarketplace.kind === 'cloud'
+            ? currentDeviceInstallation(plugin, currentDeviceId)
+            : null
+        const installedOnCurrentDevice =
+          selectedMarketplace.kind === 'local' || deviceInstallation?.state === 'installed'
         setInstalledPlugins(previous => [
           installed,
           ...previous.filter(plugin => plugin.id !== installed.id),
@@ -1418,12 +1468,16 @@ export function PluginsWorkspace({
             candidate.id === item.id
               ? {
                   ...candidate,
-                  installed: true,
-                  enabled: plugin.spec.enabled,
+                  installed: installedOnCurrentDevice,
+                  enabled: installedOnCurrentDevice && plugin.spec.enabled,
                   installedPluginId: installed.id,
+                  currentDeviceInstallation: deviceInstallation,
                   components: plugin.spec.components,
                   manifest: plugin.spec.manifest,
-                  interface: plugin.spec.interface,
+                  interface:
+                    selectedMarketplace.kind === 'cloud'
+                      ? candidate.interface
+                      : plugin.spec.interface,
                 }
               : candidate
           ),
@@ -1844,6 +1898,7 @@ export function PluginsWorkspace({
     return (
       <PluginDetailView
         plugin={selectedPlugin}
+        actionError={pluginMarketplaceState.error}
         secondaryActionLabel={
           selectedPlugin.origin === 'created' && canPublish
             ? isUploadingPlugin
@@ -1888,10 +1943,19 @@ export function PluginsWorkspace({
         : (installedPlugins.find(
             plugin => String(plugin.id) === String(selectedMarketplacePlugin.installedPluginId)
           ) ?? null)
-    const detailPlugin =
-      installedDetail ?? toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
-    const isInstalled = selectedMarketplacePlugin.installed || installedDetail !== null
+    const detailPlugin = installedDetail
+      ? withMarketplaceListingInterface(installedDetail, selectedMarketplacePlugin)
+      : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
+    const deviceState = selectedMarketplacePlugin.currentDeviceInstallation?.state
+    const isInstalled = selectedMarketplacePlugin.installed && deviceState === 'installed'
+    const isFailed = deviceState === 'failed'
+    const isDeviceSyncing =
+      deviceState === 'pending' ||
+      deviceState === 'downloading' ||
+      deviceState === 'installing' ||
+      deviceState === 'uninstalling'
     const isInstalling = installingMarketplacePluginIds.has(selectedMarketplacePlugin.id)
+    const isActionPending = isInstalling || isDeviceSyncing
     const canUpdate =
       Boolean(selectedMarketplacePlugin.updateAvailable) &&
       isInstalled &&
@@ -1900,17 +1964,29 @@ export function PluginsWorkspace({
     return (
       <PluginDetailView
         plugin={detailPlugin}
+        actionError={
+          (isFailed && selectedMarketplacePlugin.currentDeviceInstallation?.errorMessage) ||
+          pluginMarketplaceState.error
+        }
         primaryActionLabel={
-          isInstalling
-            ? t('workbench.plugins_installing', '安装中...')
+          isActionPending
+            ? isInstalling
+              ? t('workbench.plugins_installing', '安装中...')
+              : t('workbench.plugins_syncing_installation', '同步中...')
             : canUpdate
               ? t('workbench.plugins_update', '更新')
               : isInstalled
                 ? t('workbench.plugins_try_in_chat', '在对话中试用')
-                : t('workbench.plugins_install', '安装')
+                : isFailed
+                  ? t('workbench.plugins_retry_install', '重试安装')
+                  : t('workbench.plugins_install', '安装')
         }
-        primaryActionDisabled={isInstalling}
-        showUninstall={isInstalled}
+        primaryActionDisabled={isActionPending}
+        showUninstall={
+          isInstalled ||
+          (selectedMarketplacePlugin.installedPluginId !== null &&
+            selectedMarketplacePlugin.installedPluginId !== undefined)
+        }
         onBack={() => setSelectedMarketplacePluginId(null)}
         onToggle={() => {
           if (canUpdate) {
@@ -1938,8 +2014,10 @@ export function PluginsWorkspace({
           }
         }}
         onUninstall={() => {
-          if (installedDetail) {
-            uninstallInstalledPlugin(installedDetail.id)
+          const installedPluginId =
+            installedDetail?.id ?? selectedMarketplacePlugin.installedPluginId
+          if (installedPluginId !== null && installedPluginId !== undefined) {
+            uninstallInstalledPlugin(installedPluginId)
           }
         }}
         onManageConnector={slug => void managePluginConnector(slug)}
@@ -2159,14 +2237,6 @@ export function PluginsWorkspace({
                   </option>
                 ))}
               </select>
-              {marketplaces.map(marketplace => (
-                <span
-                  key={marketplace.key}
-                  data-testid={`plugins-marketplace-tab-${marketplace.id}`}
-                >
-                  {marketplace.name}
-                </span>
-              ))}
             </div>
           </>
         )}
@@ -2249,6 +2319,8 @@ export function PluginsWorkspace({
                             isInstalling={installingMarketplacePluginIds.has(item.id)}
                             installLabel={t('workbench.plugins_install', '安装')}
                             installingLabel={t('workbench.plugins_installing', '安装中...')}
+                            retryLabel={t('workbench.plugins_retry_install', '重试安装')}
+                            syncingLabel={t('workbench.plugins_syncing_installation', '同步中...')}
                             tryLabel={t('workbench.plugins_try_in_chat', '在对话中试用')}
                             updateLabel={t('workbench.plugins_update', '更新')}
                             uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
@@ -2284,6 +2356,8 @@ export function PluginsWorkspace({
                           isInstalling={installingMarketplacePluginIds.has(item.id)}
                           installLabel={t('workbench.plugins_install', '安装')}
                           installingLabel={t('workbench.plugins_installing', '安装中...')}
+                          retryLabel={t('workbench.plugins_retry_install', '重试安装')}
+                          syncingLabel={t('workbench.plugins_syncing_installation', '同步中...')}
                           tryLabel={t('workbench.plugins_try_in_chat', '在对话中试用')}
                           updateLabel={t('workbench.plugins_update', '更新')}
                           uninstallLabel={t('workbench.plugins_uninstall', '卸载')}

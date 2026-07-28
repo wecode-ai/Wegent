@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
 import json
 import re
 import zipfile
@@ -21,6 +22,15 @@ from app.schemas.installed_plugin import (
 )
 
 MAX_PLUGIN_PACKAGE_SIZE_BYTES = 50 * 1024 * 1024
+MAX_INLINE_INTERFACE_ASSET_BYTES = 512 * 1024
+INTERFACE_ASSET_MEDIA_TYPES = {
+    ".gif": "image/gif",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+}
 
 
 class ClaudePluginParser:
@@ -36,6 +46,11 @@ class ClaudePluginParser:
                 root, manifest_relative_path = self._detect_plugin_root(archive)
                 manifest = self._read_json(archive, f"{root}{manifest_relative_path}")
                 components = self._parse_components(archive, root, manifest)
+                interface = self._inline_interface_assets(
+                    archive,
+                    root,
+                    self._parse_interface(manifest),
+                )
         except zipfile.BadZipFile as exc:
             raise HTTPException(status_code=400, detail="Invalid plugin ZIP") from exc
 
@@ -54,8 +69,36 @@ class ClaudePluginParser:
             author=self._format_author(manifest.get("author")),
             manifest=manifest,
             components=components,
-            interface=self._parse_interface(manifest),
+            interface=interface,
         )
+
+    def resolve_interface_assets(
+        self,
+        package_bytes: bytes,
+        interface_values: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Inline the exact interface asset paths selected by catalog metadata."""
+        if len(package_bytes) > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="Plugin package is too large")
+        interface = PluginInterface.model_validate(interface_values)
+        try:
+            with zipfile.ZipFile(self._bytes_reader(package_bytes)) as archive:
+                self._validate_archive_paths(archive)
+                root, _ = self._detect_plugin_root(archive)
+                resolved_interface = self._inline_interface_assets(
+                    archive,
+                    root,
+                    interface,
+                )
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="Invalid plugin ZIP") from exc
+        resolved = dict(interface_values)
+        if resolved_interface:
+            for field in ("composerIcon", "logo", "logoDark"):
+                value = getattr(resolved_interface, field)
+                if value:
+                    resolved[field] = value
+        return resolved
 
     @staticmethod
     def _bytes_reader(package_bytes: bytes):
@@ -202,6 +245,48 @@ class ClaudePluginParser:
                 if str(item).strip()
             ],
         )
+
+    def _inline_interface_assets(
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+        interface: PluginInterface | None,
+    ) -> PluginInterface | None:
+        if interface is None:
+            return None
+        updates = {
+            field: self._interface_asset_data_url(
+                archive,
+                root,
+                getattr(interface, field),
+            )
+            for field in ("composerIcon", "logo", "logoDark")
+        }
+        return interface.model_copy(update=updates)
+
+    def _interface_asset_data_url(
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+        value: str | None,
+    ) -> str | None:
+        if not value or re.match(r"^(?:data:|https?://|file://|/)", value, re.I):
+            return value
+        relative = PurePosixPath(value.removeprefix("./"))
+        if relative.is_absolute() or ".." in relative.parts:
+            return value
+        media_type = INTERFACE_ASSET_MEDIA_TYPES.get(relative.suffix.lower())
+        if media_type is None:
+            return value
+        member_name = f"{root}{relative.as_posix()}"
+        try:
+            member = archive.getinfo(member_name)
+        except KeyError:
+            return value
+        if member.file_size > MAX_INLINE_INTERFACE_ASSET_BYTES:
+            return value
+        encoded = base64.b64encode(archive.read(member)).decode("ascii")
+        return f"data:{media_type};base64,{encoded}"
 
     @staticmethod
     def _optional_string(value: Any) -> str | None:

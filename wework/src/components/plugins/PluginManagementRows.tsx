@@ -1,6 +1,7 @@
 import { Boxes, Globe, Sparkles, Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin } from '@/types/api'
+import { resolvePluginAssetUrl } from './plugin-assets'
 
 export interface InstalledSkillItem {
   id: number
@@ -156,6 +157,9 @@ export function InstalledPluginRow({
   onUninstall: () => void
 }) {
   const { t } = useTranslation('common')
+  const logo = resolvePluginAssetUrl(
+    plugin.raw.spec.interface?.logo || plugin.raw.spec.interface?.composerIcon
+  )
   const componentLabels = Object.entries(plugin.componentCounts)
     .filter(([, count]) => count > 0)
     .map(([key, count]) => `${key} ${count}`)
@@ -175,8 +179,17 @@ export function InstalledPluginRow({
         }
       }}
     >
-      <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-violet-50 text-violet-600 shadow-sm">
-        <Boxes className="h-7 w-7" />
+      <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl border border-border bg-background shadow-sm">
+        {logo ? (
+          <img
+            src={logo}
+            alt=""
+            data-testid={`installed-plugin-logo-${plugin.id}`}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <Boxes className="h-7 w-7 text-violet-600" />
+        )}
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">

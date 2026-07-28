@@ -255,7 +255,7 @@ GitHub 插件直接复用 OpenAI `openai/plugins` 的 `plugins/github`，Wegent 
 - 上游锁定：`upstream.lock.json`
 - 同步检查：`uv run python scripts/sync_openai_github_plugin.py --check`
 - 发布身份：`source_type=mirror`、`source_provider=codex`、开发者 OpenAI
-- 适配版本：上游 `0.1.6` 对应 `0.1.6+wegent.1`
+- 适配版本：上游 `0.1.6` 对应 `0.1.6+wegent.2`
 
 包内不保存 OAuth token，也不使用 OpenAI connector ID 或 `.mcp.json`。Manifest 只声明：
 
@@ -287,8 +287,20 @@ uv run python scripts/publish_official_plugin.py \
   --upstream-repository https://github.com/openai/plugins \
   --upstream-commit 11c74d6ba24d3a6d48f54a194cd00ef3beea18f9 \
   --upstream-version 0.1.6 \
-  --adapter-version 1
+  --adapter-version 2
+
+# 4. 幂等纠正历史来源身份，并登记定时同步的精选上游
+uv run python scripts/configure_openai_github_mirror.py
 ```
+
+GitHub 仍以不可变快照存入 `plugin_releases`；`plugins` 保存
+`mirror/codex` 来源身份，`plugin_upstreams` 保存 OpenAI 上游地址和同步状态。
+Celery Beat 每 6 小时只检查已启用的精选上游。GitHub 包在解析版本前会执行
+同一套确定性适配并再次扫描：移除 OpenAI App/MCP 配置、声明 Wegent
+Connector、生成 `<上游版本>+wegent.<适配版本>`。同版本内容发生变化时同步
+会失败，不会覆盖已有 Release；新版本只有在原包和适配后包都通过扫描后才会
+生成待审核 Release。管理员通过现有 Submission 审核后才会更新
+`latest_release_id`，审核前用户仍安装当前已发布版本。
 
 Wework 安装该插件时会先打开 GitHub OAuth 授权窗口；成功后，Backend 按用户加密保存凭据，并由 Connector Runtime 代理 `https://api.githubcopilot.com/mcp/`。Executor 只获取短期 Connector JWT，不接触 GitHub 长期 token。用户可在“设置 → 云端连接 → 第三方应用”断开授权。
 

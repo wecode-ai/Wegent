@@ -26,6 +26,7 @@ interface PluginDetailViewProps {
   primaryActionLabel?: string
   showUninstall?: boolean
   primaryActionDisabled?: boolean
+  actionError?: string | null
   secondaryActionLabel?: string
   secondaryActionDisabled?: boolean
   onSecondaryAction?: () => void
@@ -322,6 +323,7 @@ export function PluginDetailView({
   primaryActionLabel,
   showUninstall = true,
   primaryActionDisabled = false,
+  actionError,
   secondaryActionLabel,
   secondaryActionDisabled = false,
   onSecondaryAction,
@@ -447,6 +449,16 @@ export function PluginDetailView({
         <p className="mt-6 rounded-xl bg-surface px-5 py-4 text-sm leading-6 text-text-secondary">
           {description}
         </p>
+
+        {actionError && (
+          <div
+            role="alert"
+            data-testid="plugin-detail-action-error"
+            className="mt-4 rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm leading-5 text-red-600"
+          >
+            {actionError}
+          </div>
+        )}
 
         {connectorItems.length > 0 && (
           <section className="mt-7 space-y-3">

@@ -288,6 +288,9 @@ function mockSystemSkillsFetch(
     canPublish: boolean
     marketplaceInstalled: boolean
     marketplaceDeviceState: 'installed' | 'failed' | 'pending'
+    marketplaceInstallError: string
+    marketplaceLogo: string
+    installedMarketplaceLogo: string
   }> = {}
 ) {
   const personalSkillsResponse = {
@@ -493,7 +496,7 @@ function mockSystemSkillsFetch(
     interface: {
       displayName: 'Documents',
       shortDescription: 'Create and edit documents',
-      logo: '/Users/test/plugins/documents/assets/logo.png',
+      logo: overrides.marketplaceLogo ?? '/Users/test/plugins/documents/assets/logo.png',
       composerIcon: null,
       brandColor: null,
       category: 'Productivity',
@@ -568,15 +571,28 @@ function mockSystemSkillsFetch(
       releaseId: 1001,
       componentStates: {},
       components: marketplacePlugin.components,
-      interface: marketplacePlugin.interface,
+      interface: {
+        ...marketplacePlugin.interface,
+        logo: overrides.installedMarketplaceLogo ?? marketplacePlugin.interface.logo,
+      },
       packageRef: null,
       sourcePayload: null,
     },
     status: {
       state: overrides.marketplaceDeviceState ?? 'installed',
-      devices: marketplacePlugin.currentDeviceInstallation
-        ? [marketplacePlugin.currentDeviceInstallation]
-        : [],
+      devices: [
+        marketplacePlugin.currentDeviceInstallation ?? {
+          deviceId: 'current-device',
+          desiredReleaseId: 1001,
+          actualReleaseId: 1001,
+          state: 'installed',
+          errorCode: null,
+          errorMessage: null,
+          attemptCount: 1,
+          lastSyncAt: '2026-07-25T12:00:00',
+          updatedAt: '2026-07-25T12:00:00',
+        },
+      ],
     },
   }
   const skill = (page: number) => ({
@@ -704,6 +720,14 @@ function mockSystemSkillsFetch(
         })
       }
       if (requestUrl.pathname === '/api/plugins/marketplace/101/install') {
+        if (overrides.marketplaceInstallError) {
+          return Promise.resolve({
+            ok: false,
+            status: 503,
+            text: () =>
+              Promise.resolve(JSON.stringify({ detail: overrides.marketplaceInstallError })),
+          })
+        }
         return new Promise(resolve => {
           setTimeout(() => {
             resolve({
@@ -833,7 +857,18 @@ describe('PluginsWorkspace', () => {
   })
 
   test('installs a marketplace plugin', async () => {
-    render(<PluginsWorkspace />)
+    const marketplaceLogo = 'data:image/svg+xml;base64,PHN2Zy8+'
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceLogo,
+      installedMarketplaceLogo: './assets/github-small.svg',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
@@ -842,8 +877,9 @@ describe('PluginsWorkspace', () => {
       expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('在对话中试用')
     )
     expect(screen.getByTestId('plugin-marketplace-install-101')).not.toBeDisabled()
+    expect(document.querySelector('img')).toHaveAttribute('src', marketplaceLogo)
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/marketplace/101/install',
+      '/api/plugins/marketplace/101/install?device_id=current-device',
       expect.objectContaining({ method: 'POST' })
     )
   })
@@ -862,15 +898,45 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace />)
 
-    expect(await screen.findByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
+    expect(await screen.findByTestId('plugin-marketplace-install-101')).toHaveTextContent(
+      '重试安装'
+    )
     expect(screen.queryByTestId('plugins-installed-strip-item-101')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
 
     expect(screen.getByText('0/1 已安装 · 1 失败')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('重试安装')
+    expect(screen.getByTestId('plugin-detail-action-error')).toHaveTextContent(
+      'Codex App Server rejected install'
+    )
+    expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/plugins/marketplace?device_id=current-device',
       expect.objectContaining({ method: 'GET' })
     )
+  })
+
+  test('shows pending marketplace installation as syncing and prevents duplicate installs', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace />)
+
+    const action = await screen.findByTestId('plugin-marketplace-install-101')
+    expect(action).toHaveTextContent('同步中...')
+    expect(action).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('同步中...')
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toBeDisabled()
   })
 
   test('shows publishing only when the cloud capability enables it', async () => {
@@ -883,7 +949,13 @@ describe('PluginsWorkspace', () => {
   })
 
   test('opens installed marketplace plugin actions and uninstalls from the row menu', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
     mockCodexAppServerInvoke({
+      deviceId: 'current-device',
       marketplaces: [
         {
           name: 'openai-official',
@@ -892,7 +964,7 @@ describe('PluginsWorkspace', () => {
         },
       ],
     })
-    render(<PluginsWorkspace />)
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
@@ -910,7 +982,7 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
 
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/101',
+      '/api/plugins/installed/101?device_id=current-device',
       expect.objectContaining({ method: 'DELETE' })
     )
     expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
@@ -932,15 +1004,16 @@ describe('PluginsWorkspace', () => {
         },
       ],
       installedPluginNames: ['documents'],
+      deviceId: 'current-device',
     })
 
-    render(<PluginsWorkspace />)
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
 
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/marketplace/101/install',
+        '/api/plugins/marketplace/101/install?device_id=current-device',
         expect.objectContaining({ method: 'POST' })
       )
     )
@@ -963,13 +1036,44 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByRole('button', { name: '安装' })).toBeInTheDocument()
     expect(screen.getByText('Create and edit documents')).toBeInTheDocument()
     expect(screen.getByText('Draft a document outline from this chat')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /包含能力/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /其他组件/ })).toBeInTheDocument()
     expect(screen.getByText('Documents App')).toBeInTheDocument()
     expect(screen.getByText('documents-app')).toBeInTheDocument()
   })
 
+  test('keeps the resolved marketplace logo on installed plugin details', async () => {
+    const marketplaceLogo = 'data:image/svg+xml;base64,PHN2Zy8+'
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceLogo,
+      installedMarketplaceLogo: './assets/github-small.svg',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+
+    expect(screen.getByTestId('plugin-detail-back-button')).toBeInTheDocument()
+    const detailImages = Array.from(document.querySelectorAll('img'))
+    expect(detailImages.length).toBeGreaterThan(0)
+    detailImages.forEach(image => expect(image).toHaveAttribute('src', marketplaceLogo))
+    expect(document.querySelector('img[src="./assets/github-small.svg"]')).toBeNull()
+  })
+
   test('installs a marketplace plugin from the detail page with visible progress', async () => {
-    render(<PluginsWorkspace />)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
@@ -980,8 +1084,40 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('shows marketplace installation errors on the plugin detail page', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({ marketplaceInstallError: 'GitHub OAuth is not configured' })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/marketplace?device_id=current-device',
+        expect.objectContaining({ method: 'GET' })
+      )
+    )
+    await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+
+    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
+      'GitHub OAuth is not configured'
+    )
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('安装')
+  })
+
   test('opens installed marketplace plugin actions and uninstalls from the detail menu', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
     mockCodexAppServerInvoke({
+      deviceId: 'current-device',
       marketplaces: [
         {
           name: 'openai-official',
@@ -990,7 +1126,7 @@ describe('PluginsWorkspace', () => {
         },
       ],
     })
-    render(<PluginsWorkspace />)
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
@@ -1007,7 +1143,7 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-detail-uninstall-101'))
 
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/101',
+      '/api/plugins/installed/101?device_id=current-device',
       expect.objectContaining({ method: 'DELETE' })
     )
     expect(screen.queryByTestId('plugin-detail-actions-101')).not.toBeInTheDocument()
@@ -1021,7 +1157,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-manage-marketplaces-button')).not.toBeInTheDocument()
   })
 
-  test('ignores locally configured marketplaces in the ordinary market view', async () => {
+  test('keeps the cloud marketplace selected when local marketplaces are configured', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1037,12 +1173,12 @@ describe('PluginsWorkspace', () => {
     })
     render(<PluginsWorkspace />)
 
-    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-marketplace-tab-existing-market')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveClass('bg-surface')
+    expect(screen.getByTestId('plugins-marketplace-tab-existing-market')).toBeInTheDocument()
     expectCodexAppServerRequest('plugin/list', { cwds: null })
   })
 
-  test('keeps Codex upstream marketplaces out of the ordinary market switcher', async () => {
+  test('renders Codex upstream marketplaces after the cloud marketplace', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1062,15 +1198,15 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
       'Wework 云端市场'
     )
-    expect(
-      screen.queryByTestId('plugins-marketplace-tab-openai-curated-remote')
-    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-marketplace-tab-openai-curated-remote')).toHaveTextContent(
+      'OpenAI 官方市场'
+    )
     expectCodexAppServerRequest('plugin/list', {
       cwds: null,
     })
   })
 
-  test('does not render configured local marketplaces as market tabs', async () => {
+  test('renders configured local marketplaces as secondary market tabs', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1093,8 +1229,8 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-marketplace-tab-local-openai')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-marketplace-tab-local-team')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-marketplace-tab-local-openai')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-marketplace-tab-local-team')).toBeInTheDocument()
   })
 
   test('shows add-marketplace state when no marketplace is configured', async () => {
@@ -1361,42 +1497,14 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-marketplace-edit-local-openai')).not.toBeInTheDocument()
   })
 
-  test('opens the create menu and creates a custom MCP', async () => {
+  test('opens the create menu and navigates to plugin creation', async () => {
     render(<PluginsWorkspace />)
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
-    await userEvent.click(screen.getByTestId('plugins-create-mcp-option'))
+    await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
 
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('custom-mcp-import-json-button'))
-    fireEvent.change(screen.getByTestId('custom-mcp-import-json-textarea'), {
-      target: {
-        value: JSON.stringify({
-          mcpServers: {
-            'local-docs': {
-              type: 'streamable-http',
-              url: 'https://mcp.example.com/local',
-              headers: { Authorization: 'Bearer token' },
-              description: 'Local docs search',
-            },
-          },
-        }),
-      },
-    })
-    await userEvent.click(screen.getByTestId('custom-mcp-apply-json-button'))
-
-    expect(screen.getByTestId('custom-mcp-name-input')).toHaveValue('local-docs')
-    expect(screen.getByTestId('custom-mcp-url-input')).toHaveValue('https://mcp.example.com/local')
-    await userEvent.click(screen.getByTestId('custom-mcp-submit-button'))
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/mcps/custom',
-      expect.objectContaining({
-        method: 'POST',
-        body: expect.stringContaining('"name":"local-docs"'),
-      })
-    )
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/plugins/create')
+    expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
   })
 
   test('closes the create menu on outside click and Escape', async () => {

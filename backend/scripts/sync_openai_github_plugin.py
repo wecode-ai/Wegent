@@ -7,11 +7,21 @@ import argparse
 import io
 import json
 import shutil
+import sys
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
 import httpx
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.services.plugin_package_scanner import scan_plugin_package  # noqa: E402
+from app.services.plugin_upstream_adapter import (  # noqa: E402
+    OPENAI_GITHUB_MARKETPLACE,
+    OPENAI_GITHUB_REMOTE_PLUGIN_ID,
+    adapt_upstream_package,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 TARGET = REPOSITORY_ROOT / "curated-plugins" / "openai" / "github"
@@ -31,64 +41,42 @@ def _download_archive(repository: str, commit: str) -> bytes:
         return response.content
 
 
-def _extract_plugin(package: bytes, subdirectory: str, destination: Path) -> None:
+def _extract_plugin_package(package: bytes, subdirectory: str) -> bytes:
     subdirectory_parts = PurePosixPath(subdirectory).parts
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(package)) as archive:
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as selected:
+            for member in archive.infolist():
+                path = PurePosixPath(member.filename)
+                if path.is_absolute() or ".." in path.parts:
+                    raise ValueError(f"Unsafe upstream archive path: {member.filename}")
+                parts = path.parts
+                if len(parts) <= len(subdirectory_parts):
+                    continue
+                if tuple(parts[1 : 1 + len(subdirectory_parts)]) != subdirectory_parts:
+                    continue
+                relative = PurePosixPath(*parts[1 + len(subdirectory_parts) :])
+                if member.is_dir() or not relative.parts:
+                    continue
+                copied = zipfile.ZipInfo(relative.as_posix(), member.date_time)
+                copied.create_system = member.create_system
+                copied.external_attr = member.external_attr
+                copied.internal_attr = member.internal_attr
+                copied.flag_bits = member.flag_bits
+                copied.compress_type = zipfile.ZIP_DEFLATED
+                selected.writestr(copied, archive.read(member))
+    return output.getvalue()
+
+
+def _extract_package(package: bytes, destination: Path) -> None:
     with zipfile.ZipFile(io.BytesIO(package)) as archive:
         for member in archive.infolist():
             path = PurePosixPath(member.filename)
-            if path.is_absolute() or ".." in path.parts:
-                raise ValueError(f"Unsafe upstream archive path: {member.filename}")
-            parts = path.parts
-            if len(parts) <= len(subdirectory_parts):
+            if path.is_absolute() or ".." in path.parts or member.is_dir():
                 continue
-            if tuple(parts[1 : 1 + len(subdirectory_parts)]) != subdirectory_parts:
-                continue
-            relative = Path(*parts[1 + len(subdirectory_parts) :])
-            if member.is_dir():
-                (destination / relative).mkdir(parents=True, exist_ok=True)
-                continue
-            output = destination / relative
+            output = destination.joinpath(*path.parts)
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(archive.read(member))
-
-
-def _apply_adapter(
-    root: Path,
-    *,
-    expected_upstream_version: str,
-    adapter_version: str,
-) -> None:
-    required = {
-        ".codex-plugin/plugin.json",
-        "skills/github/SKILL.md",
-        "skills/gh-address-comments/LICENSE.txt",
-        "skills/gh-fix-ci/LICENSE.txt",
-        "skills/yeet/LICENSE.txt",
-    }
-    missing = sorted(path for path in required if not (root / path).is_file())
-    if missing:
-        raise ValueError(f"Upstream GitHub plugin is missing: {', '.join(missing)}")
-    manifest_path = root / ".codex-plugin" / "plugin.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    upstream_version = str(manifest["version"])
-    if upstream_version != expected_upstream_version:
-        raise ValueError(
-            "Pinned upstream version does not match upstream.lock.json: "
-            f"{upstream_version}"
-        )
-    manifest["version"] = f"{upstream_version}+wegent.{adapter_version}"
-    manifest.pop("apps", None)
-    manifest.pop("mcpServers", None)
-    manifest["connectors"] = [{"slug": "github", "authPolicy": "on_install"}]
-    interface = manifest.get("interface")
-    if isinstance(interface, dict):
-        interface["logo"] = "./assets/github-small.svg"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    (root / ".app.json").unlink(missing_ok=True)
-    (root / ".mcp.json").unlink(missing_ok=True)
 
 
 def _tree_digest(root: Path) -> dict[str, bytes]:
@@ -109,14 +97,24 @@ def main() -> int:
     args = parser.parse_args()
     lock = json.loads(LOCK_FILE.read_text(encoding="utf-8"))
     package = _download_archive(lock["repository"], lock["commit"])
+    selected = _extract_plugin_package(package, lock["subdirectory"])
+    scan_plugin_package(selected)
+    adapted = adapt_upstream_package(
+        provider="codex",
+        marketplace_name=OPENAI_GITHUB_MARKETPLACE,
+        remote_plugin_id=OPENAI_GITHUB_REMOTE_PLUGIN_ID,
+        package=selected,
+    )
+    if adapted.upstream_version != str(lock["upstreamVersion"]):
+        raise ValueError(
+            "Pinned upstream version does not match upstream.lock.json: "
+            f"{adapted.upstream_version}"
+        )
+    if adapted.adapter_version != str(lock["adapterVersion"]):
+        raise ValueError("GitHub adapter version does not match upstream.lock.json")
     with tempfile.TemporaryDirectory(prefix="wegent-openai-github-") as directory:
         generated = Path(directory)
-        _extract_plugin(package, lock["subdirectory"], generated)
-        _apply_adapter(
-            generated,
-            expected_upstream_version=str(lock["upstreamVersion"]),
-            adapter_version=str(lock["adapterVersion"]),
-        )
+        _extract_package(adapted.package, generated)
         if args.check:
             if _tree_digest(generated) != _tree_digest(TARGET):
                 raise SystemExit("OpenAI GitHub plugin snapshot is out of date")

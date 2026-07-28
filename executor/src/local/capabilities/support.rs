@@ -453,6 +453,22 @@ pub(super) fn ensure_root_object(value: &mut Value) -> &mut Map<String, Value> {
     value.as_object_mut().expect("manifest object")
 }
 
+pub(super) fn upsert_marketplace_plugin(
+    marketplace: &mut Value,
+    plugin_name: &str,
+    plugin: Value,
+) -> Result<(), CapabilitySyncError> {
+    let plugins = ensure_root_object(marketplace)
+        .entry("plugins")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let plugins = plugins.as_array_mut().ok_or_else(|| {
+        CapabilitySyncError::invalid_payload("Marketplace plugins must be an array")
+    })?;
+    plugins.retain(|candidate| candidate.get("name").and_then(Value::as_str) != Some(plugin_name));
+    plugins.push(plugin);
+    Ok(())
+}
+
 pub(super) fn ensure_object_field<'a>(
     value: &'a mut Value,
     field: &str,

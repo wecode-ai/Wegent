@@ -256,7 +256,7 @@ repository. Wegent maintains only a reviewed adapter:
 - upstream pin: `upstream.lock.json`
 - sync check: `uv run python scripts/sync_openai_github_plugin.py --check`
 - release identity: `source_type=mirror`, `source_provider=codex`, developer OpenAI
-- adapter version: upstream `0.1.6` becomes `0.1.6+wegent.1`
+- adapter version: upstream `0.1.6` becomes `0.1.6+wegent.2`
 
 The package contains no OAuth token, OpenAI connector ID, or package-local
 `.mcp.json`. Its manifest only declares:
@@ -284,8 +284,24 @@ uv run python scripts/publish_official_plugin.py \
   --upstream-repository https://github.com/openai/plugins \
   --upstream-commit 11c74d6ba24d3a6d48f54a194cd00ef3beea18f9 \
   --upstream-version 0.1.6 \
-  --adapter-version 1
+  --adapter-version 2
+
+# Idempotently repair legacy source identity and register scheduled sync
+uv run python scripts/configure_openai_github_mirror.py
 ```
+
+GitHub remains an immutable snapshot in `plugin_releases`; `plugins` stores the
+`mirror/codex` source identity and `plugin_upstreams` stores the selected OpenAI
+source and synchronization state. Celery Beat checks only enabled selected
+upstreams every six hours. Before parsing a GitHub version, Backend applies the
+same deterministic adapter and scans the result: it removes the OpenAI App/MCP
+settings, declares the Wegent Connector, and produces
+`<upstream version>+wegent.<adapter version>`. Content drift under an existing
+version fails synchronization instead of overwriting a Release. A newer version
+creates a pending-review Release only after both the original and adapted
+packages pass scans. The existing Submission review promotes
+`latest_release_id`; users continue installing the current published version
+until an administrator approves the candidate.
 
 Wework opens GitHub OAuth before installation. Backend encrypts the user token
 and Connector Runtime proxies `https://api.githubcopilot.com/mcp/`. Executor
