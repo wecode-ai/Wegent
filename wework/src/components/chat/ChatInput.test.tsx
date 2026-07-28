@@ -733,6 +733,7 @@ describe('ChatInput', () => {
             id: 'sending-guidance',
             content: '请停止等待并检查目录',
             status: 'sending',
+            deliveryMode: 'guidance',
             notice: '正在引导当前对话',
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
@@ -811,6 +812,7 @@ describe('ChatInput', () => {
             id: 'queued-guidance',
             content: '看 cpu',
             status: 'sending',
+            deliveryMode: 'guidance',
             notice: '正在引导当前对话',
             createdAt: '2026-05-25T15:09:00.000+08:00',
           },
@@ -2415,7 +2417,7 @@ describe('ChatInput', () => {
     expect(disabledOption).not.toBeDisabled()
     expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
     expect(disabledOption).toHaveAttribute('title', 'Incompatible with the current model protocol')
-    expect(disabledOption).toHaveTextContent('Incompatible with the current model protocol')
+    expect(disabledOption).not.toHaveTextContent('Incompatible with the current model protocol')
 
     await userEvent.click(disabledOption)
 
@@ -2483,7 +2485,7 @@ describe('ChatInput', () => {
       'title',
       'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
     )
-    expect(disabledOption).toHaveTextContent(
+    expect(disabledOption).not.toHaveTextContent(
       'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
     )
 
