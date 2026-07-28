@@ -32,11 +32,13 @@ import type {
   Delivery,
   DeliveryDetail,
 } from '@/api/deliveries'
+import type { AITableApi } from '@/api/aitable'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { cn } from '@/lib/utils'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
+import { AITableTaskFields } from './AITableTaskFields'
 import {
   columnDotClasses,
   columns,
@@ -224,6 +226,7 @@ export interface TodoEditorEditProps {
 
 export type TodoEditorProps = {
   api: DeliveryApi
+  aitableApi?: AITableApi
   allItems: CloudLoopItem[]
   onClose: () => void
 } & (TodoEditorCreateProps | TodoEditorEditProps)
@@ -798,6 +801,10 @@ export function TodoEditor(props: TodoEditorProps) {
             </p>
           </div>
           {saveError && <p className="mt-2 text-xs text-destructive">{saveError}</p>}
+
+          {item && editProps?.project?.task_provider === 'dingtalk_aitable' && props.aitableApi ? (
+            <AITableTaskFields api={props.aitableApi} project={editProps.project} item={item} />
+          ) : null}
 
           <div className="mt-5">
             <TodoAttachmentSection

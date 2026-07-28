@@ -328,6 +328,124 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
+        "aitable_describe" => match string_argument(&arguments, "project_id") {
+            Ok(project_id) => runtime
+                .aitable_describe(&project_id)
+                .await
+                .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+            Err(error) => Err(error),
+        },
+        "aitable_list_records" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let query = arguments
+                .get("query")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            let cursor = arguments
+                .get("cursor")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            let limit = arguments
+                .get("limit")
+                .and_then(Value::as_i64)
+                .unwrap_or(100);
+            match project_id {
+                Ok(project_id) => runtime
+                    .aitable_list_records(&project_id, query.as_deref(), limit, cursor.as_deref())
+                    .await
+                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                Err(error) => Err(error),
+            }
+        }
+        "aitable_create_record" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let cells = cells_argument(&arguments);
+            match (project_id, cells) {
+                (Ok(project_id), Ok(cells)) => runtime
+                    .aitable_create_record(&project_id, cells)
+                    .await
+                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        }
+        "aitable_update_record" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let record_id = string_argument(&arguments, "record_id");
+            let cells = cells_argument(&arguments);
+            match (project_id, record_id, cells) {
+                (Ok(project_id), Ok(record_id), Ok(cells)) => runtime
+                    .aitable_update_record(&project_id, &record_id, cells)
+                    .await
+                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "aitable_delete_record" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let record_id = string_argument(&arguments, "record_id");
+            match (project_id, record_id) {
+                (Ok(project_id), Ok(record_id)) => runtime
+                    .aitable_delete_record(&project_id, &record_id)
+                    .await
+                    .map(|_| json!({"deleted": true})),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        }
+        "aitable_create_field" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let name = string_argument(&arguments, "name");
+            let field_type = string_argument(&arguments, "field_type");
+            let property = arguments
+                .get("config")
+                .or_else(|| arguments.get("property"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            match (project_id, name, field_type) {
+                (Ok(project_id), Ok(name), Ok(field_type)) => runtime
+                    .aitable_create_field(&project_id, &name, &field_type, property)
+                    .await
+                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+            }
+        }
+        "aitable_update_field" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let field_id = string_argument(&arguments, "field_id");
+            let payload = arguments
+                .get("field")
+                .or_else(|| arguments.get("config"))
+                .cloned()
+                .unwrap_or_else(|| arguments.clone());
+            let payload = payload.as_object().cloned().map(|mut map| {
+                map.remove("project_id");
+                map.remove("field_id");
+                if let Some(config) = map.remove("config") {
+                    map.insert("property".to_owned(), config);
+                }
+                map
+            });
+            match (project_id, field_id, payload) {
+                (Ok(project_id), Ok(field_id), Some(payload)) => runtime
+                    .aitable_update_field(&project_id, &field_id, payload)
+                    .await
+                    .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
+                (Err(error), _, _) | (_, Err(error), _) => Err(error),
+                (_, _, None) => Err(super::TaskRuntimeError::Invalid(
+                    "field update payload must be an object".to_owned(),
+                )),
+            }
+        }
+        "aitable_delete_field" => {
+            let project_id = string_argument(&arguments, "project_id");
+            let field_id = string_argument(&arguments, "field_id");
+            match (project_id, field_id) {
+                (Ok(project_id), Ok(field_id)) => runtime
+                    .aitable_delete_field(&project_id, &field_id)
+                    .await
+                    .map(|_| json!({"deleted": true})),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        }
         _ => return text_result(format!("Unknown task tool: {name}"), true),
     };
     match result {
@@ -406,6 +524,85 @@ async fn call_backend_tool(
             .json(arguments.get("reorder").unwrap_or(arguments)),
         "create_project" | "update_project" => {
             return Err("Cloud project management is not available through task MCP".to_owned())
+        }
+        "aitable_describe" => {
+            client.get(format!("{base}/cloud-projects/{project_id}/aitable/table"))
+        }
+        "aitable_list_records" => {
+            let mut request = client.get(format!(
+                "{base}/cloud-projects/{project_id}/aitable/records"
+            ));
+            if let Some(query) = arguments.get("query").and_then(Value::as_str) {
+                request = request.query(&[("query", query)]);
+            }
+            if let Some(cursor) = arguments.get("cursor").and_then(Value::as_str) {
+                request = request.query(&[("cursor", cursor)]);
+            }
+            if let Some(limit) = arguments.get("limit").and_then(Value::as_i64) {
+                request = request.query(&[("limit", limit.to_string())]);
+            }
+            return backend_json(request.bearer_auth(auth_token).send().await.map_err(|e| e.to_string())?).await;
+        }
+        "aitable_create_record" => client
+            .post(format!("{base}/cloud-projects/{project_id}/aitable/records"))
+            .json(&json!({"cells": arguments.get("cells").cloned().unwrap_or_else(|| json!({}))})),
+        "aitable_update_record" => {
+            let record_id = string_argument(arguments, "record_id").map_err(|e| e.to_string())?;
+            client
+                .patch(format!(
+                    "{base}/cloud-projects/{project_id}/aitable/records/{}",
+                    encode_segment(record_id)
+                ))
+                .json(&json!({"cells": arguments.get("cells").cloned().unwrap_or_else(|| json!({}))}))
+        }
+        "aitable_delete_record" => {
+            let record_id = string_argument(arguments, "record_id").map_err(|e| e.to_string())?;
+            let response = client
+                .delete(format!(
+                    "{base}/cloud-projects/{project_id}/aitable/records/{}",
+                    encode_segment(record_id)
+                ))
+                .bearer_auth(auth_token)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            return backend_json(response).await;
+        }
+        "aitable_create_field" => client
+            .post(format!("{base}/cloud-projects/{project_id}/aitable/fields"))
+            .json(&json!({
+                "name": arguments.get("name").and_then(Value::as_str).unwrap_or_default(),
+                "type": arguments.get("field_type").or_else(|| arguments.get("type")).and_then(Value::as_str).unwrap_or_default(),
+                "config": arguments.get("config").cloned().unwrap_or_else(|| json!({})),
+            })),
+        "aitable_update_field" => {
+            let field_id = string_argument(arguments, "field_id").map_err(|e| e.to_string())?;
+            let mut payload = json!({});
+            if let Some(name) = arguments.get("name").and_then(Value::as_str) {
+                payload["name"] = json!(name);
+            }
+            if let Some(config) = arguments.get("config") {
+                payload["config"] = config.clone();
+            }
+            client
+                .patch(format!(
+                    "{base}/cloud-projects/{project_id}/aitable/fields/{}",
+                    encode_segment(field_id)
+                ))
+                .json(&payload)
+        }
+        "aitable_delete_field" => {
+            let field_id = string_argument(arguments, "field_id").map_err(|e| e.to_string())?;
+            let response = client
+                .delete(format!(
+                    "{base}/cloud-projects/{project_id}/aitable/fields/{}",
+                    encode_segment(field_id)
+                ))
+                .bearer_auth(auth_token)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            return backend_json(response).await;
         }
         "upload_todo_attachment" => {
             let file_path =
@@ -602,7 +799,7 @@ fn tools() -> Vec<Value> {
                     "name": {"type": "string"},
                     "project_key": {"type": "string"},
                     "description": {"type": "string"},
-                    "task_provider": {"enum": ["local", "github", "gitlab"]},
+                    "task_provider": {"enum": ["local", "github", "gitlab", "dingtalk_aitable"]},
                     "provider_config": {"type": "object"}
                 },
                 "required": ["name", "task_provider"]
@@ -787,6 +984,106 @@ fn tools() -> Vec<Value> {
                 "required": ["project_id", "reorder"]
             }),
         ),
+        tool(
+            "aitable_describe",
+            "Describe a DingTalk AI Table: base, tables, and the dynamic field schema",
+            json!({
+                "type": "object",
+                "properties": {"project_id": {"type": "string"}},
+                "required": ["project_id"]
+            }),
+        ),
+        tool(
+            "aitable_list_records",
+            "Query AI Table records with optional full-text keyword and cursor pagination",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "cursor": {"type": "string"}
+                },
+                "required": ["project_id"]
+            }),
+        ),
+        tool(
+            "aitable_create_record",
+            "Create an AI Table record. cells keys must be fieldIds, only provided cells are written",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "cells": {"type": "object", "description": "Map of fieldId to cell value"}
+                },
+                "required": ["project_id", "cells"]
+            }),
+        ),
+        tool(
+            "aitable_update_record",
+            "Patch an AI Table record cell-by-cell. Only the provided fieldIds are modified",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "record_id": {"type": "string"},
+                    "cells": {"type": "object", "description": "Map of fieldId to cell value"}
+                },
+                "required": ["project_id", "record_id", "cells"]
+            }),
+        ),
+        tool(
+            "aitable_delete_record",
+            "Delete an AI Table record (irreversible)",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "record_id": {"type": "string"}
+                },
+                "required": ["project_id", "record_id"]
+            }),
+        ),
+        tool(
+            "aitable_create_field",
+            "Add a field (column) to an AI Table",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "field_type": {"type": "string", "description": "AI Table field type such as text, number, singleSelect, multipleSelect, date, user, checkbox, url"},
+                    "config": {"type": "object", "description": "Field property/options configuration"}
+                },
+                "required": ["project_id", "name", "field_type"]
+            }),
+        ),
+        tool(
+            "aitable_update_field",
+            "Rename or reconfigure an AI Table field. Field type cannot be changed; options are fully replaced",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "field_id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "config": {"type": "object"}
+                },
+                "required": ["project_id", "field_id"]
+            }),
+        ),
+        tool(
+            "aitable_delete_field",
+            "Delete an AI Table field and clear its values in every record (irreversible)",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "field_id": {"type": "string"}
+                },
+                "required": ["project_id", "field_id"]
+            }),
+        ),
     ]
 }
 
@@ -805,6 +1102,17 @@ fn string_argument<'a>(value: &'a Value, key: &str) -> Result<&'a str, super::Ta
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| super::TaskRuntimeError::Invalid(format!("{key} is required")))
+}
+
+fn cells_argument(
+    value: &Value,
+) -> Result<serde_json::Map<String, Value>, super::TaskRuntimeError> {
+    value
+        .get("cells")
+        .and_then(Value::as_object)
+        .cloned()
+        .filter(|cells| !cells.is_empty())
+        .ok_or_else(|| super::TaskRuntimeError::Invalid("cells must not be empty".to_owned()))
 }
 
 fn binary_input_from_path(

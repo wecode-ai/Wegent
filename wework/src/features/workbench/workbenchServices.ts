@@ -1,5 +1,7 @@
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
+import type { AITableApi } from '@/api/aitable'
+import type { DwsApi } from '@/api/dws'
 import {
   createExecutorClientFromApis,
   type ExecutorClient,
@@ -84,6 +86,8 @@ export interface WorkbenchServices {
     >['createDockerRemoteDeviceCommand']
   }
   deliveryApi?: DeliveryApi
+  aitableApi?: AITableApi
+  dwsApi?: DwsApi
   externalIssueApi?: ExternalIssueApi
   projectSpaceApis?: ProjectSpaceApis
   imSessionApi?: ReturnType<typeof createImSessionApi>
@@ -168,6 +172,8 @@ export function createDefaultWorkbenchServices(
   )
   return {
     ...cloudServices,
+    aitableApi: localServices.aitableApi,
+    dwsApi: localServices.dwsApi,
     externalIssueApi: localServices.externalIssueApi,
     projectSpaceApis: {
       local: localServices.deliveryApi,

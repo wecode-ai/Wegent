@@ -19,6 +19,7 @@ pub enum TaskProviderKind {
     Backend,
     Github,
     Gitlab,
+    DingtalkAitable,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

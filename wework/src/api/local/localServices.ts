@@ -109,6 +109,8 @@ import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { createExternalIssueApi, createLocalDeliveryApi } from './localDelivery'
+import { createLocalAITableApi } from '@/api/aitable'
+import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
@@ -2383,6 +2385,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
   const deliveryApi = createLocalDeliveryApi(request)
   const externalIssueApi = createExternalIssueApi(request)
+  const aitableApi = createLocalAITableApi(request)
+  const dwsApi = createDwsApi(request)
 
   return {
     teamApi: {
@@ -2437,6 +2441,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     deviceApi,
     deliveryApi,
     externalIssueApi,
+    aitableApi,
+    dwsApi,
     projectSpaceApis: {
       local: deliveryApi,
       defaultLocation: 'local',
