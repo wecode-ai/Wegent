@@ -2062,6 +2062,7 @@ export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
   | 'unavailable'
+  | 'provider_boundary_mismatch'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {
@@ -2075,6 +2076,8 @@ export interface UnifiedModel {
   displayName?: string | null
   provider?: string | null
   modelId?: string | null
+  contextWindow?: number | null
+  maxOutputTokens?: number | null
   namespace?: string
   resourceUserId?: number
   config?: Record<string, unknown>

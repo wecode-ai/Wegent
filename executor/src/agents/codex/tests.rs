@@ -323,6 +323,21 @@ fn function_tool_profile_enables_responses_tool_conversion() {
 }
 
 #[test]
+fn explicit_upstream_uses_configured_max_output_tokens() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "moonshot-kimi-k3",
+            "upstream_api_format": "anthropic-messages",
+            "max_output_tokens": 96_000
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert_eq!(upstream.max_output_tokens, Some(96_000));
+}
+
+#[test]
 fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
     let request = ExecutionRequest {
         model_config: json!({
@@ -577,6 +592,26 @@ fn codex_launch_config_forwards_web_search_mode() {
 }
 
 #[test]
+fn codex_launch_config_defaults_context_window_to_256k() {
+    let request = ExecutionRequest {
+        prompt: Value::String("create a file".to_owned()),
+        model_config: json!({
+            "model_id": "moonshot-kimi-k3",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config = build_codex_launch_config(&request);
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert_eq!(config.get("model_context_window"), Some(&json!(262_144)));
+}
+
+#[test]
 fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
@@ -684,6 +719,19 @@ fn codex_launch_config_forwards_runtime_proxy_env() {
         launch_config.env.get("ALL_PROXY").map(String::as_str),
         Some("http://127.0.0.1:7890")
     );
+}
+
+#[test]
+fn required_loopback_hosts_are_merged_into_no_proxy() {
+    assert_eq!(
+        merge_required_no_proxy(Some("example.com, localhost")),
+        "example.com,localhost,127.0.0.1,::1,host.docker.internal"
+    );
+    assert_eq!(
+        merge_required_no_proxy(Some("LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL")),
+        "LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL"
+    );
+    assert_eq!(merge_required_no_proxy(None), DEFAULT_NO_PROXY);
 }
 
 #[test]
@@ -1002,6 +1050,97 @@ fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
         outcome,
         ExecutionOutcome::Completed {
             content: "Current directory: /tmp/project".to_owned()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_uses_latest_completed_agent_message_in_same_turn() {
+    let mut state = CodexRunState::default();
+
+    for (id, text) in [
+        ("msg-before-tool", "I found the failing step."),
+        (
+            "msg-after-tool",
+            "The failure is caused by a stale lockfile.",
+        ),
+    ] {
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": id,
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "text": text
+                    }
+                }
+            }))
+            .is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "The failure is caused by a stale lockfile.".to_owned()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_does_not_duplicate_completed_text_after_matching_delta() {
+    let mut state = CodexRunState::default();
+
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-final",
+                "delta": "Done."
+            }
+        }))
+        .is_none());
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-final",
+                    "type": "agentMessage",
+                    "role": "assistant",
+                    "text": "Done."
+                }
+            }
+        }))
+        .is_none());
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Done.".to_owned()
         }
     );
 }

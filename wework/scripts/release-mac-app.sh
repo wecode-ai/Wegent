@@ -675,6 +675,7 @@ trap cleanup EXIT
 
 VERSION="$next_version" \
 MACOS_BUILD_TARGET="$MACOS_BUILD_TARGET" \
+HOOK_RESOURCES="$(wework_code_statistics_macos_resources "$MACOS_BUILD_TARGET")" \
 UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
 UPDATER_PUBKEY="$UPDATER_PUBKEY" \
 SIGNING_IDENTITY="$app_sign_identity" \
@@ -693,7 +694,7 @@ codex_targets = (
 resources = [
     *(f"binaries/codex/{target}/**/*" for target in codex_targets),
     "binaries/codex/legal/**/*",
-    "bundled-hooks/**/*",
+    *os.environ["HOOK_RESOURCES"].splitlines(),
 ]
 
 config = {

@@ -14,6 +14,7 @@ import type {
 export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
 export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUserId'
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
+export const CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION = 'weworkCloudModelMaxOutputTokens'
 export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = 'weworkCloudModelUpstreamApiFormat'
 
 function getStringConfigValue(
@@ -44,6 +45,29 @@ function modelKind(model: UnifiedModel): string {
     getStringConfigValue(model.config, 'weworkModelKind') ||
     getStringConfigValue(model.config?.ui as Record<string, unknown> | null, 'family')
   )
+}
+
+export function isOfficialCodexModel(model: UnifiedModel): boolean {
+  return modelKind(model) === 'codex-official'
+}
+
+export function disableCrossProviderModels(
+  models: UnifiedModel[],
+  activeModel: UnifiedModel | null
+): UnifiedModel[] {
+  if (!activeModel) return models
+
+  const activeIsOfficialCodex = isOfficialCodexModel(activeModel)
+  return models.map(model => {
+    if (isOfficialCodexModel(model) === activeIsOfficialCodex || model.compatibilityDisabled) {
+      return model
+    }
+    return {
+      ...model,
+      compatibilityDisabled: true,
+      compatibilityDisabledReason: 'provider_boundary_mismatch',
+    }
+  })
 }
 
 function isLocalModel(model: UnifiedModel): boolean {
@@ -125,6 +149,7 @@ export function selectedModelExecutionFields(
     }
 
     const contextWindow =
+      selectedModel.contextWindow ??
       selectedModel.config?.model_context_window ??
       selectedModel.config?.context_window ??
       selectedModel.config?.contextWindow
@@ -133,6 +158,17 @@ export function selectedModelExecutionFields(
       (typeof contextWindow === 'string' && Number(contextWindow) > 0)
     ) {
       modelOptions[CLOUD_MODEL_CONTEXT_WINDOW_OPTION] = String(contextWindow)
+    }
+
+    const maxOutputTokens =
+      selectedModel.maxOutputTokens ??
+      selectedModel.config?.max_output_tokens ??
+      selectedModel.config?.maxOutputTokens
+    if (
+      (typeof maxOutputTokens === 'number' && maxOutputTokens > 0) ||
+      (typeof maxOutputTokens === 'string' && Number(maxOutputTokens) > 0)
+    ) {
+      modelOptions[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION] = String(maxOutputTokens)
     }
   }
   return {

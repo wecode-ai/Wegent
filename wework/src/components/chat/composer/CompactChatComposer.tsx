@@ -359,6 +359,7 @@ export function CompactChatComposer({
                     icon: Clock3,
                     testId: 'send-after-turn-option',
                     onSelect: () => onSubmit(value),
+                    shortcut: 'Enter',
                   },
                   {
                     label:
@@ -372,6 +373,7 @@ export function CompactChatComposer({
                     icon: CornerDownRight,
                     testId: 'guide-current-turn-option',
                     onSelect: () => onSubmit(value, { guideWhenBusy: true }),
+                    shortcut: 'Command+Enter',
                   },
                   {
                     label:
@@ -385,6 +387,7 @@ export function CompactChatComposer({
                     icon: Zap,
                     testId: 'interrupt-and-send-option',
                     onSelect: () => onSubmit(value, { interruptWhenBusy: true }),
+                    shortcut: 'Command+Shift+Enter',
                   },
                 ]}
               />

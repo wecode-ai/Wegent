@@ -429,6 +429,10 @@ describe('ChatInput', () => {
     expect(
       screen.getByTestId('send-after-turn-option').querySelector('.lucide-clock-3')
     ).toBeInTheDocument()
+    const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
+    expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
+    expect(screen.getByTestId('guide-current-turn-option')).toHaveTextContent('⌘')
+    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent('⇧')
     await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
 
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
@@ -733,6 +737,7 @@ describe('ChatInput', () => {
             id: 'sending-guidance',
             content: '请停止等待并检查目录',
             status: 'sending',
+            deliveryMode: 'guidance',
             notice: '正在引导当前对话',
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
@@ -811,6 +816,7 @@ describe('ChatInput', () => {
             id: 'queued-guidance',
             content: '看 cpu',
             status: 'sending',
+            deliveryMode: 'guidance',
             notice: '正在引导当前对话',
             createdAt: '2026-05-25T15:09:00.000+08:00',
           },
@@ -2415,7 +2421,7 @@ describe('ChatInput', () => {
     expect(disabledOption).not.toBeDisabled()
     expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
     expect(disabledOption).toHaveAttribute('title', 'Incompatible with the current model protocol')
-    expect(disabledOption).toHaveTextContent('Incompatible with the current model protocol')
+    expect(disabledOption).not.toHaveTextContent('Incompatible with the current model protocol')
 
     await userEvent.click(disabledOption)
 
@@ -2424,6 +2430,77 @@ describe('ChatInput', () => {
       incompatibleModel,
       'Incompatible with the current model protocol'
     )
+  })
+
+  test('shows cross-provider model options as greyed and blocks selection', async () => {
+    const selectedModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        weworkModelKind: 'codex-official',
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+        },
+      },
+    }
+    const thirdPartyModel: UnifiedModel = {
+      name: 'kimi-k2.5',
+      type: 'runtime',
+      displayName: 'Kimi K2.5',
+      compatibilityDisabled: true,
+      compatibilityDisabledReason: 'provider_boundary_mismatch',
+      config: {
+        weworkModelKind: 'codex-provider',
+        ui: {
+          family: 'codex-provider',
+          modelLabel: 'Kimi K2.5',
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+    const onBlockedModelSelect = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [selectedModel, thirdPartyModel],
+          selectedModel,
+          activeModel: selectedModel,
+          selectedModelOptions: {},
+          setSelectedModel,
+          onBlockedModelSelect,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+
+    const disabledOption = screen.getByTestId('model-option-kimi-k2.5')
+    expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
+    expect(disabledOption).toHaveClass('cursor-not-allowed', 'text-text-muted')
+    expect(disabledOption).toHaveAttribute(
+      'title',
+      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
+    )
+    expect(disabledOption).not.toHaveTextContent(
+      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
+    )
+
+    await userEvent.click(disabledOption)
+
+    expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onBlockedModelSelect).toHaveBeenCalledWith(
+      thirdPartyModel,
+      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
+    )
+    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
   })
 
   test('keeps the model menu open after selecting a reasoning option', async () => {

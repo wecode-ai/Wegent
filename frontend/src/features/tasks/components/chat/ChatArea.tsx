@@ -1838,6 +1838,7 @@ function ChatAreaContent({
               onUseAsReference={handleUseAsReference}
               onReEdit={handleReEdit}
               waitingMessage={compactingWaitMessage}
+              defaultSaveKnowledgeBaseId={taskType === 'knowledge' ? knowledgeBaseId : undefined}
             />
           </div>
         </div>

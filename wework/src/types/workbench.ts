@@ -91,6 +91,7 @@ export interface QueuedWorkbenchMessage {
   id: string
   content: string
   status: QueuedMessageStatus
+  deliveryMode?: 'message' | 'guidance'
   createdAt: string
   error?: string
   notice?: string

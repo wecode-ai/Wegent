@@ -324,6 +324,31 @@ Not in Phase 2a (deferred): letting non-`COMPLETED` terminals (FAILED / CANCELLE
 carry and persist `messages_chain`, and relaxing the checkpoint locator to
 recognize them.
 
+## Phase 2b (evaluated and deferred)
+
+Phase 2b would have let FAILED / CANCELLED terminals also carry and persist
+`messages_chain`. After evaluation it was **deliberately deferred**:
+
+- **It is a token-saving optimization, not a data-loss fix.** On failure the partial
+  reply the user already saw is rebuilt into `result.value` by
+  `collect_completed_result(status="FAILED")` from the streamed blocks, so reload
+  still shows it; only the failed turn's structured `messages_chain` is missing. And
+  compaction only rewrites the runtime window — **it never rewrites earlier subtasks'
+  records** — so continuation reloads the full original history and re-compacts once.
+  The cost is one redundant compaction's tokens, not user-visible lost content.
+- **Narrow trigger.** It requires (compaction within a turn) ∩ (that turn ending
+  FAILED) — a small intersection.
+- **Cost/risk out of proportion.** Wiring the failure chain through means changing the
+  SSE `error` terminal contract (the `error` event terminates the SSE read loop before
+  `response.completed`, and `_status_updated` blocks any later update), with a blast
+  radius across the SSE / WebSocket / HTTP-callback transports.
+
+**Cheaper direction if revisited:** rather than forcing the chain through the error
+terminal, persist the summary as its own durable record **at compaction time** (not at
+turn end), so it survives any terminal state for free. Restart when telemetry shows
+material re-compaction churn from failures, or when the compaction persistence structure
+is being changed anyway.
+
 ## Implementation map
 
 These modules are the best entry points for future maintenance:

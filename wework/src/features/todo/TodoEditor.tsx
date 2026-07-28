@@ -37,7 +37,13 @@ import { cn } from '@/lib/utils'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
-import { columnDotClasses, columns, memberAvatarClasses, priorityBadgeClasses } from './todoShared'
+import {
+  columnDotClasses,
+  columns,
+  memberAvatarClasses,
+  memberNameById,
+  priorityBadgeClasses,
+} from './todoShared'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -376,12 +382,22 @@ export function TodoEditor(props: TodoEditorProps) {
   const statusLabel = columns.find(column => column.status === status)?.label ?? ''
   const parentItem = allItems.find(candidate => candidate.id === parentId)
   const assignee = projectMembers.find(member => String(member.user_id) === assigneeId)
+  const creator =
+    item?.created_by_user_name ||
+    (item && item.created_by_user_id === editProps?.project?.current_user_id
+      ? editProps.project.current_user_name
+      : item
+        ? memberNameById(projectMembers, item.created_by_user_id)
+        : null)
 
   async function submitCreate() {
     if (props.mode !== 'create' || !title.trim() || saving) return
     setSaving(true)
     setSaveError(null)
     try {
+      const creatorName =
+        props.project.current_user_name ||
+        memberNameById(projectMembers, props.project.current_user_id ?? null)
       let created = await api.createLoopItem(props.project.id, {
         title: title.trim(),
         description,
@@ -390,6 +406,7 @@ export function TodoEditor(props: TodoEditorProps) {
         tags,
         ...(parentId ? { parent_id: parentId } : {}),
         ...(dueDate ? { due_at: dueDate } : {}),
+        ...(creatorName ? { creator_name: creatorName } : {}),
       })
       // createLoopItem does not accept an assignee, so apply it right after.
       if (assigneeId) {
@@ -708,6 +725,18 @@ export function TodoEditor(props: TodoEditorProps) {
                 ))}
               </select>
             </span>
+            {item && (
+              <span
+                data-testid="cloud-todo-detail-creator"
+                className={cn(propChipClass, 'text-text-muted')}
+              >
+                <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
+                <span className="text-text-muted">创建人</span>
+                <span className="text-text-primary">
+                  {creator ?? (item.created_by_user_id > 0 ? `#${item.created_by_user_id}` : '—')}
+                </span>
+              </span>
+            )}
             <span className={propChipClass}>
               <ListTodo className="h-3.5 w-3.5 text-text-muted" />
               <span className="text-text-muted">父任务</span>

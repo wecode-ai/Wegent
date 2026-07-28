@@ -875,15 +875,23 @@ function createBlockCreatedMessage<TAttachment, TFileChanges>(
   >
 ): WorkbenchMessage<TAttachment, TFileChanges> {
   const subtaskId = action.subtaskId ?? message.subtaskId
+  const movesPendingContent = shouldMovePendingContentBeforeBlock(
+    message,
+    action.block
+  )
   const activeMessage = withActiveStreamState(
     message,
     isActiveBlockStatus(action.block.status)
   )
   return {
     ...activeMessage,
-    content: shouldMovePendingContentBeforeBlock(message, action.block)
-      ? ''
-      : message.content,
+    content: movesPendingContent ? '' : message.content,
+    ...(movesPendingContent && {
+      streamTextOffset: undefined,
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+      contentLoadRef: undefined
+    }),
     blocks: mergeProcessingBlock(
       subtaskId
         ? getBlocksBeforeIncomingBlock(message, subtaskId, action.block)

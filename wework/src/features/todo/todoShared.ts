@@ -1,4 +1,4 @@
-import type { CloudLoopItem } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
 
 export const columns: Array<{ status: CloudLoopItem['status']; label: string }> = [
   { status: 'inbox', label: '收集箱' },
@@ -28,6 +28,16 @@ export const priorityBadgeClasses: Record<CloudLoopItem['priority'], string> = {
   medium: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
   high: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
   urgent: 'bg-red-500/10 text-red-600 dark:text-red-400',
+}
+
+// Resolves a user id to the project member display name; returns null when
+// the user is not (or no longer) a member of the project.
+export function memberNameById(
+  members: CloudProjectMember[],
+  userId: number | null
+): string | null {
+  if (userId === null) return null
+  return members.find(member => member.user_id === userId)?.user_name ?? null
 }
 
 // Computes the flat item list and lane id order after moving `itemId` into
