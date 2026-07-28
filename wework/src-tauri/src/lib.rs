@@ -533,6 +533,20 @@ fn should_activate_main_window() -> bool {
     !env_flag_enabled(E2E_BACKGROUND_WINDOW_ENV)
 }
 
+#[cfg(all(desktop, target_os = "macos"))]
+fn enforce_e2e_background_application_policy<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if should_activate_main_window() {
+        return;
+    }
+    if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Prohibited) {
+        log::warn!("Failed to prohibit macOS activation for desktop E2E: {error}");
+    }
+    if let Err(error) = app.hide() {
+        log::warn!("Failed to hide macOS desktop E2E application: {error}");
+    }
+    set_dock_icon_visible(app, false);
+}
+
 #[cfg(desktop)]
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4318,12 +4332,7 @@ pub fn run() {
             );
 
             #[cfg(all(desktop, target_os = "macos"))]
-            if !should_activate_main_window() {
-                app.handle()
-                    .set_activation_policy(tauri::ActivationPolicy::Prohibited)?;
-                app.handle().hide()?;
-                set_dock_icon_visible(app.handle(), false);
-            }
+            enforce_e2e_background_application_policy(app.handle());
 
             #[cfg(desktop)]
             setup_system_tray(app)?;
@@ -4460,7 +4469,13 @@ pub fn run() {
     app.run(|app_handle, event| {
         #[cfg(desktop)]
         match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Ready => {
+                enforce_e2e_background_application_policy(app_handle);
+            }
             tauri::RunEvent::Resumed => {
+                #[cfg(target_os = "macos")]
+                enforce_e2e_background_application_policy(app_handle);
                 if app_handle
                     .get_webview_window(MAIN_WINDOW_LABEL)
                     .and_then(|window| window.is_focused().ok())
@@ -4477,6 +4492,7 @@ pub fn run() {
                 if let Err(error) = ensure_main_window(app_handle, None) {
                     log::warn!("Failed to reopen main window from macOS activation: {error}");
                 }
+                enforce_e2e_background_application_policy(app_handle);
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 let lifecycle = app_handle.state::<MainWindowLifecycleState>();
