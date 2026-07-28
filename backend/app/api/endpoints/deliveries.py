@@ -4,7 +4,16 @@
 
 """Authenticated project TODO and delivery endpoints."""
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -23,6 +32,8 @@ from app.schemas.delivery import (
     LoopItemAttachmentResponse,
     LoopItemCollaboratorCreate,
     LoopItemCollaboratorResponse,
+    LoopItemCommentCreate,
+    LoopItemCommentResponse,
     LoopItemCreate,
     LoopItemListResponse,
     LoopItemReorder,
@@ -33,10 +44,20 @@ from app.schemas.delivery import (
     MyWorkItemResponse,
     MyWorkListResponse,
 )
+from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.loop_items import loop_item_service
+from app.services.loop_items.external_provider import external_loop_item_provider
 
 router = APIRouter()
+
+
+def _loop_item_response(
+    db: Session, item: object, current_user: User
+) -> LoopItemResponse:
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id)
+    )
 
 
 def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
@@ -117,7 +138,7 @@ def find_runtime_task_loop_item(
     item = loop_item_service.find_for_runtime_task(
         db, current_user.id, device_id, task_id
     )
-    return LoopItemResponse.model_validate(item)
+    return _loop_item_response(db, item, current_user)
 
 
 @router.get("/runtime-tasks/cloud-context", response_model=CloudTaskContextResponse)
@@ -133,8 +154,19 @@ def find_runtime_task_cloud_context(
     return CloudTaskContextResponse.model_validate(
         {
             **binding.__dict__,
-            "project": project,
-            "loop_item": item,
+            "project": {
+                **project.__dict__,
+                "current_user_id": current_user.id,
+                "current_user_name": current_user.user_name,
+                "access_role": cloud_project_service.access(
+                    db, project.id, current_user.id
+                ).role,
+            },
+            "loop_item": (
+                loop_item_service.response_values(db, item, current_user.id)
+                if item is not None
+                else None
+            ),
         }
     )
 
@@ -174,9 +206,27 @@ def list_loop_items(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemListResponse:
+    project = cloud_project_service.get(db, project_id, current_user.id)
+    if project.task_provider in {"github", "gitlab"}:
+        return LoopItemListResponse(
+            items=[
+                LoopItemResponse.model_validate(item)
+                for item in external_loop_item_provider.list(
+                    db, project_id, current_user.id
+                )
+            ]
+        )
     items = loop_item_service.list(db, project_id, current_user.id)
+    access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemListResponse(
-        items=[LoopItemResponse.model_validate(item) for item in items]
+        items=[
+            LoopItemResponse.model_validate(
+                loop_item_service.response_values(
+                    db, item, current_user.id, access=access
+                )
+            )
+            for item in items
+        ]
     )
 
 
@@ -191,8 +241,15 @@ def create_loop_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
+    project = cloud_project_service.get(db, project_id, current_user.id)
+    if project.task_provider in {"github", "gitlab"}:
+        return LoopItemResponse.model_validate(
+            external_loop_item_provider.create(
+                db, project_id, current_user.id, current_user.user_name, values
+            )
+        )
     item = loop_item_service.create(db, project_id, current_user.id, values)
-    return LoopItemResponse.model_validate(item)
+    return _loop_item_response(db, item, current_user)
 
 
 @router.post(
@@ -205,9 +262,19 @@ def reorder_loop_items(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemListResponse:
+    project = cloud_project_service.get(db, project_id, current_user.id)
+    if project.task_provider in {"github", "gitlab"}:
+        return LoopItemListResponse(
+            items=[
+                LoopItemResponse.model_validate(item)
+                for item in external_loop_item_provider.list(
+                    db, project_id, current_user.id
+                )
+            ]
+        )
     items = loop_item_service.reorder(db, project_id, current_user.id, values)
     return LoopItemListResponse(
-        items=[LoopItemResponse.model_validate(item) for item in items]
+        items=[_loop_item_response(db, item, current_user) for item in items]
     )
 
 
@@ -217,8 +284,12 @@ def get_loop_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        return LoopItemResponse.model_validate(
+            external_loop_item_provider.get(db, item_id, current_user.id)
+        )
     item = loop_item_service.get(db, item_id, current_user.id)
-    return LoopItemResponse.model_validate(item)
+    return _loop_item_response(db, item, current_user)
 
 
 @router.patch("/loop-items/{item_id}", response_model=LoopItemResponse)
@@ -228,8 +299,30 @@ def update_loop_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        return LoopItemResponse.model_validate(
+            external_loop_item_provider.update(db, item_id, current_user.id, values)
+        )
     item = loop_item_service.update(db, item_id, current_user.id, values)
-    return LoopItemResponse.model_validate(item)
+    return _loop_item_response(db, item, current_user)
+
+
+@router.post(
+    "/loop-items/{item_id}/comments",
+    response_model=LoopItemCommentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_loop_item_comment(
+    item_id: str,
+    values: LoopItemCommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemCommentResponse:
+    return LoopItemCommentResponse.model_validate(
+        external_loop_item_provider.add_comment(
+            db, item_id, current_user.id, values.body
+        )
+    )
 
 
 @router.get(
@@ -241,6 +334,7 @@ def list_loop_item_attachments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[LoopItemAttachmentResponse]:
+    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     attachments = loop_item_service.list_attachments(db, item_id, current_user.id)
     return [LoopItemAttachmentResponse.model_validate(item) for item in attachments]
 
@@ -256,6 +350,7 @@ def add_loop_item_attachment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemAttachmentResponse:
+    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     attachment = loop_item_service.add_attachment(
         db,
         item_id,
@@ -302,6 +397,7 @@ def list_loop_item_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[LoopItemTaskBindingResponse]:
+    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     bindings = loop_item_service.list_task_bindings(db, item_id, current_user.id)
     return [LoopItemTaskBindingResponse.model_validate(binding) for binding in bindings]
 
@@ -316,6 +412,7 @@ def unbind_loop_item_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
+    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     loop_item_service.unbind_task(db, item_id, values, current_user.id)
 
 
@@ -330,6 +427,7 @@ def bind_loop_item_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemTaskBindingResponse:
+    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     binding = loop_item_service.bind_task(db, item_id, values, current_user.id)
     return LoopItemTaskBindingResponse.model_validate(binding)
 
@@ -345,6 +443,7 @@ def create_delivery(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DeliveryResponse:
+    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     delivery = delivery_service.create_delivery(db, item_id, current_user.id, values)
     return _delivery_response(db, delivery)
 

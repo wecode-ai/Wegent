@@ -20,6 +20,10 @@ class CloudProjectAccess:
     project: CloudProject
     role: BaseRole
 
+    @property
+    def is_public_visitor(self) -> bool:
+        return self.role == BaseRole.RestrictedAnalyst
+
 
 def require_cloud_project_role(
     db: Session,
@@ -53,13 +57,18 @@ def require_cloud_project_role(
             .first()
         )
         if membership is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
-        try:
-            role = BaseRole(membership.role)
-        except ValueError as exc:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, "Invalid cloud project role"
-            ) from exc
+            if project.visibility != "public":
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Cloud project not found"
+                )
+            role = BaseRole.RestrictedAnalyst
+        else:
+            try:
+                role = BaseRole(membership.role)
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Invalid cloud project role"
+                ) from exc
 
     if not has_permission(role, required_role):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")

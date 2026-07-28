@@ -4,7 +4,7 @@
 
 """Shared cloud project endpoints."""
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -25,7 +25,6 @@ from app.schemas.cloud_project import (
     CloudProjectMemberCreate,
     CloudProjectMemberResponse,
     CloudProjectMemberUpdate,
-    CloudProjectProviderCredentialResponse,
     CloudProjectResponse,
     CloudProjectUpdate,
     LocalBindingCreate,
@@ -37,6 +36,20 @@ from app.services.cloud_projects import cloud_project_service
 router = APIRouter()
 
 
+def _project_response(
+    db: Session, project: object, current_user: User
+) -> CloudProjectResponse:
+    access = cloud_project_service.access(db, int(project.id), current_user.id)
+    return CloudProjectResponse.model_validate(
+        {
+            **project.__dict__,
+            "current_user_id": current_user.id,
+            "current_user_name": current_user.user_name,
+            "access_role": access.role,
+        }
+    )
+
+
 @router.post(
     "", response_model=CloudProjectResponse, status_code=status.HTTP_201_CREATED
 )
@@ -46,7 +59,7 @@ def create_cloud_project(
     current_user: User = Depends(get_current_user),
 ) -> CloudProjectResponse:
     project = cloud_project_service.create(db, current_user.id, values)
-    return CloudProjectResponse.model_validate(project)
+    return _project_response(db, project, current_user)
 
 
 @router.get("", response_model=CloudProjectListResponse)
@@ -56,7 +69,7 @@ def list_cloud_projects(
 ) -> CloudProjectListResponse:
     projects = cloud_project_service.list_accessible(db, current_user.id)
     return CloudProjectListResponse(
-        items=[CloudProjectResponse.model_validate(project) for project in projects]
+        items=[_project_response(db, project, current_user) for project in projects]
     )
 
 
@@ -67,24 +80,7 @@ def get_cloud_project(
     current_user: User = Depends(get_current_user),
 ) -> CloudProjectResponse:
     project = cloud_project_service.get(db, project_id, current_user.id)
-    return CloudProjectResponse.model_validate(project)
-
-
-@router.get(
-    "/{project_id}/provider-credential",
-    response_model=CloudProjectProviderCredentialResponse,
-)
-def get_cloud_project_provider_credential(
-    project_id: int,
-    response: Response,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> CloudProjectProviderCredentialResponse:
-    response.headers["Cache-Control"] = "no-store"
-    token = cloud_project_service.get_provider_credential(
-        db, project_id, current_user.id
-    )
-    return CloudProjectProviderCredentialResponse(token=token)
+    return _project_response(db, project, current_user)
 
 
 @router.patch("/{project_id}", response_model=CloudProjectResponse)
@@ -95,7 +91,7 @@ def update_cloud_project(
     current_user: User = Depends(get_current_user),
 ) -> CloudProjectResponse:
     project = cloud_project_service.update(db, project_id, current_user.id, values)
-    return CloudProjectResponse.model_validate(project)
+    return _project_response(db, project, current_user)
 
 
 @router.post(
