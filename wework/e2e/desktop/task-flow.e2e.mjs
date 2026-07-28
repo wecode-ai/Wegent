@@ -30,6 +30,7 @@ const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be us
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const QUEUED_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_QUEUED_FOLLOW_UP'
+const BACKGROUND_GUIDANCE = 'WEWORK_DESKTOP_E2E_BACKGROUND_GUIDANCE'
 const UNSENT_BLANK_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_BLANK_TASK_DRAFT'
 const UNSENT_FIRST_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_FIRST_TASK_DRAFT'
 const UNSENT_SECOND_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_SECOND_TASK_DRAFT'
@@ -186,6 +187,15 @@ const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
 const PROVIDER_SWITCH_SOL_OPTION_ID = 'gpt-5.6-sol'
 const PROVIDER_SWITCH_SOL_LABEL = 'GPT 5.6 Sol'
+// Official Codex option used to verify the provider boundary restriction. The
+// local E2E Codex catalog is classified as third-party (custom provider), so
+// the official option is served from the cloud model catalog with a model id
+// that does not collide with the local Codex catalog (otherwise the catalog
+// merge drops it as a duplicate runtime Codex model).
+const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'codex-gpt-5.5'
+const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
+const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
+const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with Sol.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
@@ -250,6 +260,7 @@ const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
 const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
+const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -499,6 +510,76 @@ async function verifyQueuedFollowUpNavigation({ composerSelector, control, proje
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
     'The queued follow-up could not be cleared after restoration'
   )
+}
+
+async function verifyBackgroundGuidanceNavigation({
+  composerSelector,
+  control,
+  projectRowSelector,
+}) {
+  const runningTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+    'The streaming task row was not available before sending guidance'
+  )
+  const runningTaskRowTestId = runningTaskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  assert.ok(runningTaskRowTestId, 'The streaming task row identity was not found')
+
+  await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
+  await control.command('click', '[data-testid="send-mode-menu-button"]')
+  await control.command('click', '[data-testid="guide-current-turn-option"]')
+  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+    text: BACKGROUND_GUIDANCE,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const guidanceStatus = await control.command(
+    'getText',
+    '[data-testid="conversation-queue-panel"]'
+  )
+  assert.match(guidanceStatus, /引导中|Guiding/, 'The guidance did not enter its sending state')
+  await captureVerificationScreenshot(control, 'guidance-background-01-sending.png')
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The active guidance leaked into the other conversation'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  await captureVerificationScreenshot(control, 'guidance-background-02-other-task.png')
+
+  control.releaseInitialToolExecution()
+  await withTimeout(
+    control.awaitScenarioRequestCount('initial', 2),
+    UI_TIMEOUT_MS,
+    'The guided background task did not continue after its tool completed'
+  )
+
+  await ensureTaskRowVisible(control, runningTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: BACKGROUND_GUIDANCE,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('conversation-queue-panel') &&
+      !snapshot.text.includes('引导中') &&
+      !snapshot.text.includes('Guiding'),
+    'The applied background guidance remained stuck in its sending state'
+  )
+  await captureVerificationScreenshot(control, 'guidance-background-03-applied.png')
 }
 
 async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
@@ -1825,7 +1906,7 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   )
 }
 
-async function verifyProviderBoundaryRestriction(control, composerSelector) {
+async function verifyProviderSwitchWarning(control, composerSelector) {
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -1851,32 +1932,36 @@ async function verifyProviderBoundaryRestriction(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-selector-menu"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}`)
-  const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}"]`
+  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
+  const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
-    text: PROVIDER_SWITCH_SOL_LABEL,
+    text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: UI_TIMEOUT_MS,
   })
   const disabledModelText = await control.command('getText', officialModelSelector)
-  assert.match(
+  assert.ok(
+    disabledModelText.includes(PROVIDER_SWITCH_SOL_LABEL),
+    'The target model option did not display the expected model label'
+  )
+  assert.doesNotMatch(
     disabledModelText,
     /官方 Codex|Official Codex/,
-    'The official Codex option did not explain the provider boundary restriction'
+    'The target model option displayed the provider restriction inline'
   )
-  await assert.rejects(
-    control.command('click', officialModelSelector),
-    /disabled/,
-    'The official Codex option remained selectable in a third-party conversation'
-  )
+  await control.command('click', officialModelSelector)
+  await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
   assert.equal(
     control.scenarioRequests.get('provider_switch_retry')?.length,
     1,
-    'Selecting the disabled official Codex option unexpectedly sent another request'
+    'Opening the provider-switch confirmation unexpectedly sent another request'
   )
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.ok(
-    snapshot.testIds.includes('model-selector-menu'),
-    'The model selector closed after clicking a disabled cross-provider option'
+  await control.command('click', '[data-testid="model-switch-warning-cancel-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('model-switch-warning-dialog'),
+    'The model-switch warning dialog remained open after cancellation'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
@@ -4123,6 +4208,22 @@ class DesktopE2EServer {
                 apiFormat: 'responses',
                 weworkModelKind: 'codex-official',
                 ui: { family: 'codex-official', modelLabel: DEFAULT_MODEL_LABEL },
+              },
+              runtime: { family: 'openai.openai-responses' },
+              isActive: true,
+            },
+            {
+              name: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+              type: 'runtime',
+              displayName: PROVIDER_SWITCH_OFFICIAL_LABEL,
+              provider: 'openai',
+              modelId: PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
+              namespace: 'default',
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                weworkModelKind: 'codex-official',
+                ui: { family: 'codex-official', modelLabel: PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL },
               },
               runtime: { family: 'openai.openai-responses' },
               isActive: true,
@@ -7405,11 +7506,13 @@ async function main() {
       )
       await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
       await control.command('press', 'body', { key: 'Escape' })
-      await verifyQueuedFollowUpNavigation({
-        composerSelector,
-        control,
-        projectRowSelector,
-      })
+      if (!GUIDANCE_BACKGROUND_ONLY) {
+        await verifyQueuedFollowUpNavigation({
+          composerSelector,
+          control,
+          projectRowSelector,
+        })
+      }
       if (QUEUE_NAVIGATION_ONLY) {
         await writeFile(
           join(resultDir, 'model-requests.json'),
@@ -7417,6 +7520,20 @@ async function main() {
           'utf8'
         )
         console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
+        return
+      }
+      await verifyBackgroundGuidanceNavigation({
+        composerSelector,
+        control,
+        projectRowSelector,
+      })
+      if (GUIDANCE_BACKGROUND_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework background guidance desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
     }
@@ -7788,14 +7905,12 @@ async function main() {
           text: targetModel.label,
           timeoutMs: UI_TIMEOUT_MS,
         })
-        const appliedModelLabel = await control.command(
-          'getText',
+        await waitForSnapshot(
+          control,
+          snapshot => !/下一轮|Next/.test(snapshot.text),
+          `${switchCase.id} left the applied model marked as next-turn only`,
+          UI_TIMEOUT_MS,
           '[data-testid="model-selector-button"]'
-        )
-        assert.doesNotMatch(
-          appliedModelLabel,
-          /下一轮|Next/,
-          `${switchCase.id} left the applied model marked as next-turn only`
         )
         modelSwitchVerification.push({
           direction: switchCase.id,
@@ -7813,7 +7928,7 @@ async function main() {
         }
       }
       phase = 'provider-switch-retry'
-      await verifyProviderBoundaryRestriction(control, composerSelector)
+      await verifyProviderSwitchWarning(control, composerSelector)
       await writeFile(
         join(resultDir, 'model-switch-protocol-verification.json'),
         `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
