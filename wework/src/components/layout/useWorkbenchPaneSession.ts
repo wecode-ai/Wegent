@@ -67,6 +67,7 @@ import {
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
+  reduceRuntimeConversationQueue,
   runtimeConversationKey,
 } from '@/features/workbench/runtimeConversationCache'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
@@ -830,7 +831,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           runtimeGoalRequest: guidanceMessage.runtimeGoalRequest,
           runtimeGuidance: true,
         })
-        setQueuedMessages(messages => messages.filter(message => message.id !== guidanceId))
+        setQueuedMessages(messages =>
+          reduceRuntimeConversationQueue(messages, {
+            type: 'guidance_applied',
+            payload,
+          })
+        )
       },
     })
     return unsubscribe
@@ -1520,6 +1526,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             ? {
                 ...message,
                 status: 'sending',
+                deliveryMode: 'guidance',
                 error: undefined,
                 notice: '正在引导当前对话',
               }
@@ -2343,7 +2350,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
 
 function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
-  return message.status === 'sending' && message.notice === '正在引导当前对话'
+  return message.status === 'sending' && message.deliveryMode === 'guidance'
 }
 
 function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {

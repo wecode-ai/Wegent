@@ -1,5 +1,10 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
-import type { Attachment, RuntimeTaskAddress, TurnFileChangesSummary } from '@/types/api'
+import type {
+  Attachment,
+  RuntimeGuidanceAppliedPayload,
+  RuntimeTaskAddress,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
@@ -10,6 +15,11 @@ const queuedMessagesByConversation = new Map<string, RuntimePaneQueuedMessage[]>
 const queuedMessagesPausedByConversation = new Map<string, boolean>()
 const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
 const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
+
+export type RuntimeConversationQueueEvent = {
+  type: 'guidance_applied'
+  payload: RuntimeGuidanceAppliedPayload
+}
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -66,6 +76,37 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
     return
   }
   cacheBoundedEntry(queuedMessagesByConversation, key, messages)
+}
+
+export function dispatchRuntimeConversationQueueEvent(
+  address: RuntimeTaskAddress,
+  event: RuntimeConversationQueueEvent
+) {
+  const key = runtimeConversationKey(address)
+  const messages = queuedMessagesByConversation.get(key)
+  if (!messages) return
+
+  const nextMessages = reduceRuntimeConversationQueue(messages, event)
+  if (nextMessages.length === messages.length) return
+  cacheRuntimeConversationQueuedMessagesByKey(key, nextMessages)
+}
+
+export function reduceRuntimeConversationQueue(
+  messages: RuntimePaneQueuedMessage[],
+  event: RuntimeConversationQueueEvent
+): RuntimePaneQueuedMessage[] {
+  switch (event.type) {
+    case 'guidance_applied':
+      return messages.filter(message => {
+        if (message.id === event.payload.guidanceId) return false
+        return !(
+          message.status === 'sending' &&
+          message.deliveryMode === 'guidance' &&
+          Boolean(event.payload.message) &&
+          message.content === event.payload.message
+        )
+      })
+  }
 }
 
 export function getRuntimeConversationQueuePaused(address: RuntimeTaskAddress): boolean {
