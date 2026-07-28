@@ -66,6 +66,7 @@ RUN corepack enable \
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
+COPY shared/assets ./shared/assets
 COPY wework ./wework
 
 ARG WEWORK_APP_BASE_PATH="/wework"
