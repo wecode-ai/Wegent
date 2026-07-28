@@ -411,12 +411,14 @@ mod tests {
         std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
             .expect("script should be executable");
 
+        // The whole test binary shares a thread pool, so a generous timeout
+        // keeps this stable while hundreds of other tests run in parallel.
         let environment = load_shell_environment_from_candidates(
             &[
                 "/missing/wework-shell".to_string(),
                 script_path.display().to_string(),
             ],
-            Duration::from_secs(1),
+            Duration::from_secs(30),
         )
         .expect("fallback shell should load");
 

@@ -69,6 +69,18 @@ fn task_mcp_runs_over_stdio_without_listening_on_a_port() {
     assert!(tools.iter().any(|tool| tool["name"] == "create_todo"));
     assert!(tools.iter().any(|tool| tool["name"] == "update_todo"));
     assert!(tools.iter().any(|tool| tool["name"] == "add_todo_comment"));
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "list_todo_attachments"));
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "upload_todo_attachment"));
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "download_todo_attachment"));
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "delete_todo_attachment"));
     assert!(executor_home.path().join("data/tasks.sqlite").is_file());
     let project = responses[2]
         .pointer("/result/content/0/text")
