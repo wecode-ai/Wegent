@@ -64,6 +64,7 @@ import {
   isVideoModelBlock,
 } from '@/features/knowledge/multimodal/utils/upload-validation'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import type { DocumentCreationResult } from '../utils/document-creation'
 
 function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
   return {
@@ -96,7 +97,7 @@ interface DocumentUploadProps {
       video?: string | null
       image?: string | null
     }
-  ) => Promise<void>
+  ) => Promise<DocumentCreationResult[]>
   onTableAdd?: (data: TableDocument) => Promise<void>
   /** Callback to add a web page document. Backend handles scraping and document creation. */
   onWebAdd?: (url: string, name?: string) => Promise<void>
@@ -143,8 +144,17 @@ export function DocumentUpload({
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { state, addFiles, removeFile, clearFiles, startUpload, retryFile, renameFile, reset } =
-    useBatchAttachment()
+  const {
+    state,
+    addFiles,
+    removeFile,
+    clearFiles,
+    startUpload,
+    retryFile,
+    renameFile,
+    reset,
+    applyDocumentCreationResults,
+  } = useBatchAttachment()
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>(
     buildDefaultSplitterConfig
   )
@@ -316,7 +326,7 @@ export function DocumentUpload({
 
     setIsConfirming(true)
     try {
-      await onUploadComplete(
+      const results = await onUploadComplete(
         successfulAttachments,
         splitterConfig,
         // Per-media-type prompt overrides collected by the
@@ -324,9 +334,11 @@ export function DocumentUpload({
         // multimodal files → each document inherits the KB default.
         multimodalPrompts ?? undefined
       )
-      reset()
-      setSplitterConfig(buildDefaultSplitterConfig())
-      setMultimodalPrompts(null)
+      applyDocumentCreationResults(results)
+
+      if (results.every(result => result.documentId !== undefined)) {
+        handleClose()
+      }
     } catch {
       // Error handled by parent
     } finally {
@@ -1008,7 +1020,13 @@ export function DocumentUpload({
                               )}
                             </div>
                           )}
-                          <span className="flex-shrink-0">{getStatusIcon(item.status)}</span>
+                          <span className="flex-shrink-0">
+                            {item.error && item.attachment ? (
+                              <AlertCircle className="w-4 h-4 text-error" />
+                            ) : (
+                              getStatusIcon(item.status)
+                            )}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-xs text-text-muted">
@@ -1018,13 +1036,16 @@ export function DocumentUpload({
                           <span
                             className={cn(
                               'text-xs',
-                              item.status === 'success' && 'text-success',
+                              item.status === 'success' && !item.error && 'text-success',
+                              item.error && 'text-error',
                               item.status === 'error' && 'text-error',
                               (item.status === 'uploading' || item.status === 'pending') &&
                                 'text-primary'
                             )}
                           >
-                            {getStatusText(item.status)}
+                            {item.error && item.attachment
+                              ? t('document.upload.status.createFailed')
+                              : getStatusText(item.status)}
                           </span>
                         </div>
                         {(item.status === 'uploading' || item.status === 'pending') && (

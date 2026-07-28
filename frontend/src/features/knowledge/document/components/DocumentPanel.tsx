@@ -19,11 +19,11 @@ import {
 import { DocumentDetailDialog } from './DocumentDetailDialog'
 import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { useDocuments } from '../hooks/useDocuments'
-import { findDocumentByName } from '../utils/document-lookup'
+import { findDocumentForDeepLink } from '../utils/document-lookup'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
-import { resolvePerFilePrompt } from '@/features/knowledge/multimodal/utils/resolvePerFilePrompt'
 import { createWebDocument } from '@/apis/knowledge'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
+import { createDocumentsFromAttachments } from '../utils/document-creation'
 
 const EMPTY_DOCUMENT_IDS: number[] = []
 
@@ -81,6 +81,8 @@ interface DocumentPanelProps {
   canManageDocuments?: boolean
   /** Initial document path to auto-open (from virtual URL path segments). */
   initialDocPath?: string
+  /** Stable document identity for deep links. */
+  initialDocumentId?: number
   onAskArtifactNode?: (request: ArtifactPromptRequest) => void
   onCreatePptDraft: () => void
 }
@@ -110,6 +112,7 @@ export function DocumentPanel({
   isOrganization = false,
   canManageDocuments = false,
   initialDocPath,
+  initialDocumentId,
   onAskArtifactNode,
   onCreatePptDraft,
 }: DocumentPanelProps) {
@@ -202,44 +205,28 @@ export function DocumentPanel({
     onDocumentSelectionChange?.(scope.mode === 'all' ? [] : Array.from(scope.documentIds))
   }
 
-  const handleSourceCreated = () => {
-    setUploadOpen(false)
+  const refreshSources = () => {
     setSourceRevision(current => current + 1)
   }
 
   const handleUploadComplete = async (
-    attachments: { attachment: { id: number; filename: string }; file: File }[],
+    attachments: Parameters<typeof createDocumentsFromAttachments>[0]['attachments'],
     splitterConfig?: Partial<SplitterConfig>,
     multimodalAnalysisPrompts?: {
       video?: string | null
       image?: string | null
     }
   ) => {
-    let createdAny = false
-
-    for (const { attachment, file } of attachments) {
-      const documentName = attachment.filename || file.name
-      const extension = documentName.split('.').pop() || ''
-      const perFilePrompt = resolvePerFilePrompt(documentName, extension, multimodalAnalysisPrompts)
-
-      try {
-        await createDocument({
-          attachment_id: attachment.id,
-          name: documentName,
-          file_extension: extension,
-          file_size: file.size,
-          splitter_config: splitterConfig,
-          source_type: 'file',
-          folder_id: 0,
-          multimodal_analysis_prompt: perFilePrompt,
-        })
-        createdAny = true
-      } catch {
-        // Continue creating the remaining documents. useDocuments reports each failure.
-      }
-    }
-
-    if (createdAny) handleSourceCreated()
+    const results = await createDocumentsFromAttachments({
+      attachments,
+      folderId: 0,
+      splitterConfig,
+      multimodalAnalysisPrompts,
+      createDocument,
+      fallbackError: t('document.document.createFailed'),
+    })
+    if (results.some(result => result.documentId !== undefined)) refreshSources()
+    return results
   }
 
   const handleTableAdd = async (data: TableDocument) => {
@@ -251,7 +238,8 @@ export function DocumentPanel({
       source_config: data.source_config,
       folder_id: 0,
     })
-    handleSourceCreated()
+    setUploadOpen(false)
+    refreshSources()
   }
 
   const handleWebAdd = async (url: string, name?: string) => {
@@ -259,14 +247,20 @@ export function DocumentPanel({
     if (!result.success) {
       throw new Error(result.error_message || t('document.document.createFailed'))
     }
-    handleSourceCreated()
+    setUploadOpen(false)
+    refreshSources()
   }
 
   useEffect(() => {
     if (!initialDocPath) return
 
     const controller = new AbortController()
-    void findDocumentByName(knowledgeBase.id, initialDocPath, controller.signal)
+    void findDocumentForDeepLink(
+      knowledgeBase.id,
+      initialDocPath,
+      initialDocumentId,
+      controller.signal
+    )
       .then(document => {
         if (!controller.signal.aborted && document) {
           setViewingDocument(document)
@@ -277,7 +271,7 @@ export function DocumentPanel({
       })
 
     return () => controller.abort()
-  }, [initialDocPath, knowledgeBase.id])
+  }, [initialDocPath, initialDocumentId, knowledgeBase.id])
 
   // Handle mouse down on resizer
   const handleMouseDown = (e: React.MouseEvent) => {

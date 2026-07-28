@@ -11,7 +11,7 @@ const mockDocumentDetailDialog = jest.fn((_props: unknown) => null)
 const mockArtifactSourceSelector = jest.fn((_props: unknown) => null)
 const mockSourceContinuation = jest.fn()
 const mockCreateDocument = jest.fn()
-const mockFindDocumentByName = jest.fn()
+const mockFindDocumentForDeepLink = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -95,7 +95,7 @@ jest.mock('@/features/knowledge/document/hooks/useDocuments', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/utils/document-lookup', () => ({
-  findDocumentByName: (...args: unknown[]) => mockFindDocumentByName(...args),
+  findDocumentForDeepLink: (...args: unknown[]) => mockFindDocumentForDeepLink(...args),
 }))
 
 jest.mock('@/features/knowledge/multimodal/hooks/useModelSupportsVideo', () => ({
@@ -126,7 +126,7 @@ describe('DocumentPanel', () => {
     jest.clearAllMocks()
     localStorage.clear()
     mockCreateDocument.mockResolvedValue({ id: 21 })
-    mockFindDocumentByName.mockResolvedValue(undefined)
+    mockFindDocumentForDeepLink.mockResolvedValue(undefined)
   })
 
   it('forwards organization routing context to document preview', () => {
@@ -197,12 +197,13 @@ describe('DocumentPanel', () => {
       id: 31,
       name: 'guide.md',
     } as KnowledgeDocument
-    mockFindDocumentByName.mockResolvedValue(document)
+    mockFindDocumentForDeepLink.mockResolvedValue(document)
 
     render(
       <DocumentPanel
         knowledgeBase={knowledgeBase}
         initialDocPath="guide.md"
+        initialDocumentId={31}
         onCreatePptDraft={jest.fn()}
       />
     )
@@ -214,9 +215,10 @@ describe('DocumentPanel', () => {
         })
       )
     )
-    expect(mockFindDocumentByName).toHaveBeenCalledWith(
+    expect(mockFindDocumentForDeepLink).toHaveBeenCalledWith(
       knowledgeBase.id,
       'guide.md',
+      31,
       expect.any(AbortSignal)
     )
   })

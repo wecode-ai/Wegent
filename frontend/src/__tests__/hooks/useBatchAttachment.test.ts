@@ -10,6 +10,7 @@ import {
   registerVideoUploader,
   getVideoUploader,
 } from '@/features/knowledge/multimodal/video-upload-registry'
+import { uploadAttachment } from '@/apis/attachments'
 
 // Identity translator — returns the key so we can assert which error branch fired.
 jest.mock('@/hooks/useTranslation', () => ({
@@ -139,5 +140,56 @@ describe('useBatchAttachment — KB video queue gate', () => {
 
     expect(outcome!.added).toBe(1)
     expect(result.current.state.files).toHaveLength(1)
+  })
+})
+
+describe('useBatchAttachment — document creation retry', () => {
+  it('removes created items and retains failed attachments without re-uploading them', async () => {
+    const mockUploadAttachment = uploadAttachment as jest.MockedFunction<typeof uploadAttachment>
+    mockUploadAttachment
+      .mockResolvedValueOnce({
+        id: 101,
+        filename: 'created.txt',
+        file_size: 7,
+        mime_type: 'text/plain',
+        status: 'ready',
+      })
+      .mockResolvedValueOnce({
+        id: 102,
+        filename: 'retry.txt',
+        file_size: 5,
+        mime_type: 'text/plain',
+        status: 'ready',
+      })
+
+    const { result } = renderHook(() => useBatchAttachment())
+    act(() => {
+      result.current.addFiles([
+        new File(['created'], 'created.txt', { type: 'text/plain' }),
+        new File(['retry'], 'retry.txt', { type: 'text/plain' }),
+      ])
+    })
+
+    await act(async () => {
+      await result.current.startUpload()
+    })
+
+    act(() => {
+      result.current.applyDocumentCreationResults([
+        { attachmentId: 101, documentId: 201 },
+        { attachmentId: 102, error: 'create failed' },
+      ])
+    })
+
+    expect(result.current.state.files).toHaveLength(1)
+    expect(result.current.state.files[0]).toEqual(
+      expect.objectContaining({
+        status: 'success',
+        error: 'create failed',
+        attachment: expect.objectContaining({ id: 102 }),
+      })
+    )
+    expect(result.current.getSuccessfulAttachments()).toHaveLength(1)
+    expect(mockUploadAttachment).toHaveBeenCalledTimes(2)
   })
 })

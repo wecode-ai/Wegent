@@ -74,6 +74,10 @@ interface UseBatchAttachmentReturn {
   reset: () => void
   /** Get successfully uploaded attachments */
   getSuccessfulAttachments: () => { attachment: Attachment; file: File }[]
+  /** Remove created documents and retain attachment-backed failures for retry */
+  applyDocumentCreationResults: (
+    results: Array<{ attachmentId: number; documentId?: number; error?: string }>
+  ) => void
 }
 
 /** Generate unique ID for file tracking */
@@ -391,6 +395,32 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
       .map(f => ({ attachment: f.attachment!, file: f.file }))
   }
 
+  const applyDocumentCreationResults = useCallback(
+    (results: Array<{ attachmentId: number; documentId?: number; error?: string }>) => {
+      const resultByAttachmentId = new Map(results.map(result => [result.attachmentId, result]))
+
+      setState(prev => ({
+        ...prev,
+        files: prev.files.flatMap(file => {
+          if (!file.attachment) return [file]
+
+          const result = resultByAttachmentId.get(file.attachment.id)
+          if (!result) return [file]
+          if (result.documentId !== undefined) return []
+
+          return [
+            {
+              ...file,
+              error: result.error || t('knowledge:document.document.createFailed'),
+            },
+          ]
+        }),
+        summary: null,
+      }))
+    },
+    [t]
+  )
+
   return {
     state,
     addFiles,
@@ -401,5 +431,6 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
     renameFile,
     reset,
     getSuccessfulAttachments,
+    applyDocumentCreationResults,
   }
 }

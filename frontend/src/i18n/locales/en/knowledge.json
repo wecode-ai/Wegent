@@ -475,6 +475,7 @@
       "confirming": "Creating documents...",
       "summary": "Completed: {{success}} succeeded, {{failed}} failed",
       "status": {
+        "createFailed": "Document creation failed",
         "pending": "Pending",
         "uploading": "Uploading",
         "success": "Uploaded",

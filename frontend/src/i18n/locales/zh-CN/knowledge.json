@@ -475,6 +475,7 @@
       "confirming": "正在创建文档...",
       "summary": "上传完成：{{success}} 个成功，{{failed}} 个失败",
       "status": {
+        "createFailed": "创建文档失败",
         "pending": "等待中",
         "uploading": "上传中",
         "success": "已上传",

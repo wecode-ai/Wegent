@@ -177,6 +177,13 @@ export function KnowledgeDetailPanel({
     }
     return null
   }, [searchParams])
+  const initialDocumentId = useMemo(() => {
+    const rawId = searchParams.get('documentId')
+    if (!rawId) return undefined
+
+    const documentId = Number(rawId)
+    return Number.isInteger(documentId) && documentId > 0 ? documentId : undefined
+  }, [searchParams])
 
   // Use ref for taskIdFromUrl to avoid resetting panel state when taskId changes
   // (e.g., when replaceState adds ?taskId=... after sending a message)
@@ -302,6 +309,7 @@ export function KnowledgeDetailPanel({
           isOrganization={groupInfo?.groupType === 'organization'}
           canManageDocuments={canUploadDocuments}
           initialDocPath={initialDocPath}
+          initialDocumentId={initialDocumentId}
           onAskArtifactNode={request => {
             setArtifactPromptRequest(request)
             setMobileWorkspaceTab('chat')
@@ -358,6 +366,7 @@ export function KnowledgeDetailPanel({
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
               initialDocPath={initialDocPath}
+              initialDocumentId={initialDocumentId}
             />
           ) : (
             <>

@@ -67,7 +67,8 @@ describe('DocumentUpload splitter config defaults', () => {
 
   it('submits flat + file_aware + title enhancement as the default config for new uploads', async () => {
     const file = new File(['hello'], 'notes.md', { type: 'text/markdown' })
-    const onUploadComplete = jest.fn().mockResolvedValue(undefined)
+    const onUploadComplete = jest.fn().mockResolvedValue([{ attachmentId: 101, documentId: 201 }])
+    const applyDocumentCreationResults = jest.fn()
 
     mockUseBatchAttachment.mockReturnValue({
       state: {
@@ -103,6 +104,7 @@ describe('DocumentUpload splitter config defaults', () => {
       retryFile: jest.fn(),
       renameFile: jest.fn(),
       reset: jest.fn(),
+      applyDocumentCreationResults,
     })
 
     render(
@@ -112,6 +114,9 @@ describe('DocumentUpload splitter config defaults', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm upload (1)' }))
 
     await waitFor(() => expect(onUploadComplete).toHaveBeenCalledTimes(1))
+    expect(applyDocumentCreationResults).toHaveBeenCalledWith([
+      { attachmentId: 101, documentId: 201 },
+    ])
 
     expect(onUploadComplete).toHaveBeenCalledWith(
       [

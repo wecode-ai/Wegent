@@ -52,7 +52,6 @@ import { Pagination } from '@/components/ui/pagination'
 import { toast } from '@/hooks/use-toast'
 import { useDocumentIndexPolling } from '@/features/knowledge/multimodal/hooks/useDocumentIndexPolling'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
-import { resolvePerFilePrompt } from '@/features/knowledge/multimodal/utils/resolvePerFilePrompt'
 import type {
   KnowledgeBase,
   KnowledgeDocument,
@@ -78,6 +77,8 @@ import {
   folderTreeContainsId,
 } from '../utils/resource-tree'
 import { findDocumentByName } from '../utils/document-lookup'
+import { findDocumentForDeepLink } from '../utils/document-lookup'
+import { createDocumentsFromAttachments } from '../utils/document-creation'
 
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
@@ -189,6 +190,8 @@ interface DocumentListProps {
   onGroupClick?: (groupId: string, groupType?: string) => void
   /** Initial document path to auto-open (from virtual URL path segments) */
   initialDocPath?: string
+  /** Stable document identity for deep links. */
+  initialDocumentId?: number
   /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
   isOrganization?: boolean
   /** Whether server-side pagination is enabled */
@@ -220,6 +223,7 @@ export function DocumentList({
   groupInfo,
   onGroupClick,
   initialDocPath,
+  initialDocumentId,
   isOrganization = false,
   paginationEnabled = true,
 }: DocumentListProps) {
@@ -457,8 +461,14 @@ export function DocumentList({
   // Auto-open document from initialDocPath prop (from virtual URL path segments)
   // This runs once when documents are loaded, without modifying the URL
   useEffect(() => {
+    setInitialDocPathHandled(false)
+  }, [initialDocPath, initialDocumentId, knowledgeBase.id])
+
+  useEffect(() => {
     if (!initialDocPath || initialDocPathHandled || loading || documents.length === 0) return
-    const targetDoc = documents.find(doc => doc.name === initialDocPath)
+    const targetDoc = documents.find(doc =>
+      initialDocumentId !== undefined ? doc.id === initialDocumentId : doc.name === initialDocPath
+    )
     if (targetDoc) {
       setViewingDoc(targetDoc)
       setInitialDocPathHandled(true)
@@ -471,9 +481,10 @@ export function DocumentList({
       const controller = new AbortController()
       ;(async () => {
         try {
-          const found = await findDocumentByName(
+          const found = await findDocumentForDeepLink(
             knowledgeBase.id,
             initialDocPath,
+            initialDocumentId,
             controller.signal
           )
           if (!controller.signal.aborted && found) {
@@ -493,6 +504,7 @@ export function DocumentList({
     setInitialDocPathHandled(true)
   }, [
     initialDocPath,
+    initialDocumentId,
     initialDocPathHandled,
     loading,
     documents,
@@ -578,55 +590,21 @@ export function DocumentList({
   )
 
   const handleUploadComplete = async (
-    attachments: { attachment: { id: number; filename: string }; file: File }[],
+    attachments: Parameters<typeof createDocumentsFromAttachments>[0]['attachments'],
     splitterConfig?: Partial<SplitterConfig>,
     multimodalAnalysisPrompts?: {
       video?: string | null
       image?: string | null
     }
   ) => {
-    // Track newly created document IDs for auto-selection
-    const newDocumentIds: number[] = []
-
-    // Create documents sequentially to ensure all are created
-    for (const { attachment, file } of attachments) {
-      // Use attachment.filename (which may have been renamed) instead of file.name
-      const documentName = attachment.filename || file.name
-      const extension = documentName.split('.').pop() || ''
-      // Apply the per-media-type prompt override: video files get the video
-      // prompt, image files get the image prompt, non-media files get none.
-      // undefined → the document inherits the KB default for its type.
-      const perFilePrompt = resolvePerFilePrompt(documentName, extension, multimodalAnalysisPrompts)
-      try {
-        const created = await create({
-          attachment_id: attachment.id,
-          name: documentName,
-          file_extension: extension,
-          file_size: file.size,
-          splitter_config: splitterConfig,
-          source_type: 'file',
-          folder_id: selectedUploadFolderId || 0,
-          // Forward the per-upload multimodal prompt override (undefined when
-          // not customized or when the file is not multimodal → inherits KB default).
-          multimodal_analysis_prompt: perFilePrompt,
-        })
-        // Collect newly created document ID
-        if (created?.id) {
-          newDocumentIds.push(created.id)
-        }
-      } catch {
-        // Continue with next file even if one fails
-      }
-    }
-
-    // Auto-select newly uploaded documents (for notebook mode context injection)
-    if (onSelectionChange && newDocumentIds.length > 0) {
-      const nextSelectedIds = new Set(selectedDocumentIds)
-      newDocumentIds.forEach(id => nextSelectedIds.add(id))
-      setDocumentSelection(nextSelectedIds)
-    }
-
-    setShowUpload(false)
+    return createDocumentsFromAttachments({
+      attachments,
+      folderId: selectedUploadFolderId || 0,
+      splitterConfig,
+      multimodalAnalysisPrompts,
+      createDocument: create,
+      fallbackError: t('document.document.createFailed'),
+    })
   }
 
   const handleTableAdd = async (data: TableDocument) => {
