@@ -309,10 +309,10 @@ export function reduceWorkbenchMessages<
               })
           : message
       )
-    case 'assistant_done':
-      if (
-        !state.some((message) => isAssistantMessageForDoneAction(message, action))
-      ) {
+    case 'assistant_done': {
+      const messageIndex = findAssistantMessageIndexForDoneAction(state, action)
+      if (messageIndex === null) return state
+      if (messageIndex === -1) {
         return [
           ...state,
           limitWorkbenchMessage(
@@ -328,8 +328,8 @@ export function reduceWorkbenchMessages<
           )
         ]
       }
-      return state.map((message) =>
-        isAssistantMessageForDoneAction(message, action)
+      return state.map((message, index) =>
+        index === messageIndex
           ? limitWorkbenchMessage({
               ...clearMessageError(message),
               subtaskId: action.turnId ?? message.subtaskId,
@@ -352,6 +352,7 @@ export function reduceWorkbenchMessages<
             })
           : message
       )
+    }
     case 'assistant_cancelled': {
       const completedAt = new Date().toISOString()
       const matches = state.some((message) =>
@@ -764,16 +765,32 @@ function isAssistantMessageForAction<TAttachment, TFileChanges>(
   )
 }
 
-function isAssistantMessageForDoneAction<TAttachment, TFileChanges>(
-  message: WorkbenchMessage<TAttachment, TFileChanges>,
+function findAssistantMessageIndexForDoneAction<TAttachment, TFileChanges>(
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[],
   action: { messageId?: string; subtaskId?: string; turnId?: string }
-): boolean {
-  if (message.role !== 'assistant') return false
-  if (action.messageId) return message.id === action.messageId
-  return [action.subtaskId, action.turnId].some(
-    identity =>
-      typeof identity === 'string' && message.subtaskId === identity
-  )
+): number | null {
+  if (action.messageId) {
+    return messages.findIndex(
+      message =>
+        message.role === 'assistant' && message.id === action.messageId
+    )
+  }
+  for (const identity of [action.subtaskId, action.turnId]) {
+    if (typeof identity !== 'string') continue
+    const candidates = messages.flatMap((message, index) =>
+      message.role === 'assistant' && message.subtaskId === identity
+        ? [{ index, message }]
+        : []
+    )
+    if (candidates.length === 1) return candidates[0].index
+    if (candidates.length > 1) {
+      const unsettled = candidates.filter(
+        candidate => candidate.message.status !== 'done'
+      )
+      return unsettled.length === 1 ? unsettled[0].index : null
+    }
+  }
+  return -1
 }
 
 function isAssistantMessageForCancellationAction<TAttachment, TFileChanges>(

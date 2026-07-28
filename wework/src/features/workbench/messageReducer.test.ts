@@ -102,6 +102,43 @@ describe('messageReducer', () => {
     })
   })
 
+  test('settles only the unique unfinished segment for a canonical turn', () => {
+    const state: WorkbenchMessage[] = [
+      {
+        id: 'assistant-turn-9',
+        role: 'assistant',
+        subtaskId: 'turn-9',
+        turnId: 'turn-9',
+        content: 'first segment',
+        status: 'done',
+        createdAt: '2026-07-28T00:00:00.000Z',
+      },
+      {
+        id: 'assistant-turn-9-1',
+        role: 'assistant',
+        subtaskId: 'turn-9',
+        turnId: 'turn-9',
+        content: 'partial continuation',
+        status: 'streaming',
+        createdAt: '2026-07-28T00:00:01.000Z',
+      },
+    ]
+
+    const settled = messageReducer(state, {
+      type: 'assistant_done',
+      subtaskId: 'runtime-subtask-9',
+      turnId: 'turn-9',
+      content: 'final continuation',
+    })
+
+    expect(settled[0]).toBe(state[0])
+    expect(settled[1]).toMatchObject({
+      id: 'assistant-turn-9-1',
+      content: 'final continuation',
+      status: 'done',
+    })
+  })
+
   test('preserves backend error type on stream error', () => {
     const state = messageReducer([], {
       type: 'assistant_started',
