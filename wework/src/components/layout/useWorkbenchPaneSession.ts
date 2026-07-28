@@ -2184,10 +2184,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (!paused) return
     }
 
+    const shouldPauseQueue = queuedMessages.some(message => message.status === 'queued')
+    if (shouldPauseQueue) {
+      setQueuedMessagesPaused(true)
+    }
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
-    if (!cancelled) return
+    if (!cancelled) {
+      if (shouldPauseQueue) {
+        setQueuedMessagesPaused(false)
+      }
+      return
+    }
 
-    setQueuedMessagesPaused(queuedMessages.some(message => message.status === 'queued'))
     void refreshWorkLists()
 
     if (!activeAssistantMessage) return
