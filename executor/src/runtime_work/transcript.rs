@@ -20,6 +20,7 @@ use super::util::{
 const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS: usize = 200_000;
 const MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS: usize = 120_000;
+const CODEX_FILES_MENTIONED_HEADER: &str = "# Files mentioned by the user:";
 const CODEX_REQUEST_MARKER: &str = "## My request for Codex:";
 const APPLICATION_CONTEXT_OPEN: &str = "<application_context>";
 const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
@@ -1057,7 +1058,6 @@ pub(crate) fn merge_missing_user_message_metadata(target: &mut Value, source: &V
     for key in [
         "clientMessageId",
         "client_message_id",
-        "attachments",
         "source",
         "runtimeGoalRequest",
         "runtime_goal_request",
@@ -1068,6 +1068,17 @@ pub(crate) fn merge_missing_user_message_metadata(target: &mut Value, source: &V
             }
         }
     }
+
+    // Later user-message events and the cached runtime message retain the
+    // original UI attachment. Provider transcript attachments may instead
+    // point at transient `.model-input` files that are deleted after the turn.
+    if source
+        .get("attachments")
+        .and_then(Value::as_array)
+        .is_some_and(|attachments| !attachments.is_empty())
+    {
+        target.insert("attachments".to_owned(), source["attachments"].clone());
+    }
 }
 
 fn is_internal_turn_abort_message(item: &Value) -> bool {
@@ -1077,7 +1088,11 @@ fn is_internal_turn_abort_message(item: &Value) -> bool {
 }
 
 fn user_message_image_attachments(item: &Value, created_at: i64) -> Vec<Value> {
-    let mut attachments = Vec::new();
+    let mut attachments = mentioned_image_attachments(item, created_at);
+    if !attachments.is_empty() {
+        return attachments;
+    }
+
     if let Some(content) = item.get("content").and_then(Value::as_array) {
         for part in content {
             match item_type(part).as_str() {
@@ -1110,6 +1125,43 @@ fn user_message_image_attachments(item: &Value, created_at: i64) -> Vec<Value> {
         push_image_attachment(&mut attachments, &url, false, created_at);
     }
     attachments
+}
+
+fn mentioned_image_attachments(item: &Value, created_at: i64) -> Vec<Value> {
+    let Some(content) = extract_text(item) else {
+        return Vec::new();
+    };
+    let Some(request_marker_index) = content.find(CODEX_REQUEST_MARKER) else {
+        return Vec::new();
+    };
+    let mentioned_files = &content[..request_marker_index];
+    if !mentioned_files.contains(CODEX_FILES_MENTIONED_HEADER) {
+        return Vec::new();
+    }
+
+    let mut attachments = Vec::new();
+    for line in mentioned_files.lines() {
+        let Some(reference) = line.trim().strip_prefix("## ") else {
+            continue;
+        };
+        let Some((filename, path)) = reference.split_once(": ") else {
+            continue;
+        };
+        let filename = filename.trim();
+        let path = path.trim();
+        if !is_image_reference(filename) && !is_image_reference(path) {
+            continue;
+        }
+        push_image_attachment(&mut attachments, path, true, created_at);
+    }
+    attachments
+}
+
+fn is_image_reference(value: &str) -> bool {
+    let path = strip_url_query(value).to_ascii_lowercase();
+    [".jpeg", ".jpg", ".png", ".gif", ".bmp", ".webp"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
 }
 
 fn push_image_attachment(attachments: &mut Vec<Value>, source: &str, local: bool, created_at: i64) {
@@ -3356,6 +3408,39 @@ mod tests {
             "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
         );
         assert_eq!(user_messages[0]["clientMessageId"], "runtime-local-pane-1");
+    }
+
+    #[test]
+    fn transcript_prefers_original_mentioned_image_over_transient_model_input() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "user-event",
+                            "type": "userMessage",
+                            "clientId": "runtime-local-pane-1",
+                            "message": "# Files mentioned by the user:\n\n## image.png: /tmp/attachments/image.png\n\n## My request for Codex:\nFix the preview",
+                            "local_images": ["/tmp/attachments/image.model-input.png"]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let attachment = &messages[0]["attachments"][0];
+
+        assert_eq!(attachment["filename"], "image.png");
+        assert_eq!(
+            attachment["local_preview_url"],
+            "/tmp/attachments/image.png"
+        );
     }
 
     #[test]

@@ -1803,6 +1803,7 @@ function getDisplayProcessingBlocks(
 
   return blocks
     .filter(block => {
+      if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
       return Boolean(block.content.trim())

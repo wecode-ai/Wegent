@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom'
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
 import BubbleTools from '@/features/tasks/components/message/BubbleTools'
@@ -35,5 +35,26 @@ describe('BubbleTools', () => {
     expect(reEditButton).toHaveClass('h-[30px]')
     expect(reEditButton).toHaveClass('w-[30px]')
     expect(reEditButton).not.toHaveClass('min-w-[44px]')
+  })
+
+  it('passes the displayed Markdown to the save-to-knowledge action', () => {
+    const onSaveToKnowledge = jest.fn()
+
+    render(
+      <TooltipProvider>
+        <BubbleTools
+          contentToCopy="# Saved answer"
+          feedback={null}
+          onLike={jest.fn()}
+          onDislike={jest.fn()}
+          showSaveToKnowledge={true}
+          onSaveToKnowledge={onSaveToKnowledge}
+        />
+      </TooltipProvider>
+    )
+
+    fireEvent.click(screen.getByTestId('message-save-to-knowledge-button'))
+
+    expect(onSaveToKnowledge).toHaveBeenCalledWith('# Saved answer')
   })
 })
