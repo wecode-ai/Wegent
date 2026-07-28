@@ -264,7 +264,7 @@ impl AgentEngine for AgentProcessEngine {
     type RunFuture = Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>;
 
     fn run(&self, mut request: ExecutionRequest) -> Self::RunFuture {
-        crate::task_runtime::mcp::ensure_task_mcp_server(&mut request);
+        crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
@@ -355,7 +355,7 @@ impl AgentEngine for AgentProcessEngine {
     where
         S: EventSink,
     {
-        crate::task_runtime::mcp::ensure_task_mcp_server(&mut request);
+        crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();

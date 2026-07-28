@@ -39,6 +39,11 @@ pub(crate) fn encrypt_provider_config(
             "encrypted provider credentials cannot be supplied by project input",
         ));
     }
+    if provider == TaskProviderKind::DingtalkAitable && config.contains_key(TOKEN_INPUT_KEY) {
+        return Err(invalid(
+            "DingTalk authentication is managed by DWS and cannot be stored on a project",
+        ));
+    }
     let token = match config.remove(TOKEN_INPUT_KEY) {
         Some(Value::String(value)) => {
             let value = value.trim().to_owned();
@@ -66,6 +71,11 @@ pub(crate) fn update_provider_config(
     if config.remove(CREDENTIAL_KEY).is_some() {
         return Err(invalid(
             "encrypted provider credentials cannot be supplied by project input",
+        ));
+    }
+    if provider == TaskProviderKind::DingtalkAitable && config.contains_key(TOKEN_INPUT_KEY) {
+        return Err(invalid(
+            "DingTalk authentication is managed by DWS and cannot be stored on a project",
         ));
     }
     config.remove("credential_configured");
@@ -198,6 +208,23 @@ fn credential_context(
     provider: TaskProviderKind,
     provider_config: &Map<String, Value>,
 ) -> Result<String, TaskRuntimeError> {
+    if provider == TaskProviderKind::DingtalkAitable {
+        let domain = provider_config
+            .get("domain")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("api.dingtalk.com");
+        let base_id = required_config_string(provider_config, "base_id")?;
+        let table_id = provider_config
+            .get("table_id")
+            .or_else(|| provider_config.get("sheet_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| invalid("provider_config.table_id is required"))?;
+        return Ok(format!("{provider:?}:{domain}:{base_id}:{table_id}"));
+    }
     let repository = required_config_string(provider_config, "repository")?;
     let domain = provider_config
         .get("domain")
@@ -514,6 +541,19 @@ mod tests {
             .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn rejects_project_tokens_for_dws_managed_aitable() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = encrypt_provider_config(
+            &database_path(&directory),
+            TaskProviderKind::DingtalkAitable,
+            json!({"base_id": "base", "table_id": "table", "token": "secret"}),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("managed by DWS"));
     }
 
     #[cfg(unix)]

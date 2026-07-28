@@ -2,6 +2,7 @@ import { getToken } from '@/api/auth'
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
+import { createFeedbackApi } from '@/api/feedback'
 import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
 import { createImSessionApi } from '@/api/imSessions'
@@ -66,6 +67,7 @@ export function createBackendWorkbenchServices(
     taskApi,
     deviceApi,
     deliveryApi,
+    feedbackApi: createFeedbackApi(apiBaseUrl, resolveToken),
     projectSpaceApis: {
       cloud: deliveryApi,
       defaultLocation: 'cloud',
