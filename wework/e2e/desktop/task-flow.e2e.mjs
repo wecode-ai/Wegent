@@ -2,7 +2,16 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, appendFile, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  access,
+  appendFile,
+  chmod,
+  copyFile,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -436,6 +445,59 @@ function commandOutput(command, args, options = {}) {
     )
   }
   return result.stdout.trim()
+}
+
+function macosFrontmostProcessId() {
+  const output = commandOutput('osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    'ObjC.import("AppKit"); Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier)',
+  ])
+  const processId = Number(output)
+  assert.ok(Number.isInteger(processId), `Invalid macOS frontmost process ID: ${output}`)
+  return processId
+}
+
+function macosApplicationProcessId(appIdentifier) {
+  const output = commandOutput('osascript', [
+    '-l',
+    'JavaScript',
+    '-e',
+    `ObjC.import("AppKit"); const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(${JSON.stringify(appIdentifier)}); apps.count > 0 ? Number(apps.objectAtIndex(0).processIdentifier) : 0`,
+  ])
+  const processId = Number(output)
+  assert.ok(Number.isInteger(processId), `Invalid macOS application process ID: ${output}`)
+  return processId
+}
+
+async function waitForMacosApplicationProcessId(appIdentifier, launcher) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DESKTOP_READY_TIMEOUT_MS) {
+    const processId = macosApplicationProcessId(appIdentifier)
+    if (processId > 0) return processId
+    if (launcher.exitCode !== null || launcher.signalCode !== null) {
+      throw new Error(`macOS failed to launch ${appIdentifier}`)
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Timed out waiting for macOS application ${appIdentifier}`)
+}
+
+async function stopDesktopAppProcess(app) {
+  if (!app) return
+  if (!app.launcher) {
+    await stopProcessGroup(app)
+    return
+  }
+
+  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGTERM')
+  const startedAt = Date.now()
+  while (processIsAlive(app.pid) && Date.now() - startedAt < 10_000) {
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+  }
+  if (processIsAlive(app.pid)) process.kill(app.pid, 'SIGKILL')
+  await stopProcess(app.launcher)
 }
 
 async function runChecked(command, args, options = {}) {
@@ -2393,7 +2455,7 @@ async function waitForLogPattern(
 }
 
 async function reactivateMacApplication(appIdentifier) {
-  await runChecked('open', ['-b', appIdentifier])
+  await runChecked('open', ['-g', '-b', appIdentifier])
 }
 
 async function triggerModelReloadUntilCloudFailure(control) {
@@ -7157,7 +7219,8 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
   const contentsPath = join(appBundlePath, 'Contents')
   const bundledBinaryPath = join(contentsPath, 'MacOS', binaryName)
   await mkdir(join(contentsPath, 'MacOS'), { recursive: true })
-  await symlink(binaryPath, bundledBinaryPath)
+  await copyFile(binaryPath, bundledBinaryPath)
+  await chmod(bundledBinaryPath, 0o755)
   await writeFile(
     join(contentsPath, 'Info.plist'),
     `<?xml version="1.0" encoding="UTF-8"?>
@@ -7172,6 +7235,7 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
   <key>CFBundleVersion</key><string>1</string>
+  <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
@@ -7195,7 +7259,11 @@ async function buildDesktopApp(
     return wrapMacDesktopApp(binaryPath, binaryPath.split('/').at(-1), appIdentifier)
   }
 
-  const windows = await readTauriE2EWindowConfig()
+  const windows = (await readTauriE2EWindowConfig()).map(window => ({
+    ...window,
+    backgroundThrottling: 'disabled',
+    focus: false,
+  }))
   await runChecked(
     'pnpm',
     [
@@ -7213,14 +7281,10 @@ async function buildDesktopApp(
             capabilities: [
               'default',
               {
-                identifier: 'desktop-e2e-focus',
-                description: 'Allows the desktop E2E runner to keep WebKit timers unthrottled',
+                identifier: 'desktop-e2e-window',
+                description: 'Allows the desktop E2E runner to manage test window visibility',
                 windows: ['main'],
-                permissions: [
-                  'core:window:allow-set-focus',
-                  'core:window:allow-show',
-                  'core:window:allow-unminimize',
-                ],
+                permissions: ['core:window:allow-show', 'core:window:allow-unminimize'],
               },
             ],
           },
@@ -7904,11 +7968,55 @@ async function main() {
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
+      WEWORK_E2E_BACKGROUND_WINDOW: '1',
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
     }
     const startDesktopAppProcess = async () => {
+      if (process.platform === 'darwin') {
+        assert.ok(appBundlePath, 'The macOS desktop E2E application bundle is missing')
+        const environmentArgs = [
+          'CODEX_BIN',
+          'HOME',
+          'WEGENT_CODEX_HOME',
+          'WEGENT_EXECUTOR_HOME',
+          'WEWORK_EXECUTOR_ISOLATION_OVERRIDE',
+          'WEGENT_EXECUTOR_LOG_DIR',
+          'WEGENT_EXECUTOR_LOG_FILE',
+          'DEVICE_ID',
+          'DEVICE_SESSION_GATEWAY_HOST',
+          'DEVICE_SESSION_GATEWAY_PORT',
+          'VITE_WEWORK_E2E',
+          'WEWORK_E2E_BACKGROUND_WINDOW',
+          'WEWORK_E2E_MODEL_API_KEY',
+          'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
+          'WEWORK_EXECUTOR_SIDECAR',
+        ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
+        const launcher = spawn(
+          'open',
+          [
+            '-W',
+            '-n',
+            '-g',
+            ...environmentArgs,
+            '--stdout',
+            appLogPath,
+            '--stderr',
+            appLogPath,
+            appBundlePath,
+          ],
+          {
+            cwd: weworkDir,
+            env: appEnvironment,
+            stdio: 'ignore',
+            detached: true,
+          }
+        )
+        const pid = await waitForMacosApplicationProcessId(appIdentifier, launcher)
+        return { launcher, pid }
+      }
+
       const child = spawn(appBinary, [], {
         cwd: weworkDir,
         env: appEnvironment,
@@ -7924,14 +8032,13 @@ async function main() {
     app = await startDesktopAppProcess()
     const restartDesktopApp = async () => {
       const readyCountBeforeRestart = control.readyCount
-      await stopProcessGroup(app)
+      await stopDesktopAppProcess(app)
       app = await startDesktopAppProcess()
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
-      await control.command('focusMainWindow', 'body')
     }
 
     const ready = await withTimeout(
@@ -7944,8 +8051,13 @@ async function main() {
       /^(tauri|http):/,
       'The desktop controller did not connect from a webview'
     )
-    await control.command('focusMainWindow', 'body')
-
+    if (process.platform === 'darwin') {
+      assert.notEqual(
+        macosFrontmostProcessId(),
+        app.pid,
+        'The desktop E2E application stole macOS foreground focus'
+      )
+    }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
       await verifySystemDragPanelLayout(control)
@@ -9514,7 +9626,7 @@ async function main() {
     throw error
   } finally {
     await cloudEnvironment?.stop()
-    await stopProcessGroup(app)
+    await stopDesktopAppProcess(app)
     await control.close()
     if (appBundlePath) {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
