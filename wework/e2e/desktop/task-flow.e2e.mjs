@@ -7477,8 +7477,14 @@ async function main() {
         Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
       )
     }
-    await control.command('click', '[data-testid="processing-summary-toggle"]')
-    await control.command('waitFor', '[data-processing-block-id="wework-e2e-view-image"]', {
+    const viewImageBlockSelector = '[data-processing-block-id="wework-e2e-view-image"]'
+    const viewImageBlockCount = Number(
+      await control.command('getElementCount', viewImageBlockSelector)
+    )
+    if (viewImageBlockCount === 0) {
+      await control.command('click', '[data-testid="processing-summary-toggle"]')
+    }
+    await control.command('waitFor', viewImageBlockSelector, {
       timeoutMs: UI_TIMEOUT_MS,
     })
     await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
