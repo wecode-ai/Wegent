@@ -23,6 +23,19 @@ wework_code_statistics_platform() {
   esac
 }
 
+wework_code_statistics_macos_resources() {
+  local macos_target="$1"
+  local rust_target platform
+
+  printf '%s\n' \
+    "bundled-hooks/codex-code-statistics/hooks.json" \
+    "bundled-hooks/codex-code-statistics/plugin.json"
+  while IFS= read -r rust_target; do
+    platform="$(wework_code_statistics_platform "$rust_target")"
+    printf 'bundled-hooks/codex-code-statistics/bin/%s/**/*\n' "$platform"
+  done < <(wework_code_statistics_targets "$macos_target")
+}
+
 wework_build_code_statistics_hook() {
   local wework_dir="$1"
   local macos_target="$2"
@@ -62,6 +75,20 @@ wework_verify_code_statistics_hook() {
       return 1
     fi
   done < <(wework_code_statistics_targets "$macos_target")
+
+  if [ "$macos_target" = "aarch64-apple-darwin" ]; then
+    platform="macos-x86_64"
+  elif [ "$macos_target" = "x86_64-apple-darwin" ]; then
+    platform="macos-aarch64"
+  else
+    return 0
+  fi
+  if find "$bundle_root" -type f \
+    -path "*/Contents/Resources/bundled-hooks/codex-code-statistics/bin/$platform/codex-code-statistics" \
+    -print -quit | grep -q .; then
+    echo "Packaged code statistics Hook unexpectedly includes $platform" >&2
+    return 1
+  fi
 }
 
 wework_build_windows_code_statistics_hook() {
