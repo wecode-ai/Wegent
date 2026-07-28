@@ -484,7 +484,7 @@ function pressDesktopControlPointer(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
-function dragDesktopControlElement(command: DesktopControlCommand): string {
+async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   const element = findDesktopControlElements(command.selector)[0]
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   if (!command.target) throw new Error('Drag requires a target selector')
@@ -494,7 +494,11 @@ function dragDesktopControlElement(command: DesktopControlCommand): string {
   const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
   const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
   dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  await waitForDesktopControlTick()
+  dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
+  await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
   return element.textContent?.trim() ?? ''
 }

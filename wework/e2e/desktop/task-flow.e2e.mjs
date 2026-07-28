@@ -31,6 +31,17 @@ const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COM
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const QUEUED_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_QUEUED_FOLLOW_UP'
 const BACKGROUND_GUIDANCE = 'WEWORK_DESKTOP_E2E_BACKGROUND_GUIDANCE'
+const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
+const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
+const QUEUE_DIRECT_SECOND = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_SECOND'
+const QUEUE_DIRECT_THIRD = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_THIRD'
+const QUEUE_PRESERVE_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_PRESERVE_INITIAL'
+const QUEUE_PRESERVE_QUEUED = 'WEWORK_DESKTOP_E2E_QUEUE_PRESERVE_QUEUED'
+const QUEUE_PRESERVE_MANUAL = 'WEWORK_DESKTOP_E2E_QUEUE_PRESERVE_MANUAL'
+const QUEUE_CLEAR_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_CLEAR_INITIAL'
+const QUEUE_CLEAR_QUEUED = 'WEWORK_DESKTOP_E2E_QUEUE_CLEAR_QUEUED'
+const QUEUE_CLEAR_MANUAL = 'WEWORK_DESKTOP_E2E_QUEUE_CLEAR_MANUAL'
+const QUEUE_MANAGEMENT_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_QUEUE_COMPLETE'
 const UNSENT_BLANK_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_BLANK_TASK_DRAFT'
 const UNSENT_FIRST_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_FIRST_TASK_DRAFT'
 const UNSENT_SECOND_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_SECOND_TASK_DRAFT'
@@ -261,6 +272,7 @@ const MEMORY_ONLY = process.argv.includes('--memory-only')
 const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
+const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -580,6 +592,191 @@ async function verifyBackgroundGuidanceNavigation({
     'The applied background guidance remained stuck in its sending state'
   )
   await captureVerificationScreenshot(control, 'guidance-background-03-applied.png')
+}
+
+async function startPausedQueueCase({ composerSelector, control, initialPrompt, queuedPrompts }) {
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+
+  const requestCountBefore = control.scenarioRequests.get('queue_management')?.length ?? 0
+  await sendPrompt(control, composerSelector, initialPrompt)
+  await withTimeout(
+    control.awaitScenarioRequestCount('queue_management', requestCountBefore + 1),
+    UI_TIMEOUT_MS,
+    `The queue management scenario did not receive ${initialPrompt}`
+  )
+  await control.command('waitFor', '[data-testid="pause-response-button"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  for (const prompt of queuedPrompts) {
+    await control.command('fill', composerSelector, { value: prompt })
+    await control.command('press', composerSelector, { key: 'Enter' })
+    await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
+      text: prompt,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+  }
+
+  return requestCountBefore
+}
+
+async function pauseQueuedConversation(control) {
+  await control.command('click', '[data-testid="pause-response-button"]')
+  await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="resume-queue-button"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const queueText = await control.command('getText', '[data-testid="conversation-queue-panel"]')
+  assert.match(queueText, /队列已暂停|Queue paused/, 'Stopping did not pause the queued messages')
+}
+
+function assertLatestScenarioRequestContains(control, scenario, prompt, message) {
+  const request = control.scenarioRequests.get(scenario)?.at(-1)
+  assert.ok(request, `${message}: no ${scenario} request was recorded`)
+  assert.equal(latestModelInputText(request.body).includes(prompt), true, message)
+}
+
+async function verifyPausedQueueLifecycle({ composerSelector, control }) {
+  control.setScenario('queue_management')
+
+  const directRequestOffset = await startPausedQueueCase({
+    composerSelector,
+    control,
+    initialPrompt: QUEUE_DIRECT_INITIAL,
+    queuedPrompts: [QUEUE_DIRECT_FIRST, QUEUE_DIRECT_SECOND, QUEUE_DIRECT_THIRD],
+  })
+  const queueSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="conversation-queue-panel"]')
+  )
+  const dragHandleTestIds = queueSnapshot.testIds.filter(testId =>
+    testId.startsWith('queue-drag-handle-')
+  )
+  assert.equal(dragHandleTestIds.length, 3, 'The three queued messages did not expose drag handles')
+  const firstQueuedId = dragHandleTestIds[0].slice('queue-drag-handle-'.length)
+  await control.command('drag', `[data-testid="${dragHandleTestIds[2]}"]`, {
+    target: `[data-testid="conversation-queue-row-${firstQueuedId}"]`,
+  })
+  const reorderedText = await control.command('getText', '[data-testid="conversation-queue-panel"]')
+  assert.ok(
+    reorderedText.indexOf(QUEUE_DIRECT_THIRD) < reorderedText.indexOf(QUEUE_DIRECT_FIRST),
+    'Dragging did not update the queued message order in real time'
+  )
+  await captureVerificationScreenshot(control, 'queue-management-01-reordered.png')
+
+  await pauseQueuedConversation(control)
+  assert.equal(
+    control.scenarioRequests.get('queue_management')?.length,
+    directRequestOffset + 1,
+    'Stopping immediately sent a queued message instead of pausing the queue'
+  )
+  await captureVerificationScreenshot(control, 'queue-management-02-paused.png')
+
+  await control.command('click', '[data-testid="resume-queue-button"]')
+  await withTimeout(
+    control.awaitScenarioRequestCount('queue_management', directRequestOffset + 2),
+    UI_TIMEOUT_MS,
+    'Continuing the queue did not send its first message'
+  )
+  assertLatestScenarioRequestContains(
+    control,
+    'queue_management',
+    QUEUE_DIRECT_THIRD,
+    'Continuing the queue did not send the message moved to the top'
+  )
+  await withTimeout(
+    control.awaitScenarioRequestCount('queue_management', directRequestOffset + 4),
+    UI_TIMEOUT_MS,
+    'The resumed queue did not drain in its visible order'
+  )
+  const directRequests = control.scenarioRequests
+    .get('queue_management')
+    .slice(directRequestOffset + 1, directRequestOffset + 4)
+    .map(request => latestModelInputText(request.body))
+  assert.equal(directRequests[0].includes(QUEUE_DIRECT_THIRD), true)
+  assert.equal(directRequests[1].includes(QUEUE_DIRECT_FIRST), true)
+  assert.equal(directRequests[2].includes(QUEUE_DIRECT_SECOND), true)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'The directly resumed queue did not clear after sending'
+  )
+
+  const preserveRequestOffset = await startPausedQueueCase({
+    composerSelector,
+    control,
+    initialPrompt: QUEUE_PRESERVE_INITIAL,
+    queuedPrompts: [QUEUE_PRESERVE_QUEUED],
+  })
+  await pauseQueuedConversation(control)
+  await control.command('fill', composerSelector, { value: QUEUE_PRESERVE_MANUAL })
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="paused-queue-send-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="paused-queue-send-cancel-button"]')
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    QUEUE_PRESERVE_MANUAL,
+    'Cancelling the paused-queue dialog discarded the composer input'
+  )
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('click', '[data-testid="paused-queue-send-preserve-button"]')
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    '',
+    'Preserving the queue did not clear the submitted composer input'
+  )
+  await withTimeout(
+    control.awaitScenarioRequestCount('queue_management', preserveRequestOffset + 3),
+    UI_TIMEOUT_MS,
+    'Preserving the queue did not send both the manual message and queued message'
+  )
+  const preserveRequests = control.scenarioRequests
+    .get('queue_management')
+    .slice(preserveRequestOffset + 1, preserveRequestOffset + 3)
+    .map(request => latestModelInputText(request.body))
+  assert.equal(preserveRequests[0].includes(QUEUE_PRESERVE_MANUAL), true)
+  assert.equal(preserveRequests[1].includes(QUEUE_PRESERVE_QUEUED), true)
+
+  const clearRequestOffset = await startPausedQueueCase({
+    composerSelector,
+    control,
+    initialPrompt: QUEUE_CLEAR_INITIAL,
+    queuedPrompts: [QUEUE_CLEAR_QUEUED],
+  })
+  await pauseQueuedConversation(control)
+  await control.command('fill', composerSelector, { value: QUEUE_CLEAR_MANUAL })
+  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('click', '[data-testid="paused-queue-send-clear-button"]')
+  await withTimeout(
+    control.awaitScenarioRequestCount('queue_management', clearRequestOffset + 2),
+    UI_TIMEOUT_MS,
+    'Clearing the queue did not send the new manual message'
+  )
+  assertLatestScenarioRequestContains(
+    control,
+    'queue_management',
+    QUEUE_CLEAR_MANUAL,
+    'Clearing the queue sent the wrong message'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
+    'Clearing the queue left queued messages visible'
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  assert.equal(
+    control.scenarioRequests.get('queue_management')?.length,
+    clearRequestOffset + 2,
+    'A cleared queued message was still sent'
+  )
+  await captureVerificationScreenshot(control, 'queue-management-03-dialog-paths.png')
 }
 
 async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
@@ -2866,6 +3063,12 @@ function codexRequestKind(body) {
   }
 }
 
+function latestModelInputText(body) {
+  const input = Array.isArray(body.input) ? body.input.at(-1) : body.input
+  const message = Array.isArray(body.messages) ? body.messages.at(-1) : null
+  return JSON.stringify(input ?? message ?? '')
+}
+
 function responseCreated(id) {
   return { type: 'response.created', response: { id } }
 }
@@ -4013,6 +4216,7 @@ class DesktopE2EServer {
         'goal_restart',
         'turn_navigation',
         'cancellation',
+        'queue_management',
         'retry',
         'reconnect',
         'fresh_chat',
@@ -5055,6 +5259,39 @@ class DesktopE2EServer {
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
       response.write(createSse([responseCreated(responseId)]))
+      return
+    }
+
+    if (this.scenario === 'queue_management') {
+      this.recordScenarioRequest('queue_management', modelRequest)
+      const latestInput = latestModelInputText(body)
+      const initialPrompts = [QUEUE_DIRECT_INITIAL, QUEUE_PRESERVE_INITIAL, QUEUE_CLEAR_INITIAL]
+      if (initialPrompts.some(prompt => latestInput.includes(prompt))) {
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        return
+      }
+
+      const followUpPrompts = [
+        QUEUE_DIRECT_FIRST,
+        QUEUE_DIRECT_SECOND,
+        QUEUE_DIRECT_THIRD,
+        QUEUE_PRESERVE_QUEUED,
+        QUEUE_PRESERVE_MANUAL,
+        QUEUE_CLEAR_MANUAL,
+      ]
+      const prompt = followUpPrompts.find(candidate => latestInput.includes(candidate))
+      assert.ok(prompt, `Unexpected queue management request: ${latestInput}`)
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -7445,6 +7682,18 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
 
+    if (QUEUE_MANAGEMENT_ONLY) {
+      phase = 'queue-management'
+      await verifyPausedQueueLifecycle({ composerSelector, control })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework queue management desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (MEMORY_ONLY) {
       phase = 'memory-growth'
       await selectE2EModel(control)
@@ -8043,6 +8292,9 @@ async function main() {
       executorLogPath,
       restartDesktopApp,
     })
+
+    phase = 'queue-management'
+    await verifyPausedQueueLifecycle({ composerSelector, control })
 
     phase = 'cancellation'
     control.setScenario('cancellation')
