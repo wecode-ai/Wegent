@@ -641,11 +641,11 @@ async function verifyBackgroundGuidanceNavigation({
 
   await ensureTaskRowVisible(control, runningTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
-    timeoutMs: UI_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
     text: BACKGROUND_GUIDANCE,
-    timeoutMs: UI_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const pendingRestoredSnapshot = await waitForSnapshot(
     control,
@@ -670,9 +670,9 @@ async function verifyBackgroundGuidanceNavigation({
   await control.command(
     'clickWhenEnabled',
     `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-    { timeoutMs: UI_TIMEOUT_MS }
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
-  await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+  await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await waitForSnapshot(
     control,
     snapshot =>
@@ -730,9 +730,9 @@ async function verifyBackgroundGuidanceNavigation({
   await control.command(
     'clickWhenEnabled',
     `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-    { timeoutMs: UI_TIMEOUT_MS }
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
-  await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+  await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await waitForSnapshot(
     control,
     snapshot =>
@@ -744,7 +744,7 @@ async function verifyBackgroundGuidanceNavigation({
 
   await ensureTaskRowVisible(control, runningTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
-    timeoutMs: UI_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const restoredSnapshot = await waitForSnapshot(
     control,
