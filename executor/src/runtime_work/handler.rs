@@ -103,6 +103,8 @@ const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::fro
 const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
 const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
 const WORKTREE_AUTO_CLEANUP_BATCH_DELAY: Duration = Duration::from_secs(30);
+const WORKTREE_AUTO_CLEANUP_ERROR_DELAY: Duration = Duration::from_secs(5 * 60);
+const WORKTREE_AUTO_CLEANUP_MAX_EMPTY_ROUNDS: usize = 3;
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 

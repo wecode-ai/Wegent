@@ -20,6 +20,12 @@ const STATE_VERSION: u64 = 1;
 const DEFAULT_KEEP_COUNT: usize = 15;
 const AUTO_PRUNE_BATCH_SIZE: usize = 1;
 
+#[derive(Default)]
+pub(crate) struct WorktreePruneBatch {
+    pub removed: Vec<ManagedWorktree>,
+    pub errors: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(crate) struct WorktreeSettings {
@@ -109,6 +115,21 @@ impl WorktreeManager {
             .records
             .get(&normalized_path)
             .and_then(|record| record.source_path.clone())
+    }
+
+    fn busy_task_repositories(&self, tasks: &[RuntimeTaskLink]) -> HashSet<String> {
+        tasks
+            .iter()
+            .filter(|task| task.running)
+            .flat_map(|task| {
+                [
+                    Some(normalized_path_key(Path::new(&task.workspace_path))),
+                    self.source_path_for(&task.workspace_path)
+                        .map(|path| normalized_path_key(Path::new(&path))),
+                ]
+            })
+            .flatten()
+            .collect()
     }
 
     pub fn from_env() -> Self {
@@ -347,8 +368,25 @@ impl WorktreeManager {
     pub fn prune_auto_batch(
         &self,
         tasks: &[RuntimeTaskLink],
-    ) -> Result<Vec<ManagedWorktree>, String> {
-        self.prune_up_to(tasks, AUTO_PRUNE_BATCH_SIZE)
+    ) -> Result<WorktreePruneBatch, String> {
+        let state = self.load();
+        if !state.settings.auto_cleanup_enabled {
+            return Ok(WorktreePruneBatch::default());
+        }
+        let listed = self.list(tasks)?;
+        let busy_task_repositories = self.busy_task_repositories(tasks);
+        let candidates = select_auto_prune_candidates(
+            listed,
+            tasks,
+            &busy_task_repositories,
+            state.settings.keep_count,
+            usize::MAX,
+        );
+        Ok(remove_auto_prune_candidates(
+            candidates,
+            AUTO_PRUNE_BATCH_SIZE,
+            |record| self.delete(Path::new(&record.path), true),
+        ))
     }
 
     fn prune_up_to(
@@ -361,10 +399,15 @@ impl WorktreeManager {
             return Ok(Vec::new());
         }
         let listed = self.list(tasks)?;
+        let busy_task_repositories = self.busy_task_repositories(tasks);
         let mut removed = Vec::new();
-        for record in
-            select_auto_prune_candidates(listed, tasks, state.settings.keep_count, max_removals)
-        {
+        for record in select_auto_prune_candidates(
+            listed,
+            tasks,
+            &busy_task_repositories,
+            state.settings.keep_count,
+            max_removals,
+        ) {
             removed.push(self.delete(Path::new(&record.path), true)?);
         }
         Ok(removed)
@@ -626,8 +669,12 @@ fn ensure_managed_path(path: &Path, roots: &[String]) -> Result<(), String> {
 }
 
 fn ensure_concrete_absolute_path(path: &Path, label: &str) -> Result<(), String> {
-    let value = path.to_string_lossy();
-    let has_placeholder = value.starts_with('~') || value.contains('$') || value.contains('%');
+    let has_placeholder = path.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy();
+        value.starts_with('~')
+            || value.starts_with('$')
+            || (value.len() > 2 && value.starts_with('%') && value.ends_with('%'))
+    });
     let has_parent_component = path
         .components()
         .any(|component| matches!(component, std::path::Component::ParentDir));
@@ -752,6 +799,7 @@ fn is_auto_prune_candidate(record: &ManagedWorktree, linked_tasks: &[RuntimeTask
 fn select_auto_prune_candidates(
     listed: Vec<(ManagedWorktree, Vec<RuntimeTaskLink>)>,
     tasks: &[RuntimeTaskLink],
+    busy_task_repositories: &HashSet<String>,
     keep_count: usize,
     max_removals: usize,
 ) -> Vec<ManagedWorktree> {
@@ -760,11 +808,12 @@ fn select_auto_prune_candidates(
         .filter(|task| task.running || now_ms().saturating_sub(task.updated_at) < 5 * 60 * 1_000)
         .map(|task| normalized_path_key(Path::new(&task.workspace_path)))
         .collect::<HashSet<_>>();
-    let busy_repositories = listed
+    let mut busy_repositories = listed
         .iter()
         .filter(|(_, linked_tasks)| linked_tasks.iter().any(|task| task.running))
         .filter_map(|(record, _)| repository_identity(record))
         .collect::<HashSet<_>>();
+    busy_repositories.extend(busy_task_repositories.iter().cloned());
     let mut active = listed
         .into_iter()
         .filter(|(record, linked_tasks)| is_auto_prune_candidate(record, linked_tasks))
@@ -781,6 +830,32 @@ fn select_auto_prune_candidates(
         })
         .take(max_removals)
         .collect()
+}
+
+fn remove_auto_prune_candidates<F>(
+    candidates: Vec<ManagedWorktree>,
+    max_removals: usize,
+    mut remove: F,
+) -> WorktreePruneBatch
+where
+    F: FnMut(&ManagedWorktree) -> Result<ManagedWorktree, String>,
+{
+    let mut batch = WorktreePruneBatch::default();
+    if max_removals == 0 {
+        return batch;
+    }
+    for record in candidates {
+        match remove(&record) {
+            Ok(removed) => {
+                batch.removed.push(removed);
+                if batch.removed.len() >= max_removals {
+                    break;
+                }
+            }
+            Err(error) => batch.errors.push(format!("{}: {error}", record.path)),
+        }
+    }
+    batch
 }
 
 fn repository_identity(record: &ManagedWorktree) -> Option<String> {
@@ -873,6 +948,15 @@ mod tests {
                 "{path} must not be accepted as a deletion target"
             );
         }
+        for path in [
+            "/tmp/wegent-worktrees/cost$analysis/repo",
+            "/tmp/wegent-worktrees/100%done/repo",
+        ] {
+            assert!(
+                ensure_managed_path(Path::new(path), &roots).is_ok(),
+                "{path} is a concrete deletion target"
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -880,10 +964,10 @@ mod tests {
     fn managed_path_rejects_symlinks_below_the_managed_root() {
         let root = test_directory("wegent-worktree-symlink-test");
         let managed_root = root.join("managed");
-        let outside = root.join("outside/repo");
+        let target = managed_root.join("target/repo");
         fs::create_dir_all(&managed_root).unwrap();
-        fs::create_dir_all(&outside).unwrap();
-        std::os::unix::fs::symlink(root.join("outside"), managed_root.join("task")).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        std::os::unix::fs::symlink(managed_root.join("target"), managed_root.join("task")).unwrap();
         let roots = vec![managed_root.display().to_string()];
 
         assert!(ensure_managed_path(&managed_root.join("task/repo"), &roots).is_err());
@@ -977,7 +1061,7 @@ mod tests {
             (running_b, vec![running_task.clone()]),
         ];
 
-        let selected = select_auto_prune_candidates(listed, &[running_task], 1, 1);
+        let selected = select_auto_prune_candidates(listed, &[running_task], &HashSet::new(), 1, 1);
 
         assert_eq!(
             selected
@@ -986,6 +1070,60 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![old_a.path.as_str()]
         );
+    }
+
+    #[test]
+    fn auto_prune_avoids_source_repository_used_by_a_running_task() {
+        let source_a = "/tmp/source-a";
+        let source_b = "/tmp/source-b";
+        let newest_a = worktree_record("newest-a", source_a, 30);
+        let old_a = worktree_record("old-a", source_a, 20);
+        let old_b = worktree_record("old-b", source_b, 10);
+        let archived = |id: &str, path: &str| {
+            let mut task = task_link(id);
+            task.status = "archived".to_owned();
+            task.workspace_path = path.to_owned();
+            task
+        };
+        let listed = vec![
+            (
+                newest_a.clone(),
+                vec![archived("archived-newest-a", &newest_a.path)],
+            ),
+            (old_a.clone(), vec![archived("archived-old-a", &old_a.path)]),
+            (old_b.clone(), vec![archived("archived-old-b", &old_b.path)]),
+        ];
+        let busy_task_repositories = HashSet::from([source_a.to_owned()]);
+
+        let selected = select_auto_prune_candidates(listed, &[], &busy_task_repositories, 1, 1);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|record| record.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![old_b.path.as_str()]
+        );
+    }
+
+    #[test]
+    fn auto_prune_skips_failed_candidate_and_removes_the_next_one() {
+        let failed = worktree_record("failed", "/tmp/source-a", 20);
+        let removable = worktree_record("removable", "/tmp/source-b", 10);
+
+        let batch =
+            remove_auto_prune_candidates(vec![failed.clone(), removable.clone()], 1, |record| {
+                if record.path == failed.path {
+                    Err("simulated delete failure".to_owned())
+                } else {
+                    Ok(record.clone())
+                }
+            });
+
+        assert_eq!(batch.removed.len(), 1);
+        assert_eq!(batch.removed[0].path, removable.path);
+        assert_eq!(batch.errors.len(), 1);
+        assert!(batch.errors[0].contains(&failed.path));
     }
 
     #[test]

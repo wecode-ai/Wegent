@@ -132,8 +132,12 @@ fn cleanup_old_files(
 }
 
 fn ensure_concrete_absolute_path(path: &Path) -> Result<(), String> {
-    let value = path.to_string_lossy();
-    let has_placeholder = value.starts_with('~') || value.contains('$') || value.contains('%');
+    let has_placeholder = path.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy();
+        value.starts_with('~')
+            || value.starts_with('$')
+            || (value.len() > 2 && value.starts_with('%') && value.ends_with('%'))
+    });
     let has_parent_component = path
         .components()
         .any(|component| matches!(component, Component::ParentDir));
@@ -212,6 +216,8 @@ mod tests {
             20,
         )
         .is_err());
+        assert!(ensure_concrete_absolute_path(Path::new("/tmp/cost$analysis")).is_ok());
+        assert!(ensure_concrete_absolute_path(Path::new("/tmp/100%done")).is_ok());
 
         let root = test_directory("wework-storage-directory-safety");
         let nested = root.join("old-directory");
