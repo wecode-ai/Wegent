@@ -358,43 +358,6 @@ export function DocumentPanel({
       </div>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex items-center justify-between gap-2 px-4 pt-4">
-          <h2 className="text-sm font-semibold">{t('artifact.tools')}</h2>
-          <div className="flex items-center gap-1">
-            {onNewChat && (
-              <TooltipProvider>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={onNewChat}
-                      className="h-8 w-8 p-0"
-                      data-testid="new-chat-button"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    <p>{tCommon('tasks.new_conversation')}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleCollapsed}
-              className="hidden h-8 w-8 p-0 lg:inline-flex"
-              title={t('artifact.hideTools')}
-              aria-label={t('artifact.hideTools')}
-              data-testid="knowledge-panel-collapse-button"
-            >
-              <PanelRightClose className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-
         <div className="mx-4 mt-4 shrink-0" data-testid="artifact-source-summary">
           <div className="mb-2 flex min-h-11 items-center justify-between gap-2 md:min-h-8">
             <h3 className="text-sm font-semibold">
@@ -404,18 +367,51 @@ export function DocumentPanel({
                   : 'artifact.source'
               )}
             </h3>
-            {canManageDocuments && (
+            <div className="flex items-center gap-1">
+              {canManageDocuments && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11 md:h-8 md:min-h-0 md:px-2.5 md:text-xs"
+                  onClick={() => setUploadOpen(true)}
+                  data-testid="artifact-add-source"
+                >
+                  <Upload className="mr-1.5 h-4 w-4" />
+                  {t('document.document.upload')}
+                </Button>
+              )}
+              {onNewChat && (
+                <TooltipProvider>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={onNewChat}
+                        className="h-8 w-8 p-0"
+                        data-testid="new-chat-button"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>{tCommon('tasks.new_conversation')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="min-h-11 md:h-8 md:min-h-0 md:px-2.5 md:text-xs"
-                onClick={() => setUploadOpen(true)}
-                data-testid="artifact-add-source"
+                onClick={toggleCollapsed}
+                className="hidden h-8 w-8 p-0 lg:inline-flex"
+                title={t('artifact.hideTools')}
+                aria-label={t('artifact.hideTools')}
+                data-testid="knowledge-panel-collapse-button"
               >
-                <Upload className="mr-1.5 h-4 w-4" />
-                {t('document.document.upload')}
+                <PanelRightClose className="h-4 w-4" />
               </Button>
-            )}
+            </div>
           </div>
           <ArtifactSourceSelector
             knowledgeBaseId={knowledgeBase.id}
