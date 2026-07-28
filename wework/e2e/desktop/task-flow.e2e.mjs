@@ -42,6 +42,9 @@ const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
+const TASK_PLAN_PROMPT =
+  'WEWORK_DESKTOP_E2E_TASK_PLAN: publish a task plan and finish after the task is backgrounded.'
+const TASK_PLAN_STEP = 'Verify the background task plan remains visible'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const QUEUED_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_QUEUED_FOLLOW_UP'
 const BACKGROUND_GUIDANCE = 'WEWORK_DESKTOP_E2E_BACKGROUND_GUIDANCE'
@@ -298,6 +301,7 @@ const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
+const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
 const DESKTOP_CHECKPOINTS = [
@@ -604,6 +608,61 @@ async function verifyQueuedFollowUpNavigation({ composerSelector, control, proje
     snapshot => !snapshot.testIds.includes('conversation-queue-panel'),
     'The queued follow-up could not be cleared after restoration'
   )
+}
+
+async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }) {
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    initialSnapshot.testIds.includes('add-context-button') &&
+      initialSnapshot.testIds.includes('new-chat-button'),
+    'The task-plan verification did not start from a ready workbench'
+  )
+  control.setScenario('task_plan')
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-plan-mode-button"]')
+  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(control, composerSelector, TASK_PLAN_PROMPT, 'task_plan')
+  const taskPlanDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const taskPlanTaskId = taskPlanDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(taskPlanTaskId, 'The task-plan scenario did not expose its runtime task ID')
+  const taskPlanTaskRowTestId = `runtime-local-task-row-${taskPlanTaskId}`
+  await control.command('waitFor', `[data-testid="${taskPlanTaskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await withTimeout(
+    control.releaseTaskPlanResponse(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Timed out waiting for the background task-plan response'
+  )
+  await control.command('click', `[data-testid="${taskPlanTaskRowTestId}"]`)
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskPlanTaskId &&
+      snapshot.pane?.transcript?.loading === false,
+    'The background task-plan transcript did not finish loading'
+  )
+  await control.command('waitFor', '[data-testid="assistant-plan-card"]', {
+    text: TASK_PLAN_STEP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, '01-background-task-plan-restored.png')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await control.command('waitFor', '[data-testid="add-context-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifyBackgroundGuidanceNavigation({
@@ -4491,6 +4550,12 @@ class DesktopE2EServer {
     this.requestUserInputResponseWritten = new Promise(resolvePromise => {
       this.resolveRequestUserInputResponseWritten = resolvePromise
     })
+    this.taskPlanCompletionRelease = new Promise(resolvePromise => {
+      this.releaseTaskPlanCompletion = resolvePromise
+    })
+    this.taskPlanCompletionWritten = new Promise(resolvePromise => {
+      this.resolveTaskPlanCompletionWritten = resolvePromise
+    })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
     })
@@ -4668,6 +4733,7 @@ class DesktopE2EServer {
         'follow_up',
         'running_fork_follow_up',
         'fork_follow_up',
+        'task_plan',
         'request_user_input',
         'window_lifecycle',
         'goal_idle',
@@ -4753,6 +4819,11 @@ class DesktopE2EServer {
   releaseRequestUserInputResponse() {
     this.releaseRequestUserInput()
     return this.guard(this.requestUserInputResponseWritten)
+  }
+
+  releaseTaskPlanResponse() {
+    this.releaseTaskPlanCompletion()
+    return this.guard(this.taskPlanCompletionWritten)
   }
 
   awaitReconnectResponseStarted() {
@@ -5632,6 +5703,37 @@ class DesktopE2EServer {
         responseCompleted(responseId),
       ])
       this.resolveRequestUserInputResponseWritten()
+      return
+    }
+
+    if (this.scenario === 'task_plan') {
+      this.recordScenarioRequest('task_plan', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(TASK_PLAN_PROMPT),
+        'The real Codex request did not contain the task-plan prompt'
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.taskPlanCompletionRelease
+      response.end(
+        createSse([
+          assistantMessage(
+            [
+              '<proposed_plan>',
+              '# Background plan',
+              `- ${TASK_PLAN_STEP}`,
+              '</proposed_plan>',
+            ].join('\n')
+          ),
+          responseCompleted(responseId),
+        ])
+      )
+      this.resolveTaskPlanCompletionWritten()
       return
     }
 
@@ -8366,6 +8468,13 @@ async function main() {
       return
     }
 
+    if (TASK_PLAN_ONLY) {
+      phase = 'background-task-plan'
+      await verifyBackgroundTaskPlanRestoration({ composerSelector, control })
+      console.log(`Wework background task-plan E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (MEMORY_ONLY) {
       phase = 'memory-growth'
       await selectE2EModel(control)
@@ -8838,6 +8947,9 @@ async function main() {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
       }
+
+      phase = 'background-task-plan'
+      await verifyBackgroundTaskPlanRestoration({ composerSelector, control })
 
       phase = 'background-request-user-input'
       control.setScenario('request_user_input')
