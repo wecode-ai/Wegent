@@ -32,9 +32,13 @@ import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
 import type { CloudProject } from '@/api/deliveries'
-import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
+import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
+import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface CompactChatComposerProps {
   value: string
@@ -53,6 +57,7 @@ interface CompactChatComposerProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
@@ -94,6 +99,7 @@ export function CompactChatComposer({
   workspaceTarget,
   workspaceFileApi,
   cloudMentionCandidates,
+  conversationMentionCandidates,
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
@@ -152,9 +158,13 @@ export function CompactChatComposer({
     onCancelGoalDraft?.()
     if (phrase.mode === 'plan') onSetPlanMode?.()
     if (phrase.mode === 'goal') onSetGoal?.()
-    onChange(value ? `${value}\n${phrase.content}` : phrase.content)
+    const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
+    onChange(phraseValue)
     if (phrase.attachmentPaths?.length && onFileSelect) {
-      void readDroppedFiles(phrase.attachmentPaths).then(onFileSelect)
+      void resolveStoredWorkspacePaths(
+        phrase.attachmentPaths,
+        workspaceTarget?.workspaceSource === 'remote'
+      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -286,6 +296,7 @@ export function CompactChatComposer({
             workspaceTarget={workspaceTarget}
             workspaceFileApi={workspaceFileApi}
             cloudMentionCandidates={cloudMentionCandidates}
+            conversationMentionCandidates={conversationMentionCandidates}
             cloudProjectCandidates={cloudProjectCandidates}
             cloudSpaceEnabled={cloudSpaceEnabled}
             onSelectCloudProject={onSelectCloudProject}
@@ -475,6 +486,7 @@ export function CompactChatComposer({
               workspaceTarget={workspaceTarget}
               workspaceFileApi={workspaceFileApi}
               cloudMentionCandidates={cloudMentionCandidates}
+              conversationMentionCandidates={conversationMentionCandidates}
               cloudProjectCandidates={cloudProjectCandidates}
               cloudSpaceEnabled={cloudSpaceEnabled}
               onSelectCloudProject={onSelectCloudProject}

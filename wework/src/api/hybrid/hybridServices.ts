@@ -4,6 +4,7 @@ import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
+import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -883,9 +884,18 @@ export function createHybridWorkbenchServices(
       }
     },
   }
+  const cloudProjectSpaceApi = createCloudProjectSpaceApi(
+    cloudServices.deliveryApi!,
+    localServices.externalIssueApi!
+  )
 
   return {
     ...cloudServices,
+    projectSpaceApis: {
+      local: localServices.deliveryApi,
+      cloud: cloudProjectSpaceApi,
+      defaultLocation: 'cloud',
+    },
     teamApi: localServices.teamApi,
     skillApi: localServices.skillApi,
     projectApi: {

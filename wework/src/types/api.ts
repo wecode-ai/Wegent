@@ -2062,6 +2062,7 @@ export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
   | 'unavailable'
+  | 'provider_boundary_mismatch'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {

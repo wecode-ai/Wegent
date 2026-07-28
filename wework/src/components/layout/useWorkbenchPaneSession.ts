@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
 import i18n from '@/i18n'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
@@ -31,6 +31,7 @@ import type { RequestUserInputPayload } from '@/components/chat/RequestUserInput
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import { updateRuntimeGoalContinuation, visibleRuntimeGoal } from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
+import { appendConversationMentionContext } from '@/lib/conversation-mentions'
 import {
   markRuntimeTerminalAdditionalContextDelivered,
   readRuntimeTerminalAdditionalContext,
@@ -46,14 +47,13 @@ import type {
   RuntimeAdditionalContext,
   RuntimeRollbackRequest,
   RuntimeSubagentActivityPayload,
-  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type {
   GuidanceWorkbenchMessage,
-  QueuedWorkbenchMessage,
+  RuntimePaneQueuedMessage,
   RuntimePaneTranscript,
   RuntimeSubagentStatus,
   WorkbenchMessage,
@@ -62,7 +62,12 @@ import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import {
   cacheRuntimeConversationMessages,
+  cacheRuntimeConversationQueuedMessagesByKey,
+  cacheRuntimeConversationQueuePausedByKey,
   getRuntimeConversationMessages,
+  getRuntimeConversationQueuedMessagesByKey,
+  getRuntimeConversationQueuePausedByKey,
+  reduceRuntimeConversationQueue,
   runtimeConversationKey,
 } from '@/features/workbench/runtimeConversationCache'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
@@ -70,17 +75,6 @@ import { getRuntimeMessageIndex, mergeRuntimeTranscriptMessages } from './runtim
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
-}
-
-interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
-  attachments?: Attachment[]
-  displayContent?: string
-  codeComments?: CodeCommentContext[]
-  modelId?: string
-  modelType?: RuntimeSendRequest['modelType']
-  modelOptions?: ModelOptions
-  runtimeGoalRequest?: boolean
-  additionalContext?: RuntimeAdditionalContext
 }
 
 interface SendRequestUserInputResponseOptions {
@@ -144,8 +138,37 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     refreshWorkLists,
   } = useWorkbenchPaneContext()
   const lifecycleStore = useRuntimeTaskLifecycleStore()
-  const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
-  const [queuedMessagesPaused, setQueuedMessagesPaused] = useState(false)
+  const queuedMessageScopeKey = currentRuntimeTask
+    ? runtimeConversationKey(currentRuntimeTask)
+    : null
+  const [queuedMessages, setQueuedMessagesState] = useState<RuntimePaneQueuedMessage[]>(() =>
+    queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
+  )
+  const [queuedMessagesPaused, setQueuedMessagesPausedState] = useState(() =>
+    queuedMessageScopeKey ? getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey) : false
+  )
+  const setQueuedMessages = useCallback(
+    (update: SetStateAction<RuntimePaneQueuedMessage[]>) => {
+      if (!queuedMessageScopeKey) return
+      const previous = getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey)
+      const next = typeof update === 'function' ? update(previous) : update
+      if (next === previous) return
+      cacheRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey, next)
+      setQueuedMessagesState(next)
+    },
+    [queuedMessageScopeKey]
+  )
+  const setQueuedMessagesPaused = useCallback(
+    (update: SetStateAction<boolean>) => {
+      if (!queuedMessageScopeKey) return
+      const previous = getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey)
+      const next = typeof update === 'function' ? update(previous) : update
+      if (next === previous) return
+      cacheRuntimeConversationQueuePausedByKey(queuedMessageScopeKey, next)
+      setQueuedMessagesPausedState(next)
+    },
+    [queuedMessageScopeKey]
+  )
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
   const input = projectChat.input ?? ''
@@ -808,7 +831,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           runtimeGoalRequest: guidanceMessage.runtimeGoalRequest,
           runtimeGuidance: true,
         })
-        setQueuedMessages(messages => messages.filter(message => message.id !== guidanceId))
+        setQueuedMessages(messages =>
+          reduceRuntimeConversationQueue(messages, {
+            type: 'guidance_applied',
+            payload,
+          })
+        )
       },
     })
     return unsubscribe
@@ -818,6 +846,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     dispatchMessages,
     lifecycleStore,
     runtimeTaskStreamTargetKey,
+    setQueuedMessages,
   ])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
@@ -1137,7 +1166,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       return true
     },
-    [appendLocalUserMessage, currentRuntimeTask, interruptAndSendRuntimePaneMessage]
+    [
+      appendLocalUserMessage,
+      currentRuntimeTask,
+      interruptAndSendRuntimePaneMessage,
+      setQueuedMessages,
+    ]
   )
 
   const retryFailedMessageInPane = useCallback(
@@ -1178,6 +1212,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           currentMessages,
           retryUserMessageOverride ?? undefined
         )
+        if (sent) {
+          setMessages(messages =>
+            messages.filter(currentMessage => currentMessage.id !== message.id)
+          )
+        }
         return sent
       } catch (error) {
         console.error('[Wework] Runtime failed message retry failed', {
@@ -1398,7 +1437,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
-    [sendRuntimeMessage]
+    [sendRuntimeMessage, setQueuedMessages]
   )
 
   useEffect(() => {
@@ -1487,6 +1526,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             ? {
                 ...message,
                 status: 'sending',
+                deliveryMode: 'guidance',
                 error: undefined,
                 notice: '正在引导当前对话',
               }
@@ -1560,7 +1600,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       }
     },
-    [currentRuntimeTask, paneStatus.isBusy, sendRuntimeMessage, sendRuntimePaneGuidance]
+    [
+      currentRuntimeTask,
+      paneStatus.isBusy,
+      sendRuntimeMessage,
+      sendRuntimePaneGuidance,
+      setQueuedMessages,
+    ]
   )
 
   const send: (inputOverride?: string, options?: RuntimePaneSendOptions) => Promise<void> =
@@ -1736,6 +1782,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           return
         }
 
+        let resolvedAdditionalContext: RuntimeAdditionalContext | undefined
+        try {
+          resolvedAdditionalContext = await appendConversationMentionContext(
+            effectiveSubmittedInput,
+            options.additionalContext,
+            loadRuntimeTranscriptForPane
+          )
+        } catch (cause) {
+          console.warn('[Wework composer] failed to load referenced conversation', cause)
+          setError(i18n.t('workbench.mention_conversation_load_failed'))
+          return
+        }
+
         // Do not keep an earlier action error visible once the user sends a new message.
         setError(null)
         setInput('')
@@ -1755,7 +1814,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             clientMessageId: optimisticMessage.id,
             codeCommentContexts,
             initialGoal: pendingInitialGoal,
-            additionalContext: options.additionalContext,
+            additionalContext: resolvedAdditionalContext,
             onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
@@ -1827,7 +1886,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             status: 'queued',
             createdAt: new Date().toISOString(),
             attachments: persistAttachmentReferences(currentAttachments),
-            additionalContext: options.additionalContext,
+            additionalContext: resolvedAdditionalContext,
             ...getRuntimeModelFields(),
           }
 
@@ -1861,7 +1920,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           status: 'queued',
           createdAt: new Date().toISOString(),
           attachments: persistAttachmentReferences(currentAttachments),
-          additionalContext: options.additionalContext,
+          additionalContext: resolvedAdditionalContext,
           ...getRuntimeModelFields(),
         }
 
@@ -1899,6 +1958,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         input,
         interruptAndSendQueuedMessage,
         lifecycleStore,
+        loadRuntimeTranscriptForPane,
         pendingGoalState,
         paneStatus.isBusy,
         projectChat,
@@ -1908,6 +1968,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         sendRuntimeMessage,
         scopedSetInput,
         setInput,
+        setQueuedMessages,
         setRuntimeGoal,
       ]
     )
@@ -1920,9 +1981,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setCodeCommentContexts([])
   }, [])
 
-  const cancelQueuedMessage = useCallback((id: string) => {
-    setQueuedMessages(messages => messages.filter(message => message.id !== id))
-  }, [])
+  const cancelQueuedMessage = useCallback(
+    (id: string) => {
+      setQueuedMessages(messages => messages.filter(message => message.id !== id))
+    },
+    [setQueuedMessages]
+  )
 
   const resumeQueuedMessages = useCallback(() => {
     setQueuedMessagesPaused(false)
@@ -1930,7 +1994,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     const queuedMessage =
       interruptedGuidance ?? queuedMessages.find(message => message.status === 'queued')
     if (queuedMessage) void sendQueuedMessage(queuedMessage)
-  }, [queuedMessages, sendQueuedMessage])
+  }, [queuedMessages, sendQueuedMessage, setQueuedMessagesPaused])
 
   const resumeQueuedMessagesWithInput = useCallback(
     async (inputOverride?: string, options?: RuntimePaneSendOptions) => {
@@ -1950,31 +2014,34 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       setQueuedMessagesPaused(false)
       await sendQueuedMessage(combinedMessage)
     },
-    [input, queuedMessages, send, sendQueuedMessage]
+    [input, queuedMessages, send, sendQueuedMessage, setQueuedMessagesPaused]
   )
 
   const clearQueuedMessages = useCallback(() => {
     setQueuedMessages([])
     setQueuedMessagesPaused(false)
-  }, [])
+  }, [setQueuedMessages, setQueuedMessagesPaused])
 
-  const reorderQueuedMessages = useCallback((sourceId: string, targetId: string) => {
-    setQueuedMessages(messages => {
-      const sourceIndex = messages.findIndex(message => message.id === sourceId)
-      const targetIndex = messages.findIndex(message => message.id === targetId)
-      if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return messages
+  const reorderQueuedMessages = useCallback(
+    (sourceId: string, targetId: string) => {
+      setQueuedMessages(messages => {
+        const sourceIndex = messages.findIndex(message => message.id === sourceId)
+        const targetIndex = messages.findIndex(message => message.id === targetId)
+        if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return messages
 
-      const source = messages[sourceIndex]
-      const target = messages[targetIndex]
-      if (source.status !== 'queued' || target.status !== 'queued') return messages
+        const source = messages[sourceIndex]
+        const target = messages[targetIndex]
+        if (source.status !== 'queued' || target.status !== 'queued') return messages
 
-      const reordered = [...messages]
-      reordered.splice(sourceIndex, 1)
-      const insertIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
-      reordered.splice(insertIndex, 0, source)
-      return reordered
-    })
-  }, [])
+        const reordered = [...messages]
+        reordered.splice(sourceIndex, 1)
+        const insertIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
+        reordered.splice(insertIndex, 0, source)
+        return reordered
+      })
+    },
+    [setQueuedMessages]
+  )
 
   const editQueuedMessage = useCallback(
     (id: string) => {
@@ -1987,7 +2054,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       })
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
-    [projectChat, queuedMessages, setInput]
+    [projectChat, queuedMessages, setInput, setQueuedMessages]
   )
 
   const sendQueuedAsGuidance = useCallback(
@@ -2136,6 +2203,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     goal?.status,
     queuedMessages,
     refreshWorkLists,
+    setQueuedMessagesPaused,
     taskGoalStatus,
     updateCurrentGoalStatus,
   ])
@@ -2240,6 +2308,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     transcriptLoadingMoreBefore,
     transcriptLoadingFullContent,
     transcriptFullContent,
+    loadedTranscriptRanges,
     turnNavigation,
     subagentStatuses,
     goal,
@@ -2281,7 +2350,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
 
 function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
-  return message.status === 'sending' && message.notice === '正在引导当前对话'
+  return message.status === 'sending' && message.deliveryMode === 'guidance'
 }
 
 function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {

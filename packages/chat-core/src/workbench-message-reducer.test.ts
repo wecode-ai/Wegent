@@ -46,6 +46,14 @@ describe('reduceWorkbenchMessages', () => {
       content: 'partial response',
       offset: 20_000
     })
+
+    expect(streamed[0]).toMatchObject({
+      content: 'partial response',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+      contentLoadRef: undefined
+    })
+
     const done = reduceWorkbenchMessages(streamed, {
       type: 'assistant_done',
       subtaskId: 'short-final-content',
@@ -546,6 +554,59 @@ describe('reduceWorkbenchMessages', () => {
       {
         type: 'text',
         content: 'Let me inspect the repository first.',
+        status: 'done'
+      },
+      { type: 'tool', toolName: 'bash', status: 'pending' }
+    ])
+  })
+
+  test('resets the text offset after moving content before a tool block', () => {
+    const firstPreamble = '找到了关键错误。看一下失败前后的上下文：'
+    const secondPreamble =
+      '本地分支落后于 main，CI 跑的提交是 `719f99694 fix(wework)`。'
+    const withFirstPreamble = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: '1',
+        subtaskId: '9'
+      }),
+      {
+        type: 'assistant_chunk',
+        subtaskId: '9',
+        content: firstPreamble,
+        offset: 0
+      }
+    )
+
+    const withTool = reduceWorkbenchMessages(withFirstPreamble, {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call_1',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'grep error' },
+        status: 'pending',
+        createdAt: 1770000000000
+      }
+    })
+    const withSecondPreamble = reduceWorkbenchMessages(withTool, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: secondPreamble,
+      offset: 0
+    })
+
+    expect(withTool[0]).toMatchObject({
+      content: '',
+      streamTextOffset: undefined
+    })
+    expect(withSecondPreamble[0].content).toBe(secondPreamble)
+    expect(withSecondPreamble[0].blocks).toMatchObject([
+      {
+        type: 'text',
+        content: firstPreamble,
         status: 'done'
       },
       { type: 'tool', toolName: 'bash', status: 'pending' }

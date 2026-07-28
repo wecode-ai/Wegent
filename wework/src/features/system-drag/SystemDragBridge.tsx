@@ -3,8 +3,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen } from '@tauri-apps/api/event'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
-import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  findRuntimeTaskWorkspace,
+} from '@/features/workbench/workbenchRuntimeHelpers'
+import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
+import { applyWorkspacePathTransfer } from '@/components/chat/composer/composerPathTransfer'
 
 interface SystemDropPayload {
   action: 'new-chat' | 'follow-up' | 'stash'
@@ -53,18 +57,32 @@ export function SystemDragBridge() {
 
   const apply = async (payload: SystemDropPayload, input = latest.current.projectChat.input) => {
     const current = latest.current
+    let nextInput = input
     if (payload.text?.trim()) {
       const text = payload.text.trim()
-      current.projectChat.setInput(input ? `${input}\n${text}` : text)
+      nextInput = input ? `${input}\n${text}` : text
+      current.projectChat.setInput(nextInput)
     }
-    const files = await readDroppedFiles(payload.paths)
+    const workspace = findRuntimeTaskWorkspace(
+      current.state.runtimeWork,
+      current.state.currentRuntimeTask
+    )
+    const transfer = await resolveStoredWorkspacePaths(
+      payload.paths,
+      workspace?.workspaceSource === 'remote' || Boolean(workspace?.remoteHostId)
+    )
+    await applyWorkspacePathTransfer(
+      nextInput,
+      transfer,
+      current.projectChat.setInput,
+      current.projectChat.handleFileSelect
+    )
     void invoke('log_system_drag_debug', {
       stage: 'main_files_loaded',
       action: payload.action,
       rawPathCount: payload.paths.length,
-      uniquePathCount: files.length,
+      uniquePathCount: new Set(payload.paths).size,
     })
-    if (files.length > 0) await current.projectChat.handleFileSelect(files)
   }
 
   useEffect(() => {

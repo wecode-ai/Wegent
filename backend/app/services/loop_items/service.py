@@ -46,6 +46,26 @@ from app.stores.tasks import task_store
 
 
 class LoopItemService:
+    def _require_internal_task_project(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        user_id: int,
+        required_role: BaseRole = BaseRole.Reporter,
+    ) -> CloudProject:
+        project = require_cloud_project_role(
+            db, cloud_project_id, user_id, required_role
+        ).project
+        if project.task_provider != "local":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                (
+                    f"Project tasks are provided by {project.task_provider}; "
+                    "use the local Issue provider"
+                ),
+            )
+        return project
+
     def ensure_collaborator(
         self,
         db: Session,
@@ -141,7 +161,9 @@ class LoopItemService:
         user_id: int,
         values: LoopItemCreate,
     ) -> LoopItem:
-        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Developer)
+        self._require_internal_task_project(
+            db, cloud_project_id, user_id, BaseRole.Developer
+        )
         if values.parent_id is not None:
             self._require_parent(db, values.parent_id, cloud_project_id)
         project = (
@@ -171,7 +193,7 @@ class LoopItemService:
         return item
 
     def list(self, db: Session, cloud_project_id: int, user_id: int) -> list[LoopItem]:
-        require_cloud_project_role(db, cloud_project_id, user_id)
+        self._require_internal_task_project(db, cloud_project_id, user_id)
         return (
             db.query(LoopItem)
             .filter(
@@ -191,7 +213,9 @@ class LoopItemService:
     ) -> list[LoopItem]:
         """Persist the manual order of the TODOs in one board lane."""
 
-        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Developer)
+        self._require_internal_task_project(
+            db, cloud_project_id, user_id, BaseRole.Developer
+        )
         if values.parent_id is None:
             # MySQL stores unset parent ids as empty strings, so match both.
             parent_filter = or_(LoopItem.parent_id.is_(None), LoopItem.parent_id == "")

@@ -20,7 +20,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "../docker/device/Dockerfile",
         "../.github/workflows/snapshot-image.yml",
         "../.github/workflows/publish-image.yml",
-        "../.github/workflows/test-windows-executor.yml",
         "../.github/workflows/e2e-tests.yml",
         "../docker/standalone/start.sh",
         "../docker/standalone/Dockerfile",

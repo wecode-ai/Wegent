@@ -18,6 +18,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any, Callable, Optional
+from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -30,7 +31,7 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.utils import convert_to_messages
 from langchain_core.tools.base import BaseTool
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
@@ -38,7 +39,9 @@ from opentelemetry import trace as otel_trace
 
 from shared.telemetry.decorators import add_span_event, trace_sync
 
+from ..compression.tool_sanitizer import sanitize_tool_pairs
 from ..core.config import settings
+from ..guard.composition import chain_pre_model_hooks
 from ..llm_logging import env_bool as _env_bool
 from ..llm_logging import log_direct_llm_request as _log_direct_llm_request
 from ..llm_logging import log_direct_llm_response as _log_direct_llm_response
@@ -48,6 +51,7 @@ from ..tools.argument_stream import ToolCallStreamTracker
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
 from ..tools.deferred_input import DeferredUserInputExit
+from .turn_context import TurnExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -533,6 +537,10 @@ def _normalize_content_for_storage(msg: AIMessage) -> str | list:
 def _serialize_compacted_additional_kwargs(msg: BaseMessage) -> dict[str, Any] | None:
     """Persist only compact markers needed for history reconstruction."""
     kwargs = dict(getattr(msg, "additional_kwargs", {}) or {})
+    if kwargs.get("checkpoint_retained") is True:
+        # Raw user message retained into the compaction checkpoint; keep it in
+        # messages_chain (passthrough content) so the checkpoint is self-contained.
+        return {"checkpoint_retained": True}
     if kwargs.get("compacted") is True:
         serialized = {"compacted": True}
         if kwargs.get("summary_compacted") is True:
@@ -738,35 +746,6 @@ def _new_messages_from_state(
     return [msg for msg in collected if not msg.id or msg.id not in input_ids]
 
 
-def _build_limit_recovery_messages_chain(
-    *,
-    collected_state_messages: list[BaseMessage],
-    limit_messages: list[BaseMessage],
-    input_ids: frozenset[str],
-    final_response_text: str,
-) -> list[BaseMessage]:
-    """Build persisted chain for tool-limit recovery turns.
-
-    When LangGraph raises ``GraphRecursionError`` before emitting a final
-    ``on_chain_end`` state, ``collected_state_messages`` can be empty even
-    though the turn should still persist the recovery notice. Fall back to the
-    synthetic ``limit_messages`` prompt so ``messages_chain`` is not lost.
-    """
-
-    chain = (
-        _new_messages_from_state(collected_state_messages, input_ids)
-        if collected_state_messages
-        else []
-    )
-    limit_recovery_messages = _new_messages_from_state(limit_messages, input_ids)
-    if limit_recovery_messages:
-        chain = list(chain) + list(limit_recovery_messages)
-
-    if final_response_text:
-        chain = list(chain) + [AIMessage(content=final_response_text)]
-    return chain
-
-
 class LangGraphAgentBuilder:
     """Builder for LangGraph-based agent workflows using prebuilt ReAct agent."""
 
@@ -775,7 +754,6 @@ class LangGraphAgentBuilder:
         llm: BaseChatModel,
         tool_registry: ToolRegistry | None = None,
         max_iterations: int = 10,
-        enable_checkpointing: bool = False,
         max_truncation_retries: int | None = None,
         pre_model_hook: Callable | None = None,
         on_model_usage: Callable[..., Any] | None = None,
@@ -786,7 +764,6 @@ class LangGraphAgentBuilder:
             llm: LangChain chat model instance
             tool_registry: Registry of available tools (optional)
             max_iterations: Maximum tool loop iterations
-            enable_checkpointing: Enable state checkpointing for resumability
             max_truncation_retries: Maximum retry attempts when tool calls are truncated.
                 If None, uses settings.MAX_TRUNCATION_RETRIES
             pre_model_hook: Optional LangGraph hook called before each model call
@@ -796,7 +773,6 @@ class LangGraphAgentBuilder:
         self.llm = llm
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
-        self.enable_checkpointing = enable_checkpointing
         self.pre_model_hook = pre_model_hook
         self.on_model_usage = on_model_usage
         self.max_truncation_retries = (
@@ -805,6 +781,13 @@ class LangGraphAgentBuilder:
             else settings.MAX_TRUNCATION_RETRIES
         )
         self._agent = None
+        # Request-local checkpointer, created unconditionally in _build_agent so
+        # authoritative post-compaction state is readable on every exit path.
+        self._checkpointer: InMemorySaver | None = None
+        # Attempt-scoped control plane: guidance injected into the model input
+        # (via llm_input_messages, after compaction) but never persisted. Set at
+        # the top of each stream_tokens level; empty on the root turn.
+        self._attempt_guidance: list[BaseMessage] = []
 
         # Provider metadata set by LangChainModelFactory for think-block handling
         self._provider: str = getattr(llm, "_wegent_provider", "unknown")
@@ -846,7 +829,12 @@ class LangGraphAgentBuilder:
             target_model_id=self._model_id,
             target_api_format=self._api_format,
         )
-        exec_config = {"configurable": config} if config else None
+        # Request-local checkpointer needs a thread id (T11 adds the authoritative
+        # finalizer + teardown for this path).
+        nonstream_thread_id = str(uuid4())
+        exec_config = {
+            "configurable": {**(config or {}), "thread_id": nonstream_thread_id}
+        }
 
         all_events: list[dict[str, Any]] = []
         final_state: dict[str, Any] = {}
@@ -855,10 +843,11 @@ class LangGraphAgentBuilder:
             async for event in agent.astream_events(
                 {"messages": lc_messages},
                 config={
-                    **(exec_config or {}),
+                    **exec_config,
                     "recursion_limit": self.max_iterations * 2 + 1,
                 },
                 version="v2",
+                durability="exit",
             ):
                 if cancel_event and cancel_event.is_set():
                     logger.info("Streaming cancelled by user")
@@ -938,17 +927,21 @@ class LangGraphAgentBuilder:
                 self.max_iterations,
                 len(all_events),
             )
-            limit_messages = list(lc_messages) + [
+            # Recover from the CURRENT authoritative state (post-compaction, with
+            # completed tool pairs), not the pre-run lc_messages.
+            snapshot = await agent.aget_state({**exec_config})
+            safe_state = sanitize_tool_pairs(snapshot.values.get("messages", []))
+            recovery_input = safe_state + [
                 HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
             ]
 
             try:
                 _log_direct_llm_request(
-                    messages=limit_messages,
+                    messages=recovery_input,
                     tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
                     request_name="tool_limit_recovery",
                 )
-                response = await self.llm.ainvoke(limit_messages)
+                response = await self.llm.ainvoke(recovery_input)
                 _log_direct_llm_response(
                     response=response,
                     request_name="tool_limit_recovery",
@@ -968,7 +961,7 @@ class LangGraphAgentBuilder:
                         final_content = "".join(text_parts)
 
                 final_state = {
-                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
+                    "messages": safe_state + [AIMessage(content=final_content)]
                 }
                 return final_state, all_events
             except Exception:
@@ -980,6 +973,19 @@ class LangGraphAgentBuilder:
         except Exception:
             logger.exception("Error while collecting final state from events")
             raise
+        finally:
+            # Non-streaming path owns its own thread too; delete it on every exit.
+            saver = self._checkpointer
+            if saver is not None:
+                try:
+                    await saver.adelete_thread(nonstream_thread_id)
+                except Exception:
+                    logger.warning(
+                        "[collect_final_state_from_events] Failed to delete turn "
+                        "checkpoint thread=%s",
+                        nonstream_thread_id,
+                        exc_info=True,
+                    )
 
     def _find_prompt_modifier_tools(self) -> list[Any]:
         """Find all tools that implement the PromptModifierTool protocol.
@@ -1245,13 +1251,29 @@ class LangGraphAgentBuilder:
 
         return ToolNode(all_tools, awrap_tool_call=awrap_tool_call)
 
+    def _attempt_guidance_hook(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Inject attempt-scoped control guidance into the model input only.
+
+        Runs last in the pre-model chain, so it appends to the post-compaction,
+        post-guidance model-visible list via ``llm_input_messages``. The guidance
+        is never written to the ``messages`` channel, so it never reaches the
+        checkpoint, the summary source, or the persisted ``messages_chain``.
+        Injected on every model call while set, so a retry that compacts still
+        shows the model the guidance after compaction. Returns ``{}`` (a no-op)
+        on the root turn when no guidance is active.
+        """
+        guidance = self._attempt_guidance
+        if not guidance:
+            return {}
+        base = state.get("llm_input_messages") or state.get("messages") or []
+        return {"llm_input_messages": [*base, *guidance]}
+
     @trace_sync(
         span_name="agent_builder.build_agent",
         tracer_name="chat_shell.agents",
         extract_attributes=lambda self, *args, **kwargs: {
             "agent.tools_count": len(self.tools),
             "agent.max_iterations": self.max_iterations,
-            "agent.enable_checkpointing": self.enable_checkpointing,
         },
     )
     def _build_agent(self):
@@ -1262,11 +1284,12 @@ class LangGraphAgentBuilder:
 
         add_span_event("building_new_agent")
 
-        # Use LangGraph's prebuilt create_react_agent
-        checkpointer = MemorySaver() if self.enable_checkpointing else None
-        add_span_event(
-            "checkpointer_created", {"has_checkpointer": checkpointer is not None}
-        )
+        # Authoritative-state persistence requires a request-local checkpointer on
+        # every turn — not optional, or exception paths lose the compaction
+        # checkpoint. Memory stays ~1x via durability="exit" at invocation time.
+        checkpointer = InMemorySaver()
+        self._checkpointer = checkpointer
+        add_span_event("checkpointer_created", {"has_checkpointer": True})
 
         # Create prompt modifier for dynamic skill prompt injection
         prompt_modifier = self._create_prompt_modifier()
@@ -1283,6 +1306,15 @@ class LangGraphAgentBuilder:
                 "has_configurator": model_configurator is not None,
                 "all_tools_count": len(all_tools),
             },
+        )
+
+        # Chain the caller's hook (guard + user guidance) with the builder-owned
+        # attempt-guidance hook, so truncation-retry control reaches the model
+        # via llm_input_messages after compaction without ever being persisted.
+        effective_pre_model_hook = (
+            chain_pre_model_hooks(self.pre_model_hook, self._attempt_guidance_hook)
+            if self.pre_model_hook is not None
+            else chain_pre_model_hooks(self._attempt_guidance_hook)
         )
 
         # Store all_tools for external access (e.g., for display_name lookup)
@@ -1304,7 +1336,7 @@ class LangGraphAgentBuilder:
                 tools=tool_node_or_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
-                pre_model_hook=self.pre_model_hook,
+                pre_model_hook=effective_pre_model_hook,
             )
         else:
             self._agent = create_react_agent(
@@ -1312,7 +1344,7 @@ class LangGraphAgentBuilder:
                 tools=tool_node_or_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
-                pre_model_hook=self.pre_model_hook,
+                pre_model_hook=effective_pre_model_hook,
             )
         add_span_event("react_agent_created")
 
@@ -1342,51 +1374,31 @@ class LangGraphAgentBuilder:
         )
         return result
 
-    async def stream_execute(
+    def _finalize_turn_history(
         self,
-        messages: list[dict[str, Any]],
-        config: dict[str, Any] | None = None,
-        cancel_event: asyncio.Event | None = None,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream agent workflow execution.
+        authoritative_messages: list[BaseMessage],
+        turn_ctx: TurnExecutionContext,
+        termination_reason: str,
+    ) -> None:
+        """Single atomic choke point for turn-result state.
 
-        Args:
-            messages: Initial conversation messages
-            config: Optional configuration (thread_id for checkpointing)
-            cancel_event: Optional cancellation event
-
-        Yields:
-            State updates as they occur
+        Every terminal path funnels through here so ``_last_messages_chain``,
+        ``_last_live_state_messages`` and ``_last_termination_reason`` can never
+        drift apart. Sanitizes tool pairs, filters to this turn's new messages
+        using the turn-invariant ``original_input_ids``, then serializes and
+        validates.
         """
-        agent = self._build_agent()
-        lc_messages = _convert_validated_messages(
-            messages,
-            context="stream_execute input messages",
-            target_provider=self._provider,
-            target_model_id=self._model_id,
-            target_api_format=self._api_format,
+        sanitized = sanitize_tool_pairs(authoritative_messages)
+        new_msgs = _new_messages_from_state(sanitized, turn_ctx.original_input_ids)
+        self._last_messages_chain = _serialize_validated_messages_chain(
+            new_msgs,
+            provider=self._provider,
+            model_id=self._model_id,
         )
-
-        exec_config = {"configurable": config} if config else None
-
-        _log_direct_llm_request(
-            messages=lc_messages,
-            tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
-            request_name="stream_execute",
-        )
-
-        async for event in agent.astream(
-            {"messages": lc_messages},
-            config={
-                **(exec_config or {}),
-                "recursion_limit": self.max_iterations * 2 + 1,
-            },
-        ):
-            # Check cancellation
-            if cancel_event and cancel_event.is_set():
-                logger.info("Streaming cancelled by user")
-                return
-            yield event
+        self._last_live_state_messages = [
+            _message_to_context_metrics_dict(msg) for msg in authoritative_messages
+        ]
+        self._last_termination_reason = termination_reason
 
     async def stream_tokens(
         self,
@@ -1395,6 +1407,8 @@ class LangGraphAgentBuilder:
         cancel_event: asyncio.Event | None = None,
         on_tool_event: Callable[[str, dict], None] | None = None,
         _truncation_retry_count: int = 0,
+        _parent_turn_ctx: "TurnExecutionContext | None" = None,
+        _attempt_guidance: list[BaseMessage] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from agent execution.
 
@@ -1412,6 +1426,11 @@ class LangGraphAgentBuilder:
             Content tokens as they are generated
         """
         add_span_event("stream_tokens_started", {"message_count": len(messages)})
+
+        # Attempt-scoped control guidance for this recursion level. The pre-model
+        # hook reads it and injects it into the model input after compaction; it
+        # is never persisted. Reset per level (empty on the root turn).
+        self._attempt_guidance = list(_attempt_guidance or [])
 
         add_span_event("building_agent_started")
         agent = self._build_agent()
@@ -1440,7 +1459,19 @@ class LangGraphAgentBuilder:
             msg.id for msg in lc_messages if msg.id
         )
 
-        exec_config = {"configurable": config} if config else None
+        # Request-local checkpointer needs a thread id; each turn (and each
+        # truncation-retry level) owns a fresh one and reads authoritative state
+        # from it on exit. A retry INHERITS the root's original_input_ids so the
+        # checkpoint clones / summary / suffix are never mis-filtered.
+        turn_thread_id = str(uuid4())
+        if _parent_turn_ctx is not None:
+            turn_ctx = _parent_turn_ctx.with_retry(turn_thread_id)
+        else:
+            turn_ctx = TurnExecutionContext(
+                original_input_ids=_input_message_ids,
+                current_thread_id=turn_thread_id,
+            )
+        exec_config = {"configurable": {**(config or {}), "thread_id": turn_thread_id}}
 
         event_count = 0
         streamed_content = False  # Track if we've streamed any content
@@ -1481,10 +1512,11 @@ class LangGraphAgentBuilder:
             async for event in agent.astream_events(
                 {"messages": lc_messages},
                 config={
-                    **(exec_config or {}),
+                    **exec_config,
                     "recursion_limit": recursion_limit,
                 },
                 version="v2",
+                durability="exit",
             ):
                 event_count += 1
                 # Check cancellation
@@ -1939,34 +1971,14 @@ class LangGraphAgentBuilder:
                 )
                 yield final_content
 
-            # Serialize collected messages chain for history persistence
-            # Only keep new messages generated in this turn (skip input messages)
-            if _collected_state_messages:
-                self._last_live_state_messages = [
-                    _message_to_context_metrics_dict(msg)
-                    for msg in _collected_state_messages
-                ]
-                new_msgs = _new_messages_from_state(
-                    _collected_state_messages, _input_message_ids
-                )
-                self._last_messages_chain = _serialize_validated_messages_chain(
-                    new_msgs,
-                    provider=self._provider,
-                    model_id=self._model_id,
-                )
-            else:
-                self._last_messages_chain = []
-                self._last_live_state_messages = []
+            # Read the authoritative post-run state from the checkpointer and
+            # funnel it through the single finalizer. Replaces the event-captured
+            # _collected_state_messages, which could miss the post-compaction
+            # state or be rejected by the length heuristic.
+            snapshot = await agent.aget_state({**exec_config})
+            authoritative = snapshot.values.get("messages", [])
 
-            logger.debug(
-                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s, messages_chain_len=%d",
-                event_count,
-                streamed_content,
-                len(self._last_messages_chain),
-            )
-            final_message = (
-                _collected_state_messages[-1] if _collected_state_messages else None
-            )
+            final_message = authoritative[-1] if authoritative else None
             final_tool_calls = (
                 _tool_call_count(final_message)
                 if isinstance(final_message, AIMessage)
@@ -1979,8 +1991,15 @@ class LangGraphAgentBuilder:
             ):
                 termination_reason = "completed_with_unexecuted_tool_calls"
                 termination_log = logger.warning
-            self._last_termination_reason = termination_reason
 
+            self._finalize_turn_history(authoritative, turn_ctx, termination_reason)
+
+            logger.debug(
+                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s, messages_chain_len=%d",
+                event_count,
+                streamed_content,
+                len(self._last_messages_chain),
+            )
             termination_log(
                 "[stream_tokens] Termination: reason=%s "
                 "agent_iteration=%d max_iterations=%d recursion_limit=%d messages=%d "
@@ -1989,9 +2008,9 @@ class LangGraphAgentBuilder:
                 agent_iteration,
                 self.max_iterations,
                 recursion_limit,
-                len(_collected_state_messages),
-                _tail_signature(_collected_state_messages),
-                _last_tool_call_name(_collected_state_messages) or "none",
+                len(authoritative),
+                _tail_signature(authoritative),
+                _last_tool_call_name(authoritative) or "none",
                 last_model_end_tool_calls,
                 final_tool_calls,
             )
@@ -2008,11 +2027,17 @@ class LangGraphAgentBuilder:
 
             # Check if we've exceeded retry limit
             if _truncation_retry_count >= self.max_truncation_retries:
-                self._last_termination_reason = "tool_call_truncation_retry_exhausted"
                 logger.error(
                     "[stream_tokens] Max truncation retries exceeded (%d). "
                     "Yielding final truncation warning.",
                     self.max_truncation_retries,
+                )
+                # Persist the authoritative state (incl. any compaction checkpoint)
+                # instead of returning with an empty/stale chain.
+                snapshot = await agent.aget_state({**exec_config})
+                authoritative = snapshot.values.get("messages", [])
+                self._finalize_turn_history(
+                    authoritative, turn_ctx, "tool_call_truncation_retry_exhausted"
                 )
                 logger.warning(
                     "[stream_tokens] Termination: reason=tool_call_truncation_retry_exhausted "
@@ -2021,35 +2046,40 @@ class LangGraphAgentBuilder:
                     agent_iteration,
                     self.max_iterations,
                     recursion_limit,
-                    len(_collected_state_messages),
-                    _tail_signature(_collected_state_messages),
-                    _last_tool_call_name(_collected_state_messages) or "none",
+                    len(authoritative),
+                    _tail_signature(authoritative),
+                    _last_tool_call_name(authoritative) or "none",
                 )
                 # Yield truncation marker to show warning in UI
                 yield f"{TRUNCATED_MARKER_START}{e.reason}{TRUNCATED_MARKER_END}"
                 return
 
-            # Construct error message for LLM
+            # The truncation instruction is attempt-scoped CONTROL: the retry
+            # model must see it, but it must never be persisted nor compete with
+            # real user turns. It rides the attempt control plane (injected via
+            # llm_input_messages by _attempt_guidance_hook AFTER compaction), not
+            # the messages channel — so it survives the retry thread's own
+            # compaction while staying out of the summary/checkpoint/chain.
             error_message = TOOL_CALL_TRUNCATION_ERROR_TEMPLATE.format(
                 reason=e.reason,
                 attempt=_truncation_retry_count + 1,
                 max_attempts=self.max_truncation_retries,
             )
 
-            # Add error message to conversation history
-            recovery_messages = list(lc_messages) + [
-                HumanMessage(content=error_message)
-            ]
+            # Seed the retry from the CURRENT authoritative state (post-compaction,
+            # completed tool pairs) only, not the pre-run lc_messages. Re-submitting
+            # a sanitized list to the SAME thread would not delete the truncated
+            # tool call (add_messages merges by id), so the retry runs on a fresh
+            # thread while inheriting the root's original_input_ids via turn_ctx.
+            snapshot = await agent.aget_state({**exec_config})
+            safe_state = sanitize_tool_pairs(snapshot.values.get("messages", []))
 
-            # Retry with the error context
             logger.info(
                 "[stream_tokens] Retrying with truncation error context (attempt %d/%d)",
                 _truncation_retry_count + 1,
                 self.max_truncation_retries,
             )
 
-            # Recursively call stream_tokens with incremented retry count
-            # This allows LLM to adjust its strategy based on the error
             async for token in self.stream_tokens(
                 messages=[
                     (
@@ -2057,12 +2087,14 @@ class LangGraphAgentBuilder:
                         if hasattr(msg, "model_dump")
                         else msg.dict() if hasattr(msg, "dict") else msg
                     )
-                    for msg in recovery_messages
+                    for msg in safe_state
                 ],
                 config=config,
                 cancel_event=cancel_event,
                 on_tool_event=on_tool_event,
                 _truncation_retry_count=_truncation_retry_count + 1,
+                _parent_turn_ctx=turn_ctx,
+                _attempt_guidance=[HumanMessage(content=error_message)],
             ):
                 yield token
 
@@ -2072,25 +2104,23 @@ class LangGraphAgentBuilder:
             logger.info(
                 "[stream_tokens] silent/deferred exit caught, re-raising for caller to handle"
             )
-            # Persist partial messages chain before re-raising
-            if _collected_state_messages:
-                self._last_live_state_messages = [
-                    _message_to_context_metrics_dict(msg)
-                    for msg in _collected_state_messages
-                ]
-                new_msgs = _new_messages_from_state(
-                    _collected_state_messages, _input_message_ids
-                )
-                self._last_messages_chain = _serialize_validated_messages_chain(
-                    new_msgs,
-                    provider=self._provider,
-                    model_id=self._model_id,
+            # Persist authoritative state before re-raising.
+            snapshot = await agent.aget_state({**exec_config})
+            authoritative = snapshot.values.get("messages", [])
+            if authoritative:
+                self._finalize_turn_history(
+                    authoritative, turn_ctx, "silent_or_deferred_exit"
                 )
             raise
 
         except GraphRecursionError:
+            # Set upfront so even a recovery-LLM failure records the reason.
             self._last_termination_reason = "graph_recursion_limit_recovery"
-            # Tool call limit reached - ask model to provide final response
+            # Tool call limit reached - ask the model for a final response using
+            # the CURRENT authoritative state (post-compaction, with completed
+            # tool pairs), not the pre-run lc_messages.
+            snapshot = await agent.aget_state({**exec_config})
+            safe_state = sanitize_tool_pairs(snapshot.values.get("messages", []))
             logger.warning(
                 "[stream_tokens] GraphRecursionError: Tool call limit reached "
                 "(agent_iteration=%d, max_iterations=%d, recursion_limit=%d). "
@@ -2098,14 +2128,13 @@ class LangGraphAgentBuilder:
                 agent_iteration,
                 self.max_iterations,
                 recursion_limit,
-                len(_collected_state_messages),
-                _tail_signature(_collected_state_messages),
-                _last_tool_call_name(_collected_state_messages) or "none",
+                len(safe_state),
+                _tail_signature(safe_state),
+                _last_tool_call_name(safe_state) or "none",
             )
 
-            # Build messages with the limit reached notice
-            # Add a human message to prompt the model to provide final response
-            limit_messages = list(lc_messages) + [
+            # Internal control message: fed to the recovery LLM but NOT persisted.
+            recovery_input = safe_state + [
                 HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
             ]
             recovery_response_parts: list[str] = []
@@ -2113,11 +2142,11 @@ class LangGraphAgentBuilder:
             # Call the LLM directly (without tools) to get final response
             try:
                 _log_direct_llm_request(
-                    messages=limit_messages,
+                    messages=recovery_input,
                     tool_names=[t.name for t in getattr(self, "all_tools", []) or []],
                     request_name="tool_limit_recovery_stream",
                 )
-                async for chunk in self.llm.astream(limit_messages):
+                async for chunk in self.llm.astream(recovery_input):
                     if hasattr(chunk, "content"):
                         content = chunk.content
                         if isinstance(content, str) and content:
@@ -2135,32 +2164,15 @@ class LangGraphAgentBuilder:
                                         yield text
 
                 recovery_response_text = "".join(recovery_response_parts)
-                recovery_chain_messages = _build_limit_recovery_messages_chain(
-                    collected_state_messages=_collected_state_messages,
-                    limit_messages=limit_messages,
-                    input_ids=_input_message_ids,
-                    final_response_text=recovery_response_text,
+                # Final state = safe authoritative state + recovery reply. The
+                # tool-limit instruction is excluded so it never persists.
+                final_state = safe_state + (
+                    [AIMessage(content=recovery_response_text)]
+                    if recovery_response_text
+                    else []
                 )
-                self._last_messages_chain = _serialize_validated_messages_chain(
-                    recovery_chain_messages,
-                    provider=self._provider,
-                    model_id=self._model_id,
-                )
-                self._last_live_state_messages = (
-                    [
-                        _message_to_context_metrics_dict(msg)
-                        for msg in _collected_state_messages
-                    ]
-                    if _collected_state_messages
-                    else [
-                        _message_to_context_metrics_dict(msg)
-                        for msg in list(limit_messages)
-                        + (
-                            [AIMessage(content=recovery_response_text)]
-                            if recovery_response_text
-                            else []
-                        )
-                    ]
+                self._finalize_turn_history(
+                    final_state, turn_ctx, "graph_recursion_limit_recovery"
                 )
 
                 logger.info(
@@ -2173,19 +2185,65 @@ class LangGraphAgentBuilder:
                     agent_iteration,
                     self.max_iterations,
                     recursion_limit,
-                    len(_collected_state_messages),
-                    _tail_signature(_collected_state_messages),
-                    _last_tool_call_name(_collected_state_messages) or "none",
+                    len(final_state),
+                    _tail_signature(final_state),
+                    _last_tool_call_name(final_state) or "none",
                 )
-            except Exception as recovery_error:
+            except Exception:
                 logger.exception(
                     "Error generating final response after tool limit reached"
                 )
                 raise
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error in stream_tokens")
             raise
+        finally:
+            # Per-level teardown: each stream_tokens invocation owns exactly its
+            # own thread and deletes it here on every exit path. Cleanup never
+            # breaks the turn, but failures are logged, not silently suppressed.
+            thread_id = turn_ctx.current_thread_id
+            saver = self._checkpointer
+            checkpoints_in_saver: int | None = None
+            adelete_thread_ok: bool | None = None
+            if saver is not None:
+                thread_config = {"configurable": {"thread_id": thread_id}}
+                try:
+                    # Measure BEFORE delete, else it is always 0.
+                    checkpoints_in_saver = len(list(saver.list(thread_config)))
+                except Exception:
+                    checkpoints_in_saver = -1
+                try:
+                    await saver.adelete_thread(thread_id)
+                    adelete_thread_ok = True
+                except Exception:
+                    adelete_thread_ok = False
+                    logger.warning(
+                        "[stream_tokens] Failed to delete turn checkpoint thread=%s",
+                        thread_id,
+                        exc_info=True,
+                    )
+            chain = self._last_messages_chain
+            has_summary_marker = any(
+                isinstance(entry.get("additional_kwargs"), dict)
+                and entry["additional_kwargs"].get("summary_compacted") is True
+                for entry in chain
+            )
+            post_compaction_tool_pairs = sum(
+                1 for entry in chain if entry.get("role") == "tool"
+            )
+            logger.info(
+                "[stream_tokens] turn persistence: thread=%s reason=%s chain_msgs=%d "
+                "has_summary_marker=%s post_compaction_tool_pairs=%d "
+                "checkpoints_in_saver=%s adelete_thread_ok=%s",
+                thread_id,
+                self._last_termination_reason,
+                len(chain),
+                has_summary_marker,
+                post_compaction_tool_pairs,
+                checkpoints_in_saver,
+                adelete_thread_ok,
+            )
 
     def get_final_content(self, state: dict[str, Any]) -> str:
         """Extract final content from agent state.

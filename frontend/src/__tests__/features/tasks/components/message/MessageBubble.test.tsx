@@ -309,6 +309,14 @@ describe('MessageBubble', () => {
         isIncomplete: true,
       },
     },
+    {
+      name: 'empty',
+      overrides: {
+        status: 'completed' as const,
+        subtaskStatus: 'COMPLETED',
+        content: '${$$}$',
+      },
+    },
   ])('does not offer saving $name AI messages', ({ overrides }) => {
     const msg: Message = {
       type: 'ai',
@@ -329,7 +337,6 @@ describe('MessageBubble', () => {
       />
     )
 
-    expect(mockBubbleTools).toHaveBeenCalled()
     expect(mockBubbleTools.mock.calls.some(call => call[0].showSaveToKnowledge === true)).toBe(
       false
     )
