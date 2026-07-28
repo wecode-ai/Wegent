@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, ChevronRight, FileText, Network } from 'lucide-react'
+import { AlertCircle, ChevronRight, FileText, Network, Presentation } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -34,6 +34,7 @@ interface ArtifactPanelProps {
   onProcessingDocumentCountChange?: (count: number) => void
   onCanManageChange?: (canManage: boolean) => void
   onAskNode?: (request: ArtifactPromptRequest) => void
+  onCreatePptDraft: () => void
 }
 
 export function ArtifactPanel({
@@ -44,6 +45,7 @@ export function ArtifactPanel({
   onProcessingDocumentCountChange,
   onCanManageChange,
   onAskNode,
+  onCreatePptDraft,
 }: ArtifactPanelProps) {
   const { t } = useTranslation('knowledge')
   const { toast } = useToast()
@@ -114,59 +116,85 @@ export function ArtifactPanel({
 
   return (
     <div className="flex h-full flex-col" data-testid="artifact-panel">
-      {canManage && (
-        <div className="mb-5">
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
-              onClick={() => openCreate('briefing')}
-              disabled={effectiveAvailableDocumentCount === 0}
-              data-testid="artifact-type-briefing"
-            >
-              <div className="flex w-full items-center justify-between">
-                <div className="rounded-lg bg-primary/10 p-2 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
-                  <FileText className="h-5 w-5" />
-                </div>
-                <div className="rounded-full bg-base p-2 text-text-muted transition-colors group-hover:text-primary">
-                  <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                </div>
+      <div className="mb-5">
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+            onClick={onCreatePptDraft}
+            disabled={effectiveAvailableDocumentCount === 0}
+            data-testid="artifact-type-presentation"
+          >
+            <div className="flex w-full items-center justify-between">
+              <div className="rounded-lg bg-primary/10 p-2 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
+                <Presentation className="h-5 w-5" />
               </div>
-              <div className="mt-2 text-sm font-medium leading-5">
-                {t('artifact.action.briefing')}
+              <div className="rounded-full bg-base p-2 text-text-muted transition-colors group-hover:text-primary">
+                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
               </div>
-            </button>
-            <button
-              type="button"
-              className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
-              onClick={() => openCreate('mind_map')}
-              disabled={effectiveAvailableDocumentCount === 0}
-              data-testid="artifact-type-mind-map"
-            >
-              <div className="flex w-full items-center justify-between">
-                <div className="rounded-lg bg-primary/10 p-2 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
-                  <Network className="h-5 w-5" />
+            </div>
+            <div className="mt-2">
+              <div className="text-sm font-medium leading-5">
+                {t('artifact.action.presentation')}
+              </div>
+              <div className="mt-0.5 text-xs leading-4 text-text-secondary">
+                {t('artifact.type.presentationHint')}
+              </div>
+            </div>
+          </button>
+          {canManage && (
+            <>
+              <button
+                type="button"
+                className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                onClick={() => openCreate('briefing')}
+                disabled={effectiveAvailableDocumentCount === 0}
+                data-testid="artifact-type-briefing"
+              >
+                <div className="flex w-full items-center justify-between">
+                  <div className="rounded-lg bg-primary/10 p-2 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
+                    <FileText className="h-5 w-5" />
+                  </div>
+                  <div className="rounded-full bg-base p-2 text-text-muted transition-colors group-hover:text-primary">
+                    <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                  </div>
                 </div>
-                <div className="rounded-full bg-base p-2 text-text-muted transition-colors group-hover:text-primary">
-                  <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                <div className="mt-2 text-sm font-medium leading-5">
+                  {t('artifact.action.briefing')}
                 </div>
-              </div>
-              <div className="mt-2 text-sm font-medium leading-5">
-                {t('artifact.action.mind_map')}
-              </div>
-            </button>
-          </div>
-          {!isLoading && !error && effectiveAvailableDocumentCount === 0 && (
-            <p className="mt-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-text-secondary">
-              {t(
-                processingDocumentCount > 0
-                  ? 'artifact.documentsProcessingHint'
-                  : 'artifact.noDocumentsHint'
-              )}
-            </p>
+              </button>
+              <button
+                type="button"
+                className="group flex min-h-24 flex-col justify-between rounded-xl border border-border bg-surface p-3 text-left transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                onClick={() => openCreate('mind_map')}
+                disabled={effectiveAvailableDocumentCount === 0}
+                data-testid="artifact-type-mind-map"
+              >
+                <div className="flex w-full items-center justify-between">
+                  <div className="rounded-lg bg-primary/10 p-2 text-primary transition-colors group-hover:bg-primary group-hover:text-white">
+                    <Network className="h-5 w-5" />
+                  </div>
+                  <div className="rounded-full bg-base p-2 text-text-muted transition-colors group-hover:text-primary">
+                    <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                  </div>
+                </div>
+                <div className="mt-2 text-sm font-medium leading-5">
+                  {t('artifact.action.mind_map')}
+                </div>
+              </button>
+            </>
           )}
         </div>
-      )}
+        {!isLoading && !error && effectiveAvailableDocumentCount === 0 && (
+          <p className="mt-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-text-secondary">
+            {t(
+              processingDocumentCount > 0
+                ? 'artifact.documentsProcessingHint'
+                : 'artifact.noDocumentsHint'
+            )}
+          </p>
+        )}
+      </div>
 
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold">{t('artifact.recentGenerations')}</h3>

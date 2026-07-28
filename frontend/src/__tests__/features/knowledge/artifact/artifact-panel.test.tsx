@@ -15,6 +15,7 @@ import type {
 const createMock = jest.fn()
 const removeMock = jest.fn()
 const toastMock = jest.fn()
+const createPptDraftMock = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -111,11 +112,17 @@ describe('ArtifactPanel AI Workshop', () => {
 
   it('shows compact capability cards and creates from the whole knowledge base by default', async () => {
     render(
-      <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
+      />
     )
 
     expect(screen.getByText('artifact.action.briefing')).toBeInTheDocument()
     expect(screen.getByText('artifact.action.mind_map')).toBeInTheDocument()
+    expect(screen.getByText('artifact.action.presentation')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('artifact-type-briefing'))
     fireEvent.click(screen.getByTestId('mock-create-submit'))
@@ -139,6 +146,7 @@ describe('ArtifactPanel AI Workshop', () => {
         knowledgeBaseId={12}
         selectedDocumentIds={[]}
         onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
         onCanManageChange={onCanManageChange}
         onProcessingDocumentCountChange={onProcessingDocumentCountChange}
       />
@@ -156,6 +164,7 @@ describe('ArtifactPanel AI Workshop', () => {
         knowledgeBaseId={12}
         selectedDocumentIds={[11, 12]}
         onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
       />
     )
 
@@ -170,7 +179,7 @@ describe('ArtifactPanel AI Workshop', () => {
     )
   })
 
-  it('limits read-only knowledge base users to viewing artifacts', () => {
+  it('lets read-only knowledge base users start a personal PPT task', () => {
     ;(useKnowledgeArtifacts as jest.Mock).mockReturnValue({
       items: [],
       canManage: false,
@@ -186,11 +195,18 @@ describe('ArtifactPanel AI Workshop', () => {
     })
 
     render(
-      <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
+      />
     )
 
     expect(screen.queryByTestId('artifact-type-briefing')).not.toBeInTheDocument()
     expect(screen.queryByTestId('artifact-type-mind-map')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('artifact-type-presentation'))
+    expect(createPptDraftMock).toHaveBeenCalledTimes(1)
     expect(screen.getByText('artifact.emptyReadOnlyHint')).toBeInTheDocument()
     expect(createMock).not.toHaveBeenCalled()
   })
@@ -225,6 +241,7 @@ describe('ArtifactPanel AI Workshop', () => {
         knowledgeBaseId={12}
         selectedDocumentIds={[]}
         onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
         onAskNode={onAskNode}
       />
     )
@@ -259,11 +276,17 @@ describe('ArtifactPanel AI Workshop', () => {
     })
 
     render(
-      <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
+      />
     )
 
     expect(screen.getByText('artifact.documentsProcessingHint')).toBeInTheDocument()
     expect(screen.getByTestId('artifact-type-briefing')).toBeDisabled()
+    expect(screen.getByTestId('artifact-type-presentation')).toBeDisabled()
   })
 
   it('routes viewer deletion through the shared alert dialog', async () => {
@@ -292,7 +315,12 @@ describe('ArtifactPanel AI Workshop', () => {
     })
 
     render(
-      <ArtifactPanel knowledgeBaseId={12} selectedDocumentIds={[]} onAdjustSources={jest.fn()} />
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
+      />
     )
 
     fireEvent.click(screen.getByTestId('artifact-card-artifact-1'))

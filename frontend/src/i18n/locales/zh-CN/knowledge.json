@@ -945,7 +945,8 @@
     },
     "action": {
       "briefing": "生成简报",
-      "mind_map": "生成思维导图"
+      "mind_map": "生成思维导图",
+      "presentation": "生成 PPT"
     },
     "sourceDialog": {
       "title": "选择知识来源",
@@ -975,8 +976,10 @@
       "briefing": "简报",
       "briefingHint": "结构化 Markdown 摘要",
       "mindMap": "思维导图",
-      "mindMapHint": "可浏览、展开并继续追问的知识导图"
+      "mindMapHint": "可浏览、展开并继续追问的知识导图",
+      "presentationHint": "在新任务中制作演示文稿"
     },
+    "presentationPrompt": "请根据当前选中的知识库文档生成PPT",
     "mindMap": {
       "ask": "问 AI",
       "expand": "展开节点",

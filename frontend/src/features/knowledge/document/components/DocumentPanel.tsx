@@ -82,6 +82,7 @@ interface DocumentPanelProps {
   /** Initial document path to auto-open (from virtual URL path segments). */
   initialDocPath?: string
   onAskArtifactNode?: (request: ArtifactPromptRequest) => void
+  onCreatePptDraft: () => void
 }
 
 const MIN_WIDTH = 280
@@ -110,6 +111,7 @@ export function DocumentPanel({
   canManageDocuments = false,
   initialDocPath,
   onAskArtifactNode,
+  onCreatePptDraft,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
   const { t: tCommon } = useTranslation('common')
@@ -452,6 +454,7 @@ export function DocumentPanel({
             onProcessingDocumentCountChange={setProcessingDocumentCount}
             onCanManageChange={setCanManageArtifacts}
             onAskNode={onAskArtifactNode}
+            onCreatePptDraft={onCreatePptDraft}
           />
         </div>
       </div>

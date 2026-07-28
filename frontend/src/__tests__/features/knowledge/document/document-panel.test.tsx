@@ -23,9 +23,11 @@ jest.mock('@/features/knowledge/artifact/components/ArtifactPanel', () => ({
   ArtifactPanel: ({
     onCanManageChange,
     onAdjustSources,
+    onCreatePptDraft,
   }: {
     onCanManageChange?: (canManage: boolean) => void
     onAdjustSources: (continuation: () => void) => void
+    onCreatePptDraft: () => void
   }) => (
     <>
       <button data-testid="mock-read-only-permission" onClick={() => onCanManageChange?.(false)} />
@@ -34,6 +36,7 @@ jest.mock('@/features/knowledge/artifact/components/ArtifactPanel', () => ({
         data-testid="mock-adjust-sources"
         onClick={() => onAdjustSources(mockSourceContinuation)}
       />
+      <button data-testid="mock-create-ppt-draft" onClick={onCreatePptDraft} />
     </>
   ),
 }))
@@ -127,7 +130,14 @@ describe('DocumentPanel', () => {
   })
 
   it('forwards organization routing context to document preview', () => {
-    render(<DocumentPanel knowledgeBase={knowledgeBase} isOrganization canManageDocuments />)
+    render(
+      <DocumentPanel
+        knowledgeBase={knowledgeBase}
+        isOrganization
+        canManageDocuments
+        onCreatePptDraft={jest.fn()}
+      />
+    )
 
     expect(mockDocumentDetailDialog).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -140,18 +150,32 @@ describe('DocumentPanel', () => {
   })
 
   it('shows direct source upload only to document editors', () => {
-    const { rerender } = render(<DocumentPanel knowledgeBase={knowledgeBase} />)
+    const { rerender } = render(
+      <DocumentPanel knowledgeBase={knowledgeBase} onCreatePptDraft={jest.fn()} />
+    )
 
     expect(screen.queryByTestId('artifact-add-source')).not.toBeInTheDocument()
 
-    rerender(<DocumentPanel knowledgeBase={knowledgeBase} canManageDocuments />)
+    rerender(
+      <DocumentPanel
+        knowledgeBase={knowledgeBase}
+        canManageDocuments
+        onCreatePptDraft={jest.fn()}
+      />
+    )
     fireEvent.click(screen.getByTestId('artifact-add-source'))
 
     expect(screen.getByTestId('mock-table-add')).toBeInTheDocument()
   })
 
   it('creates quick-added sources in the knowledge base root', async () => {
-    render(<DocumentPanel knowledgeBase={knowledgeBase} canManageDocuments />)
+    render(
+      <DocumentPanel
+        knowledgeBase={knowledgeBase}
+        canManageDocuments
+        onCreatePptDraft={jest.fn()}
+      />
+    )
 
     fireEvent.click(screen.getByTestId('artifact-add-source'))
     fireEvent.click(screen.getByTestId('mock-table-add'))
@@ -175,7 +199,13 @@ describe('DocumentPanel', () => {
     } as KnowledgeDocument
     mockFindDocumentByName.mockResolvedValue(document)
 
-    render(<DocumentPanel knowledgeBase={knowledgeBase} initialDocPath="guide.md" />)
+    render(
+      <DocumentPanel
+        knowledgeBase={knowledgeBase}
+        initialDocPath="guide.md"
+        onCreatePptDraft={jest.fn()}
+      />
+    )
 
     await waitFor(() =>
       expect(mockDocumentDetailDialog).toHaveBeenLastCalledWith(
@@ -192,7 +222,7 @@ describe('DocumentPanel', () => {
   })
 
   it('expands sources by default only for read-only users', () => {
-    render(<DocumentPanel knowledgeBase={knowledgeBase} />)
+    render(<DocumentPanel knowledgeBase={knowledgeBase} onCreatePptDraft={jest.fn()} />)
 
     expect(mockArtifactSourceSelector).toHaveBeenLastCalledWith(
       expect.objectContaining({ defaultDocumentsExpanded: undefined })
@@ -218,7 +248,7 @@ describe('DocumentPanel', () => {
   })
 
   it('resumes creation only after applying source changes', () => {
-    render(<DocumentPanel knowledgeBase={knowledgeBase} />)
+    render(<DocumentPanel knowledgeBase={knowledgeBase} onCreatePptDraft={jest.fn()} />)
 
     fireEvent.click(screen.getByTestId('mock-adjust-sources'))
     fireEvent.click(screen.getByTestId('mock-source-cancel'))
@@ -227,5 +257,14 @@ describe('DocumentPanel', () => {
     fireEvent.click(screen.getByTestId('mock-adjust-sources'))
     fireEvent.click(screen.getByTestId('mock-source-apply'))
     expect(mockSourceContinuation).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards PPT draft creation to the knowledge workspace', () => {
+    const onCreatePptDraft = jest.fn()
+    render(<DocumentPanel knowledgeBase={knowledgeBase} onCreatePptDraft={onCreatePptDraft} />)
+
+    fireEvent.click(screen.getByTestId('mock-create-ppt-draft'))
+
+    expect(onCreatePptDraft).toHaveBeenCalledTimes(1)
   })
 })

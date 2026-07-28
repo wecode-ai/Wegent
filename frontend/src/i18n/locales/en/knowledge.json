@@ -945,7 +945,8 @@
     },
     "action": {
       "briefing": "Generate briefing",
-      "mind_map": "Generate mind map"
+      "mind_map": "Generate mind map",
+      "presentation": "Generate PPT"
     },
     "sourceDialog": {
       "title": "Choose knowledge sources",
@@ -975,8 +976,10 @@
       "briefing": "Briefing",
       "briefingHint": "Structured Markdown summary",
       "mindMap": "Mind map",
-      "mindMapHint": "Explore, expand, and ask follow-up questions"
+      "mindMapHint": "Explore, expand, and ask follow-up questions",
+      "presentationHint": "Create a presentation in a new task"
     },
+    "presentationPrompt": "Generate a PPT based on the currently selected knowledge base documents",
     "mindMap": {
       "ask": "Ask AI",
       "expand": "Expand node",

@@ -13,6 +13,7 @@ const mockHandleFileSelect = jest.fn()
 const mockHandleAttachmentRemove = jest.fn()
 const mockHandleTeamChange = jest.fn()
 const mockSetSelectedDeviceId = jest.fn()
+const mockSelectTask = jest.fn()
 
 const defaultStreamHandlers = {
   pendingTaskId: null,
@@ -136,7 +137,7 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
     selectedTaskDetail: selectedTaskDetailMock,
     selectedTask: selectedTaskDetailMock,
-    selectTask: jest.fn(),
+    selectTask: mockSelectTask,
     accessDenied: false,
     taskState: {
       taskId: selectedTaskDetailMock?.id,
@@ -355,6 +356,7 @@ describe('ChatArea queue message handler mounting', () => {
     mockHandleAttachmentRemove.mockClear()
     mockHandleTeamChange.mockClear()
     mockSetSelectedDeviceId.mockClear()
+    mockSelectTask.mockClear()
     ;(
       userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }
     ).prepareQuickLaunchPreset.mockReset()
@@ -485,6 +487,66 @@ describe('ChatArea queue message handler mounting', () => {
         expect.objectContaining({ focusInputAtEndSignal: 1 })
       )
     })
+  })
+
+  it('opens a new task draft without sending an external capability request', async () => {
+    const onExternalDraftConsumed = jest.fn()
+
+    render(
+      <ChatArea
+        teams={[]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        showRepositorySelector={false}
+        externalDraftRequest={{
+          requestId: 'presentation-1',
+          message: '请根据当前选中的知识库文档生成PPT',
+        }}
+        onExternalDraftConsumed={onExternalDraftConsumed}
+      />
+    )
+
+    expect(mockSelectTask).toHaveBeenCalledWith(null)
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('请根据当前选中的知识库文档生成PPT')
+    expect(defaultStreamHandlers.handleSendMessage).not.toHaveBeenCalled()
+    expect(onExternalDraftConsumed).toHaveBeenCalledWith('presentation-1')
+    await waitFor(() => {
+      expect(mockChatInputCard).toHaveBeenLastCalledWith(
+        expect.objectContaining({ focusInputAtEndSignal: 1 })
+      )
+    })
+  })
+
+  it('consumes the same external draft request only once', () => {
+    const onExternalDraftConsumed = jest.fn()
+    const request = {
+      requestId: 'presentation-1',
+      message: '请根据当前选中的知识库文档生成PPT',
+    }
+    const { rerender } = render(
+      <ChatArea
+        teams={[]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        showRepositorySelector={false}
+        externalDraftRequest={request}
+        onExternalDraftConsumed={onExternalDraftConsumed}
+      />
+    )
+
+    rerender(
+      <ChatArea
+        teams={[]}
+        isTeamsLoading={false}
+        taskType="knowledge"
+        showRepositorySelector={false}
+        externalDraftRequest={{ ...request }}
+        onExternalDraftConsumed={onExternalDraftConsumed}
+      />
+    )
+
+    expect(mockSelectTask).toHaveBeenCalledTimes(1)
+    expect(onExternalDraftConsumed).toHaveBeenCalledTimes(1)
   })
 
   it('asks before overwriting existing input with a quick phrase', async () => {

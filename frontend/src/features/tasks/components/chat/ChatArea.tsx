@@ -73,6 +73,7 @@ import { useDevices } from '@/contexts/DeviceContext'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
+import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
 
 /**
@@ -200,6 +201,9 @@ interface ChatAreaProps {
   /** One-shot prompt submitted through the normal chat send path. */
   externalPromptRequest?: ArtifactPromptRequest | null
   onExternalPromptConsumed?: (requestId: string) => void
+  /** One-shot request that opens and prefills a new task without sending. */
+  externalDraftRequest?: KnowledgeCapabilityDraftRequest | null
+  onExternalDraftConsumed?: (requestId: string) => void
 }
 
 /**
@@ -228,6 +232,8 @@ function ChatAreaContent({
   extension,
   externalPromptRequest,
   onExternalPromptConsumed,
+  externalDraftRequest,
+  onExternalDraftConsumed,
 }: ChatAreaProps) {
   const { t } = useTranslation('chat')
   const { toast } = useToast()
@@ -1061,6 +1067,20 @@ function ChatAreaContent({
       artifactContext: externalPromptRequest.artifactContext,
     })
   }, [externalPromptRequest, onExternalPromptConsumed, sendOrConfirmPendingReplacement])
+
+  const consumedExternalDraftRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (
+      !externalDraftRequest ||
+      consumedExternalDraftRef.current === externalDraftRequest.requestId
+    ) {
+      return
+    }
+    consumedExternalDraftRef.current = externalDraftRequest.requestId
+    selectTask(null)
+    handleQuickPhraseSelect(externalDraftRequest.message)
+    onExternalDraftConsumed?.(externalDraftRequest.requestId)
+  }, [externalDraftRequest, handleQuickPhraseSelect, onExternalDraftConsumed, selectTask])
 
   const handleConfirmPendingFormReplacement = useCallback(async () => {
     if (

@@ -37,6 +37,7 @@ import { getKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeBase, KnowledgeView } from '@/types/knowledge'
 import type { Team } from '@/types/api'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
+import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
 
 interface KnowledgeDetailPanelProps {
   /** Currently selected knowledge base */
@@ -91,6 +92,8 @@ export function KnowledgeDetailPanel({
   const [artifactPromptRequest, setArtifactPromptRequest] = useState<ArtifactPromptRequest | null>(
     null
   )
+  const [capabilityDraftRequest, setCapabilityDraftRequest] =
+    useState<KnowledgeCapabilityDraftRequest | null>(null)
 
   const namespaceRoleMap = useNamespaceRoleMap()
 
@@ -197,6 +200,7 @@ export function KnowledgeDetailPanel({
       setIsDocumentPanelCollapsed(false)
       setMobileWorkspaceTab('chat')
       setArtifactPromptRequest(null)
+      setCapabilityDraftRequest(null)
     }
 
     if (currentView === 'documents') {
@@ -269,6 +273,12 @@ export function KnowledgeDetailPanel({
                 current?.requestId === requestId ? null : current
               )
             }}
+            externalDraftRequest={capabilityDraftRequest}
+            onExternalDraftConsumed={requestId => {
+              setCapabilityDraftRequest(current =>
+                current?.requestId === requestId ? null : current
+              )
+            }}
             emptyStateContent={
               <KnowledgeBaseSummaryCard
                 knowledgeBase={selectedKb}
@@ -294,6 +304,13 @@ export function KnowledgeDetailPanel({
           initialDocPath={initialDocPath}
           onAskArtifactNode={request => {
             setArtifactPromptRequest(request)
+            setMobileWorkspaceTab('chat')
+          }}
+          onCreatePptDraft={() => {
+            setCapabilityDraftRequest({
+              requestId: `presentation-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              message: t('artifact.presentationPrompt'),
+            })
             setMobileWorkspaceTab('chat')
           }}
         />
