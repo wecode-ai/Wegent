@@ -21,6 +21,7 @@ from knowledge_engine.stat.collectors.content_quality import (
 )
 from knowledge_engine.stat.collectors.dashboard import (
     collect_global_totals,
+    collect_kb_daily_stats,
     collect_period_and_daily,
 )
 from knowledge_engine.stat.collectors.deep_analysis import (
@@ -44,6 +45,7 @@ from knowledge_engine.stat.collectors.doc_management import (
     doc_topic_distribution,
     doc_update_frequency,
     doc_upload_trend,
+    kb_avg_doc_length,
 )
 from knowledge_engine.stat.collectors.lifecycle import (
     kb_abandon_rate,
@@ -69,8 +71,11 @@ from knowledge_engine.stat.collectors.retrieval import (
     kb_active_users,
     kb_head_frequency,
     kb_rag_head_ratio,
+    kb_retrieval_hit_rate,
     kb_retrieval_mode_dist,
+    kb_slow_query_rate,
     kb_zero_chunk_rate,
+    query_dedup_rate,
     rag_call_frequency,
     rag_call_limit,
     rag_vs_head_ratio,
@@ -85,6 +90,7 @@ from knowledge_engine.stat.collectors.sys_ops import (
     storage_usage,
 )
 from knowledge_engine.stat.collectors.user_behavior import (
+    cross_kb_query_user,
     doc_uploader_ranking,
     kb_creator_ranking,
     restricted_analyst_usage,
@@ -106,6 +112,7 @@ __all__ = [
     "kb_sharing",
     "collect_global_totals",
     "collect_period_and_daily",
+    "collect_kb_daily_stats",
     "kb_health_score",
     "doc_value_ranking",
     "doc_lifecycle_trace",
@@ -122,6 +129,7 @@ __all__ = [
     "permission_change_trend",
     "kb_creator_ranking",
     "doc_uploader_ranking",
+    "cross_kb_query_user",
     "retrieval_active_user",
     "user_rag_head_preference",
     "user_kb_binding",
@@ -129,6 +137,7 @@ __all__ = [
     "restricted_analyst_usage",
     "user_first_kb_usage",
     "user_participation_summary",
+    "query_dedup_rate",
     "rag_call_frequency",
     "kb_head_frequency",
     "rag_vs_head_ratio",
@@ -142,7 +151,9 @@ __all__ = [
     "kb_active_users",
     "kb_rag_head_ratio",
     "kb_zero_chunk_rate",
+    "kb_slow_query_rate",
     "kb_retrieval_mode_dist",
+    "kb_retrieval_hit_rate",
     "retrieval_score_distribution",
     "answer_adoption_rate",
     "doc_upload_trend",
@@ -154,6 +165,7 @@ __all__ = [
     "doc_folder_depth",
     "doc_chunk_strategy",
     "doc_chunk_count_distribution",
+    "kb_avg_doc_length",
     "doc_summary_status",
     "storage_usage",
     "attachment_storage",

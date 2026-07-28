@@ -13,14 +13,20 @@ export function useMetricList(scope: StatScope) {
   const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
-    let cancelled = false
+    // Abort the in-flight request on scope change or unmount.
+    const controller = new AbortController()
     setLoading(true)
-    fetchMetricList(scope)
-      .then(d => !cancelled && setData(d))
-      .catch(e => !cancelled && setError(e))
-      .finally(() => !cancelled && setLoading(false))
+    fetchMetricList(scope, controller.signal)
+      .then(d => setData(d))
+      .catch(e => {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        setError(e)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
     return () => {
-      cancelled = true
+      controller.abort()
     }
   }, [JSON.stringify(scope)])
 

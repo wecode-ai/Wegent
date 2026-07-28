@@ -19,6 +19,8 @@ import {
   type StatScope,
   type DashboardResponse,
 } from '@/features/knowledge-stat/api'
+import { formatStorageSize } from '@/features/knowledge-stat/format-utils'
+import { healthTierOf } from '@/features/knowledge-stat/thresholds'
 
 interface KbStatViewProps {
   kbId: number
@@ -221,9 +223,25 @@ export function KbStatView({ kbId, kbName, headerActions }: KbStatViewProps) {
         >
           {/* Pillars (latest day) */}
           <div className="flex flex-col justify-center gap-3">
-            <h3 className="text-sm font-medium text-text-secondary mb-2">
-              {t('quality_summary_title', '知识库健康度')}
-            </h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-text-secondary">
+                {t('quality_summary_title', '知识库健康度')}
+              </h3>
+              {/* Data freshness: show which day this score belongs to and which
+                  run produced it, so users can tell stale data from current. */}
+              <span className="text-[10px] text-text-muted tabular-nums">
+                {latestHealthRow.stat_date
+                  ? t('health_data_as_of', '数据日期 {{date}}', {
+                      date: String(latestHealthRow.stat_date).slice(0, 10),
+                    })
+                  : t('health_data_no_date', '数据日期未知')}
+                {health?.run_id != null && (
+                  <span className="ml-1" title={health.run_completed_at ?? undefined}>
+                    · run #{health.run_id}
+                  </span>
+                )}
+              </span>
+            </div>
             <HealthPillarFromRow row={latestHealthRow} />
           </div>
           {/* 30-day health-score trend line */}
@@ -267,14 +285,6 @@ const ACCENT_COLORS = [
   '#F97316',
   '#8B5CF6',
 ]
-
-function formatStorageSize(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  const val = bytes / Math.pow(1024, i)
-  return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`
-}
 
 function KbSummaryCard({
   value,
@@ -321,16 +331,9 @@ function HealthPillarFromRow({ row }: { row: Record<string, unknown> }) {
   const { t } = useTranslation('knowledge-stat')
   const score = typeof row?.health_score === 'number' ? row.health_score : null
 
-  const tier =
-    score === null
-      ? { label: t('tier_no_data', 'N/A'), cls: 'text-text-muted bg-muted' }
-      : score >= 85
-        ? { label: t('tier_excellent', '优'), cls: 'text-green-600 bg-green-50' }
-        : score >= 70
-          ? { label: t('tier_good', '良'), cls: 'text-yellow-600 bg-yellow-50' }
-          : score >= 50
-            ? { label: t('tier_fair', '中'), cls: 'text-orange-600 bg-orange-50' }
-            : { label: t('tier_poor', '差'), cls: 'text-red-600 bg-red-50' }
+  // Single source of truth for the 85/70/50 cutoffs (see thresholds.ts).
+  const tier = healthTierOf(score)
+  const tierLabel = tier.key === 'no_data' ? t('tier_no_data', 'N/A') : t(tier.labelKey, tier.key)
 
   return (
     <>
@@ -341,7 +344,7 @@ function HealthPillarFromRow({ row }: { row: Record<string, unknown> }) {
         <span
           className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${tier.cls}`}
         >
-          {tier.label}
+          {tierLabel}
         </span>
         <span className="text-xs text-text-muted">
           {score === null ? t('tier_no_data_hint', '空知识库') : '/ 100'}

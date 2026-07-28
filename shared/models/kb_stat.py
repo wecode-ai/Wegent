@@ -5,7 +5,7 @@
 """Pydantic request/response models for KB stat API (shared by backend & runtime)."""
 
 from datetime import date, datetime
-from typing import Any, Optional, Sequence
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -15,8 +15,11 @@ class KbStatFilter(BaseModel):
 
     start_date: Optional[date] = None
     end_date: Optional[date] = None
-    namespaces: Optional[Sequence[str]] = None
-    kb_ids: Optional[Sequence[int]] = None
+    # Cap list sizes: each kb_id/namespace becomes a bind param or JSON_CONTAINS
+    # argument, so an unbounded list can produce a huge SQL statement and pin
+    # a DB connection while it parses. 500 comfortably covers any real tenant.
+    namespaces: Optional[list[str]] = Field(default=None, max_length=500)
+    kb_ids: Optional[list[int]] = Field(default=None, max_length=500)
     run_id: Optional[int] = None
 
     @model_validator(mode="after")
@@ -52,7 +55,10 @@ class MetricBatchRequest(KbStatFilter):
     (start_date/end_date/namespaces/kb_ids/run_id) and just add ``names``.
     """
 
-    names: list[str] = []
+    # Cap the batch size: each name triggers an independent stat-DB SELECT,
+    # so an unbounded list can exhaust the connection pool. 100 comfortably
+    # covers the full metric catalog (~78) while bounding worst-case load.
+    names: list[str] = Field(default_factory=list, max_length=100)
 
 
 class MetricBatchResponse(BaseModel):
@@ -149,9 +155,11 @@ class DashboardResponse(BaseModel):
 
 class TriggerRunRequest(BaseModel):
     target_date: Optional[date] = None
-    kb_ids: Optional[Sequence[int]] = None
-    domains: Optional[Sequence[str]] = None
-    collector_names: Optional[Sequence[str]] = None
+    # Bounded for the same DoS reason as KbStatFilter; also prevents a single
+    # Celery task from fanning out an unbounded collector/KB selection.
+    kb_ids: Optional[list[int]] = Field(default=None, max_length=500)
+    domains: Optional[list[str]] = Field(default=None, max_length=50)
+    collector_names: Optional[list[str]] = Field(default=None, max_length=200)
     triggered_by: str = "manual_api"
     triggered_user_id: Optional[int] = None
 

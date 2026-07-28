@@ -9,8 +9,11 @@ Provides read access to stat tables for both HTTP API and CLI usage.
 """
 
 import logging
+import math
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from functools import lru_cache
 from typing import Any, Optional, Sequence
 
 from sqlalchemy import text
@@ -45,6 +48,7 @@ def _iso(dt: datetime | date | None) -> str | None:
     return dt.isoformat()
 
 
+@lru_cache(maxsize=8)
 def build_metric_list(scope: str = "admin") -> list[dict]:
     """Build domain-grouped metric metadata list for the /metrics/list API.
 
@@ -52,6 +56,11 @@ def build_metric_list(scope: str = "admin") -> list[dict]:
     artifact — re-running gen_metric_specs.py overwrites it entirely.
     Keeping the metadata builder in query.py ensures date_col and any
     future runtime fields are never silently dropped by codegen.
+
+    Cached: the result depends only on ``scope`` (two values: "admin"/"kb")
+    and on module-level codegen constants, so it is immutable between
+    deploys. Every page load calls /metrics/list; memoizing avoids
+    rebuilding the domain map on each request.
     """
     domains: dict[str, list[dict]] = {}
     for name, spec in _METRIC_SPECS.items():
@@ -203,6 +212,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "kb_count", "type": "int", "label": "知识库数"},
     ],
     "kb_size_distribution": [
+        {"key": "stat_date", "type": "date", "label": "日期"},
         {"key": "kb_id", "type": "int", "label": "知识库ID"},
         {"key": "kb_name", "type": "string", "label": "知识库名称"},
         {"key": "namespace", "type": "string", "label": "命名空间"},
@@ -213,6 +223,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "size_bucket", "type": "string", "label": "规模区间"},
     ],
     "kb_abandon_rate": [
+        {"key": "stat_date", "type": "date", "label": "日期"},
         {"key": "namespace", "type": "string", "label": "命名空间"},
         {"key": "total_kb_count", "type": "int", "label": "总知识库数"},
         {"key": "stale_kb_count", "type": "int", "label": "沉寂数"},
@@ -277,6 +288,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "doc_count", "type": "int", "label": "文档数"},
     ],
     "doc_index_failure_rate": [
+        {"key": "target_date", "type": "date", "label": "日期"},
         {"key": "file_extension", "type": "string", "label": "文件类型"},
         {"key": "total_count", "type": "int", "label": "总数"},
         {"key": "failed_count", "type": "int", "label": "失败数"},
@@ -471,6 +483,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
     ],
     # sys_ops
     "storage_usage": [
+        {"key": "target_date", "type": "date", "label": "日期"},
         {"key": "kb_id", "type": "int", "label": "知识库ID"},
         {"key": "kb_name", "type": "string", "label": "知识库名称"},
         {"key": "namespace", "type": "string", "label": "命名空间"},
@@ -563,9 +576,9 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
     ],
     "prom_conversion_duration": [
         {"key": "file_extension", "type": "string", "label": "文件类型"},
-        {"key": "p50_seconds", "type": "float", "label": "P50(秒)"},
-        {"key": "p90_seconds", "type": "float", "label": "P90(秒)"},
-        {"key": "p99_seconds", "type": "float", "label": "P99(秒)"},
+        {"key": "p50_seconds", "type": "float", "label": "P50耗时(秒,估算)"},
+        {"key": "p90_seconds", "type": "float", "label": "P90耗时(秒,估算)"},
+        {"key": "p99_seconds", "type": "float", "label": "P99耗时(秒,估算)"},
     ],
     "prom_active_conversions": [
         {"key": "active_count", "type": "int", "label": "活跃转换数"},
@@ -597,6 +610,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "total_queries", "type": "int", "label": "总查询数"},
         {"key": "zero_chunk_queries", "type": "int", "label": "零分块查询数"},
         {"key": "zero_chunk_rate", "type": "float", "label": "零分块率 %"},
+        {"key": "low_confidence", "type": "int", "label": "低样本标记"},
     ],
     "kb_retrieval_mode_dist": [
         {"key": "kb_id", "type": "int", "label": "知识库ID"},
@@ -618,6 +632,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "total_queries", "type": "int", "label": "总查询数"},
         {"key": "low_score_queries", "type": "int", "label": "低分查询数"},
         {"key": "low_score_rate", "type": "float", "label": "低分率 %"},
+        {"key": "low_confidence", "type": "int", "label": "低样本标记"},
     ],
     "kb_thin_doc_rate": [
         {"key": "kb_id", "type": "int", "label": "知识库ID"},
@@ -657,6 +672,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "total_queries", "type": "int", "label": "总查询数"},
         {"key": "adopted_queries", "type": "int", "label": "采纳查询数"},
         {"key": "adoption_rate", "type": "float", "label": "采纳率 %"},
+        {"key": "low_confidence", "type": "int", "label": "低样本标记"},
     ],
     # P3 additions
     "kb_retrieval_hit_rate": [
@@ -664,12 +680,14 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "total_queries", "type": "int", "label": "总查询数"},
         {"key": "hit_queries", "type": "int", "label": "命中查询数"},
         {"key": "hit_rate", "type": "float", "label": "命中率 %"},
+        {"key": "low_confidence", "type": "int", "label": "低样本标记"},
     ],
     "query_dedup_rate": [
         {"key": "kb_id", "type": "int", "label": "知识库ID"},
         {"key": "total_queries", "type": "int", "label": "总查询数"},
         {"key": "unique_queries", "type": "int", "label": "唯一查询数"},
         {"key": "dedup_rate", "type": "float", "label": "去重率 %"},
+        {"key": "low_confidence", "type": "int", "label": "低样本标记"},
     ],
     "kb_slow_query_rate": [
         {"key": "kb_id", "type": "int", "label": "知识库ID"},
@@ -677,6 +695,7 @@ _METRIC_SCHEMAS: dict[str, list[dict]] = {
         {"key": "slow_queries", "type": "int", "label": "慢查询数"},
         {"key": "p95_latency_ms", "type": "float", "label": "P95延迟(ms)"},
         {"key": "slow_rate", "type": "float", "label": "慢查询率 %"},
+        {"key": "low_confidence", "type": "int", "label": "低样本标记"},
     ],
     "kb_avg_doc_length": [
         {"key": "kb_id", "type": "int", "label": "知识库ID"},
@@ -864,11 +883,11 @@ _METRIC_KB_COL: dict[str, Optional[str]] = {
 # All table-type metrics use LIMIT 20 to keep frontend tables concise.
 _METRIC_QUERY_OPTIONS: dict[str, dict[str, Any]] = {
     # kb_lifecycle
-    "kb_creation_trend": {"order_by": "stat_date", "limit": 20},
+    "kb_creation_trend": {"order_by": "stat_date", "limit": 600},
     "kb_activity": {"order_by": "document_count DESC", "limit": 20},
     "kb_topic_distribution": {"order_by": "kb_count DESC", "limit": 20},
     "kb_retrieval_config": {"order_by": "kb_count DESC", "limit": 20},
-    "kb_size_distribution": {"order_by": "stat_date", "limit": 60},
+    "kb_size_distribution": {"order_by": "stat_date", "limit": 10000},
     "kb_abandon_rate": {"order_by": "stat_date", "limit": 60},
     "kb_sharing": {"order_by": "member_count DESC", "limit": 20},
     # doc_management
@@ -918,7 +937,7 @@ _METRIC_QUERY_OPTIONS: dict[str, dict[str, Any]] = {
     "cross_org_access": {"order_by": "kb_id", "limit": 20},
     "permission_change_trend": {"order_by": "stat_date", "limit": 20},
     # sys_ops
-    "storage_usage": {"order_by": "target_date", "limit": 60},
+    "storage_usage": {"order_by": "target_date", "limit": 10000},
     "attachment_storage": {"order_by": "total_size DESC", "limit": 20},
     "doc_index_storage_view": {"order_by": "total_file_size DESC", "limit": 20},
     # deep_analysis
@@ -926,7 +945,7 @@ _METRIC_QUERY_OPTIONS: dict[str, dict[str, Any]] = {
     "doc_value_ranking": {"order_by": "value_score DESC", "limit": 20},
     "doc_lifecycle_trace": {"order_by": "updated_at_doc DESC", "limit": 20},
     "user_pattern_evolution": {"order_by": "stat_month", "limit": 20},
-    "kb_growth_curve": {"order_by": "stat_date", "limit": 20},
+    "kb_growth_curve": {"order_by": "stat_date", "limit": 60},
     "rag_head_verify_rate": {"order_by": "stat_date", "limit": 20},
     "knowledge_coverage": {"order_by": "kb_id", "limit": 20},
     "user_segmentation": {"order_by": "user_count DESC", "limit": 20},
@@ -1306,6 +1325,7 @@ _DOMAIN_LABELS: dict[str, str] = {
     "deep_analysis": "深度分析",
     "sys_ops": "系统运维",
     "prometheus": "转换监控",
+    "content_quality": "内容质量",
 }
 
 _METRIC_IMPORTS_DONE = False
@@ -1695,6 +1715,14 @@ class KbStatQueryService:
                     val = _iso(val)
                 elif isinstance(val, date):
                     val = _iso(val)
+                elif isinstance(val, Decimal):
+                    # MySQL ROUND()/AVG() may return Decimal, which is not
+                    # JSON-serializable; coerce to float.
+                    val = float(val)
+                elif isinstance(val, float) and not math.isfinite(val):
+                    # NaN / Infinity from a divide-by-zero in a SQL expression
+                    # would produce invalid JSON; surface as null instead.
+                    val = None
                 row_dict[col] = val
             result_rows.append(row_dict)
 
@@ -1735,9 +1763,11 @@ class KbStatQueryService:
                     "daily_rows": [],
                 }
 
-            # When a specific run_id is requested, use single-run mode
-            if filter.run_id:
-                return self._fetch_single_run_dashboard(session, filter.run_id, filter)
+            # When a specific run_id is requested, fall through to the
+            # normal latest-run resolution. The dashboard intentionally
+            # does not pin a single run_id (it aggregates across runs per
+            # stat_date), so a stale _fetch_single_run_dashboard path was
+            # removed — it referenced a method that no longer exists.
 
             # KB-scoped dashboard: aggregate from metric tables
             if filter.kb_ids:
@@ -2007,6 +2037,11 @@ class KbStatQueryService:
             }
             for row in daily_rows
         ]
+        # active_kb_ratio for a single-KB view: fraction of days in the
+        # window that had at least one query. The old `100.0 if rows else 0.0`
+        # was meaningless — it returned 100% whenever any day had data.
+        active_days = sum(1 for row in rows if int(row["total_queries"] or 0) > 0)
+        active_kb_ratio = round(active_days / len(rows) * 100, 2) if rows else 0.0
         period_totals = {
             "period_total_queries": sum(row["total_queries"] for row in rows),
             "period_new_kb": 0,
@@ -2014,7 +2049,7 @@ class KbStatQueryService:
             "period_rag_queries": sum(row["rag_queries"] for row in rows),
             "period_direct_inject": sum(row["direct_injection"] for row in rows),
             "period_kb_head_queries": sum(row["kb_head_queries"] for row in rows),
-            "active_kb_ratio": 100.0 if rows else 0.0,
+            "active_kb_ratio": active_kb_ratio,
         }
         latest = self._latest_run(
             session,
@@ -2054,10 +2089,16 @@ class KbStatQueryService:
         per day reveals distribution shifts that a single weighted mean
         would mask (Simpson's paradox defense, v1.3 §8.2).
 
-        **Dedup**: the same (target_date, kb_id) can appear in multiple
+        **Dedup**: the same (stat_date, kb_id) can appear in multiple
         runs (manual re-trigger, backfill). We pick only the latest run
-        per target_date via an INNER JOIN on MAX(run_id), otherwise SUM
-        double-counts KBs and the stacked area shows inflated totals.
+        per (stat_date, kb_id) via an INNER JOIN on MAX(run_id), otherwise
+        SUM double-counts KBs and the stacked area shows inflated totals.
+
+        **stat_date vs target_date**: collectors write one row per
+        ``stat_date`` (the event day) while ``target_date`` is fixed to
+        the run's target day. Grouping by ``target_date`` collapses a
+        30-day lookback into a single point; grouping by ``stat_date``
+        yields the per-day series the stacked-area chart needs.
         """
         run_condition, params = _successful_run_condition(
             "kb_health_score",
@@ -2067,10 +2108,10 @@ class KbStatQueryService:
         )
         conditions = [run_condition]
         if filter.effective_period_start:
-            conditions.append("h.target_date >= :start_date")
+            conditions.append("h.stat_date >= :start_date")
             params["start_date"] = filter.effective_period_start
         if filter.period_end_date:
-            conditions.append("h.target_date <= :end_date")
+            conditions.append("h.stat_date <= :end_date")
             params["end_date"] = filter.period_end_date
         where = " AND ".join(conditions)
         try:
@@ -2078,7 +2119,7 @@ class KbStatQueryService:
                 text(
                     f"""
                     SELECT
-                        h.target_date,
+                        h.stat_date,
                         SUM(CASE WHEN h.health_score >= 85 THEN 1 ELSE 0 END)
                             AS excellent,
                         SUM(CASE WHEN h.health_score >= 70
@@ -2094,7 +2135,7 @@ class KbStatQueryService:
                             AS no_data
                     FROM kb_stat_kb_health_score h
                     INNER JOIN (
-                        SELECT hs.target_date, MAX(hs.run_id) AS max_run
+                        SELECT hs.stat_date, hs.kb_id, MAX(hs.run_id) AS max_run
                         FROM kb_stat_kb_health_score hs
                         JOIN kb_stat_runs sr ON sr.id = hs.run_id
                         JOIN kb_stat_collector_runs sc
@@ -2103,13 +2144,14 @@ class KbStatQueryService:
                          AND sc.status = 'success'
                         WHERE sr.status IN ('completed', 'partial')
                           AND sr.kb_filter IS NULL
-                        GROUP BY hs.target_date
+                        GROUP BY hs.stat_date, hs.kb_id
                     ) latest
-                        ON h.target_date = latest.target_date
+                        ON h.stat_date = latest.stat_date
+                        AND h.kb_id = latest.kb_id
                         AND h.run_id = latest.max_run
                     WHERE {where}
-                    GROUP BY h.target_date
-                    ORDER BY h.target_date
+                    GROUP BY h.stat_date
+                    ORDER BY h.stat_date
                     """
                 ),
                 params,
@@ -2119,7 +2161,7 @@ class KbStatQueryService:
             return []
         return [
             {
-                "stat_date": _iso(r.target_date),
+                "stat_date": _iso(r.stat_date),
                 "excellent": int(r.excellent or 0),
                 "good": int(r.good or 0),
                 "fair": int(r.fair or 0),
@@ -2140,7 +2182,9 @@ class KbStatQueryService:
         the two views always appear together (Simpson's paradox defense).
 
         **Dedup**: same cross-run dedup as health distribution — pick
-        the latest run_id per target_date before aggregating.
+        the latest run_id per (stat_date, kb_id) before aggregating.
+
+        **stat_date vs target_date**: see _fetch_platform_health_distribution.
         """
         run_condition, params = _successful_run_condition(
             "kb_zero_chunk_rate",
@@ -2150,10 +2194,10 @@ class KbStatQueryService:
         )
         conditions = [run_condition]
         if filter.effective_period_start:
-            conditions.append("z.target_date >= :start_date")
+            conditions.append("z.stat_date >= :start_date")
             params["start_date"] = filter.effective_period_start
         if filter.period_end_date:
-            conditions.append("z.target_date <= :end_date")
+            conditions.append("z.stat_date <= :end_date")
             params["end_date"] = filter.period_end_date
         where = " AND ".join(conditions)
         try:
@@ -2161,12 +2205,12 @@ class KbStatQueryService:
                 text(
                     f"""
                     SELECT
-                        z.target_date,
+                        z.stat_date,
                         SUM(z.zero_chunk_queries) AS zero_events,
                         SUM(z.total_queries) AS total_events
                     FROM kb_stat_kb_zero_chunk_rate z
                     INNER JOIN (
-                        SELECT zs.target_date, MAX(zs.run_id) AS max_run
+                        SELECT zs.stat_date, zs.kb_id, MAX(zs.run_id) AS max_run
                         FROM kb_stat_kb_zero_chunk_rate zs
                         JOIN kb_stat_runs sr ON sr.id = zs.run_id
                         JOIN kb_stat_collector_runs sc
@@ -2175,13 +2219,14 @@ class KbStatQueryService:
                          AND sc.status = 'success'
                         WHERE sr.status IN ('completed', 'partial')
                           AND sr.kb_filter IS NULL
-                        GROUP BY zs.target_date
+                        GROUP BY zs.stat_date, zs.kb_id
                     ) latest
-                        ON z.target_date = latest.target_date
+                        ON z.stat_date = latest.stat_date
+                        AND z.kb_id = latest.kb_id
                         AND z.run_id = latest.max_run
                     WHERE {where}
-                    GROUP BY z.target_date
-                    ORDER BY z.target_date
+                    GROUP BY z.stat_date
+                    ORDER BY z.stat_date
                     """
                 ),
                 params,
@@ -2191,7 +2236,7 @@ class KbStatQueryService:
             return []
         return [
             {
-                "stat_date": _iso(r.target_date),
+                "stat_date": _iso(r.stat_date),
                 # Event-weighted rate: avoids the mean-of-means trap by
                 # aggregating raw event counts, not per-KB rates.
                 "zero_chunk_rate": (
@@ -2214,9 +2259,11 @@ class KbStatQueryService:
         """Daily event-weighted platform rate (shared implementation).
 
         ``SUM(numerator_col) / SUM(total_queries)`` per day across all KBs,
-        with the same latest-run-per-target_date dedup as
+        with the same latest-run-per-(stat_date, kb_id) dedup as
         ``_fetch_platform_retrieval_quality``. Used for hit / adoption /
         dedup rates so the admin KPI top bar shows true weighted means.
+
+        **stat_date vs target_date**: see _fetch_platform_health_distribution.
         """
         metric_name_by_table = {
             "kb_stat_kb_retrieval_hit_rate": "kb_retrieval_hit_rate",
@@ -2233,10 +2280,10 @@ class KbStatQueryService:
         params["rate_collector"] = _collector_for_metric(metric_name)
         conditions = [run_condition]
         if filter.effective_period_start:
-            conditions.append("t.target_date >= :start_date")
+            conditions.append("t.stat_date >= :start_date")
             params["start_date"] = filter.effective_period_start
         if filter.period_end_date:
-            conditions.append("t.target_date <= :end_date")
+            conditions.append("t.stat_date <= :end_date")
             params["end_date"] = filter.period_end_date
         where = " AND ".join(conditions)
         try:
@@ -2244,12 +2291,12 @@ class KbStatQueryService:
                 text(
                     f"""
                     SELECT
-                        t.target_date,
+                        t.stat_date,
                         SUM(t.{numerator_col}) AS num_events,
                         SUM(t.total_queries) AS total_events
                     FROM {table} t
                     INNER JOIN (
-                        SELECT rs.target_date, MAX(rs.run_id) AS max_run
+                        SELECT rs.stat_date, rs.kb_id, MAX(rs.run_id) AS max_run
                         FROM {table} rs
                         JOIN kb_stat_runs sr ON sr.id = rs.run_id
                         JOIN kb_stat_collector_runs sc
@@ -2258,13 +2305,14 @@ class KbStatQueryService:
                          AND sc.status = 'success'
                         WHERE sr.status IN ('completed', 'partial')
                           AND sr.kb_filter IS NULL
-                        GROUP BY rs.target_date
+                        GROUP BY rs.stat_date, rs.kb_id
                     ) latest
-                        ON t.target_date = latest.target_date
+                        ON t.stat_date = latest.stat_date
+                        AND t.kb_id = latest.kb_id
                         AND t.run_id = latest.max_run
                     WHERE {where}
-                    GROUP BY t.target_date
-                    ORDER BY t.target_date
+                    GROUP BY t.stat_date
+                    ORDER BY t.stat_date
                     """
                 ),
                 params,
@@ -2274,7 +2322,7 @@ class KbStatQueryService:
             return []
         return [
             {
-                "stat_date": _iso(r.target_date),
+                "stat_date": _iso(r.stat_date),
                 "rate": (
                     round(int(r.num_events or 0) / int(r.total_events or 1) * 100, 2)
                     if r.total_events and int(r.total_events) > 0

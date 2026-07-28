@@ -41,7 +41,7 @@ title: 知识库统计功能设计文档
 │  ┌──────────────┐     │  │knowledge_   │ │     ┌──────────┐ │
 │  │ 业务库(只读)  │◀────│  │engine stat  │─┼────▶│ 统计库   │ │
 │  │ kinds        │ 读取 │  │ collectors  │ │写入 │ kb_stat_*│ │
-│  │ documents    │     │  │ (78个)      │ │     │ (83张表) │ │
+│  │ documents    │     │  │ (77个)      │ │     │ (82张表) │ │
 │  │ subtask_ctx  │     │  └─────────────┘ │     └──────────┘ │
 │  │ members      │     └──────────────────┘                  │
 │  │ share_links  │                                           │
@@ -78,10 +78,10 @@ title: 知识库统计功能设计文档
 │                                          ┌────────▼────────┐ │
 │                                          │   统计库(只读)   │ │
 │                                          │   kb_stat_*     │ │
-│                                          │   (84张表)      │ │
+│                                          │   (82张表)      │ │
 │                                          └─────────────────┘ │
 │                                                              │
-│  特性: 批量查询(1个domain=1次HTTP) / 144个索引覆盖           │
+│  特性: 批量查询(1个domain=1次HTTP) / 121个索引覆盖           │
 │        表缺失容错(返回空不报500) / 503降级(统计库不可用时)    │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -210,59 +210,20 @@ title: 知识库统计功能设计文档
 | `kb_retrieval_hit_rate` | subtask_contexts.rag_result.chunks_count | 命中率 |
 | `kb_config_sanity` | kinds.json 检索配置 | 配置异常检测 |
 
-### 3.5 共享抽取与事实管道
+### 3.5 业务库零侵入原则
 
 统计功能对业务库保持零侵入：只允许只读查询，不修改业务表，不增加字段、
-生成列、索引、触发器或锁表，也不要求业务写入链路维护统计字段。所有
-staging、事实表、watermark 和性能索引仅位于独立统计库。
+生成列、索引、触发器或锁表，也不要求业务写入链路维护统计字段。所有统计
+表与索引仅位于独立统计库。采集器统一经 `readonly_session` 连接专用只读
+副本（`DATABASE_READONLY_URL`），即使采集查询较慢也只影响统计任务自身，
+不波及主库在线业务。
 
-优化后的采集链路分阶段启用：
-
-```text
-业务库（只读、并发 1～2）
-  -> extractor（keyset 分页，冻结 source cutoff）
-  -> 统计库 staging（JSON 只解析一次）
-  -> collector metric groups（统计库内受控并发）
-  -> validator
-  -> metric watermark 原子发布
-```
-
-`KB_STAT_PIPELINE_MODE` 控制灰度：
-
-| 值 | 行为 |
-| --- | --- |
-| `legacy` | 只运行原 collector，默认值 |
-| `shadow` | 先抽取 staging，再运行原 collector，用于结果和性能对账 |
-| `fact` | 当前版本尚未开放，Runner 会明确拒绝；完成指标对账和切读实现后才可启用 |
-
-第一阶段的 `query_event` extractor 读取
-`subtask_contexts(id, created_at, user_id, type_data)`，在 worker 中解析
-`knowledge_id`、注入模式、分块数、命中、采纳、查询 hash 和耗时，并写入
-`kb_stat_stage_query_event`。它采用 `id > last_id AND id <= cutoff_id`
-keyset 分页，不在业务库创建临时表。
-
-管道控制表：
-
-| 表 | 用途 | 保留 |
-| --- | --- | --- |
-| `kb_stat_extractor_runs` | 抽取状态、cutoff、读取/写入行数、耗时 | 随 run 保留期 |
-| `kb_stat_stage_query_event` | 当前 run 的窄化查询事实 | 重试期后清理 |
-| `kb_stat_source_watermarks` | 为后续增量抽取预留的已发布源游标 | 持久 |
-| `kb_stat_metric_watermarks` | 为后续原子切读预留的指标版本 | 持久 |
-
-当前交付边界是 `legacy` 可信度修复与 `shadow` 查询事件抽取。页面仍按
-“对应 collector 成功的最新适用 run”选择数据，尚不读取上述两个 watermark
-表；在 validator、指标级发布和连续 shadow 对账完成前，不得把配置切到
-`fact`。这样避免用未完成的新链路静默替代生产口径。
-
-同一 run 的 collector 必须使用相同 source cutoff。抽取失败时不进入事实
-指标阶段、不推进 watermark，也不得回退为直接扫描业务库。`partial` run
-只发布成功且通过校验的指标，失败指标继续指向上一个已发布 watermark。
-
-当前仓库使用 `docs/plans/kb-stat-schema.sql` 作为完整新建库快照，
-`docs/plans/sql/kb-stat-019-fact-pipeline-up.sql` 和对应 down SQL 作为
-已有统计库的增量升级/回滚脚本。相关 SQL 只能对
-`KNOWLEDGE_STAT_DATABASE_URL` 执行。
+> 历史上曾规划过 "shadow/fact pipeline"（把业务库 JSON 预提取到统计库
+> staging 表再由 collector 切读），用于在共享业务库场景下保护主库。在
+> 当前 "从库专供统计" 的部署前提下，该机制要解决的问题已不存在，且其
+> shadow 阶段为半成品（collector 并未真正切读 staging），相关代码、表与
+> 配置已整体移除以避免维护负担。如未来部署变为共享业务库，应重新评估
+> 采集器对业务库的查询效率，而非恢复此半成品管道。
 
 ## 4. 查询服务
 
@@ -341,20 +302,52 @@ ORDER BY {order_by} LIMIT {limit}
 
 ## 6. 环境变量配置
 
-| 变量 | 默认值 | 说明 |
+> **服务列说明**：统计功能跨三个服务协作——
+> - **backend**（FastAPI :8000 + Celery beat）：对外 API 鉴权代理层 + 定时调度
+> - **knowledge_runtime**（FastAPI :8200 + Celery worker）：采集执行 + 指标查询
+> - **frontend**（Next.js :3000）：统计仪表盘 UI
+>
+> 同名变量在不同服务可能含义不同（如 `KB_STAT_ENABLED` 在 backend 控制 API/beat，在
+> runtime 控制采集执行），下表按服务分别标注。变量写在对应服务的 `.env`（参考各服务
+> `.env.example`）。
+
+### 6.1 功能开关
+
+| 变量 | 服务 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `KB_STAT_ENABLED` | backend | `false` | 总开关。false 时统计 API 返回 503、beat 移除采集/清理任务。新部署默认关闭，需显式置 true |
+| `KB_STAT_ENABLED` | knowledge_runtime | `false` | HTTP 层 + 采集执行开关。false 时 /internal/kb-stat/* 返回 503、已入队的 collect 任务跳过。需与 backend 保持一致 |
+| `KB_STAT_PRUNE_ENABLED` | backend | `false` | 清理任务开关。false 时移除每周清理 beat，永久保留历史数据。需与 runtime 保持一致 |
+| `KB_STAT_PRUNE_ENABLED` | knowledge_runtime | `false` | /health 上报实际生效值（与 backend 同步） |
+| `KB_STAT_WORKER_ENABLED` | knowledge_runtime | `false` | Celery worker 子进程开关（main.py 拉起内嵌 worker）。需显式置 true 才会消费 kb_stat 队列 |
+| `NEXT_PUBLIC_KB_STAT_ENABLED` | frontend | （未设置=关闭） | 前端功能开关。**构建时**内联替换，仅显式置 `true`/`1` 启用；未设置时 Tab 隐藏，与 backend/runtime 默认关闭一致 |
+
+### 6.2 数据库与连接
+
+| 变量 | 服务 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | backend / knowledge_runtime | 必填 | 业务主库连接（backend 读写、runtime 采集的回退数据源） |
+| `KNOWLEDGE_STAT_DATABASE_URL` | knowledge_runtime | （回退到 DATABASE_URL） | 专用统计库连接。生产强烈建议独立，避免分析查询干扰业务 |
+| `DATABASE_READONLY_URL` | knowledge_runtime | （回退到 DATABASE_URL） | 业务库只读副本连接，采集器经此读取。生产强烈建议指向专用从库 |
+| `KNOWLEDGE_RUNTIME_URL` | backend | `http://localhost:8200` | knowledge_runtime 地址，backend 代理统计请求至此 |
+| `INTERNAL_SERVICE_TOKEN` | backend / knowledge_runtime | 必填（两端须一致） | 服务间鉴权 token。runtime 启动时 fail-fast 校验非空 |
+| `CELERY_BROKER_URL` | backend / knowledge_runtime | （回退到 REDIS_URL） | Redis broker。backend 的 beat 投递任务、runtime 的 worker 消费 + 分布式锁均依赖此 |
+
+### 6.3 采集行为
+
+| 变量 | 服务 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `KNOWLEDGE_STAT_LOOKBACK_DAYS` | knowledge_runtime | `30` | 手动触发采集的回看窗口（天）。每日 beat 传 `lookback_days=1` 纯增量，不受此影响 |
+| `KNOWLEDGE_STAT_RETENTION_DAYS` | knowledge_runtime | `400` | 数据保留期（天）。<=0 永久保留（建议同时 `KB_STAT_PRUNE_ENABLED=false`） |
+| `KB_STAT_DOMAINS` | knowledge_runtime | （空=全部） | 逗号分隔的采集域过滤器，限制只跑部分域 |
+| `KB_STAT_STALE_MINUTES` | knowledge_runtime | `120` | 卡死 "running" run 的自动标记失败阈值（分钟） |
+| `KB_STAT_LOCK_TTL_SECONDS` | knowledge_runtime | `2100` | 采集分布式锁 TTL（秒，=time_limit 1800 + 300 缓冲） |
+
+### 6.4 已废弃
+
+| 变量 | 服务 | 说明 |
 | --- | --- | --- |
-| `KB_STAT_ENABLED` | `true` | 总开关，false 时 API 返回 503 |
-| `KB_STAT_PRUNE_ENABLED` | `true` | 清理任务开关，false 时永久保留历史数据 |
-| `KB_STAT_WORKER_ENABLED` | `true` | Celery worker 子进程开关 |
-| `KB_STAT_AUTO_MIGRATE` | `false` | 已废弃；设为 true 时启动失败。统计库必须显式执行 `docs/plans/sql/` 下的版本化 SQL |
-| `KNOWLEDGE_STAT_DATABASE_URL` | （回退到 DATABASE_URL） | 专用统计库连接 |
-| `DATABASE_READONLY_URL` | （回退到 DATABASE_URL） | 业务库只读副本连接 |
-| `KNOWLEDGE_STAT_LOOKBACK_DAYS` | `30` | 手动触发时的回看窗口 |
-| `KNOWLEDGE_STAT_RETENTION_DAYS` | `400` | 数据保留期（天），<=0 永久保留 |
-| `KB_STAT_DOMAINS` | （空=全部） | 逗号分隔的采集域过滤器 |
-| `KB_STAT_STALE_MINUTES` | `120` | 卡死 run 的超时阈值（分钟） |
-| `KB_STAT_LOCK_TTL_SECONDS` | `2100` | 分布式锁 TTL（秒，>time_limit） |
-| `NEXT_PUBLIC_KB_STAT_ENABLED` | `true` | 前端功能开关 |
+| `KB_STAT_AUTO_MIGRATE` | knowledge_runtime | 已废弃；设为 true 时启动失败。统计库必须显式执行 `docs/plans/sql/` 下的版本化 SQL 或 alembic upgrade |
 
 ## 7. API 端点
 
@@ -413,7 +406,7 @@ set -a && . ../knowledge_runtime/.env && set +a
 
 ### 8.3 测试数据管理
 
-提供两个脚本用于灌入测试数据：
+提供三个脚本用于灌入测试数据。所有 seed 操作均**幂等**——重复运行前会先删除该范围的 `__test__` 前缀旧数据，不会因 `share_token` / `resource_members` 唯一约束冲突而报错。
 
 #### 8.3.1 批量测试数据（`kb_stat_test_data.py`）
 
@@ -469,6 +462,9 @@ set -a && . ../knowledge_runtime/.env && set +a
 # 为 KB id=148 (2026071301-note) 灌入 30 天检索数据
 .venv/bin/python ../scripts/kb_stat_seed_kb.py seed --kb-id 148 --days 30 --queries 15
 
+# 灌完后立即触发该 KB 的采集，详情页即可直接看到数据（推荐）
+.venv/bin/python ../scripts/kb_stat_seed_kb.py seed --kb-id 148 --days 30 --queries 15 --trigger-collect
+
 # 清理该 KB 的所有 __test__ 测试数据（源表 + 统计表）
 .venv/bin/python ../scripts/kb_stat_seed_kb.py clean --kb-id 148
 ```
@@ -478,8 +474,9 @@ set -a && . ../knowledge_runtime/.env && set +a
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--kb-id` | （必填） | 目标知识库 ID |
-| `--days` | 30 | 时间跨度（天） |
+| `--days` | 30 | 时间跨度（天），同时作为 `--trigger-collect` 的采集回看窗口 |
 | `--queries` | 15 | 每天灌入的检索记录数 |
+| `--trigger-collect` | 关 | 灌入后立即触发一次该 KB 限定的 `collect_all`（`kb_ids=[kb_id]`、`lookback_days=--days`、`triggered_by=__test__seed_kb`），使最新 run 包含该 KB，详情页无需再等下次 beat |
 
 `seed` 灌入内容：
 - **subtask_contexts**：每天 N 条检索记录（30 天 ≈ 450 条），含完整的 type_data JSON：
@@ -487,23 +484,27 @@ set -a && . ../knowledge_runtime/.env && set +a
   - `adoption_result`（cited_count — 覆盖采纳率）
   - `kb_head_result`（document_ids — 覆盖 RAG 验证率）
   - `extracted_text`（chunks[].score — 覆盖检索相关性分数分布）
-  - `selected_documents`（覆盖指定文档使用率）
+  - `rag_result.selected_documents`（覆盖部分指定文档使用路径）
+- **selected_documents 上下文**：`context_type='selected_documents'`、`type_data={knowledge_base_id, document_ids}`，分散到周期内多天（覆盖 `selected_documents_usage` 采集器，与生产 notebook 模式直接注入的上下文结构一致）
 - **resource_members**：4 种角色（Owner/Maintainer/Developer/Reporter）+ 1 个 RestrictedAnalyst
 - **share_links**：2 个分享链接
-- **knowledge_documents**：更新 chunks JSON（含 items[].score）和 summary
+- **knowledge_documents**：新建 8 篇 `__test__doc_kb{id}_*` 测试文档，`created_at` 分散到周期内多天，含 `file_extension`/`source_type='file'`/`user_id`/`file_size`/`chunks`（含 items[].score）/`summary`（覆盖 doc_upload_trend / kb_growth_curve / kb_size_distribution）
 - **tasks**：2 个绑定该 KB 的任务
 
 `clean` 清理范围：
-- `subtask_contexts`：`__test__sc_kb{id}_*` 的检索记录
+- `subtask_contexts`：`__test__sc_kb{id}_*` 的检索记录（含 selected_documents 上下文）
+- `knowledge_documents`：`__test__doc_kb{id}_*` 的测试文档
 - `share_links`：`__test__kb{id}_link_*` 的分享链接
 - `tasks`：`__test__task_kb{id}_*` 的任务
 - `resource_members`：该 KB 下测试用户的成员关系
 - `users`：`__test__*` 的测试用户
-- 统计库：所有 `__test__` 前缀触发的 run 及其关联数据
+- 统计库：所有 `__test__` 前缀触发的 run（含 `--trigger-collect` 产生的 `__test__seed_kb` run）及其关联数据
 
-灌入完成后需手动触发采集：
+灌入完成后需触发采集，详情页才能读到该 KB 的数据（详情页只读最新 run）。两种方式：
+- **推荐**：灌入时直接带 `--trigger-collect`，一步完成 seed + 该 KB 限定采集。
+- **手动**：灌入后再跑 `kb_stat_backfill.py`（可带 `--kb-id` 限定单 KB，更快）：
 ```bash
-.venv/bin/python ../scripts/kb_stat_backfill.py --date 2026-07-23 --via direct
+.venv/bin/python ../scripts/kb_stat_backfill.py --date 2026-07-23 --kb-id 148 --via direct
 ```
 
 #### 8.3.3 数据覆盖情况
@@ -539,33 +540,54 @@ set -a && . ../knowledge_runtime/.env && set +a
 当前仓库以完整建库快照和显式增量 SQL 管理统计库结构：
 
 ```bash
-# 全新空统计库
+# 全新空统计库（一步建表 + 初始化 alembic 版本到 021）
 mysql -u <user> -p <stat_db> < docs/plans/kb-stat-schema.sql
 
-# 已有统计库升级到事实管道 019
-mysql -u <user> -p <stat_db> \
-  < docs/plans/sql/kb-stat-019-fact-pipeline-up.sql
+# 已有统计库升级（alembic 迁移链，当前 head = 021）
+cd knowledge_runtime
+export KNOWLEDGE_STAT_DATABASE_URL="mysql+pymysql://<user>:<pass>@<host>/<stat_db>"
+uv run alembic -c alembic.ini upgrade head
 
-# 将瘦文档告警表无损重命名为普通质量指标表（不删除孤儿文档旧表）
-mysql -u <user> -p <stat_db> \
-  < docs/plans/sql/kb-stat-020-quality-metric-cleanup-up.sql
-
-# 回滚 019（先停止 shadow worker）
-mysql -u <user> -p <stat_db> \
-  < docs/plans/sql/kb-stat-019-fact-pipeline-down.sql
-
-# 回滚 020 表名和索引名
-mysql -u <user> -p <stat_db> \
-  < docs/plans/sql/kb-stat-020-quality-metric-cleanup-down.sql
+# 回滚到某个版本（例如 018）
+uv run alembic -c alembic.ini downgrade 018
 ```
 
+迁移链 019-021 的内容：
+- **019**：`kb_stat_thin_doc_alert` 重命名为 `kb_stat_kb_thin_doc_rate`（与 ORM/collector 对齐）
+- **020**：`kb_stat_kb_health_score` 增加 `formula_version` 列（固化权重版本）
+- **021**：`kb_stat_kb_slow_query_rate` 增加 `low_confidence` 列（小样本标记）
+
 这些命令只能指向独立统计库。`backend/alembic` 属于业务库迁移，禁止放入
-KB-stat staging/fact 表。`KB_STAT_AUTO_MIGRATE` 在独立统计库迁移链路
-正式建立前应保持 `false`。
+任何 KB-stat 统计表。`KB_STAT_AUTO_MIGRATE` 在独立统计库迁移链路
+正式建立前应保持 `false`（main.py 会在 `true` 时 fail-fast）。
 
 ### 8.5 日志
 
-采集任务日志写入 `knowledge_runtime/logs/kb_stat_worker.log`。
+采集任务日志写入 `knowledge_runtime/logs/kb_stat_worker.log`（同时仍走 root handler 进入 `info.log`，未禁用传播）。
+
+**日志路由**：`knowledge_runtime/core/logging.py` 的 `setup_kb_stat_worker_logging` 在每次采集启动时（由 `stat_tasks._ensure_worker_logging` 调用）创建一个专用 `FileHandler`，挂到 `knowledge_engine.stat` 与 `knowledge_runtime.tasks.stat_tasks` 两个 logger 上并 `setLevel(INFO)`。`knowledge_engine.stat.runner` 等子 logger 的日志经传播写入该文件，便于单独跟踪采集进度而无需在合并日志里 grep。
+
+**记录内容**（每次 `collect_all` 一条 run 汇总 + 每个 collector 一条结果）：
+
+- 每个 collector 的成功/失败（`runner.py` 的 collector 循环）：
+  - 成功：`[kb_stat] run_id=<id> collector=<name> success rows=<n> duration_ms=<ms>`（INFO）
+  - 失败（异常）：`[kb_stat] run_id=<id> collector=<name> failed duration_ms=<ms> error=<msg>`（WARNING，`error` 与写库 `kb_stat_collector_runs.error_message` 一致，经 `_sanitize_error` 处理）
+  - 失败（软超时）：`[kb_stat] run_id=<id> collector=<name> failed duration_ms=<ms> error=soft time limit exceeded`（WARNING，记日志后 re-raise 以触发 `stat_tasks` 的软超时处理）
+- run 汇总：`[kb_stat] run_id=<id> target_date=<date> status=<completed|partial|failed> metrics_count=<rows>`（INFO，由 `runner.collect_all` 结束时输出）
+- 任务包装：`[kb_stat] collect_all run_id=<id> date=<date> done`（`stat_tasks`）
+
+**样例**（一次 77 个 collector 的采集约输出 77 条 collector 结果 + 1 条 run 汇总）：
+
+```
+2026-07-28 03:07:15 INFO  [kb_stat] worker logging initialised -> ./logs/kb_stat_worker.log
+2026-07-28 03:07:18 INFO  [kb_stat] run_id=68 collector=global_totals success rows=1 duration_ms=210
+2026-07-28 03:07:21 INFO  [kb_stat] run_id=68 collector=period_and_daily success rows=31 duration_ms=2850
+2026-07-28 03:07:22 WARNING [kb_stat] run_id=68 collector=storage_usage failed duration_ms=12 error=(pymysql.err.IntegrityError) ...
+2026-07-28 03:08:40 INFO  [kb_stat] run_id=68 target_date=2026-07-28 status=partial metrics_count=7358
+2026-07-28 03:08:40 INFO  [kb_stat] collect_all run_id=68 date=2026-07-28 done
+```
+
+> 失败的 collector 单点不影响其他 collector（独立事务，rollback 后继续），run 整体状态为 `partial`；从日志可快速定位是哪个 collector 失败及原因，亦可在 `kb_stat_collector_runs` 表查每条 collector 的 `status`/`rows_written`/`duration_ms`/`error_message`。
 
 ### 8.6 开关操作矩阵
 

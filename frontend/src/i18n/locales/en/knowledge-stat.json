@@ -17,6 +17,8 @@
   "health_score_trend": "Health Score Trend",
   "health_score_trend_hint": "Last {{n}} days health score",
   "quality_summary_title": "KB Health",
+  "health_data_as_of": "As of {{date}}",
+  "health_data_no_date": "Date unknown",
   "tier_excellent": "Excellent",
   "tier_good": "Good",
   "tier_fair": "Fair",
@@ -116,7 +118,11 @@
     "query_dedup_rate": "Unique Query Ratio",
     "kb_slow_query_rate": "KB Slow Query Rate",
     "kb_avg_doc_length": "KB Avg Document Size",
-    "cross_kb_query_user": "Cross-KB Query Users"
+    "cross_kb_query_user": "Cross-KB Query Users",
+    "kb_active_users": "KB Active Users",
+    "kb_rag_head_ratio": "KB RAG / Selected Docs Ratio",
+    "kb_retrieval_mode_dist": "KB Retrieval Mode Distribution",
+    "kb_zero_chunk_rate": "KB Zero-Chunk Query Rate"
   },
   "domains": {
     "dashboard": "Dashboard",
@@ -142,6 +148,9 @@
     "new_kb": "New KB",
     "new_docs": "New Docs",
     "dt_active_users": "DT Users"
+  },
+  "health_table": {
+    "kb_name": "Knowledge Base"
   },
   "total_kb_count": "Total KB",
   "total_doc_count": "Total Docs",

@@ -216,19 +216,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Readonly database initialization skipped: {e}")
 
-    # The stat schema deliberately uses reviewed, versioned SQL migrations.
-    # A previous implementation invoked a non-existent Alembic environment
-    # here and then swallowed the error, allowing the service to start with an
-    # unknown schema. Fail fast when the obsolete switch is enabled.
-    if settings.kb_stat_auto_migrate:
-        raise RuntimeError(
-            "KB_STAT_AUTO_MIGRATE is not supported. Apply "
-            "docs/plans/sql/kb-stat-019-fact-pipeline-up.sql to the statistics "
-            "database before deployment, then keep KB_STAT_AUTO_MIGRATE=false."
-        )
-    else:
-        logger.info("Stat database auto-migration skipped (KB_STAT_AUTO_MIGRATE=false)")
-
     # KB stat worker info
     worker_enabled = settings.kb_stat_worker_enabled
     logger.info(

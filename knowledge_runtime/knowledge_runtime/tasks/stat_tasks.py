@@ -143,6 +143,19 @@ def collect_all_metrics_task(
 
     settings = get_settings()
 
+    # Feature switch short-circuit: KB_STAT_ENABLED=false must stop not only
+    # the beat schedule (handled in backend celery_app.py) but also already-
+    # queued tasks (manual API trigger, retry, or a task enqueued before the
+    # flag was flipped during a rolling restart). Bail out before acquiring
+    # the Redis lock so we never hold it for a disabled feature.
+    if not settings.kb_stat_enabled:
+        logger.info(
+            "[kb_stat] collect_all skipped (KB_STAT_ENABLED=false, target=%s, by=%s)",
+            target.isoformat(),
+            triggered_by,
+        )
+        return {"skipped": "kb_stat_disabled", "target_date": target.isoformat()}
+
     from shared.db.readonly_session import get_readonly_session_factory
     from shared.db.stat_session import get_stat_session_factory
 
@@ -218,7 +231,6 @@ def collect_all_metrics_task(
                     if lookback_days is not None
                     else settings.knowledge_stat_lookback_days
                 ),
-                pipeline_mode=settings.kb_stat_pipeline_mode,
                 source_session_factory=get_readonly_session_factory(),
                 stat_session_factory=get_stat_session_factory(),
             )
@@ -239,7 +251,19 @@ def collect_all_metrics_task(
                 )
 
 
-@celery_app.task(name="kb_stat.prune_old_runs", queue="kb_stat")
+@celery_app.task(
+    name="kb_stat.prune_old_runs",
+    queue="kb_stat",
+    # prune scans 70+ stat tables and batch-deletes old runs; bound it so a
+    # runaway prune cannot pin the single kb_stat worker indefinitely and
+    # starve the daily collect. Mirrors collect_all's hard > soft margin.
+    soft_time_limit=1200,
+    time_limit=1500,
+    # Re-queue if the worker dies mid-prune. prune is idempotent (a duplicate
+    # run only re-deletes already-absent rows), so acks_late is safe here and
+    # prevents silent data-retention drift after a crash.
+    acks_late=True,
+)
 def prune_old_runs_task(retention_days: int = 400):
     # Defense-in-depth: prune_old_runs also checks <=0 internally, but we
     # short-circuit here too so no DB session is opened when the operator

@@ -8,7 +8,9 @@
 Usage:
     cd knowledge_engine
     set -a && . ../knowledge_runtime/.env && set +a
-    .venv/bin/python ../scripts/kb_stat_seed_kb.py --kb-id 148 --days 30
+    .venv/bin/python ../scripts/kb_stat_seed_kb.py seed --kb-id 148 --days 30
+    # 灌完后立即触发该 KB 的采集，详情页即可直接看到数据：
+    .venv/bin/python ../scripts/kb_stat_seed_kb.py seed --kb-id 148 --days 30 --trigger-collect
 """
 
 import argparse
@@ -22,6 +24,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 TEST_PREFIX = "__test__"
+# triggered_by is String(32); __test__ prefix lets clean_kb remove these runs.
+TRIGGERED_BY = f"{TEST_PREFIX}seed_kb"
 QUERY_POOL = [
     "如何申请年假",
     "公积金提取条件",
@@ -42,7 +46,13 @@ def ts(d: date, hour: int = 0) -> datetime:
     return datetime(d.year, d.month, d.day, hour, 0, 0)
 
 
-def seed_kb(kb_id: int, days: int = 30, queries_per_day: int = 15, target_date=None):
+def seed_kb(
+    kb_id: int,
+    days: int = 30,
+    queries_per_day: int = 15,
+    target_date=None,
+    trigger_collect: bool = False,
+):
     random.seed(42)
     target = target_date or date.today()
     period_start = target - timedelta(days=days - 1)
@@ -91,6 +101,82 @@ def seed_kb(kb_id: int, days: int = 30, queries_per_day: int = 15, target_date=N
             src.commit()
             user_ids.append(result.lastrowid)
     print(f"Users: {user_ids}")
+
+    # 0. 预清理该 KB 的旧测试数据，保证 seed 可重复运行（幂等）
+    # subtask_contexts / tasks 可重复插入（无唯一约束），但 share_links
+    # 的 share_token 和 resource_members 的 (resource,id,entity) 有唯一约束。
+    for table, col, pattern in [
+        ("subtask_contexts", "name", f"{TEST_PREFIX}sc_kb{kb_id}_%"),
+        ("knowledge_documents", "name", f"{TEST_PREFIX}doc_kb{kb_id}_%"),
+        ("share_links", "share_token", f"{TEST_PREFIX}kb{kb_id}_link_%"),
+        ("tasks", "name", f"{TEST_PREFIX}task_kb{kb_id}_%"),
+    ]:
+        try:
+            src.execute(
+                text(f"DELETE FROM {table} WHERE {col} LIKE :p"),
+                {"p": pattern},
+            )
+        except Exception:
+            src.rollback()
+    src.commit()
+
+    # 1.5 灌入 knowledge_documents（覆盖 doc_upload_trend / kb_growth_curve /
+    # kb_size_distribution）。分散 created_at 到周期内多天，含 file_extension /
+    # source_type / user_id，is_active=1。
+    extensions = [".pdf", ".docx", ".md", ".xlsx", ".pptx"]
+    span = (target - period_start).days or 1
+    doc_count = 0
+    for j in range(1, 9):
+        name = f"{TEST_PREFIX}doc_kb{kb_id}_{j}"
+        d = period_start + timedelta(days=random.randint(0, span))
+        file_size = (j + 1) * 1024
+        chunk_count = (j % 5) + 1
+        src.execute(
+            text(
+                "INSERT INTO knowledge_documents "
+                "(kind_id, attachment_id, name, file_extension, file_size, status, user_id, "
+                " is_active, index_status, index_generation, splitter_config, source_type, "
+                " source_config, chunks, summary, folder_id, created_at, updated_at) "
+                "VALUES (:kid, 0, :name, :ext, :fsz, 'enabled', :uid, "
+                " 1, 'success', 1, :sc, 'file', '{}', :chunks, :summary, 0, :ca, :ca)"
+            ),
+            {
+                "kid": kb_id,
+                "name": name,
+                "ext": extensions[j % len(extensions)],
+                "fsz": file_size,
+                "uid": user_ids[j % len(user_ids)],
+                # splitter_config must be a valid SplitterConfig shape (the
+                # response schema's normalize_splitter_config reads the "type"
+                # key, not "splitter_type"). Empty {} normalizes to the default
+                # flat config; chunks.splitter_type below feeds doc_chunk_strategy.
+                "sc": "{}",
+                "chunks": json.dumps(
+                    {
+                        "splitter_type": "recursive",
+                        "total_count": chunk_count,
+                        "items": [
+                            {"token_count": random.randint(50, 500)}
+                            for _ in range(chunk_count)
+                        ],
+                    }
+                ),
+                "summary": json.dumps({"status": "completed"}) if j % 2 == 0 else None,
+                "ca": ts(d, 8 + j % 10),
+            },
+        )
+        doc_count += 1
+    src.commit()
+    print(f"knowledge_documents: {doc_count} test docs added")
+
+    # 重新拉取文档（含新建的测试文档），供 subtask_contexts / selected_documents 引用
+    docs = src.execute(
+        text(
+            "SELECT id, name, file_extension FROM knowledge_documents "
+            "WHERE kind_id=:kid AND is_active=1"
+        ),
+        {"kid": kb_id},
+    ).fetchall()
 
     # 2. 灌入 subtask_contexts（覆盖检索类指标的所有 JSON 路径）
     span = (target - period_start).days or 1
@@ -243,6 +329,16 @@ def seed_kb(kb_id: int, days: int = 30, queries_per_day: int = 15, target_date=N
     print(f"resource_members: {member_count} added")
 
     # 4. 灌入 share_links（覆盖 share_link_usage）
+    # 先删除该 KB 的旧测试 share_links，避免 share_token 唯一约束冲突
+    # （random.seed 固定导致 token 确定性生成，重复 seed 会产生相同 token）
+    src.execute(
+        text(
+            "DELETE FROM share_links WHERE resource_type='KnowledgeBase' "
+            "AND resource_id=:rid AND share_token LIKE :p"
+        ),
+        {"rid": kb_id, "p": f"{TEST_PREFIX}kb{kb_id}_link_%"},
+    )
+    src.commit()
     for i in range(2):
         token = f"{TEST_PREFIX}kb{kb_id}_link_{i}_{random.randint(1000,9999)}"
         d = period_start + timedelta(days=random.randint(0, span))
@@ -266,9 +362,40 @@ def seed_kb(kb_id: int, days: int = 30, queries_per_day: int = 15, target_date=N
     src.commit()
     print(f"share_links: added")
 
-    # Existing KB documents belong to the user. Never mutate chunks/summary
-    # merely to improve statistics fixture coverage.
-    print("documents: existing rows left unchanged")
+    # 4.5 灌入 selected_documents 上下文（覆盖 selected_documents_usage）。
+    # context_type='selected_documents'，type_data={knowledge_base_id, document_ids}，
+    # 与生产 notebook 模式直接注入的上下文结构一致（见
+    # backend/app/services/chat/preprocessing/contexts.py）。
+    if docs:
+        sel_count = 0
+        doc_id_list = [doc.id for doc in docs]
+        for day_offset in range(span + 1):
+            d = period_start + timedelta(days=day_offset)
+            for _ in range(random.randint(0, 2)):
+                k = random.randint(1, min(3, len(doc_id_list)))
+                sample = random.sample(doc_id_list, k=k)
+                name = f"{TEST_PREFIX}sc_kb{kb_id}_sel_d{day_offset}_{sel_count}"
+                src.execute(
+                    text(
+                        "INSERT INTO subtask_contexts "
+                        "(subtask_id, user_id, context_type, name, status, error_message, "
+                        " binary_data, image_base64, extracted_text, text_length, type_data, "
+                        " created_at, updated_at) "
+                        "VALUES (0, :uid, 'selected_documents', :name, 'completed', '', "
+                        " '', '', '', 0, :td, :ca, :ca)"
+                    ),
+                    {
+                        "uid": user_ids[day_offset % len(user_ids)],
+                        "name": name,
+                        "td": json.dumps(
+                            {"knowledge_base_id": kb_id, "document_ids": sample}
+                        ),
+                        "ca": ts(d, 10 + sel_count % 8),
+                    },
+                )
+                sel_count += 1
+        src.commit()
+        print(f"selected_documents contexts: {sel_count} rows")
 
     # 5. 灌入 tasks（覆盖 user_kb_binding）
     for j in range(2):
@@ -304,6 +431,57 @@ def seed_kb(kb_id: int, days: int = 30, queries_per_day: int = 15, target_date=N
     src.close()
     print(f"\n✅ seed done for KB {kb_id} ({kb.name})")
 
+    if trigger_collect:
+        _trigger_collection(kb_id, target, days)
+
+
+def _trigger_collection(kb_id: int, target: date, days: int) -> int:
+    """Run a KB-scoped collect_all so the latest run includes this KB.
+
+    Mirrors kb_stat_test_data._trigger_collection but scopes to a single KB
+    and matches the seed's lookback window, so one run writes the full N-day
+    series. The KB-detail page reads only the latest run, so without this
+    re-collection a freshly seeded KB shows no data until the next beat.
+    """
+    from knowledge_engine.stat import collect_all, mark_kb_stat_stale_runs
+    from shared.db.readonly_session import (
+        get_readonly_session_factory,
+        init_readonly_db,
+    )
+    from shared.db.stat_session import get_stat_session_factory, init_stat_db
+
+    load_dotenv(
+        os.path.join(os.path.dirname(__file__), "..", "knowledge_runtime", ".env")
+    )
+    init_readonly_db(os.environ["DATABASE_URL"])
+    init_stat_db(os.environ["KNOWLEDGE_STAT_DATABASE_URL"])
+
+    # Clean up any stale "running" runs from previous interrupted attempts.
+    stat_factory = get_stat_session_factory()
+    try:
+        cleaned = mark_kb_stat_stale_runs(
+            stale_minutes=5, stat_session_factory=stat_factory
+        )
+        if cleaned:
+            print(f"  [collect] cleaned {cleaned} stale running runs")
+    except Exception as e:
+        print(f"  [collect] stale cleanup warning: {e}")
+
+    print(
+        f"  [collect] running collect_all(target={target}, kb_id={kb_id}, "
+        f"lookback={days}, triggered_by={TRIGGERED_BY})..."
+    )
+    run_id = collect_all(
+        target_date=target,
+        kb_ids=[kb_id],
+        lookback_days=days,
+        triggered_by=TRIGGERED_BY,
+        source_session_factory=get_readonly_session_factory(),
+        stat_session_factory=stat_factory,
+    )
+    print(f"  [collect] done, run_id={run_id}")
+    return run_id
+
 
 def clean_kb(kb_id: int):
     """删除指定 KB 的所有 __test__ 前缀测试数据（源表 + 统计表）。"""
@@ -326,6 +504,7 @@ def clean_kb(kb_id: int):
     # 源表：按 name LIKE '__test__%' 或 share_token LIKE '__test__%'
     for table, col in [
         ("subtask_contexts", "name"),
+        ("knowledge_documents", "name"),
         ("share_links", "share_token"),
         ("tasks", "name"),
         ("resource_members", "entity_display_name"),
@@ -335,6 +514,11 @@ def clean_kb(kb_id: int):
                 r = src.execute(
                     text(f"DELETE FROM {table} WHERE {col} LIKE :p"),
                     {"p": f"{TEST_PREFIX}sc_kb{kb_id}_%"},
+                )
+            elif table == "knowledge_documents":
+                r = src.execute(
+                    text(f"DELETE FROM {table} WHERE {col} LIKE :p"),
+                    {"p": f"{TEST_PREFIX}doc_kb{kb_id}_%"},
                 )
             elif table == "share_links":
                 r = src.execute(
@@ -413,13 +597,24 @@ if __name__ == "__main__":
     p_seed.add_argument("--kb-id", type=int, required=True)
     p_seed.add_argument("--days", type=int, default=30)
     p_seed.add_argument("--queries", type=int, default=15)
+    p_seed.add_argument(
+        "--trigger-collect",
+        action="store_true",
+        help="Trigger a KB-scoped collect_all after seeding so the detail "
+        "page shows data immediately (otherwise re-run kb_stat_backfill.py)",
+    )
 
     p_clean = sub.add_parser("clean", help="Clean test data")
     p_clean.add_argument("--kb-id", type=int, required=True)
 
     args = parser.parse_args()
     if args.cmd == "seed":
-        seed_kb(args.kb_id, args.days, args.queries)
+        seed_kb(
+            args.kb_id,
+            args.days,
+            args.queries,
+            trigger_collect=args.trigger_collect,
+        )
     elif args.cmd == "clean":
         clean_kb(args.kb_id)
     else:

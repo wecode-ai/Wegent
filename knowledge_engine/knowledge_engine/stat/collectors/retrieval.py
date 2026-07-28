@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 # avoid drawing a misleading spike.
 LOW_CONFIDENCE_THRESHOLD = 5
 
+# A query is "slow" when its RAG latency exceeds this fixed wall-clock
+# threshold (milliseconds). We deliberately avoid a self-referential
+# percentile (e.g. "above this KB's own P95") because that definition is
+# meaningless on small samples — with total<21 the P95 index falls outside
+# the array and ~every query ends up "not slow". A constant 2s cutoff is
+# independent of sample size and matches the SLO expectation users have.
+SLOW_LATENCY_MS = 2000
+
 # ---------------------------------------------------------------------------
 # Chunk count distribution buckets
 # ---------------------------------------------------------------------------
@@ -542,9 +550,10 @@ def retrieval_mode_distribution(
     source_session: Session,
     stat_session: Session,
 ) -> int:
+    kb_filter_sql, kb_params = _kb_json_filter(mfilter)
     rows = source_session.execute(
         text(
-            """
+            f"""
             SELECT JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.rag_result.injection_mode')) AS mode,
                    COUNT(*) AS call_count
             FROM subtask_contexts sc
@@ -552,12 +561,14 @@ def retrieval_mode_distribution(
               AND JSON_EXTRACT(sc.type_data, '$.rag_result') IS NOT NULL
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
               AND sc.created_at < :end_date
+              {kb_filter_sql}
             GROUP BY mode
         """
         ),
         {
             "end_date": mfilter.effective_end_date,
             "days": mfilter.lookback_days,
+            **kb_params,
         },
     ).fetchall()
 
@@ -1707,7 +1718,7 @@ def kb_slow_query_rate(
     source_session: Session,
     stat_session: Session,
 ) -> int:
-    """Collect per-KB slow-query rate (share of queries above the KB's P95)."""
+    """Collect per-KB slow-query rate (share of queries above a fixed 2s cutoff)."""
     kb_filter_sql, kb_params = _kb_json_filter(mfilter)
 
     rows = source_session.execute(
@@ -1747,20 +1758,23 @@ def kb_slow_query_rate(
         lats_sorted = sorted(lats)
         total = len(lats_sorted)
         p95 = _percentile(lats_sorted, 95)
-        slow = sum(1 for v in lats_sorted if p95 is not None and v > p95)
-        # By construction ~5% of queries are above P95; we still store the
-        # ratio so ops can spot KBs whose long tail is dominated by a few
-        # outliers (small sample sizes inflate the rate).
+        # "Slow" is a fixed 2s cutoff, NOT "above the KB's own P95": the
+        # self-referential percentile definition collapses to ~0% on small
+        # samples (total<21) because the P95 index sits outside the array,
+        # masking genuinely slow queries. The fixed threshold is sample-size
+        # independent. We still record p95_latency_ms for observability.
+        slow = sum(1 for v in lats_sorted if v > SLOW_LATENCY_MS)
         rate = round(slow / total * 100, 2) if total > 0 else None
+        low_conf = 1 if 0 < total < LOW_CONFIDENCE_THRESHOLD else 0
 
         stat_session.execute(
             text(
                 """
                 INSERT INTO kb_stat_kb_slow_query_rate
                     (run_id, target_date, kb_id, total_queries,
-                     slow_queries, p95_latency_ms, slow_rate)
+                     slow_queries, p95_latency_ms, slow_rate, low_confidence)
                 VALUES (:run_id, :target_date, :kb_id, :total_queries,
-                        :slow_queries, :p95_latency_ms, :slow_rate)
+                        :slow_queries, :p95_latency_ms, :slow_rate, :low_confidence)
             """
             ),
             {
@@ -1771,6 +1785,7 @@ def kb_slow_query_rate(
                 "slow_queries": slow,
                 "p95_latency_ms": p95,
                 "slow_rate": rate,
+                "low_confidence": low_conf,
             },
         )
         written += 1

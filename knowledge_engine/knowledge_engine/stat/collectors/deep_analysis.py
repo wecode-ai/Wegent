@@ -42,6 +42,21 @@ def kb_health_score(
 
     For each day in the lookback window, computes health metrics based on
     documents that existed up to and including that day.
+
+    .. note::
+
+        This collector intentionally keeps a per-day query loop (one bounded
+        scan per day). Unlike ``kb_size_distribution`` (whose only inputs are
+        the immutable ``created_at`` / ``file_size`` columns), the health score
+        reads *non-monotonic* document state — ``updated_at``, ``index_status``,
+        ``is_active`` and ``summary`` all change over a document's lifetime.
+        A "base snapshot + daily increment" re-accumulation cannot reproduce
+        the per-day cumulative state from increments, so the daily rescan is
+        required for semantic correctness. Each query is bounded by
+        ``created_at <= :cutoff`` and the KB filter; ensure
+        ``knowledge_documents(created_at, kind_id)`` is indexed to keep each
+        daily scan cheap. Performance is tracked here rather than traded for
+        an approximation that would silently skew health tiers.
     """
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
     kb_filter_sql = f"AND k.id {kb_clause}" if kb_clause else ""
@@ -52,6 +67,17 @@ def kb_health_score(
     from datetime import timedelta as _td
 
     written = 0
+    insert_sql = text(
+        """
+        INSERT INTO kb_stat_kb_health_score
+            (run_id, target_date, stat_date, kb_id, kb_name, namespace,
+             activity_score, index_success_score, enable_score,
+             summary_score, health_score, formula_version)
+        VALUES (:run_id, :target_date, :stat_date, :kb_id, :kb_name, :namespace,
+                :activity_score, :index_success_score, :enable_score,
+                :summary_score, :health_score, :formula_version)
+        """
+    )
     d = start
     while d <= end:
         rows = source_session.execute(
@@ -84,40 +110,31 @@ def kb_health_score(
             },
         ).fetchall()
 
+        # Batch the per-day INSERTs: collect all KB rows for this day, then
+        # issue a single executemany instead of N round-trips.
+        batch: list[dict] = []
         for r in rows:
             total = int(r.total_docs or 0)
+            # Skip empty KBs (no documents). Writing an all-NULL row would
+            # pollute the ``no_data`` bucket of the health distribution
+            # chart — ``no_data`` should mean "collection failed / not
+            # covered", not "this KB genuinely has no documents". An empty
+            # KB simply does not appear in the health-score tiers.
             if total == 0:
-                activity_score = None
-                index_success_score = None
-                enable_score = None
-                summary_score = None
-                health_score = None
-            else:
-                activity_score = round(float(r.active_docs or 0) / total * 100, 2)
-                index_success_score = round(float(r.success_docs or 0) / total * 100, 2)
-                enable_score = round(float(r.enabled_docs or 0) / total * 100, 2)
-                summary_score = round(float(r.summary_docs or 0) / total * 100, 2)
+                continue
+            activity_score = round(float(r.active_docs or 0) / total * 100, 2)
+            index_success_score = round(float(r.success_docs or 0) / total * 100, 2)
+            enable_score = round(float(r.enabled_docs or 0) / total * 100, 2)
+            summary_score = round(float(r.summary_docs or 0) / total * 100, 2)
 
-                health_score = round(
-                    activity_score * 0.3
-                    + index_success_score * 0.3
-                    + enable_score * 0.2
-                    + summary_score * 0.2,
-                    2,
-                )
-
-            stat_session.execute(
-                text(
-                    """
-                    INSERT INTO kb_stat_kb_health_score
-                        (run_id, target_date, stat_date, kb_id, kb_name, namespace,
-                         activity_score, index_success_score, enable_score,
-                         summary_score, health_score)
-                    VALUES (:run_id, :target_date, :stat_date, :kb_id, :kb_name, :namespace,
-                            :activity_score, :index_success_score, :enable_score,
-                            :summary_score, :health_score)
-                """
-                ),
+            health_score = round(
+                activity_score * 0.3
+                + index_success_score * 0.3
+                + enable_score * 0.2
+                + summary_score * 0.2,
+                2,
+            )
+            batch.append(
                 {
                     "run_id": run_id,
                     "target_date": mfilter.target_date,
@@ -130,9 +147,12 @@ def kb_health_score(
                     "enable_score": enable_score,
                     "summary_score": summary_score,
                     "health_score": health_score,
-                },
+                    "formula_version": "v1",
+                }
             )
-            written += 1
+        if batch:
+            stat_session.execute(insert_sql, batch)
+            written += len(batch)
         d += _td(days=1)
     return written
 
@@ -159,7 +179,7 @@ def doc_value_ranking(
     ctx_rows = source_session.execute(
         text(
             """
-            SELECT sc.type_data
+            SELECT sc.type_data, sc.user_id
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
@@ -185,7 +205,10 @@ def doc_value_ranking(
 
         # Count RAG references from rag_result.sources
         rag_result = data.get("rag_result")
-        user_id = data.get("user_id")
+        # user_id is a real column on subtask_contexts, not a JSON field —
+        # reading it from type_data always returned None and dropped all
+        # unique-user attribution.
+        user_id = r.user_id
 
         if rag_result and isinstance(rag_result, dict):
             sources = rag_result.get("sources", [])
@@ -215,16 +238,33 @@ def doc_value_ranking(
                     except (ValueError, TypeError):
                         pass
 
-    # Query 2: fetch all active docs
-    doc_rows = source_session.execute(
-        text(
+    # Query 2: fetch only the docs that were actually referenced. The previous
+    # implementation pulled *every* active document into Python just to score
+    # and discard the vast majority as "no references" — that scaled with the
+    # whole table (OOM risk) and ignored the per-KB backfill filter entirely.
+    # Restrict to referenced ids AND push the KB filter down so per-KB runs do
+    # not scan unrelated documents.
+    referenced_ids = set(rag_counts) | set(head_counts)
+    kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
+    kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
+
+    doc_rows: list = []
+    if referenced_ids:
+        did_clause, did_params = build_kb_in_clause(
+            sorted(referenced_ids), prefix="did"
+        )
+        doc_rows = source_session.execute(
+            text(
+                f"""
+                SELECT id, name, kind_id, updated_at
+                FROM knowledge_documents
+                WHERE is_active = 1
+                  AND id {did_clause}
+                  {kb_where}
             """
-            SELECT id, name, kind_id, updated_at
-            FROM knowledge_documents
-            WHERE is_active = 1
-        """
-        ),
-    ).fetchall()
+            ),
+            {**did_params, **kb_params},
+        ).fetchall()
 
     # Build docs with value scores
     scored_docs = []
@@ -380,9 +420,16 @@ def user_pattern_evolution(
     source_session: Session,
     stat_session: Session,
 ) -> int:
+    # Filter on the knowledge_id JSON field (same pattern as the
+    # rag_head_co_occurrence collector below). The 6-month window is
+    # intentionally left as-is per the fix scope.
+    kbf_clause, kbf_params = build_kb_in_clause(mfilter.kb_ids, prefix="kbf")
+    kb_filter_sql = ""
+    if kbf_clause:
+        kb_filter_sql = "AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') " + kbf_clause
     rows = source_session.execute(
         text(
-            """
+            f"""
             SELECT sc.user_id,
                    DATE_FORMAT(sc.created_at, '%%Y-%%m') AS stat_month,
                    SUM(CASE WHEN sc.type_data->'$.rag_result' IS NOT NULL
@@ -392,26 +439,37 @@ def user_pattern_evolution(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL 6 MONTH)
+              {kb_filter_sql}
             GROUP BY sc.user_id, stat_month
             ORDER BY sc.user_id, stat_month
         """
         ),
         {
             "end_date": mfilter.effective_end_date,
+            **kbf_params,
         },
     ).fetchall()
 
-    # Fetch user names with try/except since users table may not be accessible
+    # Resolve user names for the users that actually appear in the result.
+    # The users table is part of the business DB and may be inaccessible on
+    # some deployments (e.g. a stripped read replica), so a failure here only
+    # degrades the display (empty user_name) instead of failing the collector.
+    # NB: SQLAlchemy ``text()`` does not expand a Python list into a bare
+    # ``IN :name`` placeholder — that silently raised and left user_name empty.
+    # Use the explicit expanding-placeholder builder shared by all collectors.
     user_names: dict[int, str] = {}
-    try:
-        user_rows = source_session.execute(
-            text("SELECT id, user_name FROM users WHERE id IN :user_ids"),
-            {"user_ids": list({r.user_id for r in rows if r.user_id})},
-        ).fetchall()
-        for ur in user_rows:
-            user_names[ur.id] = ur.user_name or ""
-    except Exception:
-        logger.debug("Could not fetch user names from users table")
+    user_ids = list({r.user_id for r in rows if r.user_id})
+    if user_ids:
+        uid_clause, uid_params = build_kb_in_clause(user_ids, prefix="un")
+        try:
+            user_rows = source_session.execute(
+                text(f"SELECT id, user_name FROM users WHERE id {uid_clause}"),
+                uid_params,
+            ).fetchall()
+            for ur in user_rows:
+                user_names[ur.id] = ur.user_name or ""
+        except Exception:
+            logger.debug("Could not fetch user names from users table")
 
     written = 0
     for r in rows:
@@ -632,14 +690,14 @@ def rag_head_verify_rate(
     start = mfilter.effective_period_start
     end = mfilter.effective_end_date
 
-    kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
+    # The filter targets the JSON field knowledge_id on subtask_contexts, so
+    # use a dedicated prefixed clause (no raw id IN clause here, unlike
+    # dashboard.py). Avoids the old `.replace("kb_", "kbf_")` hack that
+    # renamed params in place.
+    kbf_clause, kbf_params = build_kb_in_clause(mfilter.kb_ids, prefix="kbf")
     kb_filter_sql = ""
-    if kb_clause:
-        kb_filter_sql = (
-            "AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') "
-            + kb_clause.replace("kb_", "kbf_")
-        )
-        kb_params = {k.replace("kb_", "kbf_"): v for k, v in kb_params.items()}
+    if kbf_clause:
+        kb_filter_sql = "AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') " + kbf_clause
 
     rows = source_session.execute(
         text(
@@ -663,7 +721,7 @@ def rag_head_verify_rate(
         {
             "start_date": start,
             "end_date": end,
-            **kb_params,
+            **kbf_params,
         },
     ).fetchall()
 
@@ -725,111 +783,106 @@ def knowledge_coverage(
     source_session: Session,
     stat_session: Session,
 ) -> int:
-    try:
-        kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
-        kb_filter_sql = f"AND id {kb_clause}" if kb_clause else ""
+    kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
+    kb_filter_sql = f"AND id {kb_clause}" if kb_clause else ""
 
-        # SQL1: Fetch KB topics from kinds.json
-        kb_rows = source_session.execute(
-            text(
-                f"""
-                SELECT id, name, json
-                FROM kinds
-                WHERE kind = 'KnowledgeBase' AND is_active = 1
-                  {kb_filter_sql}
+    # SQL1: Fetch KB topics from kinds.json
+    kb_rows = source_session.execute(
+        text(
+            f"""
+            SELECT id, name, json
+            FROM kinds
+            WHERE kind = 'KnowledgeBase' AND is_active = 1
+              {kb_filter_sql}
+        """
+        ),
+        kb_params,
+    ).fetchall()
+
+    kb_topics: dict[int, tuple[str, list[str]]] = {}
+    for r in kb_rows:
+        try:
+            spec = json.loads(r.json) if r.json else {}
+            topics = spec.get("spec", {}).get("summary", {}).get("topics", [])
+            topics = [str(t).lower() for t in topics if t]
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            topics = []
+        kb_topics[r.id] = (r.name, topics)
+
+    # SQL2: Fetch top 500 queries from subtask_contexts
+    # NOTE: query path is $.rag_result.query (NOT $.query_text which
+    # doesn't exist at the top level of type_data). See retrieval.py
+    # collectors for the canonical path pattern.
+    query_rows = source_session.execute(
+        text(
             """
-            ),
-            kb_params,
-        ).fetchall()
+            SELECT JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS kb_id,
+                   JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.rag_result.query')) AS query_text
+            FROM subtask_contexts sc
+            WHERE sc.context_type = 'knowledge_base'
+              AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
+              AND sc.created_at < :end_date
+            ORDER BY sc.created_at DESC
+            LIMIT 500
+        """
+        ),
+        {
+            "end_date": mfilter.effective_end_date,
+            "days": mfilter.lookback_days,
+        },
+    ).fetchall()
 
-        kb_topics: dict[int, tuple[str, list[str]]] = {}
-        for r in kb_rows:
+    written = 0
+    for r in query_rows:
+        kb_id = r.kb_id
+        if isinstance(kb_id, str):
             try:
-                spec = json.loads(r.json) if r.json else {}
-                topics = spec.get("spec", {}).get("summary", {}).get("topics", [])
-                topics = [str(t).lower() for t in topics if t]
-            except (json.JSONDecodeError, AttributeError, TypeError):
-                topics = []
-            kb_topics[r.id] = (r.name, topics)
-
-        # SQL2: Fetch top 500 queries from subtask_contexts
-        # NOTE: query path is $.rag_result.query (NOT $.query_text which
-        # doesn't exist at the top level of type_data). See retrieval.py
-        # collectors for the canonical path pattern.
-        query_rows = source_session.execute(
-            text(
-                """
-                SELECT JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS kb_id,
-                       JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.rag_result.query')) AS query_text
-                FROM subtask_contexts sc
-                WHERE sc.context_type = 'knowledge_base'
-                  AND sc.created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
-                  AND sc.created_at < :end_date
-                ORDER BY sc.created_at DESC
-                LIMIT 500
-            """
-            ),
-            {
-                "end_date": mfilter.effective_end_date,
-                "days": mfilter.lookback_days,
-            },
-        ).fetchall()
-
-        written = 0
-        for r in query_rows:
-            kb_id = r.kb_id
-            if isinstance(kb_id, str):
-                try:
-                    kb_id = int(kb_id.strip('"'))
-                except (ValueError, TypeError):
-                    continue
-
-            query_text = (r.query_text or "").lower()
-            if not query_text:
+                kb_id = int(kb_id.strip('"'))
+            except (ValueError, TypeError):
                 continue
 
-            kb_info = kb_topics.get(kb_id)
-            if not kb_info:
-                continue
+        query_text = (r.query_text or "").lower()
+        if not query_text:
+            continue
 
-            kb_name, topics = kb_info
+        kb_info = kb_topics.get(kb_id)
+        if not kb_info:
+            continue
 
-            # Match query text against each topic
-            for topic in topics:
-                if topic == query_text:
-                    match_type = "exact"
-                elif topic in query_text or query_text in topic:
-                    match_type = "partial"
-                else:
-                    match_type = "none"
+        kb_name, topics = kb_info
 
-                stat_session.execute(
-                    text(
-                        """
-                        INSERT INTO kb_stat_knowledge_coverage
-                            (run_id, target_date, kb_id, kb_name,
-                             topic, query_text, match_type)
-                        VALUES (:run_id, :target_date, :kb_id, :kb_name,
-                                :topic, :query_text, :match_type)
+        # Match query text against each topic
+        for topic in topics:
+            if topic == query_text:
+                match_type = "exact"
+            elif topic in query_text or query_text in topic:
+                match_type = "partial"
+            else:
+                match_type = "none"
+
+            stat_session.execute(
+                text(
                     """
-                    ),
-                    {
-                        "run_id": run_id,
-                        "target_date": mfilter.target_date,
-                        "kb_id": kb_id,
-                        "kb_name": kb_name,
-                        "topic": topic,
-                        "query_text": r.query_text or "",
-                        "match_type": match_type,
-                    },
-                )
-                written += 1
+                    INSERT INTO kb_stat_knowledge_coverage
+                        (run_id, target_date, kb_id, kb_name,
+                         topic, query_text, match_type)
+                    VALUES (:run_id, :target_date, :kb_id, :kb_name,
+                            :topic, :query_text, :match_type)
+                """
+                ),
+                {
+                    "run_id": run_id,
+                    "target_date": mfilter.target_date,
+                    "kb_id": kb_id,
+                    "kb_name": kb_name,
+                    "topic": topic,
+                    "query_text": r.query_text or "",
+                    "match_type": match_type,
+                },
+            )
+            written += 1
 
-        return written
-
-    except Exception:
-        logger.exception("knowledge_coverage collector failed")
-        return 0
+    return written
 
 
 # ---------------------------------------------------------------------------

@@ -109,3 +109,63 @@ export function isWarn(value: number, t: MetricThreshold): boolean {
 export function isCritical(value: number, t: MetricThreshold): boolean {
   return t.lowerIsWorse ? value < t.critical : value > t.critical
 }
+
+/**
+ * Health-score tier definitions.
+ *
+ * The 85/70/50 cutoffs are the single source of truth for mapping a numeric
+ * health score (0-100) to a label/color tier. Previously these were
+ * hardcoded in HealthPillarFromRow, HealthDistributionChart and
+ * HealthScoreTable independently — any change had to be replicated in three
+ * places. Import HEALTH_TIERS + healthTierOf() instead.
+ */
+export interface HealthTier {
+  key: 'excellent' | 'good' | 'fair' | 'poor' | 'no_data'
+  /** Minimum score (inclusive) for this tier; no_data has no minimum. */
+  min: number
+  /** i18n label key under knowledge-stat. */
+  labelKey: string
+  /** Tailwind text/bg classes for badges. */
+  cls: string
+  /** Chart color hex. */
+  color: string
+}
+
+export const HEALTH_TIERS: HealthTier[] = [
+  {
+    key: 'excellent',
+    min: 85,
+    labelKey: 'tier_excellent',
+    cls: 'text-green-600 bg-green-50',
+    color: '#10B981',
+  },
+  {
+    key: 'good',
+    min: 70,
+    labelKey: 'tier_good',
+    cls: 'text-yellow-600 bg-yellow-50',
+    color: '#F59E0B',
+  },
+  {
+    key: 'fair',
+    min: 50,
+    labelKey: 'tier_fair',
+    cls: 'text-orange-600 bg-orange-50',
+    color: '#F97316',
+  },
+  { key: 'poor', min: 0, labelKey: 'tier_poor', cls: 'text-red-600 bg-red-50', color: '#EF4444' },
+]
+
+const NO_DATA_TIER: HealthTier = {
+  key: 'no_data',
+  min: -1,
+  labelKey: 'tier_no_data',
+  cls: 'text-text-muted bg-muted',
+  color: '#9CA3AF',
+}
+
+/** Resolve a numeric health score to its tier. Null/undefined → no_data. */
+export function healthTierOf(score: number | null | undefined): HealthTier {
+  if (score == null || typeof score !== 'number') return NO_DATA_TIER
+  return HEALTH_TIERS.find(t => score >= t.min) ?? NO_DATA_TIER
+}

@@ -11,6 +11,7 @@ and handles failure isolation.
 
 import json
 import logging
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Optional, Sequence
@@ -40,6 +41,38 @@ from knowledge_engine.stat.registry import (
 logger = logging.getLogger(__name__)
 
 
+# Patterns that indicate an exception message may leak internal topology
+# (DB host/DSN, file paths, SQL fragments). Such messages are persisted to
+# kb_stat_runs/kb_stat_collector_runs.error_message and surfaced via the
+# admin API, so they must not carry infrastructure detail.
+_SENSITIVE_PATTERNS = re.compile(
+    r"(mysql://|mysql\+pymysql://|postgresql://|redis://|amqp://|"
+    r"/[a-zA-Z0-9_\-]+/[\w\-.]+\.(py|sql|json)|"
+    r"Host '[^']+'|host=\S+|port=\d+|password=\S+|user=\S+)",
+    re.IGNORECASE,
+)
+
+# Ceiling on the sanitized message length (DB column is TEXT, but admin UI
+# only renders a snippet).
+_MAX_ERR_LEN = 300
+
+
+def _sanitize_error(exc: BaseException) -> str:
+    """Return a client-safe error string for persistence.
+
+    Keeps the exception class name (useful for ops triage, not sensitive)
+    but drops the raw message when it matches sensitive patterns. The full
+    traceback is already written to the server log by the caller.
+    """
+    cls = type(exc).__name__
+    msg = str(exc)
+    if not msg:
+        return cls[:_MAX_ERR_LEN]
+    if _SENSITIVE_PATTERNS.search(msg):
+        return f"{cls} (details redacted; see server log)"[:_MAX_ERR_LEN]
+    return f"{cls}: {msg}"[:_MAX_ERR_LEN]
+
+
 def collect_all(
     *,
     target_date: date,
@@ -49,7 +82,6 @@ def collect_all(
     domains: Optional[Sequence[str]] = None,
     collector_names: Optional[Sequence[str]] = None,
     lookback_days: int = 30,
-    pipeline_mode: str = "legacy",
     source_session_factory: Callable[[], Session],
     stat_session_factory: Callable[[], Session],
 ) -> int:
@@ -58,12 +90,6 @@ def collect_all(
     Each collector executes in its own transaction boundary.
     A single collector failure does not prevent others from running.
     """
-    if pipeline_mode not in {"legacy", "shadow"}:
-        raise ValueError(
-            "pipeline_mode must be 'legacy' or 'shadow'; fact mode is not "
-            "available until all selected collectors have migrated"
-        )
-
     # Trigger collector registration
     import knowledge_engine.stat.collectors  # noqa: F401
 
@@ -98,20 +124,6 @@ def collect_all(
     collector_results: list[str] = []  # track success/failed per collector
 
     try:
-        if pipeline_mode == "shadow":
-            from knowledge_engine.stat.extractors import extract_query_events
-
-            extractor_source_session = source_session_factory()
-            try:
-                extract_query_events(
-                    run_id,
-                    mfilter,
-                    source_session=extractor_source_session,
-                    stat_session=stat_session,
-                )
-            finally:
-                extractor_source_session.close()
-
         for collector in collectors:
             collector_run_id = _create_collector_run(
                 stat_session,
@@ -134,15 +146,23 @@ def collect_all(
                     stat_session=stat_session,
                 )
                 stat_session.commit()
+                duration_ms = int((time.monotonic() - collector_started) * 1000)
                 _update_collector_run(
                     stat_session,
                     collector_run_id,
                     status="success",
                     rows_written=rows or 0,
-                    duration_ms=int((time.monotonic() - collector_started) * 1000),
+                    duration_ms=duration_ms,
                 )
                 total_rows += rows or 0
                 collector_results.append("success")
+                logger.info(
+                    "[kb_stat] run_id=%s collector=%s success rows=%s duration_ms=%s",
+                    run_id,
+                    collector.name,
+                    rows or 0,
+                    duration_ms,
+                )
             except SoftTimeLimitExceeded:
                 # Re-raise so stat_tasks.py's soft-time-limit handler fires
                 # and the run aborts cleanly. Without this the except Exception
@@ -150,24 +170,39 @@ def collect_all(
                 # collectors past the deadline, and only the hard time_limit
                 # (which kills the worker) stops it.
                 stat_session.rollback()
+                duration_ms = int((time.monotonic() - collector_started) * 1000)
                 _update_collector_run(
                     stat_session,
                     collector_run_id,
                     status="failed",
-                    duration_ms=int((time.monotonic() - collector_started) * 1000),
+                    duration_ms=duration_ms,
                     error_message="soft time limit exceeded",
+                )
+                logger.warning(
+                    "[kb_stat] run_id=%s collector=%s failed duration_ms=%s "
+                    "error=soft time limit exceeded",
+                    run_id,
+                    collector.name,
+                    duration_ms,
                 )
                 raise
             except Exception as e:
                 stat_session.rollback()
+                duration_ms = int((time.monotonic() - collector_started) * 1000)
                 _update_collector_run(
                     stat_session,
                     collector_run_id,
                     status="failed",
-                    duration_ms=int((time.monotonic() - collector_started) * 1000),
-                    error_message=str(e)[:2000],
+                    duration_ms=duration_ms,
+                    error_message=_sanitize_error(e),
                 )
-                logger.warning(f"[kb_stat] collector {collector.name} failed: {e}")
+                logger.warning(
+                    "[kb_stat] run_id=%s collector=%s failed duration_ms=%s error=%s",
+                    run_id,
+                    collector.name,
+                    duration_ms,
+                    _sanitize_error(e),
+                )
                 collector_results.append("failed")
             finally:
                 if source_session is not None:
@@ -187,7 +222,7 @@ def collect_all(
         error_msg = ", ".join(failed_names) if failed_names else None
     except Exception as exc:
         run_status = "failed"
-        error_msg = str(exc)[:2000]
+        error_msg = _sanitize_error(exc)
         logger.error(f"[kb_stat] run_id={run_id} aborted: {exc}")
 
     _finalize_run(

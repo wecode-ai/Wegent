@@ -84,9 +84,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CELERY_RESULT_BACKEND", "REDIS_URL"),
     )
 
-    # KB stat worker toggle
+    # KB stat worker toggle. Defaults to false; set KB_STAT_WORKER_ENABLED=true
+    # (e.g. in knowledge_runtime/.env) to embed the celery worker in this
+    # runtime process.
     kb_stat_worker_enabled: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices("KB_STAT_WORKER_ENABLED"),
     )
 
@@ -94,8 +96,9 @@ class Settings(BaseSettings):
     # (except /health) return 503 and the runtime reports enabled=false
     # in the health response. Beat registration happens on the backend
     # side (it owns celery beat); this switch is for the HTTP layer.
+    # Defaults to false; set KB_STAT_ENABLED=true to enable the HTTP layer.
     kb_stat_enabled: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices("KB_STAT_ENABLED"),
     )
 
@@ -103,8 +106,9 @@ class Settings(BaseSettings):
     # health-reporting purposes — the actual beat removal happens on the
     # backend). When false the health endpoint reports prune_enabled=false
     # so operators can verify the retain-forever mode from one place.
+    # Defaults to false; set KB_STAT_PRUNE_ENABLED=true to enable pruning.
     kb_stat_prune_enabled: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices("KB_STAT_PRUNE_ENABLED"),
     )
 
@@ -119,16 +123,6 @@ class Settings(BaseSettings):
     knowledge_stat_lookback_days: int = Field(
         default=30,
         validation_alias=AliasChoices("KNOWLEDGE_STAT_LOOKBACK_DAYS"),
-    )
-
-    # Staged rollout for the statistics-only fact pipeline.
-    # legacy: collectors read the source DB directly
-    # shadow: extract facts, then run legacy collectors for comparison
-    # fact is intentionally rejected until selected collectors have completed
-    # migration; there is no silent direct-source fallback.
-    kb_stat_pipeline_mode: str = Field(
-        default="legacy",
-        validation_alias=AliasChoices("KB_STAT_PIPELINE_MODE"),
     )
 
     # Stat retention (days)

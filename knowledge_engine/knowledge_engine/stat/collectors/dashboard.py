@@ -103,13 +103,17 @@ def collect_period_and_daily(
     end = mfilter.effective_end_date
 
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
+    # The subtask_contexts join filters on a JSON field (knowledge_id), so it
+    # needs its own bind-param namespace to avoid colliding with the kinds/
+    # knowledge_documents IN clauses that filter on the raw id column. Build a
+    # separate prefixed clause instead of string-replacing placeholders (the old
+    # `.replace("kb_", "kbf_")` hack renamed the params dict in place, leaving
+    # the later `kb_clause` references pointing at missing `:kb_N` binds).
+    kbf_clause, kbf_params = build_kb_in_clause(mfilter.kb_ids, prefix="kbf")
     kb_join = ""
-    if kb_clause:
-        kb_join = (
-            " AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') IN "
-            + kb_clause.replace("kb_", "kbf_")
-        )
-        kb_params = {k.replace("kb_", "kbf_"): v for k, v in kb_params.items()}
+    if kbf_clause:
+        # kbf_clause already starts with "IN (...)" from build_kb_in_clause.
+        kb_join = " AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') " + kbf_clause
 
     # --- Period totals ---
     period_row = source_session.execute(
@@ -127,7 +131,7 @@ def collect_period_and_daily(
               {kb_join}
         """
         ),
-        {"start_date": start, "end_date": end, **kb_params},
+        {"start_date": start, "end_date": end, **kbf_params},
     ).fetchone()
 
     period_new_kb = (
@@ -150,8 +154,9 @@ def collect_period_and_daily(
             text(
                 f"""
             SELECT COUNT(*) AS cnt FROM knowledge_documents
-            WHERE created_at >= :start_date AND created_at < :end_date
-            {"AND kind_id " + kb_clause if kb_clause else ""}
+            WHERE is_active = 1
+              AND created_at >= :start_date AND created_at < :end_date
+              {"AND kind_id " + kb_clause if kb_clause else ""}
         """
             ),
             {"start_date": start, "end_date": end, **kb_params},
@@ -176,12 +181,18 @@ def collect_period_and_daily(
             "target_date": mfilter.target_date,
             "start_date": start,
             "end_date": mfilter.period_end_date,
-            "total_queries": period_row.total_queries if period_row else 0,
+            # SUM(CASE WHEN ... THEN 1 ELSE 0 END) returns NULL (not 0) when
+            # no subtask_contexts match the period window; the period_totals
+            # columns are NOT NULL, so coerce NULL -> 0. Mirrors the
+            # int(... or 0) pattern in collect_kb_daily_stats.
+            "total_queries": int(period_row.total_queries or 0) if period_row else 0,
             "new_kb": period_new_kb,
             "new_docs": period_new_docs,
-            "rag_queries": period_row.rag_queries if period_row else 0,
-            "direct_inject": period_row.direct_inject if period_row else 0,
-            "kb_head_queries": period_row.kb_head_queries if period_row else 0,
+            "rag_queries": int(period_row.rag_queries or 0) if period_row else 0,
+            "direct_inject": int(period_row.direct_inject or 0) if period_row else 0,
+            "kb_head_queries": (
+                int(period_row.kb_head_queries or 0) if period_row else 0
+            ),
         },
     )
 
@@ -208,7 +219,7 @@ def collect_period_and_daily(
             ORDER BY d
         """
         ),
-        {"start_date": start, "end_date": end, **kb_params},
+        {"start_date": start, "end_date": end, **kbf_params},
     ).fetchall()
 
     written = 1  # period_totals already written
@@ -234,14 +245,16 @@ def collect_period_and_daily(
     new_doc_by_day = {}
     new_doc_rows = source_session.execute(
         text(
-            """
+            f"""
             SELECT DATE(created_at) AS d, COUNT(*) AS cnt
             FROM knowledge_documents
-            WHERE created_at >= :start_date AND created_at < :end_date
+            WHERE is_active = 1
+              AND created_at >= :start_date AND created_at < :end_date
+              {"AND kind_id " + kb_clause if kb_clause else ""}
             GROUP BY DATE(created_at)
         """
         ),
-        {"start_date": start, "end_date": end},
+        {"start_date": start, "end_date": end, **kb_params},
     ).fetchall()
     for r in new_doc_rows:
         new_doc_by_day[r.d] = r.cnt
@@ -332,15 +345,16 @@ def collect_kb_daily_stats(
     start = mfilter.effective_period_start
     end = mfilter.effective_end_date
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
+    # The subtask_contexts join filters on a JSON field (knowledge_id), so it
+    # needs its own bind-param namespace. See collect_period_and_daily for why
+    # the old `.replace("kb_", "kbf_")` hack was a bug.
+    kbf_clause, kbf_params = build_kb_in_clause(mfilter.kb_ids, prefix="kbf")
     # When no KB filter is supplied we still write rows for every KB that
     # saw activity in the window, so admins can later drill into any KB.
     kb_join = ""
-    if kb_clause:
-        kb_join = (
-            " AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') IN "
-            + kb_clause.replace("kb_", "kbf_")
-        )
-        kb_params = {k.replace("kb_", "kbf_"): v for k, v in kb_params.items()}
+    if kbf_clause:
+        # kbf_clause already starts with "IN (...)" from build_kb_in_clause.
+        kb_join = " AND JSON_EXTRACT(sc.type_data, '$.knowledge_id') " + kbf_clause
 
     # Per-KB daily query breakdown from subtask_contexts. One row per
     # (kb_id, stat_date) with rag / direct / head / active-user counts.
@@ -365,7 +379,7 @@ def collect_kb_daily_stats(
                      CAST(JSON_EXTRACT(sc.type_data, '$.knowledge_id') AS SIGNED)
         """
         ),
-        {"start_date": start, "end_date": end, **kb_params},
+        {"start_date": start, "end_date": end, **kbf_params},
     ).fetchall()
 
     if not daily_rows:

@@ -61,6 +61,10 @@ class RuntimeHttpClient:
             base_url=self._base_url,
             timeout=timeout,
             headers=headers,
+            # Bound the connection pool so a request burst (e.g. many concurrent
+            # stat dashboards) cannot open hundreds of connections to the
+            # runtime and exhaust its stat-DB pool in turn.
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
         )
 
     async def post(

@@ -493,7 +493,7 @@ class QueryDedupRate(StatBase):
 
 
 class KbSlowQueryRate(StatBase):
-    """Per-KB slow-query rate (share of RAG calls above the P95 latency)."""
+    """Per-KB slow-query rate (share of RAG calls above a fixed 2s cutoff)."""
 
     __tablename__ = "kb_stat_kb_slow_query_rate"
 
@@ -505,6 +505,7 @@ class KbSlowQueryRate(StatBase):
     slow_queries = Column(Integer, nullable=False, default=0)
     p95_latency_ms = Column(Float, nullable=True)
     slow_rate = Column(Float, nullable=True)  # 0-100 percentage
+    low_confidence = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, nullable=False, default=func.now())
 
     __table_args__ = (

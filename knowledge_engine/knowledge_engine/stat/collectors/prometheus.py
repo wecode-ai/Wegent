@@ -79,7 +79,7 @@ def prom_conversion_success_rate(
 @register_collector(
     domain="prometheus",
     name="prom_conversion_duration",
-    description="Document conversion duration P50/P90/P99",
+    description="Document conversion duration P50/P90/P99 (estimated)",
     chart_hint="cards",
 )
 def prom_conversion_duration(
@@ -89,7 +89,15 @@ def prom_conversion_duration(
     source_session: Session,
     stat_session: Session,
 ) -> int:
-    """Collect conversion duration percentiles (estimated from average) by file extension."""
+    """Collect conversion duration percentiles by file extension.
+
+    NOTE: the Prometheus data source (and the DB fallback here) only exposes
+    the average per-document conversion time, not the raw per-record latency
+    distribution. The p50/p90/p99 columns are therefore a HEURISTIC ESTIMATE
+    derived from the mean (avg*0.8 / avg*1.5 / avg*2.5), NOT real quantiles.
+    The schema labels carry an "(估算)" / "(estimated)" suffix to make this
+    clear to the frontend; treat them as a rough long-tail indicator only.
+    """
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
     kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
 
@@ -113,6 +121,7 @@ def prom_conversion_duration(
     written = 0
     for r in rows:
         avg_s = float(r.avg_seconds) if r.avg_seconds else 0.0
+        # Heuristic estimate from the mean — NOT real percentiles (see docstring).
         p50 = round(avg_s * 0.8, 2)
         p90 = round(avg_s * 1.5, 2)
         p99 = round(avg_s * 2.5, 2)

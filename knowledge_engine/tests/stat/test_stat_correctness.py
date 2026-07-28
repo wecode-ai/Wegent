@@ -2,13 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import date, datetime
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-from knowledge_engine.stat.extractors.query_event import _parse_event
 from knowledge_engine.stat.filters import MetricFilter
 from knowledge_engine.stat.query import KbStatQueryService
 from knowledge_engine.stat.registry import (
@@ -180,33 +179,3 @@ def test_explicit_run_requires_successful_collector_and_matching_scope() -> None
     assert "c.collector_name = :collector_name" in sql
     assert "c.status = 'success'" in sql
     assert "r.status IN ('completed', 'partial')" in sql
-
-
-def test_query_event_is_parsed_once_for_fact_reuse() -> None:
-    row = SimpleNamespace(
-        id=99,
-        created_at=datetime(2026, 7, 20, 12, 30),
-        user_id=12,
-        type_data={
-            "knowledge_id": "7",
-            "rag_result": {
-                "injection_mode": "rag_retrieval",
-                "chunks_count": 3,
-                "retrieval_count": 2,
-                "restricted_mode": False,
-                "query": "  Hello   WORLD ",
-                "latency_ms": 120,
-            },
-            "adoption_result": {"cited_count": 1},
-            "kb_head_result": {"document_ids": [1]},
-        },
-    )
-
-    event = _parse_event(row, run_id=5)
-
-    assert event["kb_id"] == 7
-    assert event["is_rag"] is True
-    assert event["is_kb_head"] is True
-    assert event["hit"] is True
-    assert event["adopted"] is True
-    assert event["query_hash"] is not None

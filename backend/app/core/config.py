@@ -284,16 +284,18 @@ class Settings(BaseSettings):
     # KB_STAT_ENABLED is the master switch — when false, the stat API
     # endpoints return 503 (kb_stat_disabled) and beat entries for
     # kb_stat.collect_all / kb_stat.prune_old_runs are removed.
-    # Set to false to fully disable the KB statistics feature.
-    KB_STAT_ENABLED: bool = True
+    # Defaults to false so a fresh deployment ships the feature off; set to
+    # true (e.g. in backend/.env) to enable the KB statistics feature.
+    KB_STAT_ENABLED: bool = False
     # KB_STAT_PRUNE_ENABLED controls the weekly prune task independently.
     # When false, beat entry "kb-stat-prune-weekly" is removed so that
     # historical stat data is retained forever (compliance archive /
     # long-term trend analysis). The collect task still runs.
+    # Defaults to false; set to true to enable weekly pruning.
     # Note: KNOWLEDGE_STAT_RETENTION_DAYS<=0 also short-circuits prune at
     # runtime (see knowledge_engine.stat.runner.prune_old_runs); this
     # switch is the recommended way to disable pruning.
-    KB_STAT_PRUNE_ENABLED: bool = True
+    KB_STAT_PRUNE_ENABLED: bool = False
 
     @field_validator(
         "CELERY_BROKER_URL",

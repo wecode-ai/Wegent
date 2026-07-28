@@ -192,29 +192,35 @@ function getBaseUrl(scope: StatScope): string {
 
 export async function fetchDashboard(
   scope: StatScope,
-  filter: MetricFilter
+  filter: MetricFilter,
+  signal?: AbortSignal
 ): Promise<DashboardResponse> {
-  return apiClient.post(`/${getBaseUrl(scope)}/dashboard`, filter)
+  return apiClient.post(`/${getBaseUrl(scope)}/dashboard`, filter, signal)
 }
 
 export async function fetchMetric(
   scope: StatScope,
   name: string,
-  filter: MetricFilter
+  filter: MetricFilter,
+  signal?: AbortSignal
 ): Promise<MetricResponse> {
-  return apiClient.post(`/${getBaseUrl(scope)}/metrics/${name}`, filter)
+  return apiClient.post(`/${getBaseUrl(scope)}/metrics/${name}`, filter, signal)
 }
 
 export async function fetchMetricsBatch(
   scope: StatScope,
   names: string[],
-  filter: MetricFilter
+  filter: MetricFilter,
+  signal?: AbortSignal
 ): Promise<MetricsBatchResponse> {
-  return apiClient.post(`/${getBaseUrl(scope)}/metrics/batch`, { ...filter, names })
+  return apiClient.post(`/${getBaseUrl(scope)}/metrics/batch`, { ...filter, names }, signal)
 }
 
-export async function fetchMetricList(scope: StatScope): Promise<MetricListResponse> {
-  return apiClient.get(`/${getBaseUrl(scope)}/metrics/list`)
+export async function fetchMetricList(
+  scope: StatScope,
+  signal?: AbortSignal
+): Promise<MetricListResponse> {
+  return apiClient.get(`/${getBaseUrl(scope)}/metrics/list`, undefined, signal)
 }
 
 export async function fetchRuns(params?: {

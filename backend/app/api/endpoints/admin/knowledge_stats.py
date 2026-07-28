@@ -206,11 +206,27 @@ async def admin_retry_run(
 
 
 def _handle_remote_error(e: RemoteRuntimeError) -> None:
+    # Never echo raw ``str(e)`` to the client: transport errors carry the
+    # upstream host/URL (httpx RequestError), and unparsed responses may
+    # contain stack traces or internal paths. Log the full detail server-
+    # side; return only the structured code (and the 409 structured detail)
+    # plus a fixed user-facing message.
     if e.retryable:
-        raise HTTPException(502, {"code": "remote_transport_error", "message": str(e)})
+        logger.warning("knowledge_runtime transport error: %s", e)
+        raise HTTPException(
+            502,
+            {"code": e.code, "message": "统计数据服务暂时不可达，请稍后重试"},
+        )
     if e.status_code == 409:
         # Preserve structured detail (e.g. run_in_progress existing_run_id).
-        raise HTTPException(409, e.details or str(e))
+        logger.warning("knowledge_runtime 409: %s", e)
+        raise HTTPException(
+            409, {"code": e.code, "message": "统计任务冲突", "details": e.details or {}}
+        )
     if e.status_code:
-        raise HTTPException(e.status_code, e.details or str(e))
-    raise HTTPException(502, str(e))
+        logger.warning("knowledge_runtime error (status=%s): %s", e.status_code, e)
+        raise HTTPException(
+            e.status_code, {"code": e.code, "message": "统计数据查询失败"}
+        )
+    logger.warning("knowledge_runtime error: %s", e)
+    raise HTTPException(502, {"code": e.code, "message": "统计数据查询失败"})

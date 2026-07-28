@@ -9,16 +9,9 @@ import { Info } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { type MetricFilter, type DashboardResponse, fetchDashboard } from '../../api'
+import { formatStorageSize } from '../../format-utils'
 import { SummaryCard, SummaryGrid, DailyDetailTable } from './DashboardWidgets'
 import { LineChart, BarChart, HealthDistributionChart, Sparkline } from '../charts/Charts'
-
-function formatStorageSize(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  const val = bytes / Math.pow(1024, i)
-  return `${val < 10 ? val.toFixed(1) : Math.round(val)} ${units[i]}`
-}
 
 /** Chart title with hover tooltip for explanation. */
 function ChartTitle({ title, tooltipKey }: { title: string; tooltipKey: string }) {

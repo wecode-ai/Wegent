@@ -94,8 +94,9 @@ celery_app.conf.update(
         },
         "kb-stat-prune-weekly": {
             "task": "kb_stat.prune_old_runs",
-            # 北京时间周一 04:13 = UTC 周日 20:13 (celery timezone=UTC)
-            "schedule": crontab(day_of_week=6, hour=20, minute=13),
+            # 北京时间周一 04:13 = UTC 周日 20:13 (celery timezone=UTC).
+            # celery day_of_week: 0=Sunday .. 6=Saturday, so UTC Sunday is 0.
+            "schedule": crontab(day_of_week=0, hour=20, minute=13),
             "options": {"queue": "kb_stat"},
         },
     },

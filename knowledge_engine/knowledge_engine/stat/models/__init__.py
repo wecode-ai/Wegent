@@ -5,20 +5,10 @@
 """Stat table model registry."""
 
 from knowledge_engine.stat.models.base import StatBase
-from knowledge_engine.stat.models.pipeline import (
-    ExtractorRun,
-    MetricWatermark,
-    SourceWatermark,
-    StageQueryEvent,
-)
 from knowledge_engine.stat.models.runs import CollectorRun, Run
 
 __all__ = [
     "StatBase",
     "Run",
     "CollectorRun",
-    "ExtractorRun",
-    "StageQueryEvent",
-    "SourceWatermark",
-    "MetricWatermark",
 ]

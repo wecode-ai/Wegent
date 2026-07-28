@@ -27,6 +27,11 @@ class KbHealthScore(StatBase):
     enable_score = Column(Float, nullable=True)
     summary_score = Column(Float, nullable=True)
     health_score = Column(Float, nullable=True)
+    # Formula version pins the weighting used for this row (v1 =
+    # activity*0.3 + index_success*0.3 + enable*0.2 + summary*0.2).
+    # Future weight changes bump the version so historical trend lines
+    # are not silently mixed with a new formula.
+    formula_version = Column(String(16), nullable=False, default="v1")
     created_at = Column(DateTime, default=func.now())
 
     __table_args__ = (

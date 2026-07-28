@@ -17,6 +17,8 @@
   "health_score_trend": "健康分趋势",
   "health_score_trend_hint": "最近 {{n}} 天健康分变化",
   "quality_summary_title": "知识库健康度",
+  "health_data_as_of": "数据日期 {{date}}",
+  "health_data_no_date": "数据日期未知",
   "tier_excellent": "优",
   "tier_good": "良",
   "tier_fair": "中",
@@ -116,7 +118,11 @@
     "query_dedup_rate": "唯一查询占比",
     "kb_slow_query_rate": "知识库慢查询率",
     "kb_avg_doc_length": "知识库文档平均大小",
-    "cross_kb_query_user": "跨知识库查询用户"
+    "cross_kb_query_user": "跨知识库查询用户",
+    "kb_active_users": "知识库活跃用户",
+    "kb_rag_head_ratio": "知识库RAG/指定文档使用比",
+    "kb_retrieval_mode_dist": "知识库检索模式分布",
+    "kb_zero_chunk_rate": "知识库零分块查询率"
   },
   "domains": {
     "dashboard": "总览",
@@ -142,6 +148,9 @@
     "new_kb": "新增知识库",
     "new_docs": "新增文档",
     "dt_active_users": "新增钉钉同步用户"
+  },
+  "health_table": {
+    "kb_name": "知识库"
   },
   "total_kb_count": "总知识库数",
   "total_doc_count": "总文档数",

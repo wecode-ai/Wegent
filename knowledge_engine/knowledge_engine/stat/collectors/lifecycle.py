@@ -55,56 +55,105 @@ def kb_creation_trend(
     source_session: Session,
     stat_session: Session,
 ) -> int:
+    """Collect a continuous daily KB-creation series per namespace.
+
+    A day with no new KB is still written with ``new_kb_count=0`` and a
+    carried-forward cumulative, so the trend line has no gaps. Without this
+    fill, days with zero creation are absent from the table and the chart
+    only plots the days that had creations.
+    """
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
     kb_filter_sql = f"AND id {kb_clause}" if kb_clause else ""
 
-    rows = source_session.execute(
+    start = mfilter.effective_period_start
+    end = mfilter.period_end_date
+    from datetime import timedelta as _td
+
+    # Namespaces that own at least one KB up to the end of the window. Each
+    # gets a row for every day so the series is gapless even when a whole
+    # namespace has no creation in the window.
+    ns_rows = source_session.execute(
+        text(
+            f"""
+            SELECT DISTINCT namespace
+            FROM kinds
+            WHERE kind = 'KnowledgeBase' AND is_active = 1
+              AND created_at < :end_date
+              {kb_filter_sql}
+        """
+        ),
+        {"end_date": mfilter.effective_end_date, **kb_params},
+    ).fetchall()
+    namespaces = [r.namespace for r in ns_rows if r.namespace is not None]
+    if not namespaces:
+        return 0
+
+    # Per-day per-namespace creation counts within the window.
+    count_rows = source_session.execute(
         text(
             f"""
             SELECT DATE(created_at) AS d, namespace,
-                   COUNT(*) AS new_kb,
-                   SUM(COUNT(*)) OVER (
-                       PARTITION BY namespace
-                       ORDER BY DATE(created_at)
-                       ROWS UNBOUNDED PRECEDING
-                   ) AS cumulative_kb
+                   COUNT(*) AS new_kb
             FROM kinds
             WHERE kind = 'KnowledgeBase' AND is_active = 1
-              AND created_at >= DATE_SUB(:end_date, INTERVAL :days DAY)
+              AND created_at >= :start_date
               AND created_at < :end_date
               {kb_filter_sql}
             GROUP BY DATE(created_at), namespace
-            ORDER BY d
         """
         ),
         {
+            "start_date": start,
             "end_date": mfilter.effective_end_date,
-            "days": mfilter.lookback_days,
             **kb_params,
         },
     ).fetchall()
+    counts: dict[tuple, int] = {(r.d, r.namespace): int(r.new_kb) for r in count_rows}
 
-    written = 0
-    for r in rows:
-        stat_session.execute(
-            text(
-                """
-                INSERT INTO kb_stat_kb_creation_trend
-                    (run_id, target_date, stat_date, namespace, new_kb_count, cumulative_kb_count)
-                VALUES (:run_id, :target_date, :stat_date, :ns, :new_kb, :cumulative_kb)
-            """
-            ),
-            {
-                "run_id": run_id,
-                "target_date": mfilter.target_date,
-                "stat_date": r.d,
-                "ns": r.namespace,
-                "new_kb": r.new_kb,
-                "cumulative_kb": r.cumulative_kb,
-            },
-        )
-        written += 1
-    return written
+    # KB count created before the window per namespace — the cumulative
+    # baseline so the running total reflects true all-time growth rather
+    # than resetting at the window start.
+    base_rows = source_session.execute(
+        text(
+            f"""
+            SELECT namespace, COUNT(*) AS base_kb
+            FROM kinds
+            WHERE kind = 'KnowledgeBase' AND is_active = 1
+              AND created_at < :start_date
+              {kb_filter_sql}
+            GROUP BY namespace
+        """
+        ),
+        {"start_date": start, **kb_params},
+    ).fetchall()
+    base: dict[str, int] = {r.namespace: int(r.base_kb) for r in base_rows}
+
+    insert_sql = text(
+        """
+        INSERT INTO kb_stat_kb_creation_trend
+            (run_id, target_date, stat_date, namespace, new_kb_count, cumulative_kb_count)
+        VALUES (:run_id, :target_date, :stat_date, :ns, :new_kb, :cumulative_kb)
+    """
+    )
+    days = [start + _td(days=i) for i in range((end - start).days + 1)]
+    batch: list[dict] = []
+    for ns in namespaces:
+        cumulative = base.get(ns, 0)
+        for d in days:
+            cumulative += counts.get((d, ns), 0)
+            batch.append(
+                {
+                    "run_id": run_id,
+                    "target_date": mfilter.target_date,
+                    "stat_date": d,
+                    "ns": ns,
+                    "new_kb": counts.get((d, ns), 0),
+                    "cumulative_kb": cumulative,
+                }
+            )
+    if batch:
+        stat_session.execute(insert_sql, batch)
+    return len(batch)
 
 
 # ---------------------------------------------------------------------------
@@ -362,80 +411,156 @@ def kb_size_distribution(
     trend rather than a single cross-section snapshot.
     """
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
-    kb_filter_sql = f"AND k.id {kb_clause}" if kb_clause else ""
+    kb_filter_sql = f"AND kd.kind_id {kb_clause}" if kb_clause else ""
+    # kinds-side filter uses the same kb params (id == kind_id).
+    kb_filter_sql_kinds = f"AND k.id {kb_clause}" if kb_clause else ""
 
     start = mfilter.effective_period_start
     end = mfilter.period_end_date
 
     # Generate the list of days we need to compute for.
-    from datetime import timedelta as _td
-
     days = []
     d = start
     while d <= end:
         days.append(d)
-        d += _td(days=1)
+        d += timedelta(days=1)
 
     kb_meta = fetch_kb_metadata(source_session, mfilter.kb_ids)
     written = 0
+    insert_sql = text(
+        """
+        INSERT INTO kb_stat_kb_size_distribution
+            (run_id, target_date, stat_date, kb_id, kb_name, namespace,
+             doc_count, total_file_size, avg_file_size,
+             max_file_size, size_bucket)
+        VALUES (:run_id, :target_date, :stat_date, :kb_id, :kb_name, :namespace,
+                :doc_count, :total_file_size, :avg_file_size,
+                :max_file_size, :size_bucket)
+        """
+    )
+
+    # Cumulative-growth via "base snapshot + daily increments" instead of a
+    # per-day full rescan. The previous loop ran ``len(days)`` (default 30)
+    # LEFT JOINs over knowledge_documents with ``created_at <= :cutoff``, each
+    # rescanning a monotonically growing slice — O(days * total_docs) on the
+    # business DB. Only created_at and file_size participate, both immutable
+    # after document creation, so base + running increments reproduce the exact
+    # same per-day cumulative values in two bounded scans. Mirrors the pattern
+    # already used by kb_growth_curve / kb_creation_trend in this module.
+
+    # Scan 1: base cumulative per-KB snapshot for documents created strictly
+    # before the window start (doc_count, sum & max of file_size).
+    base_rows = source_session.execute(
+        text(
+            f"""
+            SELECT kd.kind_id AS kb_id,
+                   COUNT(*) AS base_doc_count,
+                   COALESCE(SUM(kd.file_size), 0) AS base_total_size,
+                   MAX(kd.file_size) AS base_max_size
+            FROM knowledge_documents kd
+            WHERE kd.is_active = 1
+              AND kd.created_at < :start_date
+              {kb_filter_sql}
+            GROUP BY kd.kind_id
+        """
+        ),
+        {"start_date": start, **kb_params},
+    ).fetchall()
+    base_by_kb: dict[int, tuple[int, int, int]] = {}
+    for r in base_rows:
+        base_by_kb[int(r.kb_id)] = (
+            int(r.base_doc_count or 0),
+            int(r.base_total_size or 0),
+            int(r.base_max_size) if r.base_max_size is not None else 0,
+        )
+
+    # Scan 2: daily per-KB increments inside the window.
+    incr_rows = source_session.execute(
+        text(
+            f"""
+            SELECT DATE(kd.created_at) AS d,
+                   kd.kind_id AS kb_id,
+                   COUNT(*) AS day_doc_count,
+                   COALESCE(SUM(kd.file_size), 0) AS day_total_size,
+                   MAX(kd.file_size) AS day_max_size
+            FROM knowledge_documents kd
+            WHERE kd.is_active = 1
+              AND kd.created_at >= :start_date
+              AND kd.created_at <= :end_date
+              {kb_filter_sql}
+            GROUP BY DATE(kd.created_at), kd.kind_id
+        """
+        ),
+        {"start_date": start, "end_date": end, **kb_params},
+    ).fetchall()
+    incr_by_kb_day: dict[tuple, tuple[int, int, int]] = {}
+    for r in incr_rows:
+        incr_by_kb_day[(int(r.kb_id), r.d)] = (
+            int(r.day_doc_count or 0),
+            int(r.day_total_size or 0),
+            int(r.day_max_size) if r.day_max_size is not None else 0,
+        )
+
+    # Scan 3: KB identity (id/name/namespace) — once. Only KBs created on or
+    # before ``end`` can have documents in the window, so this bounds the
+    # emitted rows the same way the original ``k.created_at <= :cutoff`` did.
+    kb_identity_rows = source_session.execute(
+        text(
+            f"""
+            SELECT id, name, namespace
+            FROM kinds k
+            WHERE k.kind = 'KnowledgeBase' AND k.is_active = 1
+              AND k.created_at <= :cutoff
+              {kb_filter_sql_kinds}
+            """
+        ),
+        {"cutoff": end, **kb_params},
+    ).fetchall()
+
+    # Accumulate per-KB running totals across the day series. A KB with no
+    # documents on a given day still emits a row carrying its carried-forward
+    # cumulative, matching the original gapless trend semantics.
+    running: dict[int, list] = {}  # kb_id -> [doc_count, total_size, max_size]
+    for kb_row in kb_identity_rows:
+        kb_id = int(kb_row.id)
+        base = base_by_kb.get(kb_id, (0, 0, 0))
+        running[kb_id] = [base[0], base[1], base[2]]
 
     for stat_date in days:
-        rows = source_session.execute(
-            text(
-                f"""
-                SELECT k.id AS kb_id,
-                       k.name AS kb_name,
-                       k.namespace,
-                       COUNT(kd.id) AS doc_count,
-                       COALESCE(SUM(kd.file_size), 0) AS total_file_size,
-                       AVG(kd.file_size) AS avg_file_size,
-                       MAX(kd.file_size) AS max_file_size
-                FROM kinds k
-                LEFT JOIN knowledge_documents kd
-                    ON kd.kind_id = k.id AND kd.is_active = 1
-                    AND kd.created_at <= :cutoff
-                WHERE k.kind = 'KnowledgeBase' AND k.is_active = 1
-                  AND k.created_at <= :cutoff
-                  {kb_filter_sql}
-                GROUP BY k.id, k.name, k.namespace
-            """
-            ),
-            {"cutoff": stat_date, **kb_params},
-        ).fetchall()
-
-        for r in rows:
-            ns, _ = kb_meta.get(r.kb_id, (r.namespace, r.kb_name))
-            name = r.kb_name or kb_meta.get(r.kb_id, ("", ""))[1]
-            total_size = int(r.total_file_size) if r.total_file_size else 0
-            bucket = _size_bucket(total_size)
-
-            stat_session.execute(
-                text(
-                    """
-                    INSERT INTO kb_stat_kb_size_distribution
-                        (run_id, target_date, stat_date, kb_id, kb_name, namespace,
-                         doc_count, total_file_size, avg_file_size,
-                         max_file_size, size_bucket)
-                    VALUES (:run_id, :target_date, :stat_date, :kb_id, :kb_name, :namespace,
-                            :doc_count, :total_file_size, :avg_file_size,
-                            :max_file_size, :size_bucket)
-                """
-                ),
+        batch: list[dict] = []
+        for kb_row in kb_identity_rows:
+            kb_id = int(kb_row.id)
+            inc = incr_by_kb_day.get((kb_id, stat_date))
+            if inc is not None:
+                running[kb_id][0] += inc[0]
+                running[kb_id][1] += inc[1]
+                if inc[2] > running[kb_id][2]:
+                    running[kb_id][2] = inc[2]
+            doc_count, total_size, max_size = running[kb_id]
+            # Skip KBs with no documents up to this day — same no-data
+            # semantics as the original (a 0-doc row adds no insight).
+            if doc_count == 0:
+                continue
+            ns, name = kb_meta.get(kb_id, (kb_row.namespace, kb_row.name))
+            avg_size = total_size // doc_count if doc_count else None
+            batch.append(
                 {
                     "run_id": run_id,
                     "target_date": mfilter.target_date,
                     "stat_date": stat_date,
-                    "kb_id": r.kb_id,
+                    "kb_id": kb_id,
                     "kb_name": name,
                     "namespace": ns,
-                    "doc_count": r.doc_count,
+                    "doc_count": doc_count,
                     "total_file_size": total_size,
-                    "avg_file_size": int(r.avg_file_size) if r.avg_file_size else None,
-                    "max_file_size": int(r.max_file_size) if r.max_file_size else None,
-                    "size_bucket": bucket,
-                },
+                    "avg_file_size": avg_size,
+                    "max_file_size": max_size if max_size else None,
+                    "size_bucket": _size_bucket(total_size),
+                }
             )
-            written += 1
+        if batch:
+            stat_session.execute(insert_sql, batch)
+            written += len(batch)
     return written
 
 
@@ -457,7 +582,22 @@ def kb_abandon_rate(
     source_session: Session,
     stat_session: Session,
 ) -> int:
-    """Collect per-namespace per-day KB abandon rate."""
+    """Collect per-namespace per-day KB abandon rate.
+
+    .. note::
+
+        This collector keeps a per-day query loop by design. The stale /
+        inactive classification depends on each KB's document ``MAX(updated_at)``
+        — a non-monotonic value that changes whenever a document is re-indexed
+        or edited. "Base snapshot + daily increment" re-accumulation cannot
+        reproduce the per-day cumulative freshness, so a daily rescan is
+        required for correctness. Each query is bounded by
+        ``kinds.created_at <= :cutoff``; keep
+        ``knowledge_documents(kind_id, is_active, updated_at)`` indexed so the
+        per-KB ``MAX(updated_at)`` subquery stays cheap. See
+        ``kb_size_distribution`` for the increment-based pattern (applicable
+        only where inputs are immutable after creation).
+    """
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
     kb_filter_sql = f"AND k.id {kb_clause}" if kb_clause else ""
 
@@ -466,6 +606,15 @@ def kb_abandon_rate(
     from datetime import timedelta as _td
 
     written = 0
+    insert_sql = text(
+        """
+        INSERT INTO kb_stat_kb_abandon_rate
+            (run_id, target_date, stat_date, namespace, total_kb_count,
+             stale_kb_count, inactive_kb_count, abandon_rate)
+        VALUES (:run_id, :target_date, :stat_date, :namespace, :total_kb_count,
+                :stale_kb_count, :inactive_kb_count, :abandon_rate)
+        """
+    )
     d = start
     while d <= end:
         stale_cutoff = d - _td(days=STALE_THRESHOLD_DAYS)
@@ -501,22 +650,17 @@ def kb_abandon_rate(
             },
         ).fetchall()
 
+        # Batch the per-day INSERTs into one executemany.
+        batch: list[dict] = []
         for r in rows:
             total = int(r.total_kb or 0)
             stale = int(r.stale_kb or 0)
             inactive = int(r.inactive_kb or 0)
-            abandon_rate = round(stale / total * 100, 2) if total > 0 else 0.0
-
-            stat_session.execute(
-                text(
-                    """
-                    INSERT INTO kb_stat_kb_abandon_rate
-                        (run_id, target_date, stat_date, namespace, total_kb_count,
-                         stale_kb_count, inactive_kb_count, abandon_rate)
-                    VALUES (:run_id, :target_date, :stat_date, :namespace, :total_kb_count,
-                            :stale_kb_count, :inactive_kb_count, :abandon_rate)
-                """
-                ),
+            # Return None (not 0.0) when there are no KBs: 0.0 would read as
+            # "0% abandonment — healthy", masking the fact that there is no
+            # data. All other ratio collectors use None for the empty case.
+            abandon_rate = round(stale / total * 100, 2) if total > 0 else None
+            batch.append(
                 {
                     "run_id": run_id,
                     "target_date": mfilter.target_date,
@@ -526,9 +670,11 @@ def kb_abandon_rate(
                     "stale_kb_count": stale,
                     "inactive_kb_count": inactive,
                     "abandon_rate": abandon_rate,
-                },
+                }
             )
-            written += 1
+        if batch:
+            stat_session.execute(insert_sql, batch)
+            written += len(batch)
         d += _td(days=1)
     return written
 

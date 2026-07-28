@@ -335,30 +335,26 @@ def approval_efficiency(
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
     kb_where = f"AND resource_id {kb_clause}" if kb_clause else ""
 
-    rows = None
-    try:
-        rows = source_session.execute(
-            text(
-                f"""
-                SELECT resource_id AS kb_id,
-                       AVG(TIMESTAMPDIFF(MINUTE, requested_at, reviewed_at)) AS avg_minutes,
-                       COUNT(*) AS total_requests,
-                       SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_count
-                FROM resource_members
-                WHERE resource_type = 'KnowledgeBase'
-                  AND requested_at IS NOT NULL
-                  AND reviewed_at IS NOT NULL
-                  AND reviewed_at > {_EPOCH_SENTINEL!r}
-                  AND status IN ('approved', 'rejected')
-                  {kb_where}
-                GROUP BY resource_id
-                LIMIT 100
-            """
-            ),
-            kb_params,
-        ).fetchall()
-    except Exception:
-        logger.warning("approval_efficiency query failed (columns may not exist)")
+    rows = source_session.execute(
+        text(
+            f"""
+            SELECT resource_id AS kb_id,
+                   AVG(TIMESTAMPDIFF(MINUTE, requested_at, reviewed_at)) AS avg_minutes,
+                   COUNT(*) AS total_requests,
+                   SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_count
+            FROM resource_members
+            WHERE resource_type = 'KnowledgeBase'
+              AND requested_at IS NOT NULL
+              AND reviewed_at IS NOT NULL
+              AND reviewed_at > {_EPOCH_SENTINEL!r}
+              AND status IN ('approved', 'rejected')
+              {kb_where}
+            GROUP BY resource_id
+            LIMIT 100
+        """
+        ),
+        kb_params,
+    ).fetchall()
 
     if not rows:
         return 0
@@ -419,29 +415,25 @@ def cross_org_access(
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
     kb_where = f"AND rm.resource_id {kb_clause}" if kb_clause else ""
 
-    rows = None
-    try:
-        rows = source_session.execute(
-            text(
-                f"""
-                SELECT rm.resource_id AS kb_id,
-                       k.namespace AS kb_namespace,
-                       k.name AS kb_name,
-                       rm.user_id,
-                       rm.role
-                FROM resource_members rm
-                JOIN kinds k
-                    ON k.id = rm.resource_id
-                    AND k.kind = 'KnowledgeBase'
-                    AND k.is_active = 1
-                WHERE rm.resource_type = 'KnowledgeBase'
-                  {kb_where}
-            """
-            ),
-            kb_params,
-        ).fetchall()
-    except Exception as e:
-        logger.warning(f"cross_org_access query failed: {e}")
+    rows = source_session.execute(
+        text(
+            f"""
+            SELECT rm.resource_id AS kb_id,
+                   k.namespace AS kb_namespace,
+                   k.name AS kb_name,
+                   rm.user_id,
+                   rm.role
+            FROM resource_members rm
+            JOIN kinds k
+                ON k.id = rm.resource_id
+                AND k.kind = 'KnowledgeBase'
+                AND k.is_active = 1
+            WHERE rm.resource_type = 'KnowledgeBase'
+              {kb_where}
+        """
+        ),
+        kb_params,
+    ).fetchall()
 
     if not rows:
         return 0

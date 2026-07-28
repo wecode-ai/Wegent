@@ -73,7 +73,7 @@ function formatDuration(start: string | null, end: string | null): string {
 }
 
 export function RunRow({ run, expanded, onToggle, onRetried }: RunRowProps) {
-  const { t } = useTranslation('knowledge-stat')
+  const { t, i18n } = useTranslation('knowledge-stat')
   const collectorHook = useCollectorRuns()
   const canRetry = run.status === 'failed' || run.status === 'partial'
 
@@ -126,7 +126,9 @@ export function RunRow({ run, expanded, onToggle, onRetried }: RunRowProps) {
         <span className="text-xs text-text-muted shrink-0">{run.metrics_count} rows</span>
 
         <span className="text-xs text-text-muted shrink-0">
-          {t(`runs.triggered_by.${run.triggered_by}`, run.triggered_by)}
+          {i18n.exists(`runs.triggered_by.${run.triggered_by}`)
+            ? t(`runs.triggered_by.${run.triggered_by}`)
+            : run.triggered_by}
         </span>
 
         {run.triggered_user_id && (

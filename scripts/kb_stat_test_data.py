@@ -59,11 +59,11 @@ SOURCE_TABLES: list[tuple[str, str]] = [
 # only what a domain's collectors read.
 DOMAIN_SOURCE_MAP: dict[str, set[str]] = {
     "retrieval": {"users", "kinds", "subtask_contexts"},
-    "content": {"users", "kinds", "knowledge_documents"},
+    "content_quality": {"users", "kinds", "knowledge_documents"},
     "collaboration": {"users", "kinds", "resource_members", "share_links"},
     "dashboard": {"users", "kinds", "knowledge_documents", "dingtalk_synced_nodes"},
     "sys_ops": {"users", "kinds", "knowledge_documents", "attachments"},
-    "lifecycle": {"users", "kinds", "knowledge_documents"},
+    "kb_lifecycle": {"users", "kinds", "knowledge_documents"},
     "deep_analysis": {"users", "kinds", "knowledge_documents", "subtask_contexts"},
     "user_behavior": {"users", "kinds", "subtask_contexts", "resource_members"},
     "prometheus": {"users", "kinds", "knowledge_documents"},
@@ -199,7 +199,6 @@ def seed(
     target_date: Optional[date] = None,
     domain: Optional[str] = None,
     trigger_collect: bool = False,
-    pipeline_mode: str = "legacy",
 ) -> None:
     random.seed(42)
     target = target_date or date.today()
@@ -217,12 +216,51 @@ def seed(
 
     print(
         f"▶ seed start: kbs={kbs} docs={docs} queries={queries} days={days} "
-        f"target={target} domain={domain or 'all'} trigger_collect={trigger_collect} "
-        f"pipeline_mode={pipeline_mode}"
+        f"target={target} domain={domain or 'all'} trigger_collect={trigger_collect}"
     )
     engine, stat_engine = _make_engines()
     src = Session(engine)
     try:
+        # 0. Pre-clean any __test__ rows left from a previous seed run so the
+        # fixed random.seed(42) replay is idempotent: deterministic values
+        # (share_token, resource_members (resource,entity) pairs, names) would
+        # otherwise collide with already-inserted rows and raise IntegrityError.
+        # Uses the global __test__% pattern (this script seeds multiple KBs, so
+        # no kb_id scoping). Each table is wrapped in try/except because some
+        # tables (e.g. attachments / tasks) may be absent in a given environment.
+        for table, col in SOURCE_TABLES:
+            try:
+                result = src.execute(
+                    text(f"DELETE FROM {table} WHERE {col} LIKE :p"),
+                    {"p": f"{TEST_PREFIX}%"},
+                )
+                if result.rowcount:
+                    print(f"  [seed] preclean    {table:28s} deleted {result.rowcount}")
+            except Exception as e:
+                src.rollback()
+                print(f"  [seed] preclean    {table:28s} skipped ({e})")
+        # resource_members stores the numeric user-id string in entity_id /
+        # entity_display_name, so a plain LIKE '__test__%' matches nothing.
+        # Delete via a subquery on the test users' user_name to actually clear
+        # the (resource_type, resource_id, entity_type, entity_id) rows that the
+        # unique constraint would otherwise reject on re-seed.
+        try:
+            result = src.execute(
+                text(
+                    "DELETE FROM resource_members WHERE entity_type='user' "
+                    "AND entity_id IN (SELECT id FROM users WHERE user_name LIKE :p)"
+                ),
+                {"p": f"{TEST_PREFIX}%"},
+            )
+            if result.rowcount:
+                print(
+                    f"  [seed] preclean    resource_members (test-user) deleted {result.rowcount}"
+                )
+        except Exception as e:
+            src.rollback()
+            print(f"  [seed] preclean    resource_members (test-user) skipped ({e})")
+        src.commit()
+
         user_ids = _seed_users(src, 3)
         kb_ids = _seed_kbs(src, user_ids, kbs, period_start, target)
         if want("knowledge_documents"):
@@ -231,6 +269,7 @@ def seed(
             print("  [seed] documents:    skipped (--domain)")
         if want("subtask_contexts"):
             _seed_subtask_contexts(src, kb_ids, user_ids, queries, period_start, target)
+            _seed_selected_documents(src, kb_ids, user_ids, period_start, target)
         else:
             print("  [seed] subtask_ctx:  skipped (--domain)")
         if want("resource_members"):
@@ -273,7 +312,7 @@ def seed(
 
     if trigger_collect:
         print("▶ triggering collection (--trigger-collect)...")
-        run_id = _trigger_collection(target, pipeline_mode=pipeline_mode)
+        run_id = _trigger_collection(target)
         print(f"✅ triggered collection, run_id={run_id}")
 
 
@@ -389,7 +428,11 @@ def _seed_documents(
                     "ia": is_active,
                     "is": idx_status,
                     "ig": 1 if j == 1 else 0,
-                    "sc": json.dumps({"splitter_type": splitter}),
+                    # splitter_config must be a valid SplitterConfig shape
+                    # (normalize_splitter_config reads the "type" key, not
+                    # "splitter_type"). Empty {} normalizes to the default flat
+                    # config; chunks.splitter_type below feeds doc_chunk_strategy.
+                    "sc": "{}",
                     "chunks": json.dumps(
                         {
                             "splitter_type": splitter,
@@ -525,6 +568,64 @@ def _seed_subtask_contexts(
         )
     session.commit()
     print(f"  [seed] subtask_ctx:  {sc_count} rows across {span + 1} days")
+
+
+def _seed_selected_documents(
+    session: Session,
+    kb_ids: list[int],
+    user_ids: list[int],
+    period_start: date,
+    target: date,
+) -> None:
+    """Seed context_type='selected_documents' rows for selected_documents_usage.
+
+    Mirrors the production notebook-mode direct-injection context shape
+    (type_data={knowledge_base_id, document_ids}); see
+    backend/app/services/chat/preprocessing/contexts.py. Without these rows
+    the selected_documents_usage collector finds nothing.
+    """
+    span = (target - period_start).days or 1
+    sel_count = 0
+    for kb_idx, kb_id in enumerate(kb_ids):
+        doc_ids = [
+            r[0]
+            for r in session.execute(
+                text(
+                    "SELECT id FROM knowledge_documents "
+                    "WHERE kind_id=:kid AND is_active=1"
+                ),
+                {"kid": kb_id},
+            ).fetchall()
+        ]
+        if not doc_ids:
+            continue
+        for day_offset in range(span + 1):
+            d = period_start + timedelta(days=day_offset)
+            for _ in range(random.randint(0, 2)):
+                k = random.randint(1, min(3, len(doc_ids)))
+                sample = random.sample(doc_ids, k=k)
+                name = f"{TEST_PREFIX}sel_kb{kb_idx + 1}_d{day_offset}_{sel_count}"
+                session.execute(
+                    text(
+                        "INSERT INTO subtask_contexts "
+                        "(subtask_id, user_id, context_type, name, status, error_message, "
+                        " binary_data, image_base64, extracted_text, text_length, type_data, "
+                        " created_at, updated_at) "
+                        "VALUES (0, :uid, 'selected_documents', :name, 'completed', '', "
+                        " '', '', '', 0, :td, :ca, :ca)"
+                    ),
+                    {
+                        "uid": user_ids[(kb_idx + day_offset) % len(user_ids)],
+                        "name": name,
+                        "td": json.dumps(
+                            {"knowledge_base_id": kb_id, "document_ids": sample}
+                        ),
+                        "ca": ts(d, 10 + sel_count % 8),
+                    },
+                )
+                sel_count += 1
+    session.commit()
+    print(f"  [seed] selected_docs:{sel_count} rows across {len(kb_ids)} KBs")
 
 
 def _seed_resource_members(
@@ -700,7 +801,7 @@ def _seed_tasks(
     print(f"  [seed] tasks:        {task_count} rows")
 
 
-def _trigger_collection(target: date, *, pipeline_mode: str = "legacy") -> int:
+def _trigger_collection(target: date) -> int:
     from knowledge_engine.stat import collect_all, mark_kb_stat_stale_runs
     from shared.db.readonly_session import (
         get_readonly_session_factory,
@@ -734,14 +835,10 @@ def _trigger_collection(target: date, *, pipeline_mode: str = "legacy") -> int:
         raise RuntimeError("kb_thin_doc_rate collector is not registered")
     if {"thin_doc_alert", "orphan_doc_alert"} & collector_names:
         raise RuntimeError("removed quality-alert collectors are still registered")
-    print(
-        f"  [collect] collectors={len(collector_names)} "
-        f"pipeline_mode={pipeline_mode}"
-    )
+    print(f"  [collect] collectors={len(collector_names)}")
     run_id = collect_all(
         target_date=target,
         triggered_by=TRIGGERED_BY_SEED,
-        pipeline_mode=pipeline_mode,
         source_session_factory=get_readonly_session_factory(),
         stat_session_factory=stat_factory,
     )
@@ -799,19 +896,6 @@ def status() -> None:
             print(f"  {span[2]} records, from {span[0]} to {span[1]}")
         else:
             print("  (no test subtask_contexts yet)")
-
-        for table in (
-            "kb_stat_extractor_runs",
-            "kb_stat_stage_query_event",
-            "kb_stat_source_watermarks",
-            "kb_stat_metric_watermarks",
-        ):
-            try:
-                count = stat.execute(text(f"SELECT COUNT(*) FROM `{table}`")).scalar()
-                print(f"  {table:30s} {count}")
-            except Exception:
-                stat.rollback()
-                print(f"  {table:30s} (not installed)")
     finally:
         src.close()
         stat.close()
@@ -842,11 +926,6 @@ def main() -> None:
         default="all",
     )
     p_seed.add_argument("--trigger-collect", action="store_true")
-    p_seed.add_argument(
-        "--pipeline-mode",
-        choices=["legacy", "shadow"],
-        default="legacy",
-    )
 
     sub.add_parser("clean", help="remove all test data")
     sub.add_parser("status", help="show test-data overview")
@@ -861,7 +940,6 @@ def main() -> None:
             target_date=args.target_date,
             domain=args.domain,
             trigger_collect=args.trigger_collect,
-            pipeline_mode=args.pipeline_mode,
         )
     elif args.cmd == "clean":
         clean()

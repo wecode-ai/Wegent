@@ -17,6 +17,7 @@ export function useRuns() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [polling, setPolling] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // Monotonic request id: every load() bumps it, and a response is applied
@@ -31,10 +32,14 @@ export function useRuns() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
-  const load = useCallback(async (p: number) => {
+  const load = useCallback(async (p: number, isPoll = false) => {
     const myId = ++reqIdRef.current
     try {
-      setLoading(true)
+      // Only the initial / user-initiated load flips `loading` (which
+      // disables pagination controls). Background polling uses a separate
+      // `polling` flag so the 10s refresh does not freeze the UI every cycle.
+      if (isPoll) setPolling(true)
+      else setLoading(true)
       setError(null)
       const offset = (p - 1) * PAGE_SIZE
       const res = await fetchRuns({ limit: PAGE_SIZE, offset })
@@ -46,7 +51,10 @@ export function useRuns() {
       if (myId !== reqIdRef.current) return
       setError(e instanceof Error ? e : new Error(String(e)))
     } finally {
-      if (myId === reqIdRef.current) setLoading(false)
+      if (myId === reqIdRef.current) {
+        setLoading(false)
+        setPolling(false)
+      }
     }
   }, [])
 
@@ -62,7 +70,8 @@ export function useRuns() {
 
   const refresh = useCallback(() => {
     // Always reload the latest page, not whatever page the closure captured.
-    load(pageRef.current)
+    // Mark as a poll so it does not toggle the pagination-disabling `loading`.
+    load(pageRef.current, true)
   }, [load])
 
   const hasRunning = runs.some(r => r.status === 'running')
@@ -86,5 +95,5 @@ export function useRuns() {
     }
   }, [hasRunning, refresh])
 
-  return { runs, total, page, totalPages, loading, error, goToPage, refresh }
+  return { runs, total, page, totalPages, loading, polling, error, goToPage, refresh }
 }

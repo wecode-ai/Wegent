@@ -63,6 +63,7 @@ _DOMAIN_LABELS: dict[str, str] = {
     "deep_analysis": "深度分析",
     "sys_ops": "系统运维",
     "prometheus": "转换监控",
+    "content_quality": "内容质量",
 }
 
 # Domains visible in KB detail scope (merged from query.py + registry.py).
@@ -117,7 +118,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col=None,
-        query_options=QueryOptions(order_by="stat_date", limit=20),
+        query_options=QueryOptions(order_by="stat_date", limit=600),
     ),
     "kb_activity": MetricSpec(
         name="kb_activity",
@@ -176,6 +177,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         name="kb_size_distribution",
         table="kb_stat_kb_size_distribution",
         schema=(
+            ColumnSpec(key="stat_date", type="date", label="日期"),
             ColumnSpec(key="kb_id", type="int", label="知识库ID"),
             ColumnSpec(key="kb_name", type="string", label="知识库名称"),
             ColumnSpec(key="namespace", type="string", label="命名空间"),
@@ -191,12 +193,13 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="stat_date", limit=60),
+        query_options=QueryOptions(order_by="stat_date", limit=10000),
     ),
     "kb_abandon_rate": MetricSpec(
         name="kb_abandon_rate",
         table="kb_stat_kb_abandon_rate",
         schema=(
+            ColumnSpec(key="stat_date", type="date", label="日期"),
             ColumnSpec(key="namespace", type="string", label="命名空间"),
             ColumnSpec(key="total_kb_count", type="int", label="总知识库数"),
             ColumnSpec(key="stale_kb_count", type="int", label="沉寂数"),
@@ -340,6 +343,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         name="doc_index_failure_rate",
         table="kb_stat_doc_index_failure_rate",
         schema=(
+            ColumnSpec(key="target_date", type="date", label="日期"),
             ColumnSpec(key="file_extension", type="string", label="文件类型"),
             ColumnSpec(key="total_count", type="int", label="总数"),
             ColumnSpec(key="failed_count", type="int", label="失败数"),
@@ -897,6 +901,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         name="storage_usage",
         table="kb_stat_storage_usage",
         schema=(
+            ColumnSpec(key="target_date", type="date", label="日期"),
             ColumnSpec(key="kb_id", type="int", label="知识库ID"),
             ColumnSpec(key="kb_name", type="string", label="知识库名称"),
             ColumnSpec(key="namespace", type="string", label="命名空间"),
@@ -909,7 +914,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="target_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="target_date", limit=60),
+        query_options=QueryOptions(order_by="target_date", limit=10000),
     ),
     "attachment_storage": MetricSpec(
         name="attachment_storage",
@@ -1044,7 +1049,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         chart_hint="line",
         date_col="stat_date",
         kb_col="kb_id",
-        query_options=QueryOptions(order_by="stat_date", limit=20),
+        query_options=QueryOptions(order_by="stat_date", limit=60),
     ),
     "rag_head_verify_rate": MetricSpec(
         name="rag_head_verify_rate",
@@ -1119,9 +1124,9 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         table="kb_stat_prom_conversion_duration",
         schema=(
             ColumnSpec(key="file_extension", type="string", label="文件类型"),
-            ColumnSpec(key="p50_seconds", type="float", label="P50(秒)"),
-            ColumnSpec(key="p90_seconds", type="float", label="P90(秒)"),
-            ColumnSpec(key="p99_seconds", type="float", label="P99(秒)"),
+            ColumnSpec(key="p50_seconds", type="float", label="P50耗时(秒,估算)"),
+            ColumnSpec(key="p90_seconds", type="float", label="P90耗时(秒,估算)"),
+            ColumnSpec(key="p99_seconds", type="float", label="P99耗时(秒,估算)"),
         ),
         domain="prometheus",
         label="文档转换耗时",
@@ -1205,6 +1210,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
             ColumnSpec(key="total_queries", type="int", label="总查询数"),
             ColumnSpec(key="zero_chunk_queries", type="int", label="零分块查询数"),
             ColumnSpec(key="zero_chunk_rate", type="float", label="零分块率 %"),
+            ColumnSpec(key="low_confidence", type="int", label="低样本标记"),
         ),
         domain="retrieval",
         label="知识库零分块查询率",
@@ -1258,6 +1264,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
             ColumnSpec(key="total_queries", type="int", label="总查询数"),
             ColumnSpec(key="low_score_queries", type="int", label="低分查询数"),
             ColumnSpec(key="low_score_rate", type="float", label="低分率 %"),
+            ColumnSpec(key="low_confidence", type="int", label="低样本标记"),
         ),
         domain="retrieval",
         label="知识库低相关检索率",
@@ -1374,6 +1381,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
             ColumnSpec(key="total_queries", type="int", label="总查询数"),
             ColumnSpec(key="adopted_queries", type="int", label="采纳查询数"),
             ColumnSpec(key="adoption_rate", type="float", label="采纳率 %"),
+            ColumnSpec(key="low_confidence", type="int", label="低样本标记"),
         ),
         domain="retrieval",
         label="回答采纳率",
@@ -1391,6 +1399,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
             ColumnSpec(key="total_queries", type="int", label="总查询数"),
             ColumnSpec(key="hit_queries", type="int", label="命中查询数"),
             ColumnSpec(key="hit_rate", type="float", label="命中率 %"),
+            ColumnSpec(key="low_confidence", type="int", label="低样本标记"),
         ),
         domain="retrieval",
         label="知识库检索命中率",
@@ -1408,6 +1417,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
             ColumnSpec(key="total_queries", type="int", label="总查询数"),
             ColumnSpec(key="unique_queries", type="int", label="唯一查询数"),
             ColumnSpec(key="dedup_rate", type="float", label="去重率 %"),
+            ColumnSpec(key="low_confidence", type="int", label="低样本标记"),
         ),
         domain="retrieval",
         label="查询去重率",
@@ -1426,6 +1436,7 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
             ColumnSpec(key="slow_queries", type="int", label="慢查询数"),
             ColumnSpec(key="p95_latency_ms", type="float", label="P95延迟(ms)"),
             ColumnSpec(key="slow_rate", type="float", label="慢查询率 %"),
+            ColumnSpec(key="low_confidence", type="int", label="低样本标记"),
         ),
         domain="retrieval",
         label="知识库慢查询率",

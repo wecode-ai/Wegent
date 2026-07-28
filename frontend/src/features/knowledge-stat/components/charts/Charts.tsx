@@ -92,6 +92,64 @@ function ChartTooltip({
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Shared: aggregate rows by xKey (dimension collapse)                        */
+/* -------------------------------------------------------------------------- */
+
+// Aggregate rows by the x-axis key. When a metric has dimension columns
+// (e.g. file_extension, kb_id), the same x value may appear in multiple
+// rows. For date/string charts we need one point per x:
+//  - Absolute counts (call_count, query_count): SUM across dimensions.
+//  - Ratio/rate fields (zero_chunk_rate, hit_rate): AVERAGE, not SUM.
+//    SUMming two KBs' 30%+40%=70% is meaningless; average (35%) is correct.
+// Used by both LineChart and BarChart so they stay consistent.
+function aggregateByXKey(
+  rows: Record<string, unknown>[],
+  xKey: string,
+  ySchemas: FieldSchema[],
+  schema: FieldSchema[]
+): Record<string, unknown>[] {
+  if (rows.length === 0) return []
+  const rateKeys = new Set(
+    ySchemas
+      .filter(s => /rate|ratio|率/i.test(s.key) || /rate|ratio/i.test(s.label))
+      .map(s => s.key)
+  )
+  const byX: Record<string, Record<string, unknown>> = {}
+  const rateCounters: Record<string, Record<string, number>> = {}
+  for (const row of rows) {
+    const xVal = String(row[xKey] ?? '')
+    if (!byX[xVal]) {
+      byX[xVal] = { [xKey]: xVal }
+      rateCounters[xVal] = {}
+      for (const s of schema) {
+        if (s.key !== xKey && s.type === 'string') {
+          byX[xVal][s.key] = row[s.key]
+        }
+      }
+    }
+    for (const s of ySchemas) {
+      const val = Number(row[s.key]) || 0
+      if (rateKeys.has(s.key)) {
+        const prevSum = Number(byX[xVal][`__${s.key}_sum`]) || 0
+        const prevCnt = rateCounters[xVal][s.key] || 0
+        byX[xVal][`__${s.key}_sum`] = prevSum + val
+        rateCounters[xVal][s.key] = prevCnt + 1
+        byX[xVal][s.key] = Math.round(((prevSum + val) / (prevCnt + 1)) * 100) / 100
+      } else {
+        byX[xVal][s.key] = (Number(byX[xVal][s.key]) || 0) + val
+      }
+    }
+  }
+  return Object.values(byX).map(r => {
+    const clean: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(r)) {
+      if (!k.startsWith('__')) clean[k] = v
+    }
+    return clean
+  })
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Line Chart — gradient area fill, active dots                               */
 /* -------------------------------------------------------------------------- */
 
@@ -104,59 +162,16 @@ export function LineChart({ rows, schema }: ChartProps) {
     s => (s.type === 'int' || s.type === 'float') && !DIMENSION_KEYS.has(s.key)
   )
 
-  // Identify ratio-type y-keys BEFORE aggregation so we can handle them
-  // differently (average instead of sum).
   const rateKeys = new Set(
     ySchemas
       .filter(s => /rate|ratio|率/i.test(s.key) || /rate|ratio/i.test(s.label))
       .map(s => s.key)
   )
 
-  // Aggregate rows by xKey (date). When a metric has dimension columns
-  // (e.g. file_extension, kb_id), the same date may appear in multiple
-  // rows. For a LineChart we need one point per date:
-  //  - Absolute counts (call_count, query_count): SUM across dimensions.
-  //  - Ratio/rate fields (zero_chunk_rate, hit_rate): AVERAGE, not SUM.
-  //    SUMming two KBs' 30%+40%=70% is meaningless; average (35%) is correct.
-  const aggregatedRows = useMemo(() => {
-    if (rows.length === 0) return []
-    const byDate: Record<string, Record<string, unknown>> = {}
-    const rateCounters: Record<string, Record<string, number>> = {} // dateKey -> {field: count}
-    for (const row of rows) {
-      const dateKey = String(row[xKey] ?? '')
-      if (!byDate[dateKey]) {
-        byDate[dateKey] = { [xKey]: dateKey }
-        rateCounters[dateKey] = {}
-        for (const s of schema) {
-          if (s.key !== xKey && s.type === 'string') {
-            byDate[dateKey][s.key] = row[s.key]
-          }
-        }
-      }
-      for (const s of ySchemas) {
-        const val = Number(row[s.key]) || 0
-        if (rateKeys.has(s.key)) {
-          // Rate field: accumulate sum + count, compute average at the end.
-          const prevSum = Number(byDate[dateKey][`__${s.key}_sum`]) || 0
-          const prevCnt = rateCounters[dateKey][s.key] || 0
-          byDate[dateKey][`__${s.key}_sum`] = prevSum + val
-          rateCounters[dateKey][s.key] = prevCnt + 1
-          byDate[dateKey][s.key] = Math.round(((prevSum + val) / (prevCnt + 1)) * 100) / 100
-        } else {
-          // Absolute count: SUM.
-          byDate[dateKey][s.key] = (Number(byDate[dateKey][s.key]) || 0) + val
-        }
-      }
-    }
-    // Strip internal __sum keys.
-    return Object.values(byDate).map(r => {
-      const clean: Record<string, unknown> = {}
-      for (const [k, v] of Object.entries(r)) {
-        if (!k.startsWith('__')) clean[k] = v
-      }
-      return clean
-    })
-  }, [rows, xKey, ySchemas, schema, rateKeys])
+  const aggregatedRows = useMemo(
+    () => aggregateByXKey(rows, xKey, ySchemas, schema),
+    [rows, xKey, ySchemas, schema]
+  )
 
   // Pre-compute enhanced chart data: for ratio keys, append a `_ma7` column
   // holding the 7-day trailing moving average. Non-ratio keys are left
@@ -312,10 +327,17 @@ export function BarChart({ rows, schema }: ChartProps) {
   const rightYKeys = new Set(
     ySchemas.filter(s => s.type === 'float' && /%|率|比例|ratio/i.test(s.label)).map(s => s.key)
   )
+  // Collapse dimension rows into one point per x value, matching LineChart.
+  // Without this, a metric with a kb_id/injection_mode dimension would render
+  // duplicate x-axis labels and side-by-side bars instead of a clean series.
+  const aggregatedRows = useMemo(
+    () => aggregateByXKey(rows, xKey, ySchemas, schema),
+    [rows, xKey, ySchemas, schema]
+  )
 
   return (
     <ResponsiveContainer width="100%" height={280}>
-      <RechartsBarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
+      <RechartsBarChart data={aggregatedRows} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
         <CartesianGrid
           strokeDasharray="3 3"
           stroke="var(--color-border-soft, #e8e8ea)"

@@ -71,8 +71,6 @@ class ShareLinkUsage(StatBase):
     link_count = Column(Integer, default=0)
     total_joins = Column(Integer, default=0)
     avg_joins_per_link = Column(Float, nullable=True)
-    needs_approval = Column(Integer, default=0)
-    no_approval = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
 
     __table_args__ = (

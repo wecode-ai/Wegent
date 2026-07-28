@@ -31,20 +31,28 @@ export function useMetricsBatch(scope: StatScope, names: string[], filter: Metri
   const scopeKey = JSON.stringify(scope)
 
   useEffect(() => {
-    let cancelled = false
     if (names.length === 0) {
       setData({ results: {} })
       setLoading(false)
       setError(null)
       return
     }
+    // Abort the in-flight request when the filter/scope changes or the
+    // component unmounts, instead of just discarding the stale response.
+    const controller = new AbortController()
     setLoading(true)
-    fetchMetricsBatch(scope, names, filter)
-      .then(d => !cancelled && setData(d))
-      .catch(e => !cancelled && setError(e))
-      .finally(() => !cancelled && setLoading(false))
+    fetchMetricsBatch(scope, names, filter, controller.signal)
+      .then(d => setData(d))
+      .catch(e => {
+        // AbortError is expected on filter change/unmount; not a real error.
+        if (e instanceof DOMException && e.name === 'AbortError') return
+        setError(e)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
     return () => {
-      cancelled = true
+      controller.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, namesKey, filterKey])
