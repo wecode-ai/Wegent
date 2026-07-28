@@ -60,7 +60,7 @@ describe('runtimeTaskSidebarHelpers', () => {
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
   })
 
-  test('uses the latest activity when a completed task resumes and updates again', () => {
+  test('keeps a resumed task in place while its latest turn is streaming', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
       workspacePath: '/workspace/repo',
@@ -90,8 +90,54 @@ describe('runtimeTaskSidebarHelpers', () => {
     }
 
     expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
-      'running',
       'completed',
+      'running',
+    ])
+  })
+
+  test('moves a streaming task only after its latest turn completes', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: [
+        {
+          taskId: 'streaming',
+          workspacePath: '/workspace/repo',
+          title: 'Streaming',
+          runtime: 'codex',
+          running: true,
+          createdAt: '2026-06-01T00:00:00.000Z',
+          completedAt: '2026-06-02T00:00:00.000Z',
+          updatedAt: '2026-06-04T00:00:00.000Z',
+        },
+        {
+          taskId: 'idle',
+          workspacePath: '/workspace/repo',
+          title: 'Idle',
+          runtime: 'codex',
+          running: false,
+          createdAt: '2026-06-01T00:00:00.000Z',
+          completedAt: '2026-06-03T00:00:00.000Z',
+          updatedAt: '2026-06-03T00:00:00.000Z',
+        },
+      ],
+    }
+
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
+      'idle',
+      'streaming',
+    ])
+
+    workspace.tasks[0] = {
+      ...workspace.tasks[0],
+      running: false,
+      completedAt: '2026-06-04T00:00:00.000Z',
+    }
+
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
+      'streaming',
+      'idle',
     ])
   })
 
