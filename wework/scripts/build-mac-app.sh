@@ -272,27 +272,61 @@ chmod 0755 "$EXECUTOR_DIR/dist/wegent-executor"
 
 cd "$WEWORK_DIR"
 CONFIG_OVERRIDE=""
+BRAND_INPUT_CONFIG=""
 cleanup() {
   if [ -n "$CONFIG_OVERRIDE" ]; then
     rm -f "$CONFIG_OVERRIDE"
     rm -f "$CONFIG_OVERRIDE.namespace"
   fi
+  if [ -n "$BRAND_INPUT_CONFIG" ]; then
+    rm -f "$BRAND_INPUT_CONFIG"
+  fi
 }
 trap cleanup EXIT
+
+CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.json.XXXXXX")"
+HOOK_RESOURCES="$(wework_code_statistics_macos_resources "$MACOS_BUILD_TARGET")" \
+MACOS_BUILD_TARGET="$MACOS_BUILD_TARGET" \
+CONFIG_OVERRIDE="$CONFIG_OVERRIDE" \
+python3 - <<'PY'
+import json
+import os
+
+build_target = os.environ["MACOS_BUILD_TARGET"]
+codex_targets = (
+    ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+    if build_target in {"", "universal-apple-darwin"}
+    else [build_target]
+)
+config = {
+    "bundle": {
+        "resources": [
+            *(f"binaries/codex/{target}/**/*" for target in codex_targets),
+            "binaries/codex/legal/**/*",
+            *os.environ["HOOK_RESOURCES"].splitlines(),
+        ]
+    }
+}
+with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
 
 TAURI_ARGS=(build)
 if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
 fi
 if [ -n "$BRAND_CONFIG" ]; then
+  BRAND_INPUT_CONFIG="$CONFIG_OVERRIDE"
   CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.json.XXXXXX")"
-  wework_prepare_brand_config "$WEWORK_DIR" "$BRAND_CONFIG" "0" "$CONFIG_OVERRIDE"
+  wework_prepare_brand_config \
+    "$WEWORK_DIR" "$BRAND_CONFIG" "0" "$CONFIG_OVERRIDE" "$BRAND_INPUT_CONFIG"
   if [ -f "$CONFIG_OVERRIDE.namespace" ]; then
     export WEWORK_EXECUTOR_NAMESPACE="$(<"$CONFIG_OVERRIDE.namespace")"
     rm -f "$CONFIG_OVERRIDE.namespace"
   fi
-  TAURI_ARGS+=(--config "$CONFIG_OVERRIDE")
 fi
+TAURI_ARGS+=(--config "$CONFIG_OVERRIDE")
 if [ "$RELEASE_DEVTOOLS" = "1" ]; then
   TAURI_ARGS+=(--features release-devtools)
 fi
