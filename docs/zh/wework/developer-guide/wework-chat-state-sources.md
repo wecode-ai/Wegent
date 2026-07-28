@@ -57,6 +57,18 @@ Codex provider 可能只发送带完整正文的 `item/completed`，而不发送
 重复正文。临时聊天是 ephemeral thread，不能依赖 `thread/read(includeTurns)` 补回
 丢失的实时文本。
 
+任务结算后，work list 刷新可能立即触发一次已完成 transcript 重载。该 transcript
+负责最终文本、消息状态和文件变更，但 Codex 的 `thread/read` 可能暂时缺少实时流中
+已经完成的工具条目。实时消息在 `assistant_done` 入口用规范 `turnId` 标准化
+`subtaskId`，`useWorkbenchPaneSession` 只按相同的标准化 `subtaskId` 归并两份消息：
+保留 transcript 的权威字段，同时补回实时消息中状态为 `done` 或 `error` 且 transcript
+尚未包含的 tool block。不得补回 `pending` 或 `streaming` block，否则已完成任务会
+重新显示为执行中。
+
+同一个 Codex turn 可能因为工具调用或中途引导被拆成多条 assistant 消息。每条消息
+必须使用不同的消息 `id`，但都保留相同的规范 `turnId`。fork、回滚等 turn 级操作
+只能使用 Codex 持久化的规范 turn ID，不能使用为了界面分段生成的消息 ID。
+
 首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
 写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
