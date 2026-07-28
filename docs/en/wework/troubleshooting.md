@@ -40,13 +40,13 @@ Select the cloud status in the sidebar to authorize again. Verify the Backend ad
 
 ## Getting help
 
-Select **Report a problem** in the upper-right corner of the affected task, choose the information to include, and select **Export diagnostics**. Wework saves the bundle in the system Downloads directory. Additional information is optional.
+Select **Report a problem** in the upper-right corner of the affected task (or in the toolbar for a new conversation), choose the information to include, and select **Preview export**. After reviewing, select **Confirm export**. Wework saves the bundle in the system Downloads directory.
 
-The bundle includes the following items by default:
+The bundle is organized into two groups:
 
-- Complete Wework and local runtime logs.
-- Current task, device, and runtime state.
-- A screenshot of the current task.
-- Wework version, operating system, and processor architecture.
+- **Standard diagnostics** (on by default): Wework and local runtime logs, plus Wework version and system information. No conversation content and low privacy risk.
+- **Full task data** (off by default): Verbatim conversation history and a full window screenshot. May include business discussions, code, or anything visible on screen; review before including.
 
-You can deselect any item before exporting. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but you should still review the bundle before sharing business-sensitive information.
+If a selected item is unavailable (for example, no task data in a new conversation), it is skipped automatically and noted in the preview.
+
+You can expand any entry to inspect its content before exporting. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but free text (such as conversation history) cannot be fully redacted, so review the bundle before sharing.

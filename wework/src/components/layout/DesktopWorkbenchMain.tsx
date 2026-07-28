@@ -2019,19 +2019,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageCircle />
     </button>
   ) : undefined
-  const feedbackButton =
-    currentRuntimeTask && isTauri ? (
-      <button
-        type="button"
-        data-testid="task-feedback-button"
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={t('workbench.feedback_button')}
-        title={t('workbench.feedback_button')}
-        onClick={() => setFeedbackDialogOpen(true)}
-      >
-        <MessageSquareWarning />
-      </button>
-    ) : undefined
+  const feedbackButton = isTauri ? (
+    <button
+      type="button"
+      data-testid="task-feedback-button"
+      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      aria-label={t('workbench.feedback_button')}
+      title={t('workbench.feedback_button')}
+      onClick={() => setFeedbackDialogOpen(true)}
+    >
+      <MessageSquareWarning />
+    </button>
+  ) : undefined
   const mainHeaderActions = (
     <>
       {forkTaskButton}
@@ -2644,8 +2643,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         />
         <TaskFeedbackDialog
           open={feedbackDialogOpen}
+          hasActiveTask={Boolean(currentRuntimeTask)}
           onClose={() => setFeedbackDialogOpen(false)}
           getTaskContext={async () => {
+            if (!currentRuntimeTask) {
+              return {
+                task: { state: 'new-conversation' },
+                runtime: {
+                  status: paneSession.status,
+                  goal: paneSession.goal,
+                },
+              }
+            }
             const messages = await paneSession.loadFullTranscriptForExport()
             return {
               task: {
