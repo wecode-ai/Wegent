@@ -35,9 +35,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LIST_PAGE_SIZE = 50
 # Per-page char budget derived from the tool-output guard limit (single source of
-# truth; conservative 1 char ≈ 1 token). A page renders under the guard, so its
-# head+tail truncation only ever fires on a single oversized unit.
-_PAGE_CHAR_SELF_BUFFER = 1024
+# truth; conservative 1 char ≈ 1 token). The buffer leaves headroom for the JSON
+# envelope and escaping (quotes/backslashes) added around ``content`` below. Even
+# if an escaping-heavy page still exceeds the guard, the guard truncates the
+# middle (head+tail), and the paging metadata is emitted BEFORE ``content`` so
+# next_cursor/has_more always survive in the head.
+_PAGE_CHAR_SELF_BUFFER = 2048
 
 
 def _read_max_chars() -> int:

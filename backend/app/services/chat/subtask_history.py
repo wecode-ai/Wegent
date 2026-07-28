@@ -31,61 +31,13 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.stores.tasks import subtask_store
 
 PREVIEW_CHARS = 200
-DEFAULT_LIST_LIMIT = 50
 # Fallback page size (characters) when the caller does not pass max_chars.
 # chat_shell derives its value from the tool-output guard limit; this default just
 # keeps a direct API call bounded.
 DEFAULT_READ_MAX_CHARS = 14_000
 
 
-def subtask_primary_text(subtask: Subtask) -> str:
-    """Un-compacted plain text of a subtask, for preview and size."""
-    if subtask.role == SubtaskRole.USER:
-        return subtask.prompt or ""
-    result = subtask.result if isinstance(subtask.result, dict) else {}
-    value = result.get("value")
-    return value if isinstance(value, str) else ""
-
-
-def list_subtask_summaries(
-    db: Session,
-    *,
-    task_id: int,
-    user_id: int,
-    limit: Optional[int] = None,
-    offset: int = 0,
-) -> dict[str, Any]:
-    """Paged summaries for the task's non-deleted subtasks.
-
-    Returns ``{"subtasks": [...], "total": int, "has_more": bool}``.
-    """
-    subtasks = subtask_store.list_new_messages_since(
-        db, task_id=task_id, owner_user_id=user_id
-    )
-    visible = [st for st in subtasks if st.status != SubtaskStatus.DELETE]
-    total = len(visible)
-
-    offset = max(0, offset)
-    window = visible[offset : offset + limit] if limit else visible[offset:]
-    summaries = [
-        {
-            "id": st.id,
-            "role": st.role.value.lower(),
-            "status": st.status.value,
-            "char_count": len(text),
-            "preview": text[:PREVIEW_CHARS],
-        }
-        for st in window
-        for text in [subtask_primary_text(st)]
-    ]
-    return {
-        "subtasks": summaries,
-        "total": total,
-        "has_more": offset + len(window) < total,
-    }
-
-
-# ---- read: render + compound-cursor pagination -----------------------------
+# ---- rendering (shared by read paging and list previews) -------------------
 
 
 def _render_block(block: dict[str, Any]) -> str:
@@ -139,6 +91,72 @@ def _rendered_units(subtask: Subtask) -> list[str]:
             value = result.get("value")
             rendered = [value] if isinstance(value, str) and value else []
     return [r for r in rendered if r]
+
+
+def _preview_text(subtask: Subtask) -> str:
+    """A short preview source for the summary list.
+
+    Prefers ``result.value`` (the final text, a clean one-line preview) and falls
+    back to the first rendered unit so block-only turns still get a non-empty
+    preview — consistent with ``_rendered_units``' block-first source.
+    """
+    if subtask.role == SubtaskRole.USER:
+        return subtask.prompt or ""
+    result = subtask.result if isinstance(subtask.result, dict) else {}
+    value = result.get("value")
+    if isinstance(value, str) and value:
+        return value
+    units = _rendered_units(subtask)
+    return units[0] if units else ""
+
+
+# ---- list ------------------------------------------------------------------
+
+
+def list_subtask_summaries(
+    db: Session,
+    *,
+    task_id: int,
+    user_id: int,
+    limit: Optional[int] = None,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Paged summaries for the task's non-deleted subtasks.
+
+    Returns ``{"subtasks": [...], "total": int, "has_more": bool}``. ``limit=None``
+    means no limit; ``limit=0`` returns an empty page (``total`` still reflects
+    all visible subtasks).
+    """
+    subtasks = subtask_store.list_new_messages_since(
+        db, task_id=task_id, owner_user_id=user_id
+    )
+    visible = [st for st in subtasks if st.status != SubtaskStatus.DELETE]
+    total = len(visible)
+
+    offset = max(0, offset)
+    if limit is None:
+        window = visible[offset:]
+    else:
+        window = visible[offset : offset + max(0, limit)]
+    summaries = [
+        {
+            "id": st.id,
+            "role": st.role.value.lower(),
+            "status": st.status.value,
+            "char_count": len(text),
+            "preview": text[:PREVIEW_CHARS],
+        }
+        for st in window
+        for text in [_preview_text(st)]
+    ]
+    return {
+        "subtasks": summaries,
+        "total": total,
+        "has_more": offset + len(window) < total,
+    }
+
+
+# ---- read: compound-cursor pagination --------------------------------------
 
 
 def _parse_cursor(cursor: str, total: int) -> tuple[int, int]:

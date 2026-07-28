@@ -32,6 +32,11 @@ from app.models.subtask_context import (
     SubtaskContext,
 )
 from app.models.user import User
+from app.schemas.subtask_history import (
+    SubtaskListResponse,
+    SubtaskRecordResponse,
+    SubtaskSummary,
+)
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.chat.compaction_checkpoint import resolve_history_subtasks
 from app.services.chat.guidance_queue import guidance_queue
@@ -948,42 +953,15 @@ async def get_chat_history(
     return HistoryResponse(session_id=session_id, messages=messages)
 
 
-class SubtaskSummary(BaseModel):
-    """One-line summary of a history subtask for AI backtracking."""
-
-    id: int
-    role: str
-    status: str
-    char_count: int
-    preview: str
-
-
-class SubtaskListResponse(BaseModel):
-    session_id: str
-    subtasks: list[SubtaskSummary]
-    total: int
-    has_more: bool
-
-
-class SubtaskRecordResponse(BaseModel):
-    """One page of a subtask's rendered, un-compaction-scoped transcript.
-
-    Paged by a compound cursor (``"<unit_idx>:<char_off>"``): whole units in the
-    common case, a within-unit character split only when a single unit alone
-    overflows the page. ``next_cursor`` is ``None`` at the end.
-    """
-
-    id: int
-    role: str
-    status: str
-    content: str
-    cursor: str
-    next_cursor: Optional[str] = None
-    has_more: bool
-    total_units: int
-
-
 @router.get("/history/{session_id}/subtasks", response_model=SubtaskListResponse)
+@trace_async(
+    "internal.chat_storage.list_subtasks",
+    "internal.chat_storage",
+    extract_attributes=lambda *args, **kwargs: {
+        "chat.session_id": kwargs.get("session_id", ""),
+        "chat.offset": kwargs.get("offset", 0),
+    },
+)
 async def list_history_subtasks(
     session_id: str,
     limit: Optional[int] = Query(None, description="Max summaries to return"),
@@ -1018,6 +996,14 @@ async def list_history_subtasks(
 @router.get(
     "/history/{session_id}/subtasks/{subtask_id}",
     response_model=SubtaskRecordResponse,
+)
+@trace_async(
+    "internal.chat_storage.read_subtask",
+    "internal.chat_storage",
+    extract_attributes=lambda *args, **kwargs: {
+        "chat.session_id": kwargs.get("session_id", ""),
+        "chat.subtask_id": kwargs.get("subtask_id", 0),
+    },
 )
 async def read_history_subtask(
     session_id: str,

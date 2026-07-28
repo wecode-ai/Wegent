@@ -59,6 +59,47 @@ def test_list_summaries_pagination_and_delete_filter(monkeypatch):
     assert out["has_more"] is True
 
 
+def test_list_preview_falls_back_to_blocks(monkeypatch):
+    # Assistant turn whose content is only in blocks (no result.value).
+    st = _subtask(
+        2,
+        SubtaskRole.ASSISTANT,
+        result={"blocks": [{"type": "text", "content": "block-only detail"}]},
+    )
+    monkeypatch.setattr(
+        subtask_history.subtask_store,
+        "list_new_messages_since",
+        lambda db, **kw: [st],
+        raising=False,
+    )
+
+    out = subtask_history.list_subtask_summaries(None, task_id=2, user_id=7)
+
+    assert out["subtasks"][0]["preview"] == "block-only detail"
+    assert out["subtasks"][0]["char_count"] == len("block-only detail")
+
+
+def test_list_limit_zero_returns_empty_page(monkeypatch):
+    rows = [
+        _subtask(1, SubtaskRole.USER, prompt="a"),
+        _subtask(2, SubtaskRole.ASSISTANT, result={"value": "b"}),
+    ]
+    monkeypatch.setattr(
+        subtask_history.subtask_store,
+        "list_new_messages_since",
+        lambda db, **kw: rows,
+        raising=False,
+    )
+
+    out = subtask_history.list_subtask_summaries(
+        None, task_id=2, user_id=7, limit=0, offset=0
+    )
+
+    assert out["subtasks"] == []
+    assert out["total"] == 2
+    assert out["has_more"] is True
+
+
 def test_read_stops_on_whole_unit_boundary(monkeypatch):
     st = _subtask(
         2,
