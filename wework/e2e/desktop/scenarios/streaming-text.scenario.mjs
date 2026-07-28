@@ -541,6 +541,11 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
+        { text: VIEWPORT_MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
       const streamingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )

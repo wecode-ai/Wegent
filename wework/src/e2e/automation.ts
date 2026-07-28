@@ -802,6 +802,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'scrollToBottomAsUser': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.dispatchEvent(
+        new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          deltaY: 120,
+        })
+      )
       element.scrollTop = element.scrollHeight
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
@@ -816,6 +824,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
 
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
       const nextScrollTop = maxScrollTop * ratio
+      scroller.dispatchEvent(
+        new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+        })
+      )
       scroller.scrollTop = nextScrollTop
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
