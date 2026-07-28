@@ -598,6 +598,12 @@ async function verifyQueuedFollowUpNavigation({ composerSelector, control, proje
 }
 
 async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }) {
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    initialSnapshot.testIds.includes('add-context-button') &&
+      initialSnapshot.testIds.includes('new-chat-button'),
+    'The task-plan verification did not start from a ready workbench'
+  )
   control.setScenario('task_plan')
   await control.command('click', '[data-testid="add-context-button"]')
   await control.command('click', '[data-testid="set-plan-mode-button"]')

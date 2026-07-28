@@ -107,6 +107,37 @@ describe('reconcileRuntimeConversationMessages', () => {
     expect(reconcileRuntimeConversationMessages(transcript, cached, false)).toBe(transcript)
   })
 
+  test('does not borrow an older cached turn identity for an identity-less latest response', () => {
+    const cached = [
+      message({ id: 'older-assistant', turnId: 'turn-1', content: 'Earlier response' }),
+      message({ id: 'latest-assistant', content: 'Latest response without runtime identity' }),
+    ]
+    const transcript = [
+      message({ id: 'server-assistant', turnId: 'turn-2', content: 'Settled server response' }),
+    ]
+
+    expect(reconcileRuntimeConversationMessages(transcript, cached, false)).toBe(transcript)
+  })
+
+  test('matches numeric and string runtime turn identities equivalently', () => {
+    const cached = [
+      message({
+        id: 'cached-assistant',
+        subtaskId: 42 as unknown as string,
+        content: 'Cached response',
+      }),
+    ]
+    const transcript = [
+      message({
+        id: 'server-assistant',
+        subtaskId: '42',
+        content: 'Settled server response',
+      }),
+    ]
+
+    expect(reconcileRuntimeConversationMessages(transcript, cached, false)).toBe(transcript)
+  })
+
   test('preserves completed live tool blocks missing from a settled transcript', () => {
     const transcript = [
       message({

@@ -2897,16 +2897,17 @@ export function transcriptSettlesLatestSeededTurn(
 }
 
 function latestRuntimeTurnIdentity(messages: WorkbenchMessage[]): ReadonlySet<string> | null {
-  const latestMessage = [...messages].reverse().find(message => message.turnId || message.subtaskId)
+  const latestMessage = messages.at(-1)
   if (!latestMessage) return null
-  return runtimeMessageTurnIdentity(latestMessage)
+  const identity = runtimeMessageTurnIdentity(latestMessage)
+  return identity.size > 0 ? identity : null
 }
 
 function runtimeMessageTurnIdentity(message: WorkbenchMessage): ReadonlySet<string> {
   return new Set(
-    [message.turnId, message.subtaskId].filter(
-      (value): value is string => value !== undefined && value !== null
-    )
+    [message.turnId, message.subtaskId]
+      .filter(value => value !== undefined && value !== null)
+      .map(value => String(value))
   )
 }
 
