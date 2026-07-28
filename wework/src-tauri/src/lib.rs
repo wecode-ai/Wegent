@@ -4387,7 +4387,13 @@ pub fn run() {
             acknowledge_frontend_resume_probe,
             register_frontend_recovery_bridge,
             #[cfg(desktop)]
-            feedback::export_feedback_bundle,
+            feedback::preview_feedback_bundle,
+            #[cfg(desktop)]
+            feedback::confirm_feedback_bundle,
+            #[cfg(desktop)]
+            feedback::discard_feedback_bundle,
+            #[cfg(desktop)]
+            feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,

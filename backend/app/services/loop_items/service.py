@@ -361,6 +361,68 @@ class LoopItemService:
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
 
+        return self._store_attachment(
+            db,
+            item,
+            project,
+            user_id,
+            display_name,
+            content_type,
+            source,
+            settings.DELIVERY_MAX_ASSET_SIZE_MB,
+        )
+
+    def has_attachment(self, db: Session, item_id: str, display_name: str) -> bool:
+        return (
+            db.query(LoopItemAttachment)
+            .filter(
+                LoopItemAttachment.loop_item_id == item_id,
+                LoopItemAttachment.display_name == display_name,
+            )
+            .first()
+            is not None
+        )
+
+    def add_feedback_attachment(
+        self,
+        db: Session,
+        item: LoopItem,
+        user_id: int,
+        display_name: str,
+        content_type: str,
+        source: BinaryIO,
+    ) -> LoopItemAttachment:
+        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        if item.created_by_user_id != user_id or not metadata.get("feedback_report_id"):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Invalid feedback attachment"
+            )
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")
+        return self._store_attachment(
+            db,
+            item,
+            project,
+            user_id,
+            display_name,
+            content_type,
+            source,
+            settings.WEWORK_FEEDBACK_MAX_BUNDLE_SIZE_MB,
+        )
+
+    @staticmethod
+    def _store_attachment(
+        db: Session,
+        item: LoopItem,
+        project: CloudProject,
+        user_id: int,
+        display_name: str,
+        content_type: str,
+        source: BinaryIO,
+        max_size_mb: int,
+    ) -> LoopItemAttachment:
+
         attachment_id = str(uuid.uuid4())
         object_key = (
             f"projects/{project.public_id}/loop-items/{item.id}/attachments/"
@@ -373,7 +435,7 @@ class LoopItemService:
                 digest.update(chunk)
                 staged.write(chunk)
                 length += len(chunk)
-                if length > settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024:
+                if length > max_size_mb * 1024 * 1024:
                     raise HTTPException(
                         status.HTTP_413_CONTENT_TOO_LARGE,
                         "TODO attachment is too large",
@@ -406,6 +468,21 @@ class LoopItemService:
     ) -> str:
         attachment = self._get_attachment(db, attachment_id, user_id)
         return delivery_storage.download_url(attachment.object_key)
+
+    def attachment_content(
+        self, db: Session, attachment_id: str, user_id: int
+    ) -> tuple[bytes, str, str]:
+        attachment = self._get_attachment(db, attachment_id, user_id)
+        return (
+            delivery_storage.get_bytes(attachment.object_key),
+            attachment.content_type or "application/octet-stream",
+            attachment.display_name,
+        )
+
+    def require_attachment_access(
+        self, db: Session, attachment_id: str, user_id: int
+    ) -> None:
+        self._get_attachment(db, attachment_id, user_id)
 
     def delete_attachment(self, db: Session, attachment_id: str, user_id: int) -> None:
         attachment = self._get_attachment(db, attachment_id, user_id)

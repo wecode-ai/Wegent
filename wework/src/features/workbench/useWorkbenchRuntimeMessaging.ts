@@ -979,6 +979,7 @@ export function useWorkbenchRuntimeMessaging({
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
           clientMessageId: options?.clientMessageId,
           additionalContext: options?.additionalContext,
+          cloudProjectId: options?.cloudProjectId,
         }
       )
       if (sent) {
