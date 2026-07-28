@@ -49,7 +49,6 @@ import {
   shouldDisableDocumentBatchActions,
 } from '../hooks/useKnowledgeResourceSelection'
 import { Pagination } from '@/components/ui/pagination'
-import { listDocuments } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import { useDocumentIndexPolling } from '@/features/knowledge/multimodal/hooks/useDocumentIndexPolling'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
@@ -78,31 +77,10 @@ import {
   deletedFolderAffectsActiveFolder,
   folderTreeContainsId,
 } from '../utils/resource-tree'
+import { findDocumentByName } from '../utils/document-lookup'
 
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
-
-/**
- * Find a document by name across all pages of a knowledge base.
- * Uses iterative pagination (while has_more) to scan beyond the first 200 items.
- * Returns undefined if not found or if the signal is aborted.
- */
-async function findDocumentByName(
-  knowledgeBaseId: number,
-  documentName: string,
-  signal?: AbortSignal
-): Promise<KnowledgeDocument | undefined> {
-  let offset = 0
-  const batchSize = 200
-  while (!signal?.aborted) {
-    const response = await listDocuments(knowledgeBaseId, { limit: batchSize, offset })
-    if (signal?.aborted) return undefined
-    const found = response.items.find(doc => doc.name === documentName)
-    if (found || !response.has_more) return found
-    offset += response.items.length
-  }
-  return undefined
-}
 
 /**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).

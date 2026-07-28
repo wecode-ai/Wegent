@@ -5,9 +5,9 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Bot, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react'
+import { Bot, PanelRightClose, PanelRightOpen, Plus, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { KnowledgeBase } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArtifactPanel } from '@/features/knowledge/artifact/components/ArtifactPanel'
@@ -17,8 +17,13 @@ import {
   type ArtifactSourceScope,
 } from '@/features/knowledge/artifact/components/ArtifactSourceSelector'
 import { DocumentDetailDialog } from './DocumentDetailDialog'
+import { DocumentUpload, type TableDocument } from './DocumentUpload'
+import { useDocuments } from '../hooks/useDocuments'
+import { findDocumentByName } from '../utils/document-lookup'
+import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
+import { resolvePerFilePrompt } from '@/features/knowledge/multimodal/utils/resolvePerFilePrompt'
+import { createWebDocument } from '@/apis/knowledge'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
-import type { KnowledgeDocument } from '@/types/knowledge'
 
 const EMPTY_DOCUMENT_IDS: number[] = []
 
@@ -72,8 +77,10 @@ interface DocumentPanelProps {
   mobileVisible?: boolean
   /** Whether the knowledge base uses organization-level public routes. */
   isOrganization?: boolean
-  /** Whether the user can edit existing documents. */
-  canManageKb?: boolean
+  /** Whether the user can add and edit documents. */
+  canManageDocuments?: boolean
+  /** Initial document path to auto-open (from virtual URL path segments). */
+  initialDocPath?: string
   onAskArtifactNode?: (request: ArtifactPromptRequest) => void
 }
 
@@ -100,7 +107,8 @@ export function DocumentPanel({
   onCollapsedChange,
   mobileVisible = false,
   isOrganization = false,
-  canManageKb = false,
+  canManageDocuments = false,
+  initialDocPath,
   onAskArtifactNode,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
@@ -111,7 +119,15 @@ export function DocumentPanel({
   const [canManageArtifacts, setCanManageArtifacts] = useState<boolean | null>(null)
   const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
   const [processingDocumentCount, setProcessingDocumentCount] = useState(0)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [sourceRevision, setSourceRevision] = useState(0)
   const sourceApplyContinuationRef = useRef<(() => void) | null>(null)
+  const modelSupportsVideo = useModelSupportsVideo(knowledgeBase)
+  const { create: createDocument } = useDocuments({
+    knowledgeBaseId: knowledgeBase.id,
+    autoLoad: false,
+    paginationEnabled: false,
+  })
   const sourceScope: ArtifactSourceScope =
     selectedDocumentIds.length > 0
       ? { mode: 'selected', documentIds: new Set(selectedDocumentIds) }
@@ -183,6 +199,83 @@ export function DocumentPanel({
   const handleInlineSourceScopeChange = (scope: ArtifactSourceScope) => {
     onDocumentSelectionChange?.(scope.mode === 'all' ? [] : Array.from(scope.documentIds))
   }
+
+  const handleSourceCreated = () => {
+    setUploadOpen(false)
+    setSourceRevision(current => current + 1)
+  }
+
+  const handleUploadComplete = async (
+    attachments: { attachment: { id: number; filename: string }; file: File }[],
+    splitterConfig?: Partial<SplitterConfig>,
+    multimodalAnalysisPrompts?: {
+      video?: string | null
+      image?: string | null
+    }
+  ) => {
+    let createdAny = false
+
+    for (const { attachment, file } of attachments) {
+      const documentName = attachment.filename || file.name
+      const extension = documentName.split('.').pop() || ''
+      const perFilePrompt = resolvePerFilePrompt(documentName, extension, multimodalAnalysisPrompts)
+
+      try {
+        await createDocument({
+          attachment_id: attachment.id,
+          name: documentName,
+          file_extension: extension,
+          file_size: file.size,
+          splitter_config: splitterConfig,
+          source_type: 'file',
+          folder_id: 0,
+          multimodal_analysis_prompt: perFilePrompt,
+        })
+        createdAny = true
+      } catch {
+        // Continue creating the remaining documents. useDocuments reports each failure.
+      }
+    }
+
+    if (createdAny) handleSourceCreated()
+  }
+
+  const handleTableAdd = async (data: TableDocument) => {
+    await createDocument({
+      name: data.name,
+      file_extension: 'table',
+      file_size: 0,
+      source_type: 'table',
+      source_config: data.source_config,
+      folder_id: 0,
+    })
+    handleSourceCreated()
+  }
+
+  const handleWebAdd = async (url: string, name?: string) => {
+    const result = await createWebDocument(url, knowledgeBase.id, name, 0)
+    if (!result.success) {
+      throw new Error(result.error_message || t('document.document.createFailed'))
+    }
+    handleSourceCreated()
+  }
+
+  useEffect(() => {
+    if (!initialDocPath) return
+
+    const controller = new AbortController()
+    void findDocumentByName(knowledgeBase.id, initialDocPath, controller.signal)
+      .then(document => {
+        if (!controller.signal.aborted && document) {
+          setViewingDocument(document)
+        }
+      })
+      .catch(() => {
+        // Document auto-open is best-effort.
+      })
+
+    return () => controller.abort()
+  }, [initialDocPath, knowledgeBase.id])
 
   // Handle mouse down on resizer
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -315,11 +408,27 @@ export function DocumentPanel({
         </div>
 
         <div className="mx-4 mt-4 shrink-0" data-testid="artifact-source-summary">
-          <h3 className="mb-2 text-sm font-semibold">
-            {t(
-              canManageArtifacts === false ? 'artifact.sourceBrowser.documents' : 'artifact.source'
+          <div className="mb-2 flex min-h-11 items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">
+              {t(
+                canManageArtifacts === false
+                  ? 'artifact.sourceBrowser.documents'
+                  : 'artifact.source'
+              )}
+            </h3>
+            {canManageDocuments && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-h-11"
+                onClick={() => setUploadOpen(true)}
+                data-testid="artifact-add-source"
+              >
+                <Upload className="mr-1.5 h-4 w-4" />
+                {t('document.document.upload')}
+              </Button>
             )}
-          </h3>
+          </div>
           <ArtifactSourceSelector
             knowledgeBaseId={knowledgeBase.id}
             scope={sourceScope}
@@ -335,6 +444,7 @@ export function DocumentPanel({
 
         <div className="min-h-0 flex-1 overflow-hidden px-4 pb-4 pt-5">
           <ArtifactPanel
+            key={sourceRevision}
             knowledgeBaseId={knowledgeBase.id}
             selectedDocumentIds={selectedDocumentIds}
             onAdjustSources={openSourceDialog}
@@ -366,10 +476,23 @@ export function DocumentPanel({
         document={viewingDocument}
         knowledgeBaseId={knowledgeBase.id}
         kbType={knowledgeBase.kb_type}
-        canEdit={canManageKb}
+        canEdit={canManageDocuments}
         knowledgeBaseName={knowledgeBase.name}
         knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
         isOrganization={isOrganization}
+      />
+
+      <DocumentUpload
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        onUploadComplete={handleUploadComplete}
+        onTableAdd={handleTableAdd}
+        onWebAdd={handleWebAdd}
+        folderId={0}
+        multimodalAnalysisEnabled={knowledgeBase.multimodal_analysis_enabled}
+        multimodalModelSupportsVideo={modelSupportsVideo}
+        multimodalVideoPrompt={knowledgeBase.multimodal_analysis_video_prompt}
+        multimodalImagePrompt={knowledgeBase.multimodal_analysis_image_prompt}
       />
 
       {/* Overlay while resizing */}

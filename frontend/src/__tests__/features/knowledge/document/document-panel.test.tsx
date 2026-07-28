@@ -3,13 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DocumentPanel } from '@/features/knowledge/document/components/DocumentPanel'
-import type { KnowledgeBase } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeDocument } from '@/types/knowledge'
 
 const mockDocumentDetailDialog = jest.fn((_props: unknown) => null)
 const mockArtifactSourceSelector = jest.fn((_props: unknown) => null)
 const mockSourceContinuation = jest.fn()
+const mockCreateDocument = jest.fn()
+const mockFindDocumentByName = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -58,8 +60,47 @@ jest.mock('@/features/knowledge/artifact/components/ArtifactSourceSelector', () 
   ArtifactSourceSelector: (props: unknown) => mockArtifactSourceSelector(props),
 }))
 
+jest.mock('@/features/knowledge/document/components/DocumentUpload', () => ({
+  DocumentUpload: ({
+    open,
+    onTableAdd,
+  }: {
+    open: boolean
+    onTableAdd?: (data: { name: string; source_config: { url: string } }) => Promise<void>
+  }) =>
+    open ? (
+      <button
+        data-testid="mock-table-add"
+        onClick={() =>
+          void onTableAdd?.({
+            name: 'Sales table',
+            source_config: { url: 'https://example.com/table' },
+          })
+        }
+      />
+    ) : null,
+}))
+
 jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () => ({
   DocumentDetailDialog: (props: unknown) => mockDocumentDetailDialog(props),
+}))
+
+jest.mock('@/features/knowledge/document/hooks/useDocuments', () => ({
+  useDocuments: () => ({
+    create: mockCreateDocument,
+  }),
+}))
+
+jest.mock('@/features/knowledge/document/utils/document-lookup', () => ({
+  findDocumentByName: (...args: unknown[]) => mockFindDocumentByName(...args),
+}))
+
+jest.mock('@/features/knowledge/multimodal/hooks/useModelSupportsVideo', () => ({
+  useModelSupportsVideo: () => true,
+}))
+
+jest.mock('@/apis/knowledge', () => ({
+  createWebDocument: jest.fn(),
 }))
 
 const knowledgeBase: KnowledgeBase = {
@@ -81,10 +122,12 @@ describe('DocumentPanel', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     localStorage.clear()
+    mockCreateDocument.mockResolvedValue({ id: 21 })
+    mockFindDocumentByName.mockResolvedValue(undefined)
   })
 
   it('forwards organization routing context to document preview', () => {
-    render(<DocumentPanel knowledgeBase={knowledgeBase} isOrganization canManageKb />)
+    render(<DocumentPanel knowledgeBase={knowledgeBase} isOrganization canManageDocuments />)
 
     expect(mockDocumentDetailDialog).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -93,6 +136,58 @@ describe('DocumentPanel', () => {
         knowledgeBaseNamespace: 'organization-name',
         canEdit: true,
       })
+    )
+  })
+
+  it('shows direct source upload only to document editors', () => {
+    const { rerender } = render(<DocumentPanel knowledgeBase={knowledgeBase} />)
+
+    expect(screen.queryByTestId('artifact-add-source')).not.toBeInTheDocument()
+
+    rerender(<DocumentPanel knowledgeBase={knowledgeBase} canManageDocuments />)
+    fireEvent.click(screen.getByTestId('artifact-add-source'))
+
+    expect(screen.getByTestId('mock-table-add')).toBeInTheDocument()
+  })
+
+  it('creates quick-added sources in the knowledge base root', async () => {
+    render(<DocumentPanel knowledgeBase={knowledgeBase} canManageDocuments />)
+
+    fireEvent.click(screen.getByTestId('artifact-add-source'))
+    fireEvent.click(screen.getByTestId('mock-table-add'))
+
+    await waitFor(() =>
+      expect(mockCreateDocument).toHaveBeenCalledWith({
+        name: 'Sales table',
+        file_extension: 'table',
+        file_size: 0,
+        source_type: 'table',
+        source_config: { url: 'https://example.com/table' },
+        folder_id: 0,
+      })
+    )
+  })
+
+  it('opens a document path directly in the workshop preview', async () => {
+    const document = {
+      id: 31,
+      name: 'guide.md',
+    } as KnowledgeDocument
+    mockFindDocumentByName.mockResolvedValue(document)
+
+    render(<DocumentPanel knowledgeBase={knowledgeBase} initialDocPath="guide.md" />)
+
+    await waitFor(() =>
+      expect(mockDocumentDetailDialog).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          document,
+        })
+      )
+    )
+    expect(mockFindDocumentByName).toHaveBeenCalledWith(
+      knowledgeBase.id,
+      'guide.md',
+      expect.any(AbortSignal)
     )
   })
 

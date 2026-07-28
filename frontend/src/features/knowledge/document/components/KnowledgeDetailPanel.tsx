@@ -290,7 +290,8 @@ export function KnowledgeDetailPanel({
           onCollapsedChange={setIsDocumentPanelCollapsed}
           mobileVisible={mobileWorkspaceTab === 'workshop'}
           isOrganization={groupInfo?.groupType === 'organization'}
-          canManageKb={canManageKb}
+          canManageDocuments={canUploadDocuments}
+          initialDocPath={initialDocPath}
           onAskArtifactNode={request => {
             setArtifactPromptRequest(request)
             setMobileWorkspaceTab('chat')

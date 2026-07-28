@@ -891,7 +891,7 @@
     "hideWorkshop": "Collapse AI Workshop",
     "recentGenerations": "Recent generations",
     "runningCount": "{{count}} in progress",
-    "noDocumentsHint": "This knowledge base has no documents. Add sources in Document Management first.",
+    "noDocumentsHint": "This knowledge base has no available documents. Add sources first.",
     "documentsProcessingHint": "Documents are being processed. Generation will be available when they are ready.",
     "create": "Start task",
     "createFirst": "Start first task",

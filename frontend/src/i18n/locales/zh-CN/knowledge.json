@@ -891,7 +891,7 @@
     "hideWorkshop": "收起 AI 工坊",
     "recentGenerations": "最近生成",
     "runningCount": "{{count}} 个进行中",
-    "noDocumentsHint": "知识库暂无文档，请先前往“文档管理”添加来源。",
+    "noDocumentsHint": "知识库暂无可用文档，请先添加来源。",
     "documentsProcessingHint": "文档正在处理中，完成后即可生成。",
     "create": "开始任务",
     "createFirst": "开始第一个任务",
