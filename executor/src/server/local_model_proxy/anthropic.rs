@@ -12,7 +12,10 @@ use serde_json::{json, Map, Value};
 
 use crate::logging::log_executor_event;
 
-use super::chat::{self, ToolContext};
+use super::{
+    chat::{self, ToolContext},
+    DEFAULT_MAX_OUTPUT_TOKENS,
+};
 
 pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext), String> {
     let (chat_body, context) = chat::responses_to_chat(body)?;
@@ -25,7 +28,7 @@ pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext
         chat_body
             .get("max_tokens")
             .cloned()
-            .unwrap_or_else(|| Value::from(4096)),
+            .unwrap_or_else(|| Value::from(DEFAULT_MAX_OUTPUT_TOKENS)),
     );
     result.insert("stream".to_owned(), Value::Bool(true));
 
