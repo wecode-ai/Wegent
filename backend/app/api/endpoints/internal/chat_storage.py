@@ -944,6 +944,137 @@ async def get_chat_history(
     return HistoryResponse(session_id=session_id, messages=messages)
 
 
+_SUBTASK_PREVIEW_CHARS = 200
+
+
+def _subtask_primary_text(subtask: Subtask) -> str:
+    """Un-compacted plain text of a subtask, for preview and size.
+
+    Deliberately reads the raw record (prompt / result.value), not the
+    compaction-scoped history flatten, so previews reflect the original turn.
+    """
+    if subtask.role == SubtaskRole.USER:
+        return subtask.prompt or ""
+    result = subtask.result if isinstance(subtask.result, dict) else {}
+    value = result.get("value")
+    return value if isinstance(value, str) else ""
+
+
+class SubtaskSummary(BaseModel):
+    """One-line summary of a history subtask for AI backtracking."""
+
+    id: int
+    role: str
+    status: str
+    char_count: int
+    preview: str
+
+
+class SubtaskListResponse(BaseModel):
+    session_id: str
+    subtasks: list[SubtaskSummary]
+
+
+class SubtaskRecordResponse(BaseModel):
+    """Raw, un-compaction-scoped record of a single subtask.
+
+    ``blocks`` is the as-streamed ground truth (never compaction-lossy);
+    ``messages_chain`` / ``value`` are fallbacks for legacy/simple turns. The
+    caller (chat_shell) renders and paginates by block.
+    """
+
+    id: int
+    role: str
+    status: str
+    prompt: Optional[str] = None
+    blocks: Optional[list] = None
+    messages_chain: Optional[list] = None
+    value: Optional[str] = None
+
+
+@router.get("/history/{session_id}/subtasks", response_model=SubtaskListResponse)
+async def list_history_subtasks(
+    session_id: str,
+    db: Session = Depends(get_db),
+):
+    """List the whole session's subtasks as summaries (AI history backtracking).
+
+    Unlike ``/history``, this is NOT compaction-scoped: it lists every subtask so
+    the model can page back into detail that compaction summarized away.
+    """
+    session_type, task_id = parse_session_id(session_id)
+    if session_type != "task":
+        raise HTTPException(
+            status_code=400, detail="Only task-based sessions are supported"
+        )
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    subtasks = subtask_store.list_new_messages_since(
+        db, task_id=task_id, owner_user_id=task.user_id
+    )
+    summaries = []
+    for st in subtasks:
+        if st.status == SubtaskStatus.DELETE:
+            continue
+        text = _subtask_primary_text(st)
+        summaries.append(
+            SubtaskSummary(
+                id=st.id,
+                role=st.role.value.lower(),
+                status=st.status.value,
+                char_count=len(text),
+                preview=text[:_SUBTASK_PREVIEW_CHARS],
+            )
+        )
+    return SubtaskListResponse(session_id=session_id, subtasks=summaries)
+
+
+@router.get(
+    "/history/{session_id}/subtasks/{subtask_id}",
+    response_model=SubtaskRecordResponse,
+)
+async def read_history_subtask(
+    session_id: str,
+    subtask_id: int,
+    db: Session = Depends(get_db),
+):
+    """Return one subtask's raw record (un-compaction-scoped) for backtracking."""
+    session_type, task_id = parse_session_id(session_id)
+    if session_type != "task":
+        raise HTTPException(
+            status_code=400, detail="Only task-based sessions are supported"
+        )
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    subtask = subtask_store.get_by_id(
+        db, subtask_id=subtask_id, owner_user_id=task.user_id
+    )
+    # Owner filter alone is not enough: a same-user subtask in a different task
+    # must not be readable through this session. Enforce task ownership too.
+    if subtask is None or subtask.task_id != task_id:
+        raise HTTPException(status_code=404, detail="Subtask not found in this session")
+
+    role = subtask.role.value.lower()
+    status = subtask.status.value
+    if subtask.role == SubtaskRole.USER:
+        return SubtaskRecordResponse(
+            id=subtask.id, role=role, status=status, prompt=subtask.prompt or ""
+        )
+    result = subtask.result if isinstance(subtask.result, dict) else {}
+    return SubtaskRecordResponse(
+        id=subtask.id,
+        role=role,
+        status=status,
+        blocks=result.get("blocks"),
+        messages_chain=result.get("messages_chain"),
+        value=result.get("value"),
+    )
+
+
 class AttachmentTextResponse(BaseModel):
     """A character slice of an attachment's extracted text."""
 
