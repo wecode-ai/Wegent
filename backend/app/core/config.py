@@ -297,6 +297,18 @@ class Settings(BaseSettings):
     # switch is the recommended way to disable pruning.
     KB_STAT_PRUNE_ENABLED: bool = False
 
+    # KB-stat beat schedules (crontab values, interpreted in UTC because
+    # celery timezone="UTC"). Defaults preserve the prior hardcoded times;
+    # override to shift collection/pruning to a different wall-clock slot.
+    # day_of_week follows celery: 0=Sunday .. 6=Saturday.
+    # collect daily: UTC 19:07 = Beijing 03:07
+    KB_STAT_COLLECT_HOUR: int = 19
+    KB_STAT_COLLECT_MINUTE: int = 7
+    # prune weekly: UTC Sunday 20:13 = Beijing Monday 04:13
+    KB_STAT_PRUNE_DAY_OF_WEEK: int = 0
+    KB_STAT_PRUNE_HOUR: int = 20
+    KB_STAT_PRUNE_MINUTE: int = 13
+
     @field_validator(
         "CELERY_BROKER_URL",
         "CELERY_RESULT_BACKEND",

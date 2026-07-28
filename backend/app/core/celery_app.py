@@ -87,16 +87,25 @@ celery_app.conf.update(
         },
         "kb-stat-collect-daily": {
             "task": "kb_stat.collect_all",
-            # 北京时间 03:07 = UTC 19:07 (celery timezone=UTC)
-            "schedule": crontab(hour=19, minute=7),
+            # crontab is UTC (celery timezone="UTC"). Defaults: UTC 19:07
+            # = Beijing 03:07. Override via KB_STAT_COLLECT_HOUR/MINUTE.
+            "schedule": crontab(
+                hour=settings.KB_STAT_COLLECT_HOUR,
+                minute=settings.KB_STAT_COLLECT_MINUTE,
+            ),
             "kwargs": {"lookback_days": 1},
             "options": {"queue": "kb_stat"},
         },
         "kb-stat-prune-weekly": {
             "task": "kb_stat.prune_old_runs",
-            # 北京时间周一 04:13 = UTC 周日 20:13 (celery timezone=UTC).
-            # celery day_of_week: 0=Sunday .. 6=Saturday, so UTC Sunday is 0.
-            "schedule": crontab(day_of_week=0, hour=20, minute=13),
+            # crontab is UTC (celery timezone="UTC"). Defaults: UTC Sunday
+            # 20:13 = Beijing Monday 04:13. celery day_of_week: 0=Sunday.
+            # Override via KB_STAT_PRUNE_DAY_OF_WEEK/HOUR/MINUTE.
+            "schedule": crontab(
+                day_of_week=settings.KB_STAT_PRUNE_DAY_OF_WEEK,
+                hour=settings.KB_STAT_PRUNE_HOUR,
+                minute=settings.KB_STAT_PRUNE_MINUTE,
+            ),
             "options": {"queue": "kb_stat"},
         },
     },
