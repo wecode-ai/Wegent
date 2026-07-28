@@ -107,6 +107,12 @@ impl RuntimeWorkRpcHandler {
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
+        if let (Some(runtime_handle), Some(project_id)) = (
+            link.runtime_handle.as_object_mut(),
+            cloud_project_id(&request),
+        ) {
+            runtime_handle.insert("cloudProjectId".to_owned(), project_id);
+        }
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
@@ -205,6 +211,9 @@ impl RuntimeWorkRpcHandler {
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        if let Some(link) = existing_link.as_ref() {
+            restore_cloud_project_id(&mut request, &link.runtime_handle);
+        }
         request.new_session = false;
         if request.runtime_project_key.is_none() {
             request.runtime_project_key = existing_link
@@ -333,6 +342,7 @@ impl RuntimeWorkRpcHandler {
         let workspace_path =
             workspace_path(&payload).unwrap_or_else(|| existing_link.workspace_path.clone());
         apply_runtime_payload_metadata(&mut request, &payload);
+        restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());

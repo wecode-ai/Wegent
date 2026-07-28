@@ -82,10 +82,10 @@ use super::{
     },
     transcript_page::transcript_page,
     util::{
-        apply_runtime_payload_metadata, bool_field, execution_request, id_field,
+        apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
-        prompt_text, runtime_task_id, string_field, timestamp_ms_field, workspace_group_path,
-        workspace_path,
+        prompt_text, restore_cloud_project_id, runtime_task_id, string_field, timestamp_ms_field,
+        workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };

@@ -443,6 +443,7 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
@@ -481,6 +482,7 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
@@ -519,6 +521,7 @@ describe('createLocalAppServices', () => {
           user_name: 'hongyu9',
           email: 'hongyu9@example.com',
         },
+        cloudProjectId: 'cloud-project-42',
         task_title: 'Hello',
         subtask_title: 'Hello - Assistant',
         prompt: 'hello',
@@ -1258,6 +1261,7 @@ describe('createLocalAppServices', () => {
         baseUrl: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         apiKey: 'cloud-login-token',
         mcpUrl: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
+        backendUrl: 'https://cloud.example.com/custom',
       },
     })
 
@@ -1313,6 +1317,12 @@ describe('createLocalAppServices', () => {
         headers: { Authorization: 'Bearer cloud-login-token' },
       },
     ])
+    expect(payload.executionRequest).toEqual(
+      expect.objectContaining({
+        backend_url: 'https://cloud.example.com/custom',
+        auth_token: 'cloud-login-token',
+      })
+    )
     expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
   })
 

@@ -55,6 +55,7 @@ const LOCAL_DEVICE_ID = 'local-device'
 const CLOUD_BACKGROUND_CACHE_TTL_MS = 30_000
 
 export interface HybridWorkbenchServicesOptions {
+  backendUrl?: string
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
@@ -287,6 +288,7 @@ export function createHybridWorkbenchServices(
     baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
     apiKey: options.token,
     mcpUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/mcp/delivery/sse`,
+    ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
   const localServices = createLocalAppServices({ cloudModelGateway, user: options.user })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
@@ -884,10 +886,7 @@ export function createHybridWorkbenchServices(
       }
     },
   }
-  const cloudProjectSpaceApi = createCloudProjectSpaceApi(
-    cloudServices.deliveryApi!,
-    localServices.externalIssueApi!
-  )
+  const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
 
   return {
     ...cloudServices,

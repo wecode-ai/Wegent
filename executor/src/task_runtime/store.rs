@@ -963,27 +963,37 @@ fn provider_credential_config(
 
 fn list_external_projects(connection: &Connection) -> Result<Vec<LoopItem>, TaskRuntimeError> {
     let mut statement = connection.prepare(
-        "SELECT descriptor
+        "SELECT project_id, descriptor
          FROM external_project_catalog
          WHERE project_store = 'backend'
          ORDER BY updated_at DESC",
     )?;
     let descriptors = statement
-        .query_map([], |row| row.get::<_, String>(0))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
     descriptors
         .into_iter()
-        .map(|serialized| {
-            let descriptor = serde_json::from_str::<ProjectDescriptor>(&serialized)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+        .filter_map(|(project_id, serialized)| {
+            let descriptor = match serde_json::from_str::<ProjectDescriptor>(&serialized) {
+                Ok(descriptor) => descriptor,
+                Err(error) => {
+                    eprintln!(
+                        "ignoring incompatible cached external project {project_id}: {error}"
+                    );
+                    return None;
+                }
+            };
             let provider_config = provider_credential_config(
                 connection,
                 project_store_key(descriptor.project_store),
                 &descriptor.id,
-            )?
-            .unwrap_or_else(|| json!({}));
-            Ok(descriptor_loop_item(descriptor, provider_config))
+            )
+            .map(|config| config.unwrap_or_else(|| json!({})))
+            .map(|config| descriptor_loop_item(descriptor, config));
+            Some(provider_config)
         })
         .collect()
 }
@@ -1246,6 +1256,37 @@ mod tests {
             store.get_project("cloud-1").unwrap().name.as_deref(),
             Some("Cloud GitHub board")
         );
+    }
+
+    #[test]
+    fn incompatible_cached_external_project_does_not_hide_local_projects() {
+        let (_directory, store) = store();
+        let local = local_project(&store);
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO external_project_catalog (
+                    project_store, project_id, descriptor, updated_at
+                 ) VALUES ('backend', 'future-1', ?1, ?2)",
+                params![
+                    json!({
+                        "id": "future-1",
+                        "project_key": "FUTURE",
+                        "name": "Future provider",
+                        "project_store": "backend",
+                        "task_provider": "provider_from_newer_branch",
+                    })
+                    .to_string(),
+                    now(),
+                ],
+            )
+            .unwrap();
+
+        let projects = store.list_projects().unwrap();
+
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, local.id);
     }
 
     #[test]

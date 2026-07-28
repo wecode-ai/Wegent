@@ -150,6 +150,7 @@ export function createDefaultWorkbenchServices(
       cloudConnection.token
     ) {
       return createHybridWorkbenchServices({
+        backendUrl: cloudConnection.backendUrl,
         apiBaseUrl: cloudConnection.apiBaseUrl,
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
@@ -164,10 +165,7 @@ export function createDefaultWorkbenchServices(
   if (!isTauriRuntime()) return cloudServices
 
   const localServices = createLocalAppServices({ user: cloudConnection?.user })
-  const cloudProjectSpaceApi = createCloudProjectSpaceApi(
-    cloudServices.deliveryApi!,
-    localServices.externalIssueApi!
-  )
+  const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
   return {
     ...cloudServices,
     externalIssueApi: localServices.externalIssueApi,

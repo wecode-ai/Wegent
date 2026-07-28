@@ -79,7 +79,8 @@ export interface CloudProject {
   name: string
   description: string
   project_store: 'local' | 'backend'
-  task_provider: 'local' | 'github' | 'gitlab'
+  // Cloud responses can contain provider kinds introduced by a newer backend.
+  task_provider: string
   provider_config: {
     repository?: string
     domain?: string

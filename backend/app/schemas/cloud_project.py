@@ -117,7 +117,10 @@ class CloudProjectResponse(BaseModel):
     name: str
     description: str
     project_store: Literal["backend"] = "backend"
-    task_provider: TaskProvider = "local"
+    # Responses must remain forward-compatible with provider kinds written by
+    # newer services. Request schemas stay strict so this service only creates
+    # provider kinds it can operate.
+    task_provider: str = "local"
     provider_config: dict[str, object] = Field(default_factory=dict)
     visibility: ProjectVisibility = "private"
     created_by_user_id: int

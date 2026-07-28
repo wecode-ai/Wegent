@@ -313,6 +313,7 @@ interface CloudModelGateway {
   baseUrl: string
   apiKey: string
   mcpUrl?: string
+  backendUrl?: string
 }
 
 interface RuntimeWorkIpcOptions {
@@ -1134,6 +1135,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
+  cloudProjectId?: string
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
@@ -1215,6 +1217,12 @@ function buildLocalRuntimeExecutionRequest(
     },
     user_id: input.user.id,
     user_name: input.user.user_name,
+    ...(input.cloudModelGateway?.backendUrl
+      ? {
+          backend_url: input.cloudModelGateway.backendUrl,
+          auth_token: input.cloudModelGateway.apiKey,
+        }
+      : {}),
     bot: [],
     mcp_servers: input.cloudModelGateway?.mcpUrl
       ? [
@@ -1249,6 +1257,7 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.runtimeWorkspaceRoots?.length
       ? { runtime_workspace_roots: input.runtimeWorkspaceRoots }
       : {}),
+    ...(input.cloudProjectId ? { cloudProjectId: input.cloudProjectId } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
@@ -1393,6 +1402,7 @@ async function createLocalRuntimeTaskPayload(
       runtimeProjectKey: normalizedData.runtimeProjectKey,
       runtimeProjectName: normalizedData.runtimeProjectName,
       runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
+      cloudProjectId: normalizedData.cloudProjectId,
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,

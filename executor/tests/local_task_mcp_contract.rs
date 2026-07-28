@@ -7,12 +7,13 @@ use std::{
     process::{Command, Stdio},
 };
 
-use axum::{http::HeaderMap, routing::post, Json, Router};
+use axum::{
+    http::HeaderMap,
+    routing::{get, post},
+    Json, Router,
+};
 use serde_json::json;
 use serde_json::Value;
-use wegent_executor::task_runtime::{
-    LocalTaskStore, ProjectDescriptor, ProjectStoreKind, TaskProviderKind, TaskRuntime,
-};
 
 #[test]
 fn task_mcp_runs_over_stdio_without_listening_on_a_port() {
@@ -106,23 +107,51 @@ fn task_mcp_runs_over_stdio_without_listening_on_a_port() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn task_mcp_routes_cached_cloud_gitlab_projects_to_gitlab() {
-    async fn create_issue(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
-        assert_eq!(headers.get("private-token").unwrap(), "gitlab-secret");
+async fn task_mcp_routes_cloud_project_crud_through_backend() {
+    fn assert_auth(headers: &HeaderMap) {
+        assert_eq!(
+            headers.get("authorization").unwrap(),
+            "Bearer backend-token"
+        );
+    }
+
+    async fn list_projects(headers: HeaderMap) -> Json<Value> {
+        assert_auth(&headers);
+        Json(json!({"items": [{"id": 9001, "name": "Cloud GitLab"}]}))
+    }
+
+    async fn list_todos(headers: HeaderMap) -> Json<Value> {
+        assert_auth(&headers);
+        Json(json!({"items": [{"id": "GL-11", "title": "Existing"}]}))
+    }
+
+    async fn get_todo(headers: HeaderMap) -> Json<Value> {
+        assert_auth(&headers);
+        Json(json!({"id": "GL-11", "title": "Existing"}))
+    }
+
+    async fn create_todo(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
+        assert_auth(&headers);
         assert_eq!(body["title"], "Created through MCP");
-        Json(json!({
-            "iid": 11,
-            "title": "Created through MCP",
-            "description": "",
-            "state": "opened",
-            "web_url": "https://gitlab.example/acme/repo/-/issues/11",
-            "author": {"username": "tester"},
-            "labels": ["wegent:status:inbox"],
-            "user_notes_count": 0,
-            "created_at": "2026-07-27T08:00:00Z",
-            "updated_at": "2026-07-27T08:00:00Z",
-            "closed_at": null
-        }))
+        Json(json!({"id": "GL-12", "title": body["title"]}))
+    }
+
+    async fn update_todo(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
+        assert_auth(&headers);
+        assert_eq!(body["title"], "Updated through MCP");
+        Json(json!({"id": "GL-11", "title": body["title"]}))
+    }
+
+    async fn add_comment(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
+        assert_auth(&headers);
+        assert_eq!(body["body"], "MCP comment");
+        Json(json!({"id": "comment-1", "body": body["body"]}))
+    }
+
+    async fn reorder_todos(headers: HeaderMap, Json(body): Json<Value>) -> Json<Value> {
+        assert_auth(&headers);
+        assert_eq!(body["status"], "in_progress");
+        Json(json!({"items": [{"id": "GL-11", "status": "in_progress"}]}))
     }
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -130,36 +159,29 @@ async fn task_mcp_routes_cached_cloud_gitlab_projects_to_gitlab() {
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
-            Router::new().route("/projects/12/issues", post(create_issue)),
+            Router::new()
+                .route("/api/v1/cloud-projects", get(list_projects))
+                .route(
+                    "/api/v1/cloud-projects/9001/loop-items",
+                    get(list_todos).post(create_todo),
+                )
+                .route(
+                    "/api/v1/cloud-projects/9001/loop-items/reorder",
+                    post(reorder_todos),
+                )
+                .route("/api/v1/loop-items/GL-11", get(get_todo).patch(update_todo))
+                .route("/api/v1/loop-items/GL-11/comments", post(add_comment)),
         )
         .await
         .unwrap();
     });
     let executor_home = tempfile::tempdir().unwrap();
-    let store = LocalTaskStore::open(executor_home.path().join("data/tasks.sqlite")).unwrap();
-    TaskRuntime::new(store.clone())
-        .unwrap()
-        .configure_external_project(ProjectDescriptor {
-            id: "9001".to_owned(),
-            public_id: Some("cloud-gitlab".to_owned()),
-            project_key: "GLABC".to_owned(),
-            name: "Cloud GitLab".to_owned(),
-            description: String::new(),
-            project_store: ProjectStoreKind::Backend,
-            task_provider: TaskProviderKind::Gitlab,
-            provider_config: json!({
-                "repository": "12",
-                "domain": "127.0.0.1",
-                "api_base": format!("http://{address}"),
-                "token": "gitlab-secret"
-            }),
-            version: 1,
-        })
-        .unwrap();
-
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
         .arg("task-mcp-server")
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
+        .env("WEGENT_TASK_PROJECT_ID", "9001")
+        .env("WEGENT_TASK_BACKEND_URL", format!("http://{address}"))
+        .env("WEGENT_TASK_AUTH_TOKEN", "backend-token")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -173,7 +195,32 @@ async fn task_mcp_routes_cached_cloud_gitlab_projects_to_gitlab() {
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"create_todo","arguments":{{"project_id":"9001","todo":{{"title":"Created through MCP"}}}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"list_todos","arguments":{{"project_id":"9001"}}}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"get_todo","arguments":{{"project_id":"9001","task_id":"GL-11"}}}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{{"name":"create_todo","arguments":{{"project_id":"9001","todo":{{"title":"Created through MCP"}}}}}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"update_todo","arguments":{{"project_id":"9001","task_id":"GL-11","todo":{{"version":1,"title":"Updated through MCP"}}}}}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{{"name":"add_todo_comment","arguments":{{"project_id":"9001","task_id":"GL-11","body":"MCP comment"}}}}}}"#
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"reorder_todos","arguments":{{"project_id":"9001","reorder":{{"parent_id":null,"status":"in_progress","item_ids":["GL-11"]}}}}}}}}"#
     )
     .unwrap();
     drop(stdin);
@@ -194,28 +241,24 @@ async fn task_mcp_routes_cached_cloud_gitlab_projects_to_gitlab() {
         .and_then(Value::as_str)
         .and_then(|value| serde_json::from_str::<Value>(value).ok())
         .unwrap();
-    assert_eq!(projects[0]["id"], "9001");
-    assert_eq!(projects[0]["metadata"]["project_store"], "backend");
-    assert_eq!(projects[0]["metadata"]["task_provider"], "gitlab");
-    let create_response = responses[1]
-        .pointer("/result/content/0/text")
-        .and_then(Value::as_str)
-        .unwrap();
-    assert_eq!(
-        responses[1].pointer("/result/isError"),
-        Some(&Value::Bool(true))
-    );
-    assert!(create_response.contains("provider api_base must use HTTPS"));
-
-    let task_count: i64 =
-        rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite"))
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM loop_items WHERE resource_type = 'task'",
-                [],
-                |row| row.get(0),
+    assert_eq!(projects[0]["id"], 9001);
+    let decoded = responses
+        .iter()
+        .map(|response| {
+            serde_json::from_str::<Value>(
+                response
+                    .pointer("/result/content/0/text")
+                    .and_then(Value::as_str)
+                    .unwrap(),
             )
-            .unwrap();
-    assert_eq!(task_count, 0);
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(decoded[1][0]["id"], "GL-11");
+    assert_eq!(decoded[2]["id"], "GL-11");
+    assert_eq!(decoded[3]["id"], "GL-12");
+    assert_eq!(decoded[4]["title"], "Updated through MCP");
+    assert_eq!(decoded[5]["body"], "MCP comment");
+    assert_eq!(decoded[6]["items"][0]["status"], "in_progress");
     server.abort();
 }

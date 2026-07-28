@@ -42,7 +42,7 @@ pub fn ensure_task_mcp_server(request: &mut ExecutionRequest) {
         .extra
         .get("cloudProjectId")
         .or_else(|| request.extra.get("cloud_project_id"))
-        .and_then(Value::as_str)
+        .and_then(id_value)
         .filter(|value| !value.is_empty())
     {
         server["env"] = json!({"WEGENT_TASK_PROJECT_ID": project_id});
@@ -62,6 +62,14 @@ pub fn ensure_task_mcp_server(request: &mut ExecutionRequest) {
         server["env"]["WEGENT_TASK_AUTH_TOKEN"] = json!(auth_token);
     }
     request.mcp_servers.push(server);
+}
+
+fn id_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 pub async fn run() -> Result<(), String> {
@@ -500,7 +508,7 @@ async fn call_backend_tool(
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .filter(|project| project["id"].as_str() == Some(project_id))
+                .filter(|project| id_value(&project["id"]).as_deref() == Some(project_id))
                 .cloned()
                 .collect(),
         ));
@@ -933,6 +941,21 @@ mod tests {
         assert_eq!(
             request.mcp_servers[0]["env"]["WEGENT_TASK_PROJECT_ID"],
             "cloud-42"
+        );
+    }
+
+    #[test]
+    fn scopes_task_mcp_with_a_numeric_cloud_project_id() {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!(9001));
+
+        ensure_task_mcp_server(&mut request);
+
+        assert_eq!(
+            request.mcp_servers[0]["env"]["WEGENT_TASK_PROJECT_ID"],
+            "9001"
         );
     }
 
