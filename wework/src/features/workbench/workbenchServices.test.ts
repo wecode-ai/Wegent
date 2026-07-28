@@ -93,7 +93,7 @@ describe('default workbench project-space services', () => {
       status: 'pending',
     })
 
-    expect(mocks.externalIssueApi.retainProjects).toHaveBeenCalledWith([])
+    expect(mocks.externalIssueApi.retainProjects).not.toHaveBeenCalled()
     expect(mocks.backendDeliveryApi.listCloudProjects).toHaveBeenCalled()
     expect(mocks.backendDeliveryApi.createLoopItem).toHaveBeenCalledWith(mocks.project.id, {
       title: 'GitLab Issue',

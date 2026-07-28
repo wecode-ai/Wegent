@@ -13,6 +13,7 @@ import type {
   DeliveryDetail,
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { openLocalFile } from '@/lib/local-terminal'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 type LocalRequest = <T>(
@@ -83,7 +84,9 @@ function stringList(value: unknown): string[] {
 
 function localProject(record: LocalLoopItemRecord): CloudProject {
   const taskProvider =
-    record.metadata.task_provider === 'github' || record.metadata.task_provider === 'gitlab'
+    record.metadata.task_provider === 'github' ||
+    record.metadata.task_provider === 'gitlab' ||
+    record.metadata.task_provider === 'dingtalk_aitable'
       ? record.metadata.task_provider
       : 'local'
   return {
@@ -235,6 +238,8 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     created_at: record.created_at,
     updated_at: record.updated_at,
     completed_at: record.completed_at,
+    source_status:
+      typeof record.metadata.source_status === 'string' ? record.metadata.source_status : null,
   }
 }
 
@@ -317,12 +322,21 @@ export function createLocalDeliveryApi(
       project_key?: string
       name: string
       description?: string
-      task_provider?: 'local' | 'github' | 'gitlab'
+      task_provider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
       provider_config?: {
         repository?: string
         domain?: string
         api_base?: string
         token?: string
+        base_id?: string
+        table_id?: string
+        sheet_id?: string
+        source_url?: string
+        view_id?: string
+        board_mapping?: Record<string, string>
+        status_mode?: 'mapped' | 'custom'
+        status_mapping?: Record<string, CloudLoopItem['status']>
+        custom_statuses?: string[]
       }
     }) {
       const record = await request<LocalLoopItemRecord>('projects.create', {
@@ -436,6 +450,12 @@ export function createLocalDeliveryApi(
           attachment_id: attachmentId,
         })
       )
+    },
+    async downloadLoopItemAttachment(attachmentId: string) {
+      const access = await request<LocalAccessRecord>('attachments.access', {
+        attachment_id: attachmentId,
+      })
+      await openLocalFile(access.path)
     },
     async deleteLoopItemAttachment(attachmentId: string) {
       await request('attachments.delete', { attachment_id: attachmentId })

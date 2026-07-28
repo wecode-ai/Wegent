@@ -654,6 +654,10 @@ class Settings(BaseSettings):
     DEFAULT_TEAM_WEWORK: str = (
         "wegent-wework#default"  # Default team for WeWork workbench
     )
+    # Cloud project that receives authenticated Wework feedback submissions.
+    # An empty value disables the feedback channel.
+    WEWORK_FEEDBACK_PROJECT_ID: str = ""
+    WEWORK_FEEDBACK_MAX_BUNDLE_SIZE_MB: int = 250
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:

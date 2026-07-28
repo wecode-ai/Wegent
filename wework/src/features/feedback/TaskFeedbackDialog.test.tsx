@@ -18,6 +18,11 @@ vi.mock('@/hooks/useTranslation', () => ({
         'workbench.feedback_runtime_logs': '运行日志',
         'workbench.feedback_preview': '预览导出内容',
         'workbench.feedback_confirm_export': '确认导出',
+        'workbench.feedback_submit': '提交到看板',
+        'workbench.feedback_submitted': '反馈已提交',
+        'workbench.feedback_board_item': '看板事项',
+        'workbench.feedback_default_title': 'Wework 问题反馈',
+        'workbench.feedback_contact_developer_with_report': '提交失败：{{reportId}}',
         'workbench.feedback_back': '返回',
         'workbench.feedback_exported': '已导出',
         'workbench.feedback_preview_truncated': '（内容过长，仅显示前一部分）',
@@ -157,6 +162,46 @@ describe('TaskFeedbackDialog', () => {
       })
     )
     // Nothing has been written to disk yet.
+    expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
+  })
+
+  test('submits the exact previewed bundle to the board', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    const feedbackApi = {
+      submit: vi.fn().mockResolvedValue({
+        report_id: 'WF-1',
+        item_id: 'FEEDBACK-1',
+        duplicate: false,
+      }),
+    }
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        feedbackApi={feedbackApi}
+        getTaskContext={async () => ({ task: { title: 'Broken task' } })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Cannot send messages' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+    fireEvent.click(screen.getByTestId('task-feedback-submit-button'))
+
+    await waitFor(() => expect(feedbackApi.submit).toHaveBeenCalledOnce())
+    expect(feedbackApi.submit).toHaveBeenCalledWith({
+      stagingId: 'staging-1',
+      title: 'Cannot send messages',
+      description: 'Cannot send messages',
+      context: {},
+    })
+    expect(await screen.findByText(/FEEDBACK-1/)).toBeInTheDocument()
     expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
   })
 

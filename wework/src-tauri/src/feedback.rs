@@ -60,6 +60,27 @@ pub struct FeedbackBundleDecision {
     staging_id: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackSubmitRequest {
+    api_url: String,
+    access_token: String,
+    staging_id: String,
+    title: String,
+    description: String,
+    context: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct FeedbackSubmitResult {
+    report_id: String,
+    project_id: String,
+    item_id: String,
+    created_by_user_id: i64,
+    duplicate: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Manifest {
@@ -247,10 +268,7 @@ fn text_entry(archive_path: &str, content: String) -> PendingEntry {
     }
 }
 
-fn write_pending_bundle(
-    bundle: &PendingBundle,
-    destination: &Path,
-) -> Result<(), String> {
+fn write_pending_bundle(bundle: &PendingBundle, destination: &Path) -> Result<(), String> {
     let file = File::create(destination)
         .map_err(|error| format!("Failed to create feedback bundle: {error}"))?;
     let mut incomplete_archive = IncompleteArchive::new(destination.to_path_buf());
@@ -426,6 +444,63 @@ pub fn discard_feedback_bundle(
         Err(error) => Err(format!("Failed to discard the feedback bundle: {error}")),
     }
 }
+
+#[tauri::command(async)]
+pub async fn submit_feedback_bundle(
+    app: tauri::AppHandle,
+    request: FeedbackSubmitRequest,
+) -> Result<FeedbackSubmitResult, String> {
+    tauri::async_runtime::spawn_blocking(move || submit_feedback_bundle_blocking(&app, request))
+        .await
+        .map_err(|error| format!("Failed to join feedback submission: {error}"))?
+}
+
+fn submit_feedback_bundle_blocking(
+    app: &tauri::AppHandle,
+    request: FeedbackSubmitRequest,
+) -> Result<FeedbackSubmitResult, String> {
+    let api_url = request.api_url.trim();
+    if !(api_url.starts_with("https://") || api_url.starts_with("http://")) {
+        return Err("Feedback API URL must use HTTP or HTTPS".to_string());
+    }
+    if request.access_token.trim().is_empty() {
+        return Err("Feedback authentication is unavailable".to_string());
+    }
+    let staging_path = resolve_staging_path(app, &request.staging_id)?;
+    let report_id = report_id_from_staging_archive(&staging_path)?;
+    let bundle = reqwest::blocking::multipart::Part::file(&staging_path)
+        .map_err(|error| format!("Failed to open feedback bundle: {error}"))?
+        .file_name(format!("wework-feedback-{report_id}.zip"))
+        .mime_str("application/zip")
+        .map_err(|error| format!("Failed to prepare feedback bundle: {error}"))?;
+    let form = reqwest::blocking::multipart::Form::new()
+        .text("report_id", report_id)
+        .text("title", request.title)
+        .text("description", request.description)
+        .text("context", request.context.to_string())
+        .part("bundle", bundle);
+    let response = reqwest::blocking::Client::new()
+        .post(api_url)
+        .bearer_auth(request.access_token)
+        .multipart(form)
+        .send()
+        .map_err(|error| format!("Failed to submit feedback: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let message = response
+            .json::<serde_json::Value>()
+            .ok()
+            .and_then(|value| value.get("detail")?.as_str().map(str::to_owned))
+            .unwrap_or_else(|| format!("Feedback submission failed with HTTP {status}"));
+        return Err(message);
+    }
+    let result = response
+        .json::<FeedbackSubmitResult>()
+        .map_err(|error| format!("Invalid feedback response: {error}"))?;
+    let _ = fs::remove_file(staging_path);
+    Ok(result)
+}
+
 struct IncompleteArchive {
     path: PathBuf,
     completed: bool,
@@ -618,7 +693,9 @@ mod tests {
         assert!(empty_task_context(&serde_json::Value::Null));
         assert!(empty_task_context(&serde_json::json!({})));
         assert!(empty_task_context(&serde_json::json!([])));
-        assert!(!empty_task_context(&serde_json::json!({"task": {"id": "task-1"}})));
+        assert!(!empty_task_context(
+            &serde_json::json!({"task": {"id": "task-1"}})
+        ));
     }
 
     #[test]

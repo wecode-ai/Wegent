@@ -6,8 +6,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import re
+import tempfile
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, BinaryIO
 from urllib.parse import quote
 
 import httpx
@@ -23,11 +27,22 @@ from app.services.cloud_projects.access import (
     CloudProjectAccess,
     require_cloud_project_role,
 )
+from app.services.delivery.storage import delivery_storage
 
 PRIORITY_PREFIX = "wegent:priority:"
 STATUS_PREFIX = "wegent:status:"
 CREATOR_PREFIX = "wegent:creator:"
 PARENT_MARKER = "Wegent-Parent:"
+GITLAB_PROVIDER_UPLOAD_PATTERN = re.compile(
+    r"(?P<image>!)?\[(?P<name>[^\]]+)\]\((?P<url>[^)]*/uploads/[^)]+)\)"
+)
+WEGENT_ATTACHMENT_PATTERN = re.compile(
+    r"(?P<image>!)?\[(?P<name>[^\]]+)\]\((?P<url>[^)]+)\)"
+    r"\s*<!--\s*wegent-attachment:(?P<id>gitlab-[A-Za-z0-9_-]+)\s*-->"
+)
+LEGACY_WEGENT_ATTACHMENT_PATTERN = re.compile(
+    r"(?P<image>!)?\[(?P<name>[^\]]+)\]\(wegent://attachments/(?P<id>gitlab-[^)]+)\)"
+)
 
 
 class ExternalLoopItemProvider:
@@ -89,6 +104,300 @@ class ExternalLoopItemProvider:
                 project, self._number(issue), {"state": "closed"}
             )
         return self._response(project, issue, access, user_id)
+
+    def attach_gitlab_upload(
+        self,
+        db: Session,
+        item_id: str,
+        user_id: int,
+        filename: str,
+        content_type: str,
+        source: BinaryIO,
+        max_size_bytes: int,
+    ) -> dict[str, object] | None:
+        project, number = self._resolve_project(db, item_id)
+        if project.task_provider != "gitlab":
+            return None
+        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        issue = self._get_issue(project, number)
+        description = str(issue.get("description") or "")
+        if filename in description:
+            attachment = next(
+                (
+                    attachment
+                    for attachment in self._gitlab_attachments(project, item_id, issue)
+                    if attachment["display_name"] == filename
+                ),
+                None,
+            )
+            if attachment is not None and "wegent://attachments/" in description:
+                native_markdown = (
+                    f"[{filename}]({self._decode_attachment_id(str(attachment['id']))[1]})\n"
+                    f"<!-- wegent-attachment:{attachment['id']} -->"
+                )
+                description = LEGACY_WEGENT_ATTACHMENT_PATTERN.sub(
+                    lambda match: (
+                        native_markdown
+                        if match.group("id") == attachment["id"]
+                        else match.group(0)
+                    ),
+                    description,
+                )
+                self._update_issue(project, number, {"description": description})
+                attachment["markdown"] = native_markdown
+            if attachment is not None:
+                self._store_external_attachment(
+                    str(attachment["id"]), source, max_size_bytes
+                )
+            return attachment
+
+        length = 0
+        with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as staged:
+            while chunk := source.read(1024 * 1024):
+                length += len(chunk)
+                if length > max_size_bytes:
+                    raise HTTPException(
+                        status.HTTP_413_CONTENT_TOO_LARGE,
+                        "Feedback bundle is too large",
+                    )
+                staged.write(chunk)
+            staged.seek(0)
+            uploaded = self._request(
+                project,
+                "POST",
+                f"/projects/{quote(self._repository(project), safe='')}/uploads",
+                files={"file": (filename, staged, content_type)},
+            )
+            provider_markdown = str(uploaded.get("markdown") or "").strip()
+            if not provider_markdown:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    "GitLab upload did not return an attachment link",
+                )
+            url = str(uploaded.get("full_path") or uploaded.get("url") or "")
+            if not url:
+                match = GITLAB_PROVIDER_UPLOAD_PATTERN.search(provider_markdown)
+                url = match.group("url") if match else ""
+            attachment = self._gitlab_attachment_values(
+                project,
+                item_id,
+                filename,
+                url,
+                content_type,
+                length,
+                user_id,
+                str(issue.get("updated_at") or self._now()),
+            )
+            markdown = (
+                f"{provider_markdown}\n"
+                f"<!-- wegent-attachment:{attachment['id']} -->"
+            )
+            attachment["markdown"] = markdown
+            self._update_issue(
+                project,
+                number,
+                {"description": f"{description.rstrip()}\n\n{markdown}".strip()},
+            )
+            staged.seek(0)
+            self._store_external_attachment(
+                str(attachment["id"]), staged, max_size_bytes
+            )
+        return attachment
+
+    def list_attachments(
+        self, db: Session, item_id: str, user_id: int
+    ) -> list[dict[str, object]]:
+        project, number = self._resolve_project(db, item_id)
+        if project.task_provider != "gitlab":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Attachments are not supported by this Issue provider",
+            )
+        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        return self._gitlab_attachments(
+            project, item_id, self._get_issue(project, number)
+        )
+
+    def add_attachment(
+        self,
+        db: Session,
+        item_id: str,
+        user_id: int,
+        filename: str,
+        content_type: str,
+        source: BinaryIO,
+        max_size_bytes: int,
+    ) -> dict[str, object]:
+        attachment = self.attach_gitlab_upload(
+            db,
+            item_id,
+            user_id,
+            filename,
+            content_type,
+            source,
+            max_size_bytes,
+        )
+        if attachment is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Attachments are not supported by this Issue provider",
+            )
+        return attachment
+
+    def attachment_access_url(
+        self, db: Session, attachment_id: str, user_id: int
+    ) -> str:
+        item_id, url = self._decode_attachment_id(attachment_id)
+        project, _ = self._resolve_project(db, item_id)
+        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        if project.task_provider != "gitlab":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO attachment not found")
+        return self._absolute_gitlab_url(project, url)
+
+    def attachment_content(
+        self, db: Session, attachment_id: str, user_id: int
+    ) -> tuple[bytes, str, str]:
+        item_id, url = self._decode_attachment_id(attachment_id)
+        project, _ = self._resolve_project(db, item_id)
+        require_cloud_project_role(db, project.id, user_id, BaseRole.RestrictedAnalyst)
+        try:
+            content = delivery_storage.get_bytes(
+                self._external_attachment_key(attachment_id)
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Provider attachment is not available in unified storage",
+            ) from exc
+        filename = url.rstrip("/").rsplit("/", 1)[-1] or "attachment"
+        return content, "application/octet-stream", filename
+
+    def delete_attachment(self, db: Session, attachment_id: str, user_id: int) -> None:
+        item_id, url = self._decode_attachment_id(attachment_id)
+        project, number = self._resolve_project(db, item_id)
+        access = require_cloud_project_role(
+            db, project.id, user_id, BaseRole.RestrictedAnalyst
+        )
+        issue = self._get_issue(project, number)
+        response = self._response(project, issue, access, user_id)
+        if not response["can_edit"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        description = str(issue.get("description") or "")
+        updated = description
+        for pattern in (WEGENT_ATTACHMENT_PATTERN, LEGACY_WEGENT_ATTACHMENT_PATTERN):
+            updated = pattern.sub(
+                lambda match: (
+                    "" if match.group("id") == attachment_id else match.group(0)
+                ),
+                updated,
+            )
+        updated = updated.strip()
+        self._update_issue(project, number, {"description": updated})
+        delivery_storage.remove_objects([self._external_attachment_key(attachment_id)])
+
+    @staticmethod
+    def _external_attachment_key(attachment_id: str) -> str:
+        digest = hashlib.sha256(attachment_id.encode()).hexdigest()
+        return f"loop-items/external-attachments/{digest}"
+
+    def _store_external_attachment(
+        self, attachment_id: str, source: BinaryIO, max_size_bytes: int
+    ) -> None:
+        length = 0
+        with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as staged:
+            while chunk := source.read(1024 * 1024):
+                length += len(chunk)
+                if length > max_size_bytes:
+                    raise HTTPException(
+                        status.HTTP_413_CONTENT_TOO_LARGE,
+                        "TODO attachment is too large",
+                    )
+                staged.write(chunk)
+            staged.seek(0)
+            delivery_storage.put_stream(
+                self._external_attachment_key(attachment_id),
+                staged,
+                length,
+                "application/octet-stream",
+            )
+
+    def _gitlab_attachments(
+        self, project: CloudProject, item_id: str, issue: dict[str, Any]
+    ) -> list[dict[str, object]]:
+        description = str(issue.get("description") or "")
+        created_at = str(
+            issue.get("updated_at") or issue.get("created_at") or self._now()
+        )
+        creator_id = self._creator_id(self._labels(issue))
+        attachments = []
+        matches = list(WEGENT_ATTACHMENT_PATTERN.finditer(description))
+        matches.extend(LEGACY_WEGENT_ATTACHMENT_PATTERN.finditer(description))
+        for match in matches:
+            attachment_id = match.group("id")
+            encoded_item_id, url = self._decode_attachment_id(attachment_id)
+            if encoded_item_id != item_id:
+                continue
+            values = self._gitlab_attachment_values(
+                project,
+                item_id,
+                match.group("name"),
+                url,
+                "image/*" if match.group("image") else None,
+                0,
+                creator_id,
+                created_at,
+            )
+            values["markdown"] = match.group(0)
+            attachments.append(values)
+        return attachments
+
+    def _gitlab_attachment_values(
+        self,
+        project: CloudProject,
+        item_id: str,
+        filename: str,
+        url: str,
+        content_type: str | None,
+        size_bytes: int,
+        user_id: int,
+        created_at: str,
+    ) -> dict[str, object]:
+        raw_id = (
+            base64.urlsafe_b64encode(f"{item_id}\n{url}".encode()).decode().rstrip("=")
+        )
+        return {
+            "id": f"gitlab-{raw_id}",
+            "loop_item_id": item_id,
+            "display_name": filename,
+            "content_type": content_type,
+            "size_bytes": size_bytes,
+            "sha256": hashlib.sha256(url.encode()).hexdigest(),
+            "created_by_user_id": user_id,
+            "created_at": created_at,
+        }
+
+    @staticmethod
+    def _decode_attachment_id(attachment_id: str) -> tuple[str, str]:
+        if not attachment_id.startswith("gitlab-"):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO attachment not found")
+        encoded = attachment_id.removeprefix("gitlab-")
+        try:
+            value = base64.urlsafe_b64decode(
+                encoded + "=" * (-len(encoded) % 4)
+            ).decode()
+            item_id, url = value.split("\n", 1)
+        except (ValueError, UnicodeError) as exc:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "TODO attachment not found"
+            ) from exc
+        return item_id, url
+
+    def _absolute_gitlab_url(self, project: CloudProject, url: str) -> str:
+        if url.startswith(("https://", "http://")):
+            return url
+        config, _ = self._config(project)
+        domain = str(config.get("domain") or "gitlab.com").rstrip("/")
+        return f"https://{domain}/{url.lstrip('/')}"
 
     def update(
         self,
@@ -293,6 +602,7 @@ class ExternalLoopItemProvider:
         *,
         json: object | None = None,
         params: dict[str, object] | None = None,
+        files: dict[str, object] | None = None,
     ) -> Any:
         config, token = self._config(project)
         domain = str(
@@ -322,6 +632,7 @@ class ExternalLoopItemProvider:
                 headers=headers,
                 json=json,
                 params=params,
+                files=files,
                 timeout=30,
             )
             response.raise_for_status()
