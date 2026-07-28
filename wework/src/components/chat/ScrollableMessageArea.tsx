@@ -243,6 +243,7 @@ function ScrollableMessagePaneContent({
   const turnNavigationScrollingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
+  const previousLatestGuidanceMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const scrollFrameRef = useRef<number | null>(null)
@@ -263,6 +264,7 @@ function ScrollableMessagePaneContent({
   )
   const [loadingTranscriptGapKey, setLoadingTranscriptGapKey] = useState<string | null>(null)
   const lastMessage = messages[messages.length - 1]
+  const latestGuidanceMessageId = findLatestGuidanceMessageId(messages)
   const currentScrollKey = useMemo(() => scrollPositionKey(conversationKey), [conversationKey])
   const messageScrollSignature = useMemo(() => {
     if (!lastMessage) return 'empty'
@@ -573,6 +575,12 @@ function ScrollableMessagePaneContent({
     const conversationChanged = previousConversationKeyRef.current !== conversationKey
     const messagesLoaded = previousMessageCountRef.current === 0 && messages.length > 0
     const lastMessageChanged = previousLastMessageIdRef.current !== (lastMessage?.id ?? null)
+    const guidanceMessageApplied =
+      !conversationChanged &&
+      previousMessageCountRef.current > 0 &&
+      lastMessageChanged &&
+      latestGuidanceMessageId !== null &&
+      previousLatestGuidanceMessageIdRef.current !== latestGuidanceMessageId
     const shouldRestoreScroll = Boolean(
       currentScrollKey &&
       messages.length > 0 &&
@@ -583,10 +591,12 @@ function ScrollableMessagePaneContent({
       !shouldRestoreScroll &&
       (conversationChanged ||
         messagesLoaded ||
+        guidanceMessageApplied ||
         (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey
     previousLastMessageIdRef.current = lastMessage?.id ?? null
+    previousLatestGuidanceMessageIdRef.current = latestGuidanceMessageId
     previousMessageCountRef.current = messages.length
 
     if (conversationChanged) {
@@ -623,6 +633,7 @@ function ScrollableMessagePaneContent({
     clearScheduledScrolls,
     isTurnNavigationAutoScrollSuspended,
     lastMessage,
+    latestGuidanceMessageId,
     messageScrollSignature,
     messages.length,
     scheduleStableRestoreSavedScrollPosition,
@@ -934,6 +945,14 @@ function ScrollableMessagePaneContent({
 
 function scrollPositionKey(conversationKey: string | number | null | undefined): string | null {
   return conversationKey == null ? null : String(conversationKey)
+}
+
+function findLatestGuidanceMessageId(messages: WorkbenchMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.runtimeGuidance === true) return message.id
+  }
+  return null
 }
 
 function setConversationScrollSnapshot(key: string, snapshot: ConversationScrollSnapshot) {
