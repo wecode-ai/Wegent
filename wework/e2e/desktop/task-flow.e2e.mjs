@@ -2141,7 +2141,7 @@ async function verifyProviderSwitchWarning(control, composerSelector) {
   })
   const disabledModelText = await control.command('getText', officialModelSelector)
   assert.ok(
-    disabledModelText.includes(PROVIDER_SWITCH_SOL_LABEL),
+    disabledModelText.includes(PROVIDER_SWITCH_OFFICIAL_LABEL),
     'The target model option did not display the expected model label'
   )
   assert.doesNotMatch(
