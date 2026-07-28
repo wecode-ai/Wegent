@@ -46,6 +46,14 @@ describe('reduceWorkbenchMessages', () => {
       content: 'partial response',
       offset: 20_000
     })
+
+    expect(streamed[0]).toMatchObject({
+      content: 'partial response',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+      contentLoadRef: undefined
+    })
+
     const done = reduceWorkbenchMessages(streamed, {
       type: 'assistant_done',
       subtaskId: 'short-final-content',

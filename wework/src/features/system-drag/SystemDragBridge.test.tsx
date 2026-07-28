@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   startNewChat: vi.fn(),
   getAppPreferences: vi.fn(),
   updateAppPreferences: vi.fn(),
+  resolveStoredPaths: vi.fn(),
   currentTask: null as { title: string } | null,
+  workspaceSource: 'local' as 'local' | 'remote',
   input: '',
 }))
 
@@ -39,8 +41,13 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 }))
 vi.mock('@/features/workbench/workbenchRuntimeHelpers', () => ({
   findRuntimeTask: () => mocks.currentTask,
+  findRuntimeTaskWorkspace: () =>
+    mocks.currentTask ? { workspaceSource: mocks.workspaceSource } : null,
 }))
-vi.mock('@/tauri/droppedFiles', () => ({ readDroppedFiles: vi.fn(() => Promise.resolve([])) }))
+vi.mock('@/lib/workspace-path-transfer', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/workspace-path-transfer')>()),
+  resolveStoredWorkspacePaths: mocks.resolveStoredPaths,
+}))
 vi.mock('@/tauri/appPreferences', () => ({
   getAppPreferences: mocks.getAppPreferences,
   updateAppPreferences: mocks.updateAppPreferences,
@@ -66,7 +73,13 @@ describe('SystemDragBridge', () => {
     mocks.startNewChat.mockReset()
     mocks.getAppPreferences.mockReset()
     mocks.updateAppPreferences.mockReset()
+    mocks.resolveStoredPaths.mockReset()
+    mocks.resolveStoredPaths.mockResolvedValue({
+      attachmentFiles: [],
+      referenceEntries: [],
+    })
     mocks.currentTask = null
+    mocks.workspaceSource = 'local'
     mocks.input = ''
     mocks.invoke.mockImplementation(command =>
       Promise.resolve(command === 'take_pending_system_drag_drops' ? [] : undefined)
@@ -106,6 +119,58 @@ describe('SystemDragBridge', () => {
 
     await waitFor(() => expect(mocks.setInput).toHaveBeenCalledWith('已有追问\n补充内容'))
     expect(mocks.startNewChat).not.toHaveBeenCalled()
+  })
+
+  test('adds dropped folders and ordinary files as path references without reading them', async () => {
+    mocks.resolveStoredPaths.mockResolvedValue({
+      attachmentFiles: [],
+      referenceEntries: [
+        { path: '/tmp/project', isDirectory: true },
+        { path: '/tmp/project/README.md', isDirectory: false },
+      ],
+    })
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+
+    emitDrop({
+      action: 'new-chat',
+      text: null,
+      paths: ['/tmp/project', '/tmp/project/README.md'],
+    })
+
+    await waitFor(() =>
+      expect(mocks.setInput).toHaveBeenCalledWith(
+        '[$project](folder://%2Ftmp%2Fproject) [$README.md](file://%2Ftmp%2Fproject%2FREADME.md)'
+      )
+    )
+    expect(mocks.resolveStoredPaths).toHaveBeenCalledWith(
+      ['/tmp/project', '/tmp/project/README.md'],
+      false
+    )
+    expect(mocks.handleFileSelect).not.toHaveBeenCalled()
+  })
+
+  test('reads only dropped images before attaching them', async () => {
+    const image = new File(['image'], 'preview.png', { type: 'image/png' })
+    mocks.resolveStoredPaths.mockResolvedValue({
+      attachmentFiles: [image],
+      referenceEntries: [{ path: '/tmp/project', isDirectory: true }],
+    })
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+
+    emitDrop({
+      action: 'new-chat',
+      text: null,
+      paths: ['/tmp/project', '/tmp/preview.png'],
+    })
+
+    await waitFor(() => expect(mocks.handleFileSelect).toHaveBeenCalledWith([image]))
+    expect(mocks.resolveStoredPaths).toHaveBeenCalledWith(
+      ['/tmp/project', '/tmp/preview.png'],
+      false
+    )
+    expect(mocks.setInput).toHaveBeenCalledWith('[$project](folder://%2Ftmp%2Fproject)')
   })
 
   test('records when system-drag content is stashed', async () => {

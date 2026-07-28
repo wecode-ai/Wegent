@@ -36,7 +36,6 @@ import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskRe
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { WorkbenchBackground } from '@/features/appearance'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -53,7 +52,6 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
 
 export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
-  const cloudConnection = useOptionalCloudConnection()
   const { logout: onLogout } = useAuth()
   const {
     state,
@@ -110,7 +108,7 @@ export function DesktopWorkbenchLayout() {
   )
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
-  const todoOpen = currentPath === '/todo' && cloudConnection.isConnected
+  const todoOpen = currentPath === '/todo'
   const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const createPermanentWorktree = useCallback(

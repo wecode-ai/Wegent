@@ -13,6 +13,10 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.provider_credentials import (
+    decrypt_provider_token,
+    store_provider_config,
+)
 from app.models.cloud_project import CloudProject, CloudProjectLocalBinding
 from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -25,6 +29,7 @@ from app.schemas.cloud_project import (
     CloudProjectMemberUpdate,
     CloudProjectUpdate,
     LocalBindingCreate,
+    normalize_provider_config,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 
@@ -52,6 +57,12 @@ class CloudProjectService:
         self, db: Session, user_id: int, values: CloudProjectCreate
     ) -> CloudProject:
         public_id = str(uuid.uuid4())
+        try:
+            provider_config = store_provider_config(
+                values.task_provider, values.provider_config
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
         project = CloudProject(
             public_id=public_id,
             project_key=values.project_key
@@ -60,6 +71,12 @@ class CloudProjectService:
             description=values.description,
             created_by_user_id=user_id,
             storage_prefix=f"projects/{public_id}",
+            metadata_json={
+                "project_store": "backend",
+                "task_provider": values.task_provider,
+                "provider_config": provider_config,
+                "tags": [],
+            },
         )
         db.add(project)
         try:
@@ -106,6 +123,27 @@ class CloudProjectService:
     def get(self, db: Session, project_id: int, user_id: int) -> CloudProject:
         return require_cloud_project_role(db, project_id, user_id).project
 
+    def get_provider_credential(
+        self, db: Session, project_id: int, user_id: int
+    ) -> str:
+        project = require_cloud_project_role(
+            db, project_id, user_id, BaseRole.Developer
+        ).project
+        metadata = (
+            project.metadata_json if isinstance(project.metadata_json, dict) else {}
+        )
+        try:
+            token = decrypt_provider_token(
+                project.task_provider, metadata.get("provider_config")
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        if not token:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Provider credential is not configured"
+            )
+        return token
+
     def update(
         self,
         db: Session,
@@ -117,11 +155,40 @@ class CloudProjectService:
             db, project_id, user_id, BaseRole.Maintainer
         ).project
         updates = values.model_dump(exclude={"version"}, exclude_none=True)
-        if "tags" in values.model_fields_set and values.tags is not None:
-            # The project tag registry lives inside the metadata JSON column;
-            # merge so other metadata keys survive the update.
+        if (
+            "tags" in values.model_fields_set
+            or "provider_config" in values.model_fields_set
+        ):
             metadata = dict(project.metadata_json or {})
-            metadata["tags"] = updates.pop("tags")
+            if "tags" in values.model_fields_set and values.tags is not None:
+                metadata["tags"] = updates.pop("tags")
+            if (
+                "provider_config" in values.model_fields_set
+                and values.provider_config is not None
+            ):
+                provider = metadata.get("task_provider", "local")
+                current_config = metadata.get("provider_config")
+                current_config = (
+                    current_config if isinstance(current_config, dict) else {}
+                )
+                try:
+                    provider_config = normalize_provider_config(
+                        str(provider), values.provider_config
+                    )
+                    metadata["provider_config"] = (
+                        {}
+                        if provider == "local"
+                        else store_provider_config(
+                            str(provider),
+                            provider_config,
+                            current_config,
+                        )
+                    )
+                except ValueError as exc:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
+                    ) from exc
+                updates.pop("provider_config", None)
             updates["metadata_json"] = metadata
         updated = (
             db.query(CloudProject)

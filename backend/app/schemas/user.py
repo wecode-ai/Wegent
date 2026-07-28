@@ -278,6 +278,7 @@ class WeworkWebConfigResponse(BaseModel):
     """Web application metadata exposed to Wework desktop."""
 
     web_url: str
+    socket_url: Optional[str] = None
 
 
 class WeworkAuthSessionPollResponse(BaseModel):

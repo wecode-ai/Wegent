@@ -21,7 +21,7 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 
 桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。授权窗使用 Wework 主窗口作为原生父窗口，因此在授权期间始终位于 Wework 之上；它不会设置为跨应用全局置顶，切换到其他应用时仍遵循系统窗口层级。
 
-当用户连接的地址与打包时的 `VITE_WEGENT_BACKEND_URL` 或 `VITE_API_BASE_URL` 一致时，Wework 使用打包配置中的 `VITE_SOCKET_BASE_URL` 和 `VITE_SOCKET_PATH`，支持 HTTP API 与 Socket.IO 分域部署。这也覆盖 `VITE_WEGENT_BACKEND_URL` 未配置、用户手动输入打包 API 对应 Backend 的场景。升级前已经保存为同源 Socket 地址的连接会在启动时自动迁移；用户手动输入的其他 Backend 仍按同源规则解析。
+Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。
 
 本地 Wework 不渲染云端账号密码表单，也不调用 `/auth/login` 或 `/auth/admin-password/setup`。云端登录、OIDC 和管理员初始化都发生在云端 Wegent Web 授权页中。用户登录后必须明确点击“授权 Wework”，Backend 才会把一次性可领取的云端 JWT 写入授权会话；本地 Wework 领取成功后继续读取 `/users/me` 校验用户并保存云端连接状态。
 

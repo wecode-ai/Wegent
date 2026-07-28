@@ -65,7 +65,7 @@ export interface LocalCodexPluginApi {
   codexHomeMigrationStatus(): Promise<LocalCodexHomeMigrationStatus>
   initializeCodexHome(options: {
     migrateNativeHome: boolean
-    remoteAppsEnabled: boolean
+    remoteAppsEnabled?: boolean
   }): Promise<LocalCodexHomeMigrationStatus>
   migrateNativeCodexHome(remoteAppsEnabled?: boolean): Promise<LocalCodexHomeMigrationStatus>
   readCodexLocalConfig(): Promise<LocalCodexLocalConfig>
@@ -530,7 +530,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
   const defaultCodexLocalConfig: LocalCodexLocalConfig = {
     codexHome: '',
     configPath: '',
-    remoteAppsEnabled: false,
+    remoteAppsEnabled: true,
   }
   return {
     importExternalContent(source) {
@@ -564,10 +564,13 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         })
       }
       return invoke<LocalCodexHomeMigrationStatus>('local_executor_initialize_codex_home', {
-        options,
+        options: {
+          ...options,
+          remoteAppsEnabled: options.remoteAppsEnabled ?? true,
+        },
       })
     },
-    migrateNativeCodexHome(remoteAppsEnabled = false) {
+    migrateNativeCodexHome(remoteAppsEnabled = true) {
       return this.initializeCodexHome({
         migrateNativeHome: true,
         remoteAppsEnabled,

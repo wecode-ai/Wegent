@@ -75,6 +75,14 @@ export interface CloudProject {
   project_key: string
   name: string
   description: string
+  project_store: 'local' | 'backend'
+  task_provider: 'local' | 'github' | 'gitlab'
+  provider_config: {
+    repository?: string
+    domain?: string
+    api_base?: string
+    credential_configured?: boolean
+  }
   created_by_user_id: number
   status: string
   tags: string[]
@@ -177,8 +185,18 @@ export function createDeliveryApi(client: HttpClient) {
       project_key?: string
       name: string
       description?: string
+      task_provider?: 'local' | 'github' | 'gitlab'
+      provider_config?: {
+        repository?: string
+        domain?: string
+        api_base?: string
+        token?: string
+      }
     }): Promise<CloudProject> {
       return client.post('/v1/cloud-projects', data)
+    },
+    getCloudProjectProviderCredential(projectId: CloudProjectIdInput): Promise<{ token: string }> {
+      return client.get(`/v1/cloud-projects/${projectId}/provider-credential`)
     },
     updateCloudProject(
       projectId: CloudProjectIdInput,
@@ -186,6 +204,12 @@ export function createDeliveryApi(client: HttpClient) {
         name?: string
         description?: string
         tags?: string[]
+        provider_config?: {
+          repository?: string
+          domain?: string
+          api_base?: string
+          token?: string
+        }
         version: number
       }
     ): Promise<CloudProject> {
