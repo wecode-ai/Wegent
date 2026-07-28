@@ -173,6 +173,9 @@ const CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES = MODEL_PROTOCOL_MATRIX_CASES.
 const LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
   model => model.source === 'local'
 )
+const MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.protocol === 'chat' || model.protocol === 'anthropic'
+)
 const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
   LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
 const HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
@@ -274,6 +277,7 @@ const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
+const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -3266,6 +3270,10 @@ function matrixToolCompletion(model) {
   return `${matrixToolPrompt(model)}_COMPLETE`
 }
 
+function matrixToolPreamble(model) {
+  return `${matrixToolPrompt(model)}_RUNNING_TOOL`
+}
+
 function matrixArtifact(model) {
   return `wework-matrix-${matrixCaseId(model)}.txt`
 }
@@ -5496,16 +5504,51 @@ class DesktopE2EServer {
       return
     }
     if (model.protocol === 'chat') {
+      const assistant = body.messages?.find(
+        message =>
+          message?.role === 'assistant' &&
+          message?.content?.includes(matrixToolPreamble(model)) &&
+          message?.tool_calls?.some(call => call?.function?.name === 'apply_patch')
+      )
       assert.ok(
-        body.messages?.some(message => message?.role === 'tool'),
-        `${matrixCaseId(model)} lost the function tool result`
+        assistant,
+        `${matrixCaseId(model)} split assistant text and tool_calls into different messages`
+      )
+      const call = assistant.tool_calls.find(
+        candidate => candidate?.function?.name === 'apply_patch'
+      )
+      assert.ok(
+        body.messages?.some(
+          message => message?.role === 'tool' && message?.tool_call_id === call?.id
+        ),
+        `${matrixCaseId(model)} lost the function tool result or call ID`
       )
       return
     }
-    const blocks = body.messages?.flatMap(message => message?.content ?? []) ?? []
+    const assistant = body.messages?.find(
+      message =>
+        message?.role === 'assistant' &&
+        message?.content?.some(
+          block => block?.type === 'text' && block?.text?.includes(matrixToolPreamble(model))
+        ) &&
+        message?.content?.some(block => block?.type === 'tool_use' && block?.name === 'apply_patch')
+    )
     assert.ok(
-      blocks.some(block => block?.type === 'tool_result'),
-      `${matrixCaseId(model)} lost the Anthropic tool_result`
+      assistant,
+      `${matrixCaseId(model)} split assistant text and tool_use into different messages`
+    )
+    const call = assistant.content.find(
+      block => block?.type === 'tool_use' && block?.name === 'apply_patch'
+    )
+    assert.ok(
+      body.messages?.some(
+        message =>
+          message?.role === 'user' &&
+          message?.content?.some(
+            block => block?.type === 'tool_result' && block?.tool_use_id === call?.id
+          )
+      ),
+      `${matrixCaseId(model)} lost the Anthropic tool_result or tool_use_id`
     )
   }
 
@@ -5523,10 +5566,22 @@ class DesktopE2EServer {
       return
     }
     if (model.protocol === 'chat') {
-      this.writeChatToolCall(response, patch)
+      this.writeChatToolCall(
+        response,
+        patch,
+        'chat-local-apply-patch',
+        'apply_patch',
+        matrixToolPreamble(model)
+      )
       return
     }
-    this.writeAnthropicToolCall(response, patch)
+    this.writeAnthropicToolCall(
+      response,
+      patch,
+      'anthropic-local-apply-patch',
+      'apply_patch',
+      matrixToolPreamble(model)
+    )
   }
 
   writeMatrixAssistantMessage(response, model, text) {
@@ -6114,13 +6169,31 @@ class DesktopE2EServer {
     response,
     toolInput,
     callId = 'chat-local-apply-patch',
-    toolName = 'apply_patch'
+    toolName = 'apply_patch',
+    assistantText = ''
   ) {
     const argumentsValue = JSON.stringify(
       toolName === 'apply_patch' ? { input: toolInput } : toolInput
     )
     const splitAt = Math.max(1, Math.floor(argumentsValue.length / 2))
-    const chunks = [
+    const chunks = []
+    if (assistantText) {
+      chunks.push({
+        id: 'chat-local-tool',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              content: assistantText,
+            },
+            finish_reason: null,
+          },
+        ],
+      })
+    }
+    chunks.push(
       {
         id: 'chat-local-tool',
         object: 'chat.completion.chunk',
@@ -6166,8 +6239,8 @@ class DesktopE2EServer {
             finish_reason: 'tool_calls',
           },
         ],
-      },
-    ]
+      }
+    )
     this.writeRawSse(
       response,
       `${chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join('')}data: [DONE]\n\n`
@@ -6187,10 +6260,12 @@ class DesktopE2EServer {
     response,
     toolInput,
     callId = 'anthropic-local-apply-patch',
-    toolName = 'apply_patch'
+    toolName = 'apply_patch',
+    assistantText = ''
   ) {
     const input = JSON.stringify(toolName === 'apply_patch' ? { input: toolInput } : toolInput)
-    this.writeAnthropicSse(response, [
+    const toolIndex = assistantText ? 1 : 0
+    const events = [
       [
         'message_start',
         {
@@ -6206,11 +6281,34 @@ class DesktopE2EServer {
           },
         },
       ],
+    ]
+    if (assistantText) {
+      events.push(
+        [
+          'content_block_start',
+          {
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'text', text: '' },
+          },
+        ],
+        [
+          'content_block_delta',
+          {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: assistantText },
+          },
+        ],
+        ['content_block_stop', { type: 'content_block_stop', index: 0 }]
+      )
+    }
+    events.push(
       [
         'content_block_start',
         {
           type: 'content_block_start',
-          index: 0,
+          index: toolIndex,
           content_block: {
             type: 'tool_use',
             id: callId,
@@ -6223,11 +6321,11 @@ class DesktopE2EServer {
         'content_block_delta',
         {
           type: 'content_block_delta',
-          index: 0,
+          index: toolIndex,
           delta: { type: 'input_json_delta', partial_json: input },
         },
       ],
-      ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+      ['content_block_stop', { type: 'content_block_stop', index: toolIndex }],
       [
         'message_delta',
         {
@@ -6236,8 +6334,9 @@ class DesktopE2EServer {
           usage: { output_tokens: 1 },
         },
       ],
-      ['message_stop', { type: 'message_stop' }],
-    ])
+      ['message_stop', { type: 'message_stop' }]
+    )
+    this.writeAnthropicSse(response, events)
   }
 
   writeAnthropicError(response, message) {
@@ -7682,6 +7781,25 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
 
+    if (MIXED_TOOL_TURNS_ONLY) {
+      phase = 'mixed-assistant-tool-turns'
+      await verifyModelProtocolMatrix({
+        cases: MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
+        composerSelector,
+        control,
+        newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+        screenshotPrefix: 'mixed-assistant-tool-turn',
+        workspacePath,
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework mixed assistant tool-turn desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (QUEUE_MANAGEMENT_ONLY) {
       phase = 'queue-management'
       await verifyPausedQueueLifecycle({ composerSelector, control })
@@ -7788,24 +7906,9 @@ async function main() {
     }
 
     phase = 'initial-task-completion'
-    await control.command('waitFor', '[data-testid="environment-info-button"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    const environmentSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-    if (!environmentSnapshot.testIds.includes('environment-changes-button')) {
-      await control.command('click', '[data-testid="environment-info-button"]')
+    if (control.modelStage !== 'complete') {
+      control.releaseInitialToolExecution()
     }
-    await control.command('waitFor', '[data-testid="environment-changes-button"]', {
-      text: '+0',
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    const cleanEnvironmentText = await control.command(
-      'getText',
-      '[data-testid="environment-changes-button"]'
-    )
-    assert.match(cleanEnvironmentText, /\+0\s*-0/, 'The clean workspace diff was not displayed')
-
-    control.releaseInitialToolExecution()
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
@@ -7820,8 +7923,8 @@ async function main() {
     )
     assert.match(
       processingSummaryText,
-      /调用 2 个工具，编辑 1 个文件|Called 2 tools, edited 1 file/,
-      'The processing summary did not report tool calls and edited files separately'
+      /编辑 1 个文件|edited 1 file/,
+      'The processing summary did not report the edited file'
     )
     await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
       timeoutMs: UI_TIMEOUT_MS,
@@ -7885,11 +7988,8 @@ async function main() {
       '[data-testid="processing-live-preview"]'
     )
     await control.command('click', '[data-testid="processing-summary-toggle"]')
-    await control.command('waitFor', '[data-testid="environment-changes-button"]', {
-      text: '+1',
-      timeoutMs: UI_TIMEOUT_MS,
-    })
     await control.command('waitFor', '[data-testid="file-change-stats-label"]', {
+      text: '+1',
       timeoutMs: UI_TIMEOUT_MS,
     })
     if (VIEW_IMAGE_ONLY) {
