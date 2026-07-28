@@ -38,20 +38,27 @@ pub(crate) mod test_env {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    // The desktop app exports WEGENT_* variables (for example
-    // WEGENT_BUNDLED_HOOKS_DIR) into every process it spawns, including
-    // `cargo test`. Unit tests must observe a hermetic environment, so scrub
-    // these variables before any test runs. Constructors execute
-    // single-threaded ahead of main, which makes the mutation safe.
+    // The desktop app exports host-specific WEGENT_* variables (for example
+    // WEGENT_BUNDLED_HOOKS_DIR pointing inside the installed app bundle) into
+    // every process it spawns, including `cargo test`. Tests that rely on a
+    // hermetic environment must not observe them, so scrub the variables that
+    // leak host machine state before any test runs. Constructors execute
+    // single-threaded ahead of main, which makes the mutation safe. Keep this
+    // list narrow: variables like WEGENT_EXTRA_PATHS configure the runner and
+    // must survive.
+    const HOST_STATE_VARS: &[&str] = &[
+        "WEGENT_BUNDLED_HOOKS_DIR",
+        "WEGENT_MANAGED_HOOKS_DIR",
+        "WEGENT_EXECUTOR_HOME",
+    ];
+
     #[used]
     #[link_section = "__DATA,__mod_init_func"]
     static SCRUB_WEGENT_ENV: extern "C" fn() = {
         extern "C" fn scrub() {
-            for (key, _) in std::env::vars_os() {
-                if key.to_string_lossy().starts_with("WEGENT_") {
-                    // SAFETY: constructors run single-threaded before main.
-                    unsafe { std::env::remove_var(&key) };
-                }
+            for key in HOST_STATE_VARS {
+                // SAFETY: constructors run single-threaded before main.
+                unsafe { std::env::remove_var(key) };
             }
         }
         scrub
