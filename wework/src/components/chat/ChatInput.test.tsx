@@ -429,6 +429,10 @@ describe('ChatInput', () => {
     expect(
       screen.getByTestId('send-after-turn-option').querySelector('.lucide-clock-3')
     ).toBeInTheDocument()
+    const sendAfterTurnOption = screen.getByTestId('send-after-turn-option')
+    expect(sendAfterTurnOption.querySelector('.lucide-corner-down-left')).toBeInTheDocument()
+    expect(screen.getByTestId('guide-current-turn-option')).toHaveTextContent('⌘')
+    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent('⇧')
     await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
 
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
