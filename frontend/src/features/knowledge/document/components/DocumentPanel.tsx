@@ -404,7 +404,7 @@ export function DocumentPanel({
         </div>
 
         <div className="mx-4 mt-4 shrink-0" data-testid="artifact-source-summary">
-          <div className="mb-2 flex min-h-11 items-center justify-between gap-2">
+          <div className="mb-2 flex min-h-11 items-center justify-between gap-2 md:min-h-8">
             <h3 className="text-sm font-semibold">
               {t(
                 canManageArtifacts === false
@@ -416,7 +416,7 @@ export function DocumentPanel({
               <Button
                 variant="outline"
                 size="sm"
-                className="min-h-11"
+                className="min-h-11 md:h-8 md:min-h-0 md:px-2.5 md:text-xs"
                 onClick={() => setUploadOpen(true)}
                 data-testid="artifact-add-source"
               >

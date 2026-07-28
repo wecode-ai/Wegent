@@ -137,6 +137,23 @@ describe('ArtifactPanel AI Workshop', () => {
     expect(toastMock).toHaveBeenCalledWith({ description: 'artifact.started' })
   })
 
+  it('shows capability descriptions on keyboard focus instead of inside the cards', async () => {
+    render(
+      <ArtifactPanel
+        knowledgeBaseId={12}
+        selectedDocumentIds={[]}
+        onAdjustSources={jest.fn()}
+        onCreatePptDraft={createPptDraftMock}
+      />
+    )
+
+    expect(screen.queryByText('artifact.type.presentationHint')).not.toBeInTheDocument()
+
+    fireEvent.focus(screen.getByTestId('artifact-type-presentation'))
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('artifact.type.presentationHint')
+  })
+
   it('reports generation permission and processing state to the source browser', async () => {
     const onCanManageChange = jest.fn()
     const onProcessingDocumentCountChange = jest.fn()
