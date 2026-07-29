@@ -136,38 +136,59 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
 }
 
 async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
-    let scoped_project_id = env::var("WEWORK_SPACE_ID").ok();
-    if let (Some(scoped), Some(requested)) = (
-        scoped_project_id.as_deref(),
-        arguments.get("space_id").and_then(Value::as_str),
-    ) {
-        if requested != scoped {
-            return text_result(
-                "wework_space access is limited to the current project space".to_owned(),
-                true,
-            );
-        }
-    }
-    let is_local_project = scoped_project_id
+    let default_project_id = env::var("WEWORK_SPACE_ID").ok();
+    let requested_project_id = arguments
+        .get("space_id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| default_project_id.clone());
+    let is_locally_routed = requested_project_id
         .as_deref()
-        .is_some_and(|project_id| is_local_scoped_project(runtime, project_id));
+        .is_some_and(|project_id| is_locally_routed_project(runtime, project_id, name));
     let backend_url = env::var("WEWORK_SPACE_BACKEND_URL").ok();
     let auth_token = env::var("WEWORK_SPACE_AUTH_TOKEN").ok();
-    if let (Some(backend_url), Some(auth_token), Some(project_id)) = (
-        backend_url.as_deref(),
-        auth_token.as_deref(),
-        scoped_project_id.as_deref(),
-    ) {
-        if !is_local_project || is_backend_space_tool(name) {
-            return match call_backend_tool(backend_url, auth_token, project_id, name, &arguments)
-                .await
-            {
-                Ok(value) => text_result(value.to_string(), false),
-                Err(error) => text_result(error, true),
-            };
-        }
+    if name == "list_spaces" {
+        let local_projects = match runtime.list_projects().and_then(|mut projects| {
+            projects.retain(|project| project.metadata["project_store"] != "backend");
+            serde_json::to_value(projects).map_err(invalid_json)
+        }) {
+            Ok(Value::Array(projects)) => projects,
+            Ok(_) => Vec::new(),
+            Err(error) => return text_result(error.to_string(), true),
+        };
+        let Some((backend_url, auth_token)) = backend_url.as_deref().zip(auth_token.as_deref())
+        else {
+            return text_result(Value::Array(local_projects).to_string(), false);
+        };
+        return match call_backend_tool(backend_url, auth_token, "", name, &arguments).await {
+            Ok(Value::Array(mut cloud_projects)) => {
+                cloud_projects.extend(local_projects);
+                text_result(Value::Array(cloud_projects).to_string(), false)
+            }
+            Ok(value) => text_result(value.to_string(), false),
+            Err(error) => text_result(error, true),
+        };
     }
-    if scoped_project_id.is_some() && !is_local_project {
+
+    let should_use_backend = backend_url.is_some()
+        && auth_token.is_some()
+        && (name == "create_space" || (requested_project_id.is_some() && !is_locally_routed));
+    if should_use_backend {
+        let project_id = requested_project_id.as_deref().unwrap_or_default();
+        return match call_backend_tool(
+            backend_url.as_deref().unwrap_or_default(),
+            auth_token.as_deref().unwrap_or_default(),
+            project_id,
+            name,
+            &arguments,
+        )
+        .await
+        {
+            Ok(value) => text_result(value.to_string(), false),
+            Err(error) => text_result(error, true),
+        };
+    }
+    if requested_project_id.is_some() && !is_locally_routed {
         return text_result(
             "The current project space requires the WeWork Backend connection. Retry through wework_space after the connection is restored; do not use git or provider APIs."
                 .to_owned(),
@@ -175,12 +196,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
         );
     }
     let result = match name {
-        "list_spaces" => runtime.list_projects().and_then(|mut value| {
-            if let Some(project_id) = scoped_project_id.as_deref() {
-                value.retain(|project| project.id == project_id);
-            }
-            serde_json::to_value(value).map_err(invalid_json)
-        }),
+        "list_spaces" => unreachable!("list_spaces is handled before tool routing"),
         "create_space" => parse(arguments)
             .and_then(|input: ProjectCreate| runtime.create_project(input))
             .and_then(|value| serde_json::to_value(value).map_err(invalid_json)),
@@ -213,7 +229,7 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 .map(ToOwned::to_owned);
             match parse::<TaskSearch>(arguments) {
                 Ok(mut input) => {
-                    input.project_id = requested_space_id.or_else(|| scoped_project_id.clone());
+                    input.project_id = requested_space_id.or_else(|| default_project_id.clone());
                     runtime
                         .search_tasks(input)
                         .await
@@ -474,24 +490,41 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
     }
 }
 
-fn is_local_scoped_project(runtime: &TaskRuntime, project_id: &str) -> bool {
+fn is_locally_routed_project(runtime: &TaskRuntime, project_id: &str, tool_name: &str) -> bool {
     runtime
         .list_projects()
         .unwrap_or_default()
         .into_iter()
         .find(|project| project.id == project_id)
-        .and_then(|project| {
-            project.metadata["project_store"]
-                .as_str()
-                .map(|store| store == "local")
+        .is_some_and(|project| {
+            project.metadata["project_store"].as_str() == Some("local")
+                || (project.metadata["task_provider"].as_str() == Some("dingtalk_aitable")
+                    && is_task_provider_tool(tool_name))
         })
-        .unwrap_or(false)
 }
 
-fn is_backend_space_tool(name: &str) -> bool {
+fn is_task_provider_tool(name: &str) -> bool {
     matches!(
         name,
-        "list_space_files" | "read_space_file" | "list_deliveries" | "read_delivery"
+        "list_board_items"
+            | "search_board_items"
+            | "get_board_item"
+            | "create_board_item"
+            | "update_board_item"
+            | "add_board_item_comment"
+            | "list_item_attachments"
+            | "upload_item_attachment"
+            | "read_item_attachment"
+            | "delete_item_attachment"
+            | "reorder_board_items"
+            | "describe_space_table"
+            | "list_table_records"
+            | "create_table_record"
+            | "update_table_record"
+            | "delete_table_record"
+            | "create_table_field"
+            | "update_table_field"
+            | "delete_table_field"
     )
 }
 
@@ -587,9 +620,12 @@ async fn call_backend_tool(
                 "{base}/cloud-projects/{project_id}/loop-items/reorder"
             ))
             .json(arguments.get("reorder").unwrap_or(arguments)),
-        "create_space" | "update_space" => {
-            return Err("Cloud project management is not available through task MCP".to_owned())
-        }
+        "create_space" => client
+            .post(format!("{base}/cloud-projects"))
+            .json(arguments),
+        "update_space" => client
+            .patch(format!("{base}/cloud-projects/{project_id}"))
+            .json(arguments.get("project").unwrap_or(arguments)),
         "describe_space_table" => {
             client.get(format!("{base}/cloud-projects/{project_id}/aitable/table"))
         }
@@ -755,11 +791,8 @@ async fn call_backend_tool(
             value
                 .get("items")
                 .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter(|project| id_value(&project["id"]).as_deref() == Some(project_id))
                 .cloned()
-                .collect(),
+                .unwrap_or_default(),
         ));
     }
     if name == "list_board_items" {
@@ -1337,7 +1370,9 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task_runtime::{LocalTaskStore, TaskCreate, TaskProviderKind};
+    use crate::task_runtime::{
+        LocalTaskStore, ProjectDescriptor, ProjectStoreKind, TaskCreate, TaskProviderKind,
+    };
 
     #[test]
     fn injects_wework_space_once() {
@@ -1386,7 +1421,7 @@ mod tests {
     }
 
     #[test]
-    fn scopes_wework_space_to_the_bound_project() {
+    fn provides_the_bound_project_as_the_default_space() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -1398,7 +1433,7 @@ mod tests {
     }
 
     #[test]
-    fn scopes_wework_space_with_a_numeric_project_id() {
+    fn provides_a_numeric_bound_project_as_the_default_space() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -1424,8 +1459,57 @@ mod tests {
             .unwrap();
         let runtime = TaskRuntime::new(store).unwrap();
 
-        assert!(is_local_scoped_project(&runtime, &project.id));
-        assert!(!is_local_scoped_project(&runtime, "cloud-project"));
+        assert!(is_locally_routed_project(
+            &runtime,
+            &project.id,
+            "list_board_items"
+        ));
+        assert!(!is_locally_routed_project(
+            &runtime,
+            "cloud-project",
+            "list_board_items"
+        ));
+    }
+
+    #[test]
+    fn routes_backend_dingtalk_table_operations_to_the_local_provider() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        store
+            .configure_external_project(ProjectDescriptor {
+                id: "cloud-aitable".to_owned(),
+                public_id: None,
+                project_key: "AITABLE".to_owned(),
+                name: "DingTalk table".to_owned(),
+                description: String::new(),
+                project_store: ProjectStoreKind::Backend,
+                task_provider: TaskProviderKind::DingtalkAitable,
+                provider_config: json!({
+                    "base_id": "base-1",
+                    "table_id": "table-1"
+                }),
+                version: 1,
+            })
+            .unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+
+        for tool_name in [
+            "list_board_items",
+            "search_board_items",
+            "describe_space_table",
+            "list_table_records",
+        ] {
+            assert!(is_locally_routed_project(
+                &runtime,
+                "cloud-aitable",
+                tool_name
+            ));
+        }
+        assert!(!is_locally_routed_project(
+            &runtime,
+            "cloud-aitable",
+            "list_space_files"
+        ));
     }
 
     #[test]
