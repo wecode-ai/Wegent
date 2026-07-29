@@ -3052,115 +3052,121 @@ async function verifyAutomationLifecycle(control, workspacePath) {
   )
   assert.ok(automationActions, 'The automation detail did not expose its actions menu')
 
+  const previousScenario = control.scenario
   control.setScenario('automation')
-  await control.command('click', `[data-testid="${automationActions}"]`)
-  await control.command('click', '[data-testid="automation-run-now-button"]')
-  await control.awaitScenarioRequestCount('automation', 1, WORKBENCH_READY_TIMEOUT_MS)
+  try {
+    await control.command('click', `[data-testid="${automationActions}"]`)
+    await control.command('click', '[data-testid="automation-run-now-button"]')
+    await control.awaitScenarioRequestCount('automation', 1, WORKBENCH_READY_TIMEOUT_MS)
 
-  const manualTaskSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`) ||
-      snapshot.testIds.some(
-        testId =>
-          testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
-      ),
-    'The manual automation run did not expose its completed runtime task',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  const manualTaskRow = manualTaskSnapshot.testIds.find(
-    testId =>
-      testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
-  )
-  assert.ok(manualTaskRow, 'The manual automation run did not expose its runtime task')
-  const manualTaskId = manualTaskRow.replace('runtime-local-task-row-', '')
-  if (!manualTaskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
+    const manualTaskSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`) ||
+        snapshot.testIds.some(
+          testId =>
+            testId.startsWith('runtime-local-task-row-') &&
+            !initialSnapshot.testIds.includes(testId)
+        ),
+      'The manual automation run did not expose its completed runtime task',
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+    const manualTaskRow = manualTaskSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
+    )
+    assert.ok(manualTaskRow, 'The manual automation run did not expose its runtime task')
+    const manualTaskId = manualTaskRow.replace('runtime-local-task-row-', '')
+    if (!manualTaskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
+      await control.command('click', `[data-testid="${manualTaskRow}"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: `${AUTOMATION_COMPLETION_TEXT}_1`,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+    }
+    await control.command('click', `[data-testid="runtime-local-task-mark-${manualTaskId}"]`)
+    await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes('sidebar-pinned-section'),
+      'The automation task was not pinned before testing existing-task mode'
+    )
+
+    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('click', `[data-testid="${automationRow}"]`)
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.some(testId => testId.startsWith('automation-run-status-')) &&
+        /Completed|已完成/.test(snapshot.text),
+      'The manual automation run did not update its run history to completed',
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+    await control.command('click', '[data-testid="automation-conversation-mode"]')
+    await control.command(
+      'click',
+      '[data-testid="automation-conversation-mode-option-continue_thread"]'
+    )
+    await control.command('click', '[data-testid="automation-target-task-select"]')
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes(
+          `automation-target-task-select-option-local-device:${manualTaskId}`
+        ),
+      'The existing-task selector did not list the pinned local task'
+    )
+    await control.command('click', '[data-testid="automation-target-task-select"]')
+    await control.command('click', '[data-testid="automation-repeat-menu"]')
+    await control.command('click', '[data-testid="automation-repeat-menu-option-one_time"]')
+    const scheduledFor = new Date(Date.now() + 5_000)
+    const localScheduledFor = new Date(
+      scheduledFor.getTime() - scheduledFor.getTimezoneOffset() * 60_000
+    )
+      .toISOString()
+      .slice(0, 19)
+    await control.command('fill', '[data-testid="automation-execute-at-input"]', {
+      value: localScheduledFor,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+
+    const beforeScheduledRun = JSON.parse(await control.command('snapshot', 'body'))
+    await control.awaitScenarioRequestCount('automation', 2, AUTOMATION_SCHEDULE_TIMEOUT_MS)
+    await waitForSnapshot(
+      control,
+      snapshot => {
+        const completedRuns = snapshot.testIds.filter(testId =>
+          testId.startsWith('automation-run-status-')
+        ).length
+        const completedLabels = snapshot.text.match(/Completed|已完成/g)?.length ?? 0
+        const newTask = snapshot.testIds.some(
+          testId =>
+            testId.startsWith('runtime-local-task-row-') &&
+            !beforeScheduledRun.testIds.includes(testId)
+        )
+        return completedRuns >= 2 && completedLabels >= 2 && !newTask
+      },
+      'The scheduled automation did not continue the pinned task after becoming due',
+      AUTOMATION_SCHEDULE_TIMEOUT_MS
+    )
+    await captureVerificationScreenshot(control, 'automations-02-scheduled-complete.png')
     await control.command('click', `[data-testid="${manualTaskRow}"]`)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: `${AUTOMATION_COMPLETION_TEXT}_1`,
+      text: `${AUTOMATION_COMPLETION_TEXT}_2`,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('click', '[data-testid="automation-button"]')
+    await control.command('waitFor', `[data-testid="${automationRow}"]`, {
+      text: AUTOMATION_NAME,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, 'automations-01-local-persisted.png')
+  } finally {
+    control.setScenario(previousScenario)
   }
-  await control.command('click', `[data-testid="runtime-local-task-mark-${manualTaskId}"]`)
-  await waitForSnapshot(
-    control,
-    snapshot => snapshot.testIds.includes('sidebar-pinned-section'),
-    'The automation task was not pinned before testing existing-task mode'
-  )
-
-  await control.command('click', '[data-testid="automation-button"]')
-  await control.command('click', `[data-testid="${automationRow}"]`)
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.some(testId => testId.startsWith('automation-run-status-')) &&
-      /Completed|已完成/.test(snapshot.text),
-    'The manual automation run did not update its run history to completed',
-    WORKBENCH_READY_TIMEOUT_MS
-  )
-  await control.command('click', '[data-testid="automation-conversation-mode"]')
-  await control.command(
-    'click',
-    '[data-testid="automation-conversation-mode-option-continue_thread"]'
-  )
-  await control.command('click', '[data-testid="automation-target-task-select"]')
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes(
-        `automation-target-task-select-option-local-device:${manualTaskId}`
-      ),
-    'The existing-task selector did not list the pinned local task'
-  )
-  await control.command('click', '[data-testid="automation-target-task-select"]')
-  await control.command('click', '[data-testid="automation-repeat-menu"]')
-  await control.command('click', '[data-testid="automation-repeat-menu-option-one_time"]')
-  const scheduledFor = new Date(Date.now() + 5_000)
-  const localScheduledFor = new Date(
-    scheduledFor.getTime() - scheduledFor.getTimezoneOffset() * 60_000
-  )
-    .toISOString()
-    .slice(0, 19)
-  await control.command('fill', '[data-testid="automation-execute-at-input"]', {
-    value: localScheduledFor,
-  })
-  await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-
-  const beforeScheduledRun = JSON.parse(await control.command('snapshot', 'body'))
-  await control.awaitScenarioRequestCount('automation', 2, AUTOMATION_SCHEDULE_TIMEOUT_MS)
-  const scheduledRunSnapshot = await waitForSnapshot(
-    control,
-    snapshot => {
-      const completedRuns = snapshot.testIds.filter(testId =>
-        testId.startsWith('automation-run-status-')
-      ).length
-      const completedLabels = snapshot.text.match(/Completed|已完成/g)?.length ?? 0
-      const newTask = snapshot.testIds.some(
-        testId =>
-          testId.startsWith('runtime-local-task-row-') &&
-          !beforeScheduledRun.testIds.includes(testId)
-      )
-      return completedRuns >= 2 && completedLabels >= 2 && !newTask
-    },
-    'The scheduled automation did not continue the pinned task after becoming due',
-    AUTOMATION_SCHEDULE_TIMEOUT_MS
-  )
-  await captureVerificationScreenshot(control, 'automations-02-scheduled-complete.png')
-  await control.command('click', `[data-testid="${manualTaskRow}"]`)
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: `${AUTOMATION_COMPLETION_TEXT}_2`,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-
-  await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('click', '[data-testid="automation-button"]')
-  await control.command('waitFor', `[data-testid="${automationRow}"]`, {
-    text: AUTOMATION_NAME,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'automations-01-local-persisted.png')
 }
 
 async function verifySitesPluginAutoInstall(control) {
