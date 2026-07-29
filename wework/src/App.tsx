@@ -18,6 +18,7 @@ import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
 import { AppsPage } from '@/pages/AppsPage'
 import { SitesPage } from '@/pages/SitesPage'
+import { AutomationsPage } from '@/pages/AutomationsPage'
 import { CloudWorkPage } from '@/pages/CloudWorkPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
@@ -79,6 +80,7 @@ import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
+import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -114,6 +116,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
+  const experimentalFeatures = useExperimentalFeaturesState()
   const { activeTab, isNativeApp } = useChromeTabs(path)
   const resolvedActiveTab =
     activeTab?.key === 'wegent' && cloudConnection.webUrl
@@ -128,6 +131,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     path === '/plugins/manage' ||
     path === '/plugins/create' ||
     path === '/plugins' ||
+    path === '/automations' ||
     path === '/cloud-work' ||
     path === '/sites' ||
     path === '/apps'
@@ -156,6 +160,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     onWorkbenchStartupReadyChange?.(true)
   }, [isLoading, isNativeApp, onWorkbenchStartupReadyChange, resolvedActiveTab?.url, user])
 
+  useEffect(() => {
+    if (path === '/automations' && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
+      navigateTo('/')
+    }
+  }, [experimentalFeatures.enabled, experimentalFeatures.loaded, path])
+
   if (path === '/login') {
     return <LoginPage />
   }
@@ -179,6 +189,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <CloudWorkPage />
     ) : path === '/sites' ? (
       <SitesPage />
+    ) : path === '/automations' && experimentalFeatures.enabled ? (
+      <AutomationsPage />
     ) : path === '/apps' ? (
       <AppsPage />
     ) : null
