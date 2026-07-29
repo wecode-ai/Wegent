@@ -10,7 +10,7 @@ describe('useKnowledgeTaskSidebar', () => {
     localStorage.clear()
   })
 
-  it('hydrates the persisted collapsed state before paint', () => {
+  it('eventually sets isCollapsed to true after hydrating persisted state', () => {
     localStorage.setItem('task-sidebar-collapsed', 'true')
 
     const { result } = renderHook(() =>
