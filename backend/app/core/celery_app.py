@@ -93,7 +93,13 @@ celery_app.conf.update(
                 hour=settings.KB_STAT_COLLECT_HOUR,
                 minute=settings.KB_STAT_COLLECT_MINUTE,
             ),
-            "kwargs": {"lookback_days": 1},
+            "kwargs": {
+                "lookback_days": 1,
+                # Tier switch: false (default) → only basic collectors run.
+                # Read at beat schedule build time; flip requires a backend
+                # restart, matching KB_STAT_ENABLED/PRUNE_ENABLED behaviour.
+                "advanced_enabled": settings.KB_STAT_ADVANCED_ENABLED,
+            },
             "options": {"queue": "kb_stat"},
         },
         "kb-stat-prune-weekly": {

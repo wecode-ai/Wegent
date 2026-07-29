@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 
 import { useTranslation } from '@/hooks/useTranslation'
 import { type MetricFilter, type MetricListResponse, type StatScope } from '../api'
@@ -12,7 +12,6 @@ import { useMetricList } from '../hooks/useMetricList'
 import { DomainSection } from './DomainSection'
 import {
   domainToType,
-  isCoreMetric,
   METRIC_TYPE_META,
   TYPE_GROUP_LABEL_KEY,
   TYPE_GROUP_ORDER,
@@ -43,11 +42,12 @@ interface Section {
 export function StatsPage({ scope, filter, hideDashboard, groupByType }: StatsPageProps) {
   const { t } = useTranslation('knowledge-stat')
   const { data, loading, error } = useMetricList(scope)
-  const [advancedOpen, setAdvancedOpen] = useState(false)
 
-  // Split each domain's metrics into core (shown by default) and demoted
-  // (folded into the advanced view). Memoized so toggling the advanced
-  // view doesn't rebuild the section arrays.
+  // The metric list is already tier-filtered server-side (basic mode returns
+  // only basic metrics), so every metric here is meant to be shown. There is
+  // no longer a core/demoted split or a collapsed "advanced view" — all
+  // returned metrics render directly, grouped by domain (or by type on the
+  // KB-detail page).
   //
   // IMPORTANT: this useMemo MUST be called unconditionally (before any
   // early returns) to satisfy React's rules-of-hooks. When data is null
@@ -58,11 +58,8 @@ export function StatsPage({ scope, filter, hideDashboard, groupByType }: StatsPa
       : data.domains
     : []
 
-  const { coreSections, demotedSections } = useMemo(
-    () => ({
-      coreSections: buildSections(domains, true, !!groupByType),
-      demotedSections: buildSections(domains, false, !!groupByType),
-    }),
+  const sections = useMemo(
+    () => buildSections(domains, !!groupByType),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [domains, groupByType]
   )
@@ -85,7 +82,7 @@ export function StatsPage({ scope, filter, hideDashboard, groupByType }: StatsPa
 
   return (
     <div className="space-y-8" data-testid="kb-stats-page">
-      {coreSections.map(section => (
+      {sections.map(section => (
         <DomainSection
           key={section.key}
           scope={scope}
@@ -96,58 +93,15 @@ export function StatsPage({ scope, filter, hideDashboard, groupByType }: StatsPa
           titleKeyOverride={section.titleKeyOverride}
         />
       ))}
-
-      {demotedSections.length > 0 && (
-        <div className="rounded-lg border border-border bg-surface/50">
-          <button
-            type="button"
-            onClick={() => setAdvancedOpen(o => !o)}
-            className="flex w-full items-center gap-2 px-4 py-3 text-left"
-            data-testid="advanced-view-toggle"
-            aria-expanded={advancedOpen}
-          >
-            <span className="text-sm font-semibold text-text-primary">
-              {advancedOpen
-                ? t('advanced_view.collapse', '收起高级视图')
-                : t('advanced_view.expand', '▶ 高级视图（完整指标）')}
-            </span>
-            <span className="text-xs text-text-muted">
-              {t('advanced_view.count', '{{count}} 项', {
-                count: demotedSections.reduce((n, s) => n + s.metrics.length, 0),
-              })}
-            </span>
-          </button>
-          {advancedOpen && (
-            <div className="space-y-8 px-4 pb-4">
-              {demotedSections.map(section => (
-                <DomainSection
-                  key={section.key}
-                  scope={scope}
-                  domain={section.domain}
-                  filter={filter}
-                  metricsOverride={section.metrics}
-                  typeOverride={section.typeOverride}
-                  titleKeyOverride={section.titleKeyOverride}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 
-  function buildSections(
-    domains: MetricListResponse['domains'],
-    core: boolean,
-    byType: boolean
-  ): Section[] {
+  function buildSections(domains: MetricListResponse['domains'], byType: boolean): Section[] {
     if (!byType) {
       const out: Section[] = []
       for (const d of domains) {
-        const metrics = d.metrics.filter(m => core === isCoreMetric(m.name))
-        if (metrics.length === 0) continue
-        out.push({ key: d.domain, domain: d, metrics })
+        if (d.metrics.length === 0) continue
+        out.push({ key: d.domain, domain: d, metrics: d.metrics })
       }
       return out
     }
@@ -162,7 +116,7 @@ export function StatsPage({ scope, filter, hideDashboard, groupByType }: StatsPa
     for (const d of domains) {
       const type = domainToType(d.domain)
       for (const m of d.metrics) {
-        if (core === isCoreMetric(m.name)) byGroup[type].push(m)
+        byGroup[type].push(m)
       }
     }
     const out: Section[] = []

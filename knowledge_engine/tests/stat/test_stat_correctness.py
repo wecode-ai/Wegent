@@ -293,6 +293,9 @@ def test_collect_all_re_raises_soft_time_limit(monkeypatch) -> None:
     with pytest.raises(SoftTimeLimitExceeded):
         collect_all(
             target_date=date(2026, 7, 20),
+            # advanced_enabled=True so the fake collector (not in
+            # BASIC_COLLECTORS) survives the tier filter and actually runs.
+            advanced_enabled=True,
             source_session_factory=MagicMock(),
             stat_session_factory=MagicMock(return_value=stat_session),
         )
@@ -300,3 +303,102 @@ def test_collect_all_re_raises_soft_time_limit(monkeypatch) -> None:
     # The run was still finalized as failed before re-raising.
     finalize_calls = [str(c.args[0]) for c in stat_session.execute.call_args_list]
     assert any("UPDATE kb_stat_runs" in s for s in finalize_calls)
+
+
+def test_collect_all_basic_mode_runs_only_basic_collectors(monkeypatch) -> None:
+    """KB_STAT_ADVANCED_ENABLED=false must skip every non-basic collector."""
+    from knowledge_engine.stat import runner
+    from knowledge_engine.stat.tiers import BASIC_COLLECTORS
+
+    ran: list[str] = []
+
+    def make(name: str):
+        def fn(*args, **kwargs):
+            ran.append(name)
+            return 0
+
+        return SimpleNamespace(domain="retrieval", name=name, fn=fn)
+
+    # storage_usage / kb_active_users are basic; the other two are advanced.
+    fakes = [
+        make("storage_usage"),
+        make("kb_active_users"),
+        make("doc_value_ranking"),
+        make("kb_member_scale"),
+    ]
+    assert {"storage_usage", "kb_active_users"} <= BASIC_COLLECTORS
+    assert "doc_value_ranking" not in BASIC_COLLECTORS
+    monkeypatch.setattr(runner, "all_collectors", lambda: fakes)
+
+    stat_session = MagicMock()
+    stat_session.execute.return_value.lastrowid = 1
+
+    collect_all(
+        target_date=date(2026, 7, 20),
+        advanced_enabled=False,
+        source_session_factory=MagicMock(),
+        stat_session_factory=MagicMock(return_value=stat_session),
+    )
+
+    assert set(ran) == {"storage_usage", "kb_active_users"}
+
+
+def test_collect_all_advanced_mode_runs_all(monkeypatch) -> None:
+    """advanced_enabled=True keeps every collector, basic or not."""
+    from knowledge_engine.stat import runner
+
+    ran: list[str] = []
+
+    def make(name: str):
+        def fn(*args, **kwargs):
+            ran.append(name)
+            return 0
+
+        return SimpleNamespace(domain="retrieval", name=name, fn=fn)
+
+    fakes = [make("storage_usage"), make("doc_value_ranking")]
+    monkeypatch.setattr(runner, "all_collectors", lambda: fakes)
+
+    stat_session = MagicMock()
+    stat_session.execute.return_value.lastrowid = 1
+
+    collect_all(
+        target_date=date(2026, 7, 20),
+        advanced_enabled=True,
+        source_session_factory=MagicMock(),
+        stat_session_factory=MagicMock(return_value=stat_session),
+    )
+
+    assert set(ran) == {"storage_usage", "doc_value_ranking"}
+
+
+def test_list_metrics_basic_mode_returns_only_basic_metrics() -> None:
+    """Basic mode /metrics/list must hide every advanced metric."""
+    from knowledge_engine.stat.tiers import BASIC_METRICS
+
+    svc = KbStatQueryService(stat_session_factory=MagicMock(), advanced_enabled=False)
+    result = svc.list_metrics(scope="admin")
+    names = {m["name"] for d in result for m in d["metrics"]}
+
+    # Everything returned is in the basic tier...
+    assert names <= BASIC_METRICS
+    # ...basic metrics are present...
+    assert "kb_growth_curve" in names
+    assert "storage_usage" in names
+    # ...and advanced metrics are absent — including the three moved from
+    # basic to advanced (kb_health_score / doc_upload_trend / kb_config_sanity).
+    assert "kb_health_score" not in names
+    assert "doc_upload_trend" not in names
+    assert "kb_config_sanity" not in names
+    assert "doc_value_ranking" not in names
+    assert "kb_member_scale" not in names
+
+
+def test_list_metrics_advanced_mode_returns_all() -> None:
+    """Advanced mode returns the full metric catalog."""
+    from knowledge_engine.stat.metric_spec import _METRIC_SPECS
+
+    svc = KbStatQueryService(stat_session_factory=MagicMock(), advanced_enabled=True)
+    result = svc.list_metrics(scope="admin")
+    names = {m["name"] for d in result for m in d["metrics"]}
+    assert names == set(_METRIC_SPECS)

@@ -348,6 +348,11 @@ function PlatformKpiBar({ data }: { data: DashboardResponse }) {
     },
   ]
 
+  // Basic mode: the backend returns null for every platform series (their
+  // collectors are advanced-tier and don't run). Hide the whole bar rather
+  // than render three "—" placeholders.
+  if (cards.every(c => c.latest === null)) return null
+
   return (
     <div className="grid grid-cols-2 lg:grid-cols-3 gap-3" data-testid="platform-kpi-bar">
       {cards.map(card => {

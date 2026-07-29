@@ -60,45 +60,6 @@ export function domainToType(domain: string): MetricType {
   return DOMAIN_TO_TYPE[domain] ?? 'ops'
 }
 
-// Core metrics shown by default. Everything returned by the
-// metrics/list endpoint that is NOT in this set is demoted to the
-// collapsed "advanced view" (v4 §2.4) — the backend tables and collectors
-// keep running, only the UI folds them away.
-export const CORE_METRICS: ReadonlySet<string> = new Set<string>([
-  // KPI / dashboard
-  'global_totals',
-  'daily_dashboard',
-  'kb_creation_trend',
-  // retrieval (business + tech)
-  'kb_retrieval_hit_rate',
-  'answer_adoption_rate',
-  'kb_zero_chunk_rate',
-  'rag_call_frequency',
-  'kb_head_frequency',
-  'kb_rag_head_ratio',
-  'rag_vs_head_ratio',
-  // lifecycle / ops
-  'kb_abandon_rate',
-  'kb_config_sanity',
-  'kb_health_score',
-  'storage_usage',
-  'doc_index_failure_rate',
-  'prom_conversion_success_rate',
-  // doc management / content quality
-  'doc_value_ranking',
-  'doc_upload_trend',
-  'kb_thin_doc_rate',
-  'kb_content_freshness',
-  'duplicate_doc_suspect',
-  // users / collaboration
-  'kb_active_users',
-  'kb_sharing',
-])
-
-export function isCoreMetric(name: string): boolean {
-  return CORE_METRICS.has(name)
-}
-
 // Ordered type groups for the KB-detail "group by type" layout (v4 §4.3).
 export const TYPE_GROUP_ORDER: MetricType[] = ['tech', 'ops', 'business']
 

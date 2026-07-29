@@ -180,8 +180,6 @@
       "title": "触发新任务",
       "start_date": "开始日期",
       "end_date": "结束日期",
-      "domains": "选择领域",
-      "domains_placeholder": "不选则执行所有领域",
       "submit": "开始执行",
       "submitting": "执行中...",
       "success": "任务已触发",
@@ -247,11 +245,6 @@
     "tech": "RAG 技术",
     "ops": "知识运营",
     "business": "业务效果"
-  },
-  "advanced_view": {
-    "expand": "▶ 高级视图（完整指标）",
-    "collapse": "收起高级视图",
-    "count": "{{count}} 项"
   },
   "platform_hit_rate": "平台命中率",
   "platform_adoption_rate": "平台采纳率",

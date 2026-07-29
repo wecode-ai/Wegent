@@ -215,6 +215,10 @@ class HealthResponse(BaseModel):
     # compatible when the runtime hasn't been upgraded yet.
     enabled: bool = True
     prune_enabled: bool = True
+    # Advanced-metrics switch (KB_STAT_ADVANCED_ENABLED). false (default)
+    # means only the basic 18-metric tier is collected/exposed. Default True
+    # keeps older clients that never set the field backward compatible.
+    advanced_enabled: bool = True
     latest_run_id: Optional[int] = None
     latest_run_completed_at: Optional[str] = None
     latest_run_status: Optional[str] = None

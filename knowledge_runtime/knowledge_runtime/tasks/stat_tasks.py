@@ -129,6 +129,7 @@ def collect_all_metrics_task(
     triggered_by: str = "beat",
     triggered_user_id: Optional[int] = None,
     lookback_days: Optional[int] = None,
+    advanced_enabled: Optional[bool] = None,
 ):
     target = (
         date.fromisoformat(target_date_iso)
@@ -230,6 +231,11 @@ def collect_all_metrics_task(
                     lookback_days
                     if lookback_days is not None
                     else settings.knowledge_stat_lookback_days
+                ),
+                advanced_enabled=(
+                    advanced_enabled
+                    if advanced_enabled is not None
+                    else settings.kb_stat_advanced_enabled
                 ),
                 source_session_factory=get_readonly_session_factory(),
                 stat_session_factory=get_stat_session_factory(),

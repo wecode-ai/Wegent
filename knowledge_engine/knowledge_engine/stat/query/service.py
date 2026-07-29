@@ -25,6 +25,7 @@ from knowledge_engine.stat.query.metadata import (
     build_metric_list,
 )
 from knowledge_engine.stat.registry import all_collectors
+from knowledge_engine.stat.tiers import BASIC_METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,18 @@ logger = logging.getLogger(__name__)
 class KbStatQueryService(KbStatDashboardMixin):
     """Generic read service for KB stat data."""
 
-    def __init__(self, *, stat_session_factory: sessionmaker):
+    def __init__(
+        self,
+        *,
+        stat_session_factory: sessionmaker,
+        advanced_enabled: bool = False,
+    ):
         self._stat_session_factory = stat_session_factory
+        # Tier filter for /metrics/list. Basic mode hides advanced metrics so
+        # the frontend never requests a metric whose collector did not run.
+        # Single-metric fetch is not gated: an advanced metric simply returns
+        # empty rows in basic mode (its table was never populated).
+        self._advanced_enabled = advanced_enabled
 
     def _get_session(self) -> Session:
         return self._stat_session_factory()
@@ -332,7 +343,19 @@ class KbStatQueryService(KbStatDashboardMixin):
 
     def list_metrics(self, scope: str = "admin") -> list[dict]:
         """Return metric metadata based on queryable metric definitions."""
-        return build_metric_list(scope=scope)
+        domains = build_metric_list(scope=scope)
+        if self._advanced_enabled:
+            return domains
+        # Basic mode: keep only basic metrics and drop now-empty domains so
+        # the frontend renders no advanced group headers. build_metric_list is
+        # lru_cached and shared across callers, so we must not mutate it —
+        # rebuild the structure with filtered metric lists.
+        result: list[dict] = []
+        for d in domains:
+            metrics = [m for m in d["metrics"] if m["name"] in BASIC_METRICS]
+            if metrics:
+                result.append({**d, "metrics": metrics})
+        return result
 
     def list_runs(
         self,
@@ -471,10 +494,12 @@ class KbStatQueryService(KbStatDashboardMixin):
             runtime_settings = get_settings()
             enabled = runtime_settings.kb_stat_enabled
             prune_enabled = runtime_settings.kb_stat_prune_enabled
+            advanced_enabled = runtime_settings.kb_stat_advanced_enabled
         except Exception:  # noqa: BLE001 - engine may run without runtime
             logger.debug("runtime settings unavailable; defaulting switches to True")
             enabled = True
             prune_enabled = True
+            advanced_enabled = True
 
         session = self._get_session()
         try:
@@ -486,6 +511,7 @@ class KbStatQueryService(KbStatDashboardMixin):
                 and latest["status"] in ("completed", "partial"),
                 "enabled": enabled,
                 "prune_enabled": prune_enabled,
+                "advanced_enabled": advanced_enabled,
                 "latest_run_id": latest["id"] if latest else None,
                 "latest_run_completed_at": (
                     _iso(latest["completed_at"])
@@ -502,6 +528,7 @@ class KbStatQueryService(KbStatDashboardMixin):
                 "worker_ok": False,
                 "enabled": enabled,
                 "prune_enabled": prune_enabled,
+                "advanced_enabled": advanced_enabled,
                 "latest_run_id": None,
                 "latest_run_completed_at": None,
                 "latest_run_status": None,

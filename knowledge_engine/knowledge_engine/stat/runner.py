@@ -37,6 +37,7 @@ from knowledge_engine.stat.registry import (
     collectors_by_domains,
     collectors_by_names,
 )
+from knowledge_engine.stat.tiers import BASIC_COLLECTORS
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ def collect_all(
     domains: Optional[Sequence[str]] = None,
     collector_names: Optional[Sequence[str]] = None,
     lookback_days: int = 30,
+    advanced_enabled: bool = False,
     source_session_factory: Callable[[], Session],
     stat_session_factory: Callable[[], Session],
 ) -> int:
@@ -89,6 +91,12 @@ def collect_all(
 
     Each collector executes in its own transaction boundary.
     A single collector failure does not prevent others from running.
+
+    ``advanced_enabled=False`` (default) restricts the run to the basic
+    collector tier (see :data:`BASIC_COLLECTORS`), so 56 advanced collectors
+    are skipped entirely — no business-DB reads, no stat-DB writes. This is
+    the performance win of the tier switch; the query/UI layers filter
+    defensively on top.
     """
     # Trigger collector registration
     import knowledge_engine.stat.collectors  # noqa: F401
@@ -105,6 +113,14 @@ def collect_all(
         collectors = collectors_by_domains(domains)
     else:
         collectors = all_collectors()
+
+    # Tier filter: basic mode drops every advanced collector even when the
+    # caller asked for it explicitly — basic mode must never run advanced
+    # collection. An explicit advanced-only selection in basic mode yields
+    # an empty set, surfaced as "No enabled collectors selected" below.
+    if not advanced_enabled:
+        collectors = [c for c in collectors if c.name in BASIC_COLLECTORS]
+
     if not collectors:
         raise ValueError("No enabled collectors selected")
 

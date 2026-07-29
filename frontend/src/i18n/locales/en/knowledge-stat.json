@@ -180,8 +180,6 @@
       "title": "Trigger New Run",
       "start_date": "Start Date",
       "end_date": "End Date",
-      "domains": "Select Domains",
-      "domains_placeholder": "Leave empty to run all domains",
       "submit": "Start",
       "submitting": "Starting...",
       "success": "Tasks triggered",
@@ -247,11 +245,6 @@
     "tech": "RAG Tech",
     "ops": "Knowledge Ops",
     "business": "Business Effect"
-  },
-  "advanced_view": {
-    "expand": "▶ Advanced view (full metrics)",
-    "collapse": "Collapse advanced view",
-    "count": "{{count}} metrics"
   },
   "platform_hit_rate": "Platform hit rate",
   "platform_adoption_rate": "Platform adoption rate",

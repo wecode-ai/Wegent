@@ -157,28 +157,39 @@ class KbStatDashboardMixin:
                 for r in daily_rows_raw
             ]
 
-            # --- Platform-level aggregate views (v1.3 time-series plan) ---
-            # 1. Health distribution per day (for stacked area chart).
-            #    Aggregated from per-KB health_score by target_date, grouped
-            #    into tiers. This counters the Simpson's paradox risk where
-            #    a single weighted-mean line hides a deteriorating tail.
-            platform_health_dist = self._fetch_platform_health_distribution(
-                session, filter
-            )
-
-            # 2. Platform retrieval quality (weighted-mean zero-chunk rate).
-            #    Computed as SUM(zero_chunk_events)/SUM(total_events) per
-            #    day — a true event-weighted mean, not a mean-of-means.
-            platform_retrieval_quality = self._fetch_platform_retrieval_quality(
-                session, filter
-            )
-
-            # 3-4. Platform-weighted hit / adoption rates. Same event-weighted
-            #      pattern as retrieval quality (SUM(numerator)/SUM(denominator)
-            #      per day) so the KPI top bar shows true platform means, not
-            #      mean-of-means.
-            platform_hit_rate = self._fetch_platform_hit_rate(session, filter)
-            platform_adoption_rate = self._fetch_platform_adoption_rate(session, filter)
+            # --- Platform-level aggregate views (advanced tier only) ---
+            # These aggregate from advanced collectors (kb_health_score,
+            # kb_zero_chunk_rate, kb_retrieval_hit_rate, answer_adoption_rate)
+            # which do not run in basic mode, so the underlying tables are
+            # empty. Skip the queries entirely in basic mode and return None
+            # so the frontend hides the KPI bar / health-distribution chart.
+            if self._advanced_enabled:
+                # 1. Health distribution per day (for stacked area chart).
+                #    Aggregated from per-KB health_score by target_date,
+                #    grouped into tiers. Counters the Simpson's paradox risk
+                #    where a single weighted-mean line hides a deteriorating
+                #    tail.
+                platform_health_dist = self._fetch_platform_health_distribution(
+                    session, filter
+                )
+                # 2. Platform retrieval quality (weighted-mean zero-chunk
+                #    rate): SUM(zero_chunk_events)/SUM(total_events) per day —
+                #    a true event-weighted mean, not a mean-of-means.
+                platform_retrieval_quality = self._fetch_platform_retrieval_quality(
+                    session, filter
+                )
+                # 3-4. Platform-weighted hit / adoption rates. Same
+                #      event-weighted pattern so the KPI top bar shows true
+                #      platform means, not mean-of-means.
+                platform_hit_rate = self._fetch_platform_hit_rate(session, filter)
+                platform_adoption_rate = self._fetch_platform_adoption_rate(
+                    session, filter
+                )
+            else:
+                platform_health_dist = None
+                platform_retrieval_quality = None
+                platform_hit_rate = None
+                platform_adoption_rate = None
 
             return {
                 "report_period": {

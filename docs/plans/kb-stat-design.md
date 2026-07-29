@@ -138,7 +138,8 @@ title: 知识库统计功能设计文档
 **Domain 指标区**：
 - 按 10 个 domain 分组，每组带类型图标
 - 每个卡片含行动指引（阈值超限自动提示）
-- 50 个降级指标收入"高级视图"折叠区
+- 指标列表由 `/metrics/list` 动态返回并直接平铺展示（无折叠/高级视图）；
+  `KB_STAT_ADVANCED_ENABLED=false` 时只返回 15 个基本 metric，`true` 时返回全部 73 个
 
 ### 2.5 KB 详情页核心指标（20 个精选）
 
@@ -318,8 +319,11 @@ ORDER BY {order_by} LIMIT {limit}
 | `KB_STAT_ENABLED` | knowledge_runtime | `false` | HTTP 层 + 采集执行开关。false 时 /internal/kb-stat/* 返回 503、已入队的 collect 任务跳过。需与 backend 保持一致 |
 | `KB_STAT_PRUNE_ENABLED` | backend | `false` | 清理任务开关。false 时移除每周清理 beat，永久保留历史数据。需与 runtime 保持一致 |
 | `KB_STAT_PRUNE_ENABLED` | knowledge_runtime | `false` | /health 上报实际生效值（与 backend 同步） |
+| `KB_STAT_ADVANCED_ENABLED` | backend | `false` | 指标分级开关。false 时 beat 投递 collect 任务传 `advanced_enabled=false`，只采集 14 个基本 collector。需与 runtime 同名变量一致 |
+| `KB_STAT_ADVANCED_ENABLED` | knowledge_runtime | `false` | 采集 + 查询分级。false 时 collect_all 只跑基本 collector（采集耗时 ~20min→~3min）、`/metrics/list` 只返回 15 个基本 metric、dashboard 不返回平台命中率/采纳率/零分块率/健康度分布等高级聚合字段；true 开启全部 73 指标。需与 backend 一致 |
 | `KB_STAT_WORKER_ENABLED` | knowledge_runtime | `false` | Celery worker 子进程开关（main.py 拉起内嵌 worker）。需显式置 true 才会消费 kb_stat 队列 |
 | `NEXT_PUBLIC_KB_STAT_ENABLED` | frontend | （未设置=关闭） | 前端功能开关。**构建时**内联替换，仅显式置 `true`/`1` 启用；未设置时 Tab 隐藏，与 backend/runtime 默认关闭一致 |
+| `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED` | frontend | （未设置=基本） | 前端分级开关（**构建时**）。false 时只渲染基本指标分组；`/metrics/list` 已服务端过滤，此开关主要控制高级分组容器是否渲染。与后端不一致也不报错（最多多/少几个空分组标题） |
 
 ### 6.2 数据库与连接
 
@@ -342,11 +346,28 @@ ORDER BY {order_by} LIMIT {limit}
 | `KB_STAT_STALE_MINUTES` | knowledge_runtime | `120` | 卡死 "running" run 的自动标记失败阈值（分钟） |
 | `KB_STAT_LOCK_TTL_SECONDS` | knowledge_runtime | `2100` | 采集分布式锁 TTL（秒，=time_limit 1800 + 300 缓冲） |
 
-### 6.4 已废弃
+### 6.4 指标分级清单
 
-| 变量 | 服务 | 说明 |
-| --- | --- | --- |
-| `KB_STAT_AUTO_MIGRATE` | knowledge_runtime | 已废弃；设为 true 时启动失败。统计库必须显式执行 `docs/plans/sql/` 下的版本化 SQL 或 alembic upgrade |
+`KB_STAT_ADVANCED_ENABLED=false` 时只采集/暴露**基本**指标，`true` 时全部开启。
+权威清单见 `knowledge_engine/stat/tiers.py`（`BASIC_COLLECTORS` / `BASIC_METRICS`）；本节为同步快照，改分级请同步 `tiers.py` 与本表。
+
+**基本 collector（14 个，按域）**：
+
+| 域 | 基本 collector |
+| --- | --- |
+| dashboard | `global_totals`、`period_and_daily`、`kb_daily_stats` |
+| deep_analysis | `kb_growth_curve` |
+| doc_management | `kb_avg_doc_length`、`doc_index_failure_rate` |
+| kb_lifecycle | `kb_size_distribution`、`kb_creation_trend`、`kb_abandon_rate` |
+| content_quality | `kb_thin_doc_rate`、`duplicate_doc_suspect` |
+| retrieval | `rag_vs_head_ratio`、`kb_active_users` |
+| sys_ops | `storage_usage` |
+
+**基本 metric（15 个）**：上述 collector 产出的 metric——dashboard 域 3 个 collector 产出 4 个（`global_totals`、`period_totals`、`daily_dashboard`、`kb_daily_stats`），其余 11 个 collector 各产出 1 个，共 15。
+
+> 注：`kb_daily_stats` 是 KB 详情页 dashboard 的内部表，由 dashboard 端点直接查询，**不经 `/metrics/list` 暴露**。故 `/metrics/list` 基本模式返回 14 个 metric（15 减去 `kb_daily_stats`）。
+
+**高级 = 其余**：73 个 collector 中的其余 59 个、73 个 queryable metric 中的其余 59 个，仅在 `KB_STAT_ADVANCED_ENABLED=true` 时采集与暴露。已从基本挪到高级的典型：`kb_health_score`（管理页健康评分/健康度分布趋势 + 详情页健康评分）、`doc_upload_trend`（管理页文档上传趋势）、`kb_config_sanity`（详情页配置合理性）。
 
 ## 7. API 端点
 
@@ -533,31 +554,20 @@ set -a && . ../knowledge_runtime/.env && set +a
 
 ### 8.4 数据库迁移
 
-当前仓库以完整建库快照和显式增量 SQL 管理统计库结构：
+统计库 schema 由 `docs/plans/kb-stat-schema.sql` 建表脚本维护（权威快照），**不使用
+alembic 维护统计类表格**：
 
 ```bash
-# 全新空统计库（一步建表 + 初始化 alembic 版本到 021）
+# 全新空统计库：一步建表（含全部 kb_stat_* 表与索引）
 mysql -u <user> -p <stat_db> < docs/plans/kb-stat-schema.sql
-
-# 已有统计库升级（alembic 迁移链，当前 head = 021）
-cd knowledge_runtime
-export KNOWLEDGE_STAT_DATABASE_URL="mysql+pymysql://<user>:<pass>@<host>/<stat_db>"
-uv run alembic -c alembic.ini upgrade head
-
-# 回滚到某个版本（例如 018）
-uv run alembic -c alembic.ini downgrade 018
 ```
 
-迁移链 019-023 的内容：
-- **019**：`kb_stat_thin_doc_alert` 重命名为 `kb_stat_kb_thin_doc_rate`（与 ORM/collector 对齐）
-- **020**：`kb_stat_kb_health_score` 增加 `formula_version` 列（固化权重版本）
-- **021**：`kb_stat_kb_slow_query_rate` 增加 `low_confidence` 列（小样本标记；该表后于 023 整体删除）
-- **022**：`kb_stat_collector_runs` 增加 `duration_ms`、`kb_stat_kb_daily_stats` 增加 `total_queries`（补建 ORM 已用但迁移缺失的列）
-- **023**：删除 5 个已下线指标的统计表（`retrieval_score_distribution`/`kb_low_score_rate`/`query_dedup_rate`/`kb_slow_query_rate`/`knowledge_coverage`）及随表索引
-
-这些命令只能指向独立统计库。`backend/alembic` 属于业务库迁移，禁止放入
-任何 KB-stat 统计表。`KB_STAT_AUTO_MIGRATE` 在独立统计库迁移链路
-正式建立前应保持 `false`（main.py 会在 `true` 时 fail-fast）。
+- **建表脚本即事实源**：`docs/plans/kb-stat-schema.sql` 是统计库结构的权威定义，新库
+  直接执行即可得到当前完整 schema（已反映指标增删，如已下线的 5 张表不再包含）。
+- **表结构变更流程**：修改 `docs/plans/kb-stat-schema.sql`；已有统计库执行对应的增量
+  DDL（或重建库后回填历史数据）。
+- **不走 alembic**：统计库不纳入 alembic 迁移链，无 `upgrade`/`downgrade`。`backend/alembic`
+  属于业务库迁移，禁止放入任何 KB-stat 统计表。
 
 ### 8.5 日志
 
@@ -592,6 +602,8 @@ uv run alembic -c alembic.ini downgrade 018
 | 场景 | 配置 |
 | --- | --- |
 | 完全关闭 | `KB_STAT_ENABLED=false` + `KB_STAT_WORKER_ENABLED=false` |
+| 基本模式（只采 14 个基本指标） | `KB_STAT_ENABLED=true` + `KB_STAT_ADVANCED_ENABLED=false`（两端一致）+ `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED=false` |
+| 全量模式（全部 73 指标） | `KB_STAT_ADVANCED_ENABLED=true`（两端一致）+ `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED=true` |
 | 暂停采集但保留查询 | `KB_STAT_WORKER_ENABLED=false` |
 | 永久保留历史数据 | `KB_STAT_PRUNE_ENABLED=false` |
 | 隐藏前端入口 | `NEXT_PUBLIC_KB_STAT_ENABLED=false` |
@@ -602,7 +614,7 @@ uv run alembic -c alembic.ini downgrade 018
 - 表、列和索引数量以 `StatBase.metadata` 与建库 SQL 校验结果为准，文档不
   再手写易漂移的总数
 - 引擎：MySQL 8.0+ / InnoDB / utf8mb4
-- 当前显式增量 SQL 版本：020
+- 统计库 schema 由 `docs/plans/kb-stat-schema.sql` 建表脚本维护，不走 alembic
 
 完整建表语句见同目录 `kb-stat-schema.sql`。
 

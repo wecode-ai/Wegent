@@ -22,3 +22,18 @@ export const isKbStatEnabled = (): boolean => {
   const v = process.env.NEXT_PUBLIC_KB_STAT_ENABLED
   return v === 'true' || v === '1'
 }
+
+/**
+ * Advanced-metrics tier switch (build-time, inline-replaced by Next.js).
+ *
+ * NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED defaults to OFF: only the basic
+ * metric groups render. The /metrics/list API filters server-side already,
+ * so this flag mainly decides whether "advanced" group containers render
+ * at all — drifting from the backend KB_STAT_ADVANCED_ENABLED causes no
+ * functional error, at worst a few empty group headers. Set to "true"/"1"
+ * (e.g. in frontend/.env.local) to render advanced groups.
+ */
+export const isKbStatAdvancedEnabled = (): boolean => {
+  const v = process.env.NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED
+  return v === 'true' || v === '1'
+}

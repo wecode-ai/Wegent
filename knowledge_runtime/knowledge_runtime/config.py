@@ -112,11 +112,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KB_STAT_PRUNE_ENABLED"),
     )
 
-    # Retained only to fail fast for deployments still setting the obsolete
-    # flag. Stat schema upgrades use the versioned SQL in docs/plans/sql/.
-    kb_stat_auto_migrate: bool = Field(
+    # Advanced-metrics tier switch (mirrors backend's KB_STAT_ADVANCED_ENABLED
+    # — same env var name, both services must agree). When false (default)
+    # collect_all runs only the 14 basic collectors and /metrics/list returns
+    # only the basic 15 metrics; set true to enable all 73. MUST match
+    # backend's setting or beat-injected runs diverge from the worker.
+    kb_stat_advanced_enabled: bool = Field(
         default=False,
-        validation_alias=AliasChoices("KB_STAT_AUTO_MIGRATE"),
+        validation_alias=AliasChoices("KB_STAT_ADVANCED_ENABLED"),
     )
 
     # Stat lookback window (days)

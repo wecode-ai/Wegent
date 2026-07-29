@@ -11,8 +11,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { triggerRun } from '../../api'
 import { enumerateDateRange, inclusiveDateCount, localYesterday } from '../../date-utils'
-import { useMetricList } from '../../hooks/useMetricList'
-import { DOMAIN_LIST } from './constants'
 
 interface TriggerRunFormProps {
   onTriggered?: () => void
@@ -22,22 +20,12 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
   const { t } = useTranslation('knowledge-stat')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
-  const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<{
     type: 'success' | 'partial' | 'failed'
     message: string
   } | null>(null)
 
-  // Domain list now comes from the backend so newly registered domains
-  // (e.g. content_quality, which used to be missing from the hardcoded
-  // DOMAIN_LIST) are selectable without a frontend redeploy. Falls back
-  // to the static list while loading or if the metric endpoint fails.
-  const { data: metricList } = useMetricList('admin')
-  const domains = useMemo(() => {
-    const backend = metricList?.domains?.map(d => d.domain).filter(d => d && d !== 'dashboard')
-    return backend && backend.length > 0 ? backend : DOMAIN_LIST
-  }, [metricList])
   const yesterday = useMemo(localYesterday, [])
   const validationError = useMemo(() => {
     if (!startDate) return null
@@ -51,24 +39,11 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
     return null
   }, [startDate, endDate, yesterday, t])
 
-  const toggleDomain = useCallback((domain: string) => {
-    setSelectedDomains(prev => {
-      const next = new Set(prev)
-      if (next.has(domain)) {
-        next.delete(domain)
-      } else {
-        next.add(domain)
-      }
-      return next
-    })
-  }, [])
-
   const handleSubmit = useCallback(async () => {
     if (!startDate || validationError) return
 
     const dates = enumerateDateRange(startDate, endDate || startDate)
 
-    const domains = selectedDomains.size > 0 ? Array.from(selectedDomains) : undefined
     setSubmitting(true)
     setResult(null)
 
@@ -76,12 +51,17 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
     // target_date with 409 run_in_progress, and a single kb_stat worker
     // processes the queue sequentially anyway. Sending all dates at once
     // would only inflate the 409 noise and confuse the success/fail tally.
+    //
+    // No domain filter: collect_all always runs every enabled collector
+    // (the KB_STAT_ADVANCED_ENABLED tier switch decides basic vs. all, not
+    // the caller) — letting the user pick domains would conflict with the
+    // tier filter and is no longer exposed.
     let successCount = 0
     let failCount = 0
     let skippedCount = 0
     for (const date of dates) {
       try {
-        await triggerRun({ target_date: date, domains })
+        await triggerRun({ target_date: date })
         successCount++
       } catch (err: unknown) {
         // 409 = a run is already in progress for this date; treat as
@@ -108,7 +88,7 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
     onTriggered?.()
 
     setTimeout(() => setResult(null), 5000)
-  }, [startDate, endDate, selectedDomains, t, onTriggered, validationError])
+  }, [startDate, endDate, t, onTriggered, validationError])
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
@@ -144,28 +124,6 @@ export function TriggerRunForm({ onTriggered }: TriggerRunFormProps) {
         </div>
         <span className="text-xs text-text-muted">{t('runs.trigger.single_day_hint')}</span>
         {validationError && <span className="text-xs text-red-500">{validationError}</span>}
-      </div>
-
-      <div className="space-y-1.5">
-        <span className="text-sm text-text-secondary">{t('runs.trigger.domains')}</span>
-        <div className="flex flex-wrap gap-2">
-          {domains.map(domain => (
-            <button
-              key={domain}
-              type="button"
-              onClick={() => toggleDomain(domain)}
-              className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
-                selectedDomains.has(domain)
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border bg-base text-text-secondary hover:border-primary/50'
-              }`}
-              data-testid={`trigger-domain-${domain}`}
-            >
-              {t(`domains.${domain}`, domain)}
-            </button>
-          ))}
-        </div>
-        <span className="text-xs text-text-muted">{t('runs.trigger.domains_placeholder')}</span>
       </div>
 
       <div className="flex items-center gap-3">
