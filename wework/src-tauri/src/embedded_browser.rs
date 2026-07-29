@@ -1373,6 +1373,9 @@ pub async fn embedded_browser_open(
     let native_label_for_navigation = native_label.clone();
     let native_label_for_title = native_label.clone();
     let native_label_for_popup = native_label.clone();
+    let label_for_navigation = label.clone();
+    let label_for_load = label.clone();
+    let label_for_popup = label.clone();
     let app_for_popup = app.clone();
     let data_directory = browser_data_directory(&app)?;
 
@@ -1419,7 +1422,7 @@ pub async fn embedded_browser_open(
                     let owner = current_logical_owner_or(
                         &state,
                         &native_label_for_navigation,
-                        &native_label_for_navigation,
+                        &label_for_navigation,
                     );
                     log_embedded_browser_diagnostic(
                         &state,
@@ -1439,7 +1442,7 @@ pub async fn embedded_browser_open(
                 let owner = current_logical_owner_or(
                     &load_state_handle,
                     &native_label_for_load,
-                    &native_label_for_load,
+                    &label_for_load,
                 );
                 log_embedded_browser_diagnostic(
                     &load_state_handle,
@@ -1476,7 +1479,7 @@ pub async fn embedded_browser_open(
                 let parent_label = current_logical_owner_or(
                     app_for_popup.state::<EmbeddedBrowserState>().inner(),
                     &native_label_for_popup,
-                    &native_label_for_popup,
+                    &label_for_popup,
                 );
                 emit_popup_observed(
                     &app_for_popup,
