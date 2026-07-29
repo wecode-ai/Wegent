@@ -13,6 +13,9 @@ on:
       - reopened
       - ready_for_review
       - labeled
+  merge_group:
+    types:
+      - checks_requested
   workflow_dispatch:
   schedule:
     - cron: "0 4 * * *"
@@ -216,10 +219,47 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  wework-e2e-summary:
+    name: Wework E2E Summary
+    needs:
+      - changes
+      - wework-e2e
+      - wework-desktop-e2e
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Wework E2E results
+        env:
+          RUN_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
+          DESKTOP_E2E_RESULT: ${{ needs.wework-desktop-e2e.result }}
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Wework E2E change detection completed with: $CHANGES_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_E2E" != "true" ]]; then
+            echo "Wework E2E is not required for this pull request"
+            exit 0
+          fi
+
+          if [[ "$WEB_E2E_RESULT" != "success" ]]; then
+            echo "Wework browser E2E completed with: $WEB_E2E_RESULT"
+            exit 1
+          fi
+
+          if [[ "$DESKTOP_E2E_RESULT" != "success" ]]; then
+            echo "Wework desktop E2E completed with: $DESKTOP_E2E_RESULT"
+            exit 1
+          fi
+
   wework-desktop-memory-e2e:
     name: Wework Desktop Memory E2E
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')))
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 30
 

@@ -112,6 +112,20 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
     printf '%s must force E2E for the ci:all label\n' "$workflow" >&2
     exit 1
   fi
+  if ! grep -q "merge_group:" "$workflow_path"; then
+    printf '%s must run for merge queue groups\n' "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "checks_requested" "$workflow_path"; then
+    printf '%s must limit merge group runs to checks_requested\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "github.event_name != 'pull_request'" "$workflow_path"; then
+    printf '%s must force all E2E outside pull request events\n' \
+      "$workflow" >&2
+    exit 1
+  fi
 done
 
 for workflow in test.yml lint.yml; do
@@ -120,16 +134,41 @@ for workflow in test.yml lint.yml; do
     printf '%s must classify every module for pushes to main\n' "$workflow" >&2
     exit 1
   fi
+  if ! grep -q "merge_group:" "$workflow_path"; then
+    printf '%s must run for merge queue groups\n' "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "GITHUB_EVENT_NAME.*merge_group\\|github.event_name == 'merge_group'" \
+    "$workflow_path"; then
+    printf '%s must classify every module for merge groups\n' "$workflow" >&2
+    exit 1
+  fi
 done
 
 wework_workflow="$script_dir/../workflows/wework-e2e.yml"
-if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -ne 2 ]]; then
+if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]]; then
   printf 'Wework non-memory E2E jobs must filter pull_request label events\n' >&2
   exit 1
 fi
 
 if ! grep -q "github.event.label.name || 'code'" "$wework_workflow"; then
   printf 'Wework label events must not cancel code-change E2E runs\n' >&2
+  exit 1
+fi
+
+if ! grep -q "name: Platform E2E Summary" \
+  "$script_dir/../workflows/e2e-tests.yml"; then
+  printf 'Platform E2E must expose a stable summary check\n' >&2
+  exit 1
+fi
+
+if ! grep -q "name: Wework E2E Summary" "$wework_workflow"; then
+  printf 'Wework E2E must expose a stable summary check\n' >&2
+  exit 1
+fi
+
+if ! grep -q "github.event_name != 'merge_group'" "$wework_workflow"; then
+  printf 'Wework memory E2E must remain outside regular merge groups\n' >&2
   exit 1
 fi
 

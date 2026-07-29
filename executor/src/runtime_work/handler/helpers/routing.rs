@@ -163,29 +163,25 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
     project_index
         .projects()
         .iter()
-        .flat_map(|project| {
-            let roots = if project.roots.is_empty() {
-                vec![project.workspace_path.clone()]
-            } else {
-                project.roots.clone()
-            };
-            roots.into_iter().map(|root| RuntimeWorkspaceLink {
-                workspace_path: root,
-                title: project.name.clone(),
-                runtime: "codex".to_owned(),
-                created_at: now,
-                updated_at: now,
-                workspace_source: project.kind.clone(),
-                remote_host_id: project.remote_host_id.clone(),
-                project_key: project.key.clone(),
-                project_kind: project.kind.clone(),
-                project_source: project.source.clone(),
-                project_roots: project.roots.clone(),
-                project_pinned: project.pinned,
-                project_pinned_order: project.pinned_order,
-                project_active: project.active,
-                project_appearance: project.appearance.clone(),
-            })
+        .map(|project| RuntimeWorkspaceLink {
+            // A device workspace represents one project on one device. Its additional
+            // writable roots belong in project_roots; expanding them into workspaces
+            // makes two projects that share a root collapse into the same path group.
+            workspace_path: project.workspace_path.clone(),
+            title: project.name.clone(),
+            runtime: "codex".to_owned(),
+            created_at: now,
+            updated_at: now,
+            workspace_source: project.kind.clone(),
+            remote_host_id: project.remote_host_id.clone(),
+            project_key: project.key.clone(),
+            project_kind: project.kind.clone(),
+            project_source: project.source.clone(),
+            project_roots: project.roots.clone(),
+            project_pinned: project.pinned,
+            project_pinned_order: project.pinned_order,
+            project_active: project.active,
+            project_appearance: project.appearance.clone(),
         })
         .collect()
 }

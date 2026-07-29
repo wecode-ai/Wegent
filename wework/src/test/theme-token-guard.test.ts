@@ -46,7 +46,7 @@ const forbiddenGlobalZIndexClasses = [
 describe('theme token guard', () => {
   test('tailwind exposes semantic surface colors', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
-    const source = readFileSync(tailwindConfigPath, 'utf8')
+    const source = readFileSync(tailwindConfigPath, 'utf8').replace(/\r\n/g, '\n')
     const colorsBlock = source.slice(source.indexOf('colors: {'), source.indexOf('borderRadius:'))
 
     expect(source).toContain(

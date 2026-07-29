@@ -18,7 +18,7 @@ import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type { ProjectWithTasks, RuntimeDeviceWorkspace, User as UserProfile } from '@/types/api'
 import type { TodoDetailItem } from './TodoDetailPanel'
@@ -292,7 +292,7 @@ export function TodoSidebar({
         <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
         <div
           data-testid="todo-sidebar-chrome-controls"
-          className="absolute left-[92px] top-0 z-10 flex h-[38px] items-center gap-1"
+          className="absolute left-[92px] top-0 z-10 flex h-[38px] items-center gap-7"
         >
           <DesktopWindowControls
             sidebarCollapsed={false}
@@ -301,17 +301,7 @@ export function TodoSidebar({
           />
           <DesktopAppSwitcher
             activeApp="todo"
-            onNavigate={app =>
-              navigateTo(
-                app === 'wework'
-                  ? '/'
-                  : app === 'todo'
-                    ? '/todo'
-                    : app === 'wegent'
-                      ? '/app/wegent'
-                      : '/apps'
-              )
-            }
+            onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
             testIds={{
               wework: 'todo-app-wework',
               todo: 'todo-app-current',
