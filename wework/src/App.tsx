@@ -241,6 +241,8 @@ export default function App() {
 }
 
 function MainApp() {
+  const isPopoutWindow = isPopoutWindowRuntime()
+
   useEffect(() => {
     document.title = getWeworkDocumentTitle()
   }, [])
@@ -271,7 +273,7 @@ function MainApp() {
   return (
     <AppearanceProvider>
       <AppUpdateProvider>
-        <CloudConnectionProvider>
+        <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
           <AuthProvider>
             <AppShell />
           </AuthProvider>
