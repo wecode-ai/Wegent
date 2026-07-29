@@ -741,6 +741,32 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     })
   })
 
+  test('combines provider content with non-overlapping Wework presentation references', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'codex-user-item-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: '请用 $plugin:skill explain the sidebar',
+        presentationReferences: [
+          {
+            start: 3,
+            end: 16,
+            href: '/tmp/plugin/skill/SKILL.md',
+          },
+        ],
+        status: 'done',
+        createdAt: '2026-07-17T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toMatchObject({
+      id: 'runtime-local-pane-1',
+      role: 'user',
+      content: '请用 [$plugin:skill](/tmp/plugin/skill/SKILL.md) explain the sidebar',
+    })
+  })
+
   test('replaces a failed attempt when the same user message is retried successfully', () => {
     const messages = runtimeMessagesToWorkbenchMessages([
       {

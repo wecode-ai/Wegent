@@ -2681,6 +2681,10 @@ async function verifyPluginLifecycle({
     5,
     'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
   )
+  const officialPluginTaskId = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  ).workbench?.currentRuntimeTask?.taskId
+  assert.ok(officialPluginTaskId, 'The official plugin conversation did not expose its task ID')
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 
   const qualifiedSkillName = `${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`
@@ -2698,6 +2702,32 @@ async function verifyPluginLifecycle({
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const qualifiedSkillTaskId = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  ).workbench?.currentRuntimeTask?.taskId
+  assert.ok(qualifiedSkillTaskId, 'The qualified skill conversation did not expose its task ID')
+  const officialPluginTaskRow = `[data-testid="runtime-local-task-row-${officialPluginTaskId}"]`
+  const qualifiedSkillTaskRow = `[data-testid="runtime-local-task-row-${qualifiedSkillTaskId}"]`
+  await control.command('waitFor', officialPluginTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', qualifiedSkillTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', officialPluginTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', qualifiedSkillTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command(
     'waitFor',
     `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
@@ -2710,7 +2740,7 @@ async function verifyPluginLifecycle({
       await control.command('getText', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`)
     ).includes(`$${qualifiedSkillName}`),
     false,
-    'The sent qualified skill reference degraded to its plain-text mention'
+    'The reloaded qualified skill reference degraded to its plain-text mention'
   )
 
   await control.command('click', '[data-testid="plugins-button"]')

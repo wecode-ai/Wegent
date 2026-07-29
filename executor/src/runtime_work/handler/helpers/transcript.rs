@@ -200,7 +200,7 @@ fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_message
             matched_provider_indexes.insert(index);
             merge_missing_user_message_metadata(&mut messages[index], &message);
             if client_id_match == Some(index) {
-                restore_cached_user_message_content(&mut messages[index], &message);
+                attach_cached_user_message_presentation(&mut messages[index], &message);
             }
             continue;
         }
@@ -212,13 +212,70 @@ fn user_message_client_id(message: &Value) -> Option<String> {
     string_field(message, "clientMessageId").or_else(|| string_field(message, "client_message_id"))
 }
 
-fn restore_cached_user_message_content(target: &mut Value, source: &Value) {
-    let Some(source_content) = string_field(source, "content") else {
+fn attach_cached_user_message_presentation(target: &mut Value, source: &Value) {
+    let Some(provider_content) = string_field(target, "content") else {
         return;
     };
-    if let Some(target) = target.as_object_mut() {
-        target.insert("content".to_owned(), Value::String(source_content));
+    let Some(local_content) = string_field(source, "content") else {
+        return;
+    };
+    let references = local_skill_presentation_references(&local_content, &provider_content);
+    if references.is_empty() {
+        return;
     }
+    if let Some(target) = target.as_object_mut() {
+        target.insert(
+            "presentationReferences".to_owned(),
+            Value::Array(references),
+        );
+    }
+}
+
+fn local_skill_presentation_references(local_content: &str, provider_content: &str) -> Vec<Value> {
+    let mut references = Vec::new();
+    let mut local_offset = 0;
+    let mut provider_offset = 0;
+
+    while let Some(relative_start) = local_content[local_offset..].find("[$") {
+        let reference_start = local_offset + relative_start;
+        let name_start = reference_start + 2;
+        let Some(relative_name_end) = local_content[name_start..].find("](") else {
+            break;
+        };
+        let name_end = name_start + relative_name_end;
+        let href_start = name_end + 2;
+        let Some(relative_href_end) = local_content[href_start..].find(')') else {
+            break;
+        };
+        let href_end = href_start + relative_href_end;
+        local_offset = href_end + 1;
+
+        let name = &local_content[name_start..name_end];
+        let href = &local_content[href_start..href_end];
+        if name.is_empty() || !is_local_skill_reference(href) {
+            continue;
+        }
+
+        let token = format!("${name}");
+        let Some(relative_provider_start) = provider_content[provider_offset..].find(&token) else {
+            continue;
+        };
+        let provider_start = provider_offset + relative_provider_start;
+        let provider_end = provider_start + token.len();
+        references.push(json!({
+            "start": provider_content[..provider_start].encode_utf16().count(),
+            "end": provider_content[..provider_end].encode_utf16().count(),
+            "href": href,
+        }));
+        provider_offset = provider_end;
+    }
+
+    references
+}
+
+fn is_local_skill_reference(href: &str) -> bool {
+    let path = href.strip_prefix("skill://").unwrap_or(href);
+    path.starts_with('/') && path.ends_with("/SKILL.md")
 }
 
 fn append_missing_cached_failed_assistant_messages(

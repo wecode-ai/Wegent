@@ -465,18 +465,18 @@ fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
 }
 
 #[test]
-fn transcript_restores_cached_skill_mentions_by_client_message_id() {
+fn transcript_combines_provider_content_with_local_skill_presentation_by_client_message_id() {
     let mut provider_messages = vec![json!({
         "id": "provider-user",
         "clientMessageId": "runtime-local-pane-1",
         "role": "user",
-        "content": "$wework-video-studio:create-wework-tutorial-video 制作教程"
+        "content": "请用 $wework-video-studio:create-wework-tutorial-video 制作教程"
     })];
     let cached_messages = vec![json!({
         "id": "cached-user",
         "clientMessageId": "runtime-local-pane-1",
         "role": "user",
-        "content": "[$wework-video-studio:create-wework-tutorial-video](/tmp/create-wework-tutorial-video/SKILL.md) 制作教程"
+        "content": "请用 [$wework-video-studio:create-wework-tutorial-video](/tmp/create-wework-tutorial-video/SKILL.md) 制作教程"
     })];
 
     append_missing_cached_user_messages(&mut provider_messages, cached_messages);
@@ -484,8 +484,17 @@ fn transcript_restores_cached_skill_mentions_by_client_message_id() {
     assert_eq!(provider_messages.len(), 1);
     assert_eq!(
         provider_messages[0]["content"],
-        "[$wework-video-studio:create-wework-tutorial-video](/tmp/create-wework-tutorial-video/SKILL.md) 制作教程"
+        "请用 $wework-video-studio:create-wework-tutorial-video 制作教程"
     );
+    assert_eq!(
+        provider_messages[0]["presentationReferences"],
+        json!([{
+            "start": 3,
+            "end": 52,
+            "href": "/tmp/create-wework-tutorial-video/SKILL.md"
+        }])
+    );
+    assert!(provider_messages[0].get("displayContent").is_none());
 }
 
 #[test]
