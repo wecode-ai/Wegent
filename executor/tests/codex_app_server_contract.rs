@@ -701,6 +701,68 @@ async fn codex_app_server_engine_does_not_timeout_running_turn() {
 }
 
 #[tokio::test]
+async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
+    let _lock = env_lock().await;
+    let fake_codex = write_fake_codex_with_pending_request();
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let request_client = client.clone();
+    let pending_request =
+        tokio::spawn(async move { request_client.request("plugin/list", json!({})).await });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pending app-server request should be observed");
+
+    client.restart().await;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), pending_request)
+        .await
+        .expect("forced restart should settle the pending request")
+        .expect("pending request task should join");
+    assert_eq!(result.unwrap_err(), "codex app-server was restarted");
+}
+
+#[tokio::test]
+async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
+    let _lock = env_lock().await;
+    let fake_codex = write_fake_codex_with_pending_request();
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let request_client = client.clone();
+    let pending_request =
+        tokio::spawn(async move { request_client.request("plugin/list", json!({})).await });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pending app-server request should be observed");
+
+    assert!(client
+        .configure_runtime_proxy_for_restart(Some("http://127.0.0.1:7890"))
+        .await
+        .expect("runtime proxy should update"));
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), pending_request)
+        .await
+        .expect("proxy restart should settle the pending request")
+        .expect("pending request task should join");
+    assert_eq!(
+        result.unwrap_err(),
+        "codex app-server was restarted after its runtime proxy changed"
+    );
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_times_out_turn_without_progress() {
     let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS", "1");
@@ -973,6 +1035,40 @@ done
         log_path.display()
     );
     fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_with_pending_request() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-pending-request-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"id":%s,"result":{"protocolVersion":1}}\n' "$request_id"
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"plugin/list"'*)
+      sleep 30
+      ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
