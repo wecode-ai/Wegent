@@ -1916,6 +1916,59 @@ async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_
 }
 
 #[tokio::test]
+async fn runtime_tasks_cancel_uses_startup_interrupt_before_first_turn_progress() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-cancel-startup-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-cancel-startup-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-cancel-startup-log", "jsonl");
+    let fake_codex = write_fake_codex_startup_interrupt_race(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-cancel-startup",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let cancelled = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-cancel-startup"
+            }
+        }))
+        .await
+        .expect("cancel should be accepted");
+
+    assert_eq!(cancelled["accepted"], true);
+    wait_for_method_count(&log_path, "turn/interrupt", 1).await;
+    let interrupt = read_json_lines(&log_path)
+        .into_iter()
+        .find(|call| call["method"] == "turn/interrupt")
+        .expect("startup turn should be interrupted");
+    assert_eq!(interrupt["params"]["turnId"], "");
+}
+
+#[tokio::test]
 async fn runtime_tasks_cancel_does_not_kill_shared_app_server_process_group() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2719,6 +2772,47 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_startup_interrupt_race(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-cancel-startup", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      ;;
+    *'"method":"turn/interrupt"'*)
+      if printf '%s\n' "$line" | grep -q '"turnId":""'; then
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32600,"message":"no active turn to interrupt"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      fi
       ;;
   esac
 done

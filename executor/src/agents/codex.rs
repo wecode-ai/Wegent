@@ -1412,7 +1412,12 @@ async fn read_shared_turn_notifications(
         };
         let Some(received) = received else {
             options.cancellation = None;
-            if let Some(turn_id) = options.active_turn_id.as_deref() {
+            let interrupt_turn_id = if waiting_for_initial_progress {
+                Some("")
+            } else {
+                options.active_turn_id.as_deref()
+            };
+            if let Some(turn_id) = interrupt_turn_id {
                 if let Err(error) = interrupt_shared_turn(client, thread_id, turn_id).await {
                     log_executor_event(
                         "codex shared turn interrupt failed",
