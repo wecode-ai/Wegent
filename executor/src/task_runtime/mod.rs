@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod aitable_provider;
 mod content;
 mod credentials;
 mod issue_provider;

@@ -13,11 +13,15 @@ import {
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   CircleUserRound,
   Cloud,
+  Copy,
+  Ellipsis,
   GitBranch,
+  Grid3X3,
   HardDrive,
   ListTodo,
   LockKeyhole,
@@ -43,10 +47,12 @@ import type {
   WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { getActiveKeybinding, OPEN_SEARCH_COMMAND } from '@/lib/keybindings'
 import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { getPlatform } from '@/lib/platform'
-import { getActiveKeybinding, OPEN_SEARCH_COMMAND } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
+import { AITableView } from '@/features/todo/AITableView'
 import type {
   Attachment,
   ProjectWithTasks,
@@ -59,15 +65,15 @@ import { CloudProjectManageView } from './CloudProjectManageView'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
-import { repositoryProviderConfig } from './projectProviderConfig'
+import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { columnDotClasses, columns, priorityBadgeClasses, reorderLaneItems } from './todoShared'
 
-type ProjectView = 'board' | 'files' | 'manage'
+type ProjectView = 'board' | 'table' | 'files' | 'manage'
 type RootView = 'projects' | 'my-work'
-type ProjectTaskProvider = 'local' | 'github' | 'gitlab'
+type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
 
 interface LocatedCloudProject extends CloudProject {
   location: ProjectSpaceLocation
@@ -104,10 +110,9 @@ const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
   completed: '已完成的任务会归档在这里',
 }
 
-function boardStatusFromDropId(id: string | number | undefined): CloudLoopItem['status'] | null {
+function boardStatusFromDropId(id: string | number | undefined): string | null {
   if (typeof id !== 'string' || !id.startsWith('todo-column:')) return null
-  const status = id.slice('todo-column:'.length) as CloudLoopItem['status']
-  return columns.some(column => column.status === status) ? status : null
+  return id.slice('todo-column:'.length) || null
 }
 
 function boardCardIdFromDropId(id: string | number | undefined): string | null {
@@ -234,13 +239,7 @@ function DraggableTodoCard({
   )
 }
 
-function TodoColumnDropzone({
-  status,
-  children,
-}: {
-  status: CloudLoopItem['status']
-  children: React.ReactNode
-}) {
+function TodoColumnDropzone({ status, children }: { status: string; children: React.ReactNode }) {
   const { isOver, setNodeRef } = useDroppable({ id: `todo-column:${status}` })
   return (
     <div
@@ -336,11 +335,17 @@ function ProjectDialog({
   const [visibility, setVisibility] = useState<'private' | 'public'>('private')
   const [repositoryAddress, setRepositoryAddress] = useState('')
   const [token, setToken] = useState('')
+  const [aitableUrl, setAitableUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const externalProvider = taskProvider !== 'local'
+  const repositoryProvider = taskProvider === 'github' || taskProvider === 'gitlab'
+  const isAITableProvider = taskProvider === 'dingtalk_aitable'
+  const aitableLink = parseDingTalkAITableLink(aitableUrl)
   const canSubmit = Boolean(
-    name.trim() && (!externalProvider || repositoryAddress.trim()) && !saving
+    name.trim() &&
+    (!repositoryProvider || repositoryAddress.trim()) &&
+    (!isAITableProvider || aitableLink) &&
+    !saving
   )
 
   async function submit() {
@@ -350,13 +355,19 @@ function ProjectDialog({
     try {
       const selectedApi = availableApis.find(option => option.location === location)?.api
       if (!selectedApi) throw new Error('所选项目空间位置当前不可用')
-      const providerConfig =
-        taskProvider === 'local'
-          ? {}
-          : {
+      const providerConfig = isAITableProvider
+        ? {
+            base_id: aitableLink!.baseId,
+            table_id: aitableLink!.tableId,
+            source_url: aitableLink!.url,
+            ...(aitableLink!.viewId ? { view_id: aitableLink!.viewId } : {}),
+          }
+        : repositoryProvider
+          ? {
               ...repositoryProviderConfig(repositoryAddress, taskProvider),
               ...(token.trim() ? { token: token.trim() } : {}),
             }
+          : {}
       const project = await selectedApi.createCloudProject({
         name: name.trim(),
         description: description.trim(),
@@ -490,12 +501,13 @@ function ProjectDialog({
 
         <section>
           <h3 className="text-sm font-medium text-text-primary">任务来源</h3>
-          <div className="mt-2 grid grid-cols-3 gap-2">
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {(
               [
                 ['local', ListTodo, '内置任务', location === 'local' ? '保存在本机' : '保存在云端'],
                 ['github', GitBranch, 'GitHub', '读取 Issues'],
                 ['gitlab', GitBranch, 'GitLab', '读取 Issues'],
+                ['dingtalk_aitable', Grid3X3, '钉钉多维表格', '同步表格记录'],
               ] as const
             ).map(([value, ProviderIcon, label, detail]) => (
               <button
@@ -522,7 +534,7 @@ function ProjectDialog({
           </div>
         </section>
 
-        {externalProvider && (
+        {repositoryProvider && (
           <section className="space-y-4 rounded-xl bg-muted/40 p-3">
             <label className="block text-sm font-medium text-text-primary">
               仓库地址
@@ -565,6 +577,37 @@ function ProjectDialog({
                   : '令牌会加密保存在当前设备，不会写入项目文件。'}
               </span>
             </label>
+          </section>
+        )}
+
+        {isAITableProvider && (
+          <section className="space-y-4 rounded-xl bg-muted/40 p-3">
+            <label className="block text-sm font-medium text-text-primary">
+              多维表格链接
+              <input
+                data-testid="cloud-project-aitable-url"
+                value={aitableUrl}
+                onChange={event => {
+                  setAitableUrl(event.target.value)
+                  setError(null)
+                }}
+                className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                placeholder="粘贴 alidocs.dingtalk.com 多维表格链接"
+              />
+              {aitableUrl && !aitableLink ? (
+                <span className="mt-1.5 block text-xs font-normal text-destructive">
+                  无法识别这个链接，请复制打开多维表格后的完整浏览器地址。
+                </span>
+              ) : (
+                <span className="mt-1.5 block text-xs font-normal text-text-muted">
+                  将自动识别表格和当前数据表，无需查找内部 ID。
+                </span>
+              )}
+            </label>
+            <p className="text-xs text-text-muted">
+              表格读写统一由本机 Executor 通过 DWS
+              执行。创建后连接钉钉账号，并确保该账号已获得此表格权限。
+            </p>
           </section>
         )}
 
@@ -695,6 +738,7 @@ export function CloudTodoWorkspace({
   onOpenRuntimeTask,
 }: CloudTodoWorkspaceProps) {
   const platform = getPlatform()
+  const { t } = useTranslation('common')
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
     return {
@@ -748,6 +792,30 @@ export function CloudTodoWorkspace({
   const [loading, setLoading] = useState(true)
   const [boardError, setBoardError] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null)
+  const [projectMenuId, setProjectMenuId] = useState<string | null>(null)
+  useEffect(() => {
+    if (projectMenuId === null) return
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (
+        event.target instanceof Element &&
+        !event.target.closest('[data-cloud-project-menu-root]')
+      ) {
+        setProjectMenuId(null)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProjectMenuId(null)
+    }
+
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [projectMenuId])
   // Applies a freshly fetched board snapshot. `boardError` distinguishes a
   // loaded-but-empty project (renders empty columns) from a failed fetch
   // (renders the skeleton plus the error banner instead of an empty board).
@@ -763,6 +831,9 @@ export function CloudTodoWorkspace({
   const apiForProjectId = useCallback(
     (projectId: string) => {
       const project = projects.find(candidate => candidate.id === projectId)
+      if (project?.task_provider === 'dingtalk_aitable' && projectSpaceApis.local) {
+        return projectSpaceApis.local
+      }
       return (
         (project ? projectSpaceApis[project.location] : undefined) ??
         services.deliveryApi ??
@@ -772,7 +843,56 @@ export function CloudTodoWorkspace({
     [availableProjectSpaceApis, projectSpaceApis, projects, services.deliveryApi]
   )
   const selectedProjectApi = selectedProject ? apiForProjectId(selectedProject.id) : undefined
-  const canCreateBoardTask = selectedProject !== null
+  const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
+  const usesCustomStatusLanes =
+    isAITableProject && selectedProject?.provider_config.status_mode === 'custom'
+  const customStatuses = Array.from(
+    new Set([
+      ...(selectedProject?.provider_config.custom_statuses ?? []),
+      ...items.map(item => item.source_status ?? '').filter(Boolean),
+      ...(items.some(item => !(item.source_status ?? '').trim()) ? [''] : []),
+    ])
+  )
+  const boardColumns = usesCustomStatusLanes
+    ? customStatuses.map((sourceStatus, index) => ({
+        key: sourceStatus || '__unset__',
+        label: sourceStatus || '未设置',
+        status: 'inbox' as CloudLoopItem['status'],
+        sourceStatus,
+        dotClass: ['bg-zinc-400', 'bg-indigo-500', 'bg-amber-500', 'bg-violet-500'][index % 4],
+      }))
+    : columns.map(column => ({
+        key: column.status,
+        label: column.label,
+        status: column.status,
+        sourceStatus: null,
+        dotClass: columnDotClasses[column.status],
+      }))
+  const aitableApi = isAITableProject ? services.aitableApi : undefined
+
+  useEffect(() => {
+    if (!services.aitableApi) return
+    let active = true
+    for (const project of projects) {
+      if (project.task_provider === 'dingtalk_aitable') {
+        void services.aitableApi
+          .configureProject(project)
+          .then(async () => {
+            const api = projectSpaceApis.local
+            if (!api) return
+            const response = await api.listLoopItems(project.id)
+            if (!active) return
+            setProjectCounts(current => ({ ...current, [project.id]: response.items.length }))
+            setProjectItems(current => ({ ...current, [project.id]: response.items }))
+          })
+          .catch(() => {})
+      }
+    }
+    return () => {
+      active = false
+    }
+  }, [projectSpaceApis.local, projects, services.aitableApi])
+  const canCreateBoardTask = selectedProject !== null && !usesCustomStatusLanes
   // Only render board items that belong to the selected project. On a project
   // switch this flips to the skeleton in the same render, before the fetch.
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
@@ -882,8 +1002,12 @@ export function CloudTodoWorkspace({
     if (!selectedProjectId || !selectedProjectApi) return
     let active = true
     const refreshItems = () => {
-      void selectedProjectApi
-        .listLoopItems(selectedProjectId)
+      const prepare =
+        selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
+          ? services.aitableApi.configureProject(selectedProject)
+          : Promise.resolve()
+      void prepare
+        .then(() => selectedProjectApi.listLoopItems(selectedProjectId))
         .then(response => {
           if (!active) return
           applyBoardItems(selectedProjectId, response.items, null)
@@ -918,7 +1042,7 @@ export function CloudTodoWorkspace({
       active = false
       window.clearInterval(interval)
     }
-  }, [applyBoardItems, selectedProjectApi, selectedProjectId])
+  }, [applyBoardItems, selectedProject, selectedProjectApi, selectedProjectId, services.aitableApi])
   useEffect(() => {
     if (rootView !== 'my-work' && !(rootView === 'projects' && !selectedProjectId)) return
     void Promise.all(availableProjectSpaceApis.map(({ api }) => api.listMyWork())).then(responses =>
@@ -969,9 +1093,34 @@ export function CloudTodoWorkspace({
   async function moveItem(
     itemId: string,
     status: CloudLoopItem['status'],
-    beforeItemId: string | null = null
+    beforeItemId: string | null = null,
+    sourceStatus: string | null = null
   ) {
     const item = items.find(candidate => candidate.id === itemId)
+    if (usesCustomStatusLanes && item && sourceStatus) {
+      if (item.can_edit === false || item.source_status === sourceStatus) return
+      const previousItems = items
+      setItems(current =>
+        current.map(candidate =>
+          candidate.id === item.id ? { ...candidate, source_status: sourceStatus } : candidate
+        )
+      )
+      try {
+        const itemApi = apiForProjectId(item.cloud_project_id)
+        if (!itemApi) throw new Error('项目空间当前不可用')
+        const updated = await itemApi.updateLoopItem(item.id, {
+          version: item.version,
+          status: sourceStatus as CloudLoopItem['status'],
+        })
+        setItems(current =>
+          current.map(candidate => (candidate.id === updated.id ? updated : candidate))
+        )
+      } catch (cause) {
+        setItems(previousItems)
+        setBoardError(cause instanceof Error ? cause.message : '移动任务失败')
+      }
+      return
+    }
     const reordered = reorderLaneItems(items, itemId, status, beforeItemId)
     if (!item || item.can_edit === false || !reordered) return
     const previousItems = items
@@ -1008,11 +1157,20 @@ export function CloudTodoWorkspace({
     if (beforeCardId) {
       if (beforeCardId === activeId) return
       const target = items.find(candidate => candidate.id === beforeCardId)
-      if (target) void moveItem(activeId, target.status, beforeCardId)
+      if (target)
+        void moveItem(
+          activeId,
+          target.status,
+          beforeCardId,
+          usesCustomStatusLanes ? (target.source_status ?? null) : null
+        )
       return
     }
     const status = boardStatusFromDropId(event.over?.id)
-    if (status) void moveItem(activeId, status)
+    if (status) {
+      const column = boardColumns.find(candidate => candidate.key === status)
+      if (column) void moveItem(activeId, column.status, null, column.sourceStatus)
+    }
   }
 
   return (
@@ -1121,34 +1279,83 @@ export function CloudTodoWorkspace({
               {projects.map(project => {
                 const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
                 return (
-                  <button
+                  <div
                     key={project.id}
-                    type="button"
-                    onClick={() => {
-                      selectProject(project.id)
-                      setRootView('projects')
-                      setProjectView('board')
-                      setSelectedItem(null)
-                    }}
+                    data-cloud-project-menu-root
                     className={cn(
-                      'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
+                      'group relative flex h-8 w-full items-center rounded-lg px-1 text-sm',
                       rootView === 'projects' && selectedProjectId === project.id
                         ? 'bg-muted font-medium text-text-primary'
                         : 'text-text-secondary hover:bg-muted/60'
                     )}
                   >
-                    <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                    <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                    <button
+                      type="button"
+                      data-testid={`cloud-sidebar-project-${project.id}`}
+                      onClick={() => {
+                        selectProject(project.id)
+                        setRootView('projects')
+                        setProjectView('board')
+                        setSelectedItem(null)
+                      }}
+                      className="flex h-full min-w-0 flex-1 items-center gap-3 rounded-md px-2 text-sm"
+                    >
+                      <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                      <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                    </button>
                     {projectCounts[project.id] ? (
-                      <span className="text-xs text-text-muted">{projectCounts[project.id]}</span>
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center text-xs text-text-muted group-hover:hidden">
+                        {projectCounts[project.id]}
+                      </span>
                     ) : null}
-                  </button>
+                    <button
+                      type="button"
+                      data-testid={`cloud-sidebar-project-more-${project.id}`}
+                      onClick={() => {
+                        setProjectMenuId(current => (current === project.id ? null : project.id))
+                      }}
+                      className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-background hover:text-text-primary focus:flex group-hover:flex"
+                      aria-expanded={projectMenuId === project.id}
+                      aria-label={t('todo.project_actions', '项目操作')}
+                    >
+                      <Ellipsis className="h-3.5 w-3.5" />
+                    </button>
+                    {projectMenuId === project.id ? (
+                      <div
+                        data-testid={`cloud-sidebar-project-menu-${project.id}`}
+                        role="menu"
+                        className="absolute right-0 top-8 z-30 w-36 rounded-lg border border-border bg-background p-1 shadow-md"
+                      >
+                        <button
+                          type="button"
+                          data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
+                          onClick={() => {
+                            void copyTextToClipboard(String(project.id)).then(() => {
+                              setCopiedProjectId(project.id)
+                              window.setTimeout(() => setCopiedProjectId(null), 2000)
+                            })
+                            setProjectMenuId(null)
+                          }}
+                          role="menuitem"
+                          className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                        >
+                          {copiedProjectId === project.id ? (
+                            <Check className="h-3.5 w-3.5 text-green-600" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                          {copiedProjectId === project.id
+                            ? t('todo.project_id_copied', '项目 ID 已复制')
+                            : t('todo.copy_project_id', '复制项目 ID')}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 )
               })}
             </div>
           </div>
         </aside>
-
         <main className="relative flex min-w-0 flex-1 flex-col">
           {!selectedProject && (
             <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
@@ -1257,6 +1464,21 @@ export function CloudTodoWorkspace({
                   >
                     事项
                   </button>
+                  {isAITableProject && aitableApi ? (
+                    <button
+                      type="button"
+                      data-testid="cloud-project-table-view"
+                      onClick={() => setProjectView('table')}
+                      className={cn(
+                        'rounded-md px-3.5 py-1 text-sm',
+                        projectView === 'table'
+                          ? 'bg-background font-medium text-text-primary shadow-sm'
+                          : 'text-text-secondary hover:text-text-primary'
+                      )}
+                    >
+                      表格
+                    </button>
+                  ) : null}
                   {selectedProject.access_role !== 'RestrictedAnalyst' && (
                     <button
                       type="button"
@@ -1355,9 +1577,13 @@ export function CloudTodoWorkspace({
               </header>
               {projectView === 'files' && selectedProjectApi ? (
                 <CloudFilesView api={selectedProjectApi} project={selectedProject} />
+              ) : projectView === 'table' && isAITableProject && aitableApi ? (
+                <AITableView api={aitableApi} project={selectedProject} />
               ) : projectView === 'manage' && selectedProjectApi ? (
                 <CloudProjectManageView
-                  api={selectedProjectApi}
+                  api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
+                  aitableApi={aitableApi}
+                  dwsApi={services.dwsApi}
                   project={selectedProject}
                   onProjectUpdated={updated =>
                     setProjects(current =>
@@ -1436,43 +1662,44 @@ export function CloudTodoWorkspace({
                         onDragEnd={finishBoardDrop}
                       >
                         <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
-                          {columns.map(column => {
+                          {boardColumns.map(column => {
                             const columnItems = items.filter(
                               item =>
                                 item.parent_id === boardParentId &&
-                                item.status === column.status &&
+                                (column.sourceStatus !== null
+                                  ? (item.source_status ?? '') === column.sourceStatus
+                                  : item.status === column.status) &&
                                 (!tagFilter || (item.tags ?? []).includes(tagFilter))
                             )
                             return (
                               <section
-                                key={column.status}
-                                data-testid={`cloud-todo-column-${column.status}`}
+                                key={column.key}
+                                data-testid={`cloud-todo-column-${column.key}`}
                                 className="group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5"
                               >
                                 <header className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
                                   <span className="flex min-w-0 items-center">
                                     <span
-                                      className={cn(
-                                        'mr-2 h-2 w-2 rounded-full',
-                                        columnDotClasses[column.status]
-                                      )}
+                                      className={cn('mr-2 h-2 w-2 rounded-full', column.dotClass)}
                                     />
                                     <span className="text-sm font-semibold">{column.label}</span>
                                     <span className="ml-2 text-xs text-text-muted">
                                       {columnItems.length}
                                     </span>
                                   </span>
-                                  <button
-                                    type="button"
-                                    data-testid={`cloud-todo-column-add-${column.status}`}
-                                    onClick={() => openTodoCreation(boardParent, column.status)}
-                                    className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                    aria-label={`在${column.label}中新建任务`}
-                                  >
-                                    <Plus className="h-3.5 w-3.5" />
-                                  </button>
+                                  {canCreateBoardTask && (
+                                    <button
+                                      type="button"
+                                      data-testid={`cloud-todo-column-add-${column.key}`}
+                                      onClick={() => openTodoCreation(boardParent, column.status)}
+                                      className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                      aria-label={`在${column.label}中新建任务`}
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
                                 </header>
-                                <TodoColumnDropzone status={column.status}>
+                                <TodoColumnDropzone status={column.key}>
                                   {columnItems.map(item => (
                                     <DraggableTodoCard
                                       key={item.id}
@@ -1497,7 +1724,7 @@ export function CloudTodoWorkspace({
                                   <div className="shrink-0 px-2 pb-2">
                                     <button
                                       type="button"
-                                      data-testid={`cloud-todo-column-bottom-add-${column.status}`}
+                                      data-testid={`cloud-todo-column-bottom-add-${column.key}`}
                                       onClick={() => openTodoCreation(boardParent, column.status)}
                                       className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
                                       aria-label={`在${column.label}中新建任务`}
@@ -1560,6 +1787,12 @@ export function CloudTodoWorkspace({
           key={`${selectedItem.id}:${selectedItem.version}`}
           mode="edit"
           api={selectedItemApi}
+          aitableApi={
+            projects.find(project => project.id === selectedItem.cloud_project_id)
+              ?.task_provider === 'dingtalk_aitable'
+              ? services.aitableApi
+              : undefined
+          }
           item={selectedItem}
           project={projects.find(project => project.id === selectedItem.cloud_project_id)}
           allItems={detailAllItems}

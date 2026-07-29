@@ -64,11 +64,13 @@ import {
   cacheRuntimeConversationMessages,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
+  discardRuntimeConversationGuidance,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
   reduceRuntimeConversationQueue,
   runtimeConversationKey,
+  settleRuntimeConversationGuidance,
 } from '@/features/workbench/runtimeConversationCache'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { getRuntimeMessageIndex, mergeRuntimeTranscriptMessages } from './runtimeTranscriptMessages'
@@ -86,6 +88,7 @@ interface RuntimePaneSendOptions {
   guideWhenBusy?: boolean
   interruptWhenBusy?: boolean
   additionalContext?: RuntimeAdditionalContext
+  cloudProjectId?: string
   onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
 }
 
@@ -366,6 +369,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   useEffect(() => {
     currentRuntimeTaskRef.current = currentRuntimeTask
   }, [currentRuntimeTask])
+
+  useEffect(() => {
+    setQueuedMessagesState(
+      queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
+    )
+    setQueuedMessagesPausedState(
+      queuedMessageScopeKey ? getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey) : false
+    )
+  }, [queuedMessageScopeKey])
 
   useEffect(() => {
     if (currentRuntimeTaskLoadTarget) {
@@ -815,14 +827,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         setTaskPlan(payload.plan.length > 0 ? payload : null)
       },
       onGuidanceApplied: payload => {
+        const guidanceMessage = settleRuntimeConversationGuidance(address, payload)
         const pendingEntry = [...pendingAppliedGuidancesRef.current.entries()].find(
           ([, message]) => !payload.message || message.content === payload.message
         )
-        if (!pendingEntry) return
-        const [guidanceId, guidanceMessage] = pendingEntry
-        pendingAppliedGuidancesRef.current.delete(guidanceId)
-        if (interruptedGuidanceIdsRef.current.delete(guidanceId)) {
-          setQueuedMessages(messages => messages.filter(message => message.id !== guidanceId))
+        if (pendingEntry) {
+          pendingAppliedGuidancesRef.current.delete(pendingEntry[0])
+        }
+        if (!guidanceMessage) return
+        if (interruptedGuidanceIdsRef.current.delete(guidanceMessage.id)) {
+          setQueuedMessages(messages =>
+            messages.filter(message => message.id !== guidanceMessage.id)
+          )
+          discardRuntimeConversationGuidance(address, guidanceMessage.id)
           return
         }
         appendGuidanceLocalUserMessage(guidanceMessage.content, guidanceMessage.attachments, {
@@ -1699,6 +1716,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             clientMessageId: optimisticMessage.id,
             initialGoal,
             additionalContext: options.additionalContext,
+            cloudProjectId: options.cloudProjectId,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
               setPendingGoalState(current =>
@@ -1778,6 +1796,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           void sendCurrentInput('', {
             codeCommentContexts,
             additionalContext: options.additionalContext,
+            cloudProjectId: options.cloudProjectId,
           })
           return
         }
@@ -1815,6 +1834,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             codeCommentContexts,
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
+            cloudProjectId: options.cloudProjectId,
             onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
@@ -2670,24 +2690,66 @@ export function reconcileRuntimeConversationMessages(
   transcriptRunning: boolean
 ): WorkbenchMessage[] {
   if (transcriptMessages.length === 0) return cachedMessages
-  if (!transcriptRunning && hasSettledAssistantMessage(transcriptMessages)) {
-    return transcriptMessages
+  if (transcriptRunning) {
+    return hasUnsettledRuntimePaneState(cachedMessages) ? cachedMessages : transcriptMessages
   }
-  if (!hasUnsettledRuntimePaneState(cachedMessages)) return transcriptMessages
-  if (!hasUnsettledRuntimePaneState(transcriptMessages)) return cachedMessages
 
-  return runtimeMessageContentWeight(cachedMessages) >
-    runtimeMessageContentWeight(transcriptMessages)
-    ? cachedMessages
+  const latestCachedTurnIdentity = latestRuntimeTurnIdentity(cachedMessages)
+  if (
+    latestCachedTurnIdentity &&
+    !hasSettledAssistantForTurn(transcriptMessages, latestCachedTurnIdentity)
+  ) {
+    return cachedMessages
+  }
+  return hasSettledAssistantMessage(transcriptMessages)
+    ? preserveSettledRuntimeBlocks(transcriptMessages, cachedMessages)
     : transcriptMessages
 }
 
-function runtimeMessageContentWeight(messages: WorkbenchMessage[]): number {
-  return messages.reduce(
-    (total, message) =>
-      total + message.content.length + JSON.stringify(message.blocks ?? []).length,
-    0
+function preserveSettledRuntimeBlocks(
+  transcriptMessages: WorkbenchMessage[],
+  cachedMessages: WorkbenchMessage[]
+): WorkbenchMessage[] {
+  const cachedAssistants = cachedMessages.filter(message => message.role === 'assistant')
+  const restoredSubtaskIds = new Set<string>()
+  let changed = false
+  const messages = transcriptMessages.map(message => {
+    if (message.role !== 'assistant' || !message.subtaskId) return message
+    if (restoredSubtaskIds.has(message.subtaskId)) return message
+    const cachedMessage = cachedAssistants.find(
+      candidate => candidate.subtaskId === message.subtaskId
+    )
+    if (!cachedMessage) return message
+    restoredSubtaskIds.add(message.subtaskId)
+    const blocks = mergeSettledRuntimeBlocks(message.blocks, cachedMessage?.blocks)
+    if (blocks === message.blocks) return message
+    changed = true
+    return { ...message, blocks }
+  })
+  return changed ? messages : transcriptMessages
+}
+
+function mergeSettledRuntimeBlocks(
+  transcriptBlocks: WorkbenchMessage['blocks'],
+  cachedBlocks: WorkbenchMessage['blocks']
+): WorkbenchMessage['blocks'] {
+  const settledCachedBlocks = cachedBlocks?.filter(
+    block =>
+      (block.type === 'tool' || block.type === 'file_changes') &&
+      (block.status === 'done' || block.status === 'error')
   )
+  if (!settledCachedBlocks?.length) return transcriptBlocks
+  if (!transcriptBlocks?.length) return settledCachedBlocks
+
+  const transcriptById = new Map(transcriptBlocks.map(block => [block.id, block]))
+  const cachedIds = new Set(settledCachedBlocks.map(block => block.id))
+  const hasMissingCachedBlock = settledCachedBlocks.some(block => !transcriptById.has(block.id))
+  if (!hasMissingCachedBlock) return transcriptBlocks
+
+  return [
+    ...settledCachedBlocks.map(block => transcriptById.get(block.id) ?? block),
+    ...transcriptBlocks.filter(block => !cachedIds.has(block.id)),
+  ]
 }
 
 function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -2835,6 +2897,11 @@ export function transcriptSettlesLatestSeededTurn(
   transcriptMessages: WorkbenchMessage[],
   seededMessages: WorkbenchMessage[]
 ): boolean {
+  const latestSeededTurnIdentity = latestRuntimeTurnIdentity(seededMessages)
+  if (latestSeededTurnIdentity) {
+    return hasSettledAssistantForTurn(transcriptMessages, latestSeededTurnIdentity)
+  }
+
   const latestSeededUser = [...seededMessages].reverse().find(message => message.role === 'user')
   if (!latestSeededUser) return hasSettledAssistantMessage(transcriptMessages)
 
@@ -2847,6 +2914,34 @@ export function transcriptSettlesLatestSeededTurn(
   return transcriptMessages
     .slice(latestMatchingUserIndex + 1)
     .some(message => message.role === 'assistant' && message.status !== 'streaming')
+}
+
+function latestRuntimeTurnIdentity(messages: WorkbenchMessage[]): ReadonlySet<string> | null {
+  const latestMessage = messages.at(-1)
+  if (!latestMessage) return null
+  const identity = runtimeMessageTurnIdentity(latestMessage)
+  return identity.size > 0 ? identity : null
+}
+
+function runtimeMessageTurnIdentity(message: WorkbenchMessage): ReadonlySet<string> {
+  return new Set(
+    [message.turnId, message.subtaskId]
+      .filter(value => value !== undefined && value !== null)
+      .map(value => String(value))
+  )
+}
+
+function hasSettledAssistantForTurn(
+  messages: WorkbenchMessage[],
+  turnIdentity: ReadonlySet<string>
+): boolean {
+  return messages.some(
+    message =>
+      message.role === 'assistant' &&
+      message.status !== 'streaming' &&
+      message.status !== 'pending' &&
+      [...runtimeMessageTurnIdentity(message)].some(identity => turnIdentity.has(identity))
+  )
 }
 
 function markRuntimeSubagentsSettled(current: RuntimeSubagentStatus[]): RuntimeSubagentStatus[] {

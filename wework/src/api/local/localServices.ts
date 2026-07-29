@@ -109,6 +109,8 @@ import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { createExternalIssueApi, createLocalDeliveryApi } from './localDelivery'
+import { createLocalAITableApi } from '@/api/aitable'
+import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
@@ -312,7 +314,7 @@ interface LocalAppServicesDeps {
 interface CloudModelGateway {
   baseUrl: string
   apiKey: string
-  mcpUrl?: string
+  backendUrl?: string
 }
 
 interface RuntimeWorkIpcOptions {
@@ -1134,6 +1136,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
+  cloudProjectId?: string
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
@@ -1153,15 +1156,10 @@ function messageWithApplicationContext(
       {
         kind: 'application',
         value: [
-          'The user activated the Wegent project-space capability.',
-          'Project storage and task source are independent.',
-          'Use wegent_tasks for local project spaces and for GitHub or GitLab Issues, even when the project space is stored in the Backend.',
-          'Use wegent_delivery for cloud project metadata, files, deliveries, and Backend-native TODOs only.',
-          'wegent_delivery and wegent_tasks are server ids, not callable tools.',
-          'List both sources when resolving a project name.',
-          'Never create or copy a cloud project merely because a local project is not returned by list_cloud_projects.',
-          'Use resolve_cloud_reference to resolve cloud:// references.',
-          'MCP resources describe addressable data; do not use list_mcp_resources to discover tools.',
+          'Use wework_space as the only interface for WeWork project spaces, board items, files, attachments, and deliveries.',
+          'Storage and task providers are internal implementation details.',
+          'Do not use git commands or call GitHub, GitLab, or object-storage APIs to inspect or modify project-space data.',
+          'Use list_spaces to discover spaces, get_board_item for item details, and read_item_attachment for attachment contents.',
         ].join('\n'),
       },
     ])
@@ -1215,19 +1213,14 @@ function buildLocalRuntimeExecutionRequest(
     },
     user_id: input.user.id,
     user_name: input.user.user_name,
+    ...(input.cloudModelGateway?.backendUrl
+      ? {
+          backend_url: input.cloudModelGateway.backendUrl,
+          auth_token: input.cloudModelGateway.apiKey,
+        }
+      : {}),
     bot: [],
-    mcp_servers: input.cloudModelGateway?.mcpUrl
-      ? [
-          {
-            name: 'wegent_delivery',
-            type: 'streamable-http',
-            url: input.cloudModelGateway.mcpUrl,
-            headers: {
-              Authorization: `Bearer ${input.cloudModelGateway.apiKey}`,
-            },
-          },
-        ]
-      : [],
+    mcp_servers: [],
     model_config: modelConfig,
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
     enable_tools: true,
@@ -1249,6 +1242,7 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.runtimeWorkspaceRoots?.length
       ? { runtime_workspace_roots: input.runtimeWorkspaceRoots }
       : {}),
+    ...(input.cloudProjectId ? { cloudProjectId: input.cloudProjectId } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
@@ -1393,6 +1387,7 @@ async function createLocalRuntimeTaskPayload(
       runtimeProjectKey: normalizedData.runtimeProjectKey,
       runtimeProjectName: normalizedData.runtimeProjectName,
       runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
+      cloudProjectId: normalizedData.cloudProjectId,
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,
@@ -2388,6 +2383,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
   const deliveryApi = createLocalDeliveryApi(request)
   const externalIssueApi = createExternalIssueApi(request)
+  const aitableApi = createLocalAITableApi(request)
+  const dwsApi = createDwsApi(request)
 
   return {
     teamApi: {
@@ -2442,6 +2439,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     deviceApi,
     deliveryApi,
     externalIssueApi,
+    aitableApi,
+    dwsApi,
     projectSpaceApis: {
       local: deliveryApi,
       defaultLocation: 'local',
