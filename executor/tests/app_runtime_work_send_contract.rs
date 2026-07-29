@@ -980,6 +980,74 @@ async fn runtime_tasks_share_one_codex_app_server_across_handlers() {
 }
 
 #[tokio::test]
+async fn runtime_proxy_applies_before_auxiliary_rpc_and_task_share_app_server() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-shared-proxy-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-shared-proxy-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-shared-proxy-log", "jsonl");
+    let fake_codex = write_fake_codex_auxiliary_rpc_then_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.runtime_config.update",
+            "payload": {"proxyUrl": "http://127.0.0.1:7890"}
+        }))
+        .await
+        .expect("runtime proxy configuration should succeed");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.rate_limits.read",
+            "payload": {}
+        }))
+        .await
+        .expect("rate limits should start the proxy-configured app-server");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-shared-proxy",
+                "workspacePath": "/tmp/project",
+                "message": "implement feature",
+                "executionRequest": codex_execution_request(
+                    "implement feature",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("task should be accepted");
+
+    wait_until_task_idle(&handler, "local-task-shared-proxy").await;
+    let calls = read_json_lines(&log_path);
+    assert_eq!(calls[0]["env"]["HTTP_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(calls[0]["env"]["HTTPS_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "initialize")
+            .count(),
+        1,
+        "auxiliary RPC and task should share one Codex app-server process"
+    );
+    assert!(calls
+        .iter()
+        .any(|call| call["method"] == "account/rateLimits/read"));
+    assert!(calls.iter().any(|call| call["method"] == "turn/start"));
+}
+
+#[tokio::test]
 async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2423,6 +2491,53 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-persistent","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-persistent","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_auxiliary_rpc_then_turn(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-auxiliary-rpc-then-turn", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+http_proxy=$(printenv HTTP_PROXY)
+https_proxy=$(printenv HTTPS_PROXY)
+printf '{{"env":{{"HTTP_PROXY":"%s","HTTPS_PROXY":"%s"}}}}\n' "$http_proxy" "$https_proxy" >> "$LOG_PATH"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"account/rateLimits/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"rateLimits":[]}}}}'
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-shared-proxy"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-shared-proxy","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-shared-proxy","turnId":"turn-shared-proxy","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-shared-proxy","turn":{{"id":"turn-shared-proxy","status":"completed"}}}}}}'
       ;;
   esac
 done
