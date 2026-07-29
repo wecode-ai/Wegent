@@ -38,6 +38,12 @@ Run only the plugin marketplace, install, chat-use, and uninstall flow:
 pnpm --filter wework e2e:desktop:plugins
 ```
 
+Run only the embedded-browser Agent operation regression:
+
+```bash
+pnpm --filter wework e2e:desktop:embedded-browser
+```
+
 Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash
@@ -102,6 +108,8 @@ The model protocol matrix defines 18 combinations across execution location, mod
 Matrix submissions use a 10-second timeout. If the composer already displays a submission error, the runner throws that exact error immediately. Otherwise, a stalled protocol stage reports its current stage and captured requests instead of waiting through the general UI timeout.
 
 `e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The scenario builds a long multi-turn conversation beyond the virtualization threshold. It first verifies that “Thinking” appears below the visible reply, then scrolls to completed history so the active response remains offscreen while it continues growing. The test waits for the list's total height to grow and asserts that the visible text anchor and `scrollTop` stay stable during streaming, after completion, and after reopening the task. It also verifies that “Thinking” disappears after the response is released. The scenario retains screenshots for its ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
+
+`e2e:desktop:embedded-browser` runs the embedded-browser Agent operation regression through a scenario module. It uses the real Tauri WebView, Executor, Codex app-server, and browser MCP server, opens a local fixture page, and verifies the current WKWebView bridge control path. The scenario covers bridge identity lookup, authenticated bridge requests, page open, structured `inspect`, `fill`, `click`, `wait`, `scroll`, `screenshot`, `capabilities`, high-risk action approval, and combined MCP tools such as `open_and_inspect` and `wait_and_inspect`. It also starts a long `waitFor` and then verifies an independent `click` is not blocked, preventing bridge concurrency regressions. Results are written to `embedded-browser-agent-result.json`.
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
