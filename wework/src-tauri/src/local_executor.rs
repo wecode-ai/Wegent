@@ -48,7 +48,11 @@ const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
 const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = if cfg!(debug_assertions) {
-    if cfg!(windows) { 180 } else { 60 }
+    if cfg!(windows) {
+        180
+    } else {
+        60
+    }
 } else {
     10
 };
@@ -477,14 +481,21 @@ fn local_executor_instance_name() -> &'static str {
 }
 
 fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
-    let home = local_executor_home_path()?;
-    if local_executor_isolation_enabled()? {
-        return Ok(home
-            .join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
-            .join(local_executor_instance_name()));
+    if let Some((_, instance)) = isolated_runtime_instance_paths()? {
+        return Ok(instance);
     }
 
-    Ok(home)
+    local_executor_home_path()
+}
+
+pub(crate) fn isolated_runtime_instance_paths() -> Result<Option<(PathBuf, PathBuf)>, String> {
+    if !local_executor_isolation_enabled()? {
+        return Ok(None);
+    }
+
+    let root = local_executor_home_path()?.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME);
+    let instance = root.join(local_executor_instance_name());
+    Ok(Some((root, instance)))
 }
 
 fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
