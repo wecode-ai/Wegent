@@ -11,6 +11,7 @@
 
 mod anthropic;
 mod chat;
+mod fork;
 mod history;
 
 use std::{
@@ -34,6 +35,7 @@ use sha2::{Digest, Sha256};
 use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
+use fork::{codex_forked_from_thread_id, prepare_fork_request};
 
 pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
@@ -690,75 +692,6 @@ fn prepare_model_switch_request(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to encode model switch request: {error}"),
     })
-}
-
-fn codex_forked_from_thread_id(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-codex-turn-metadata")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| serde_json::from_str::<Value>(value).ok())
-        .and_then(|metadata| {
-            metadata
-                .get("forked_from_thread_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-        })
-}
-
-fn prepare_fork_request(body: Vec<u8>, is_fork: bool) -> Result<(Vec<u8>, usize), HttpError> {
-    if !is_fork {
-        return Ok((body, 0));
-    }
-    let mut request = serde_json::from_slice::<Value>(&body).map_err(|error| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: format!("Invalid Codex Responses request: {error}"),
-    })?;
-    let Some(items) = request.get_mut("input").and_then(Value::as_array_mut) else {
-        return Ok((body, 0));
-    };
-    let removed = items
-        .iter_mut()
-        .filter(|item| is_opaque_encrypted_history_item(item))
-        .map(remove_encrypted_content)
-        .sum();
-    if removed == 0 {
-        return Ok((body, 0));
-    }
-    let body = serde_json::to_vec(&request).map_err(|error| HttpError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        detail: format!("Failed to encode fork request: {error}"),
-    })?;
-    Ok((body, removed))
-}
-
-fn is_opaque_encrypted_history_item(item: &Value) -> bool {
-    matches!(
-        item.get("type").and_then(Value::as_str),
-        Some(
-            "reasoning"
-                | "compaction"
-                | "compaction_summary"
-                | "context_compaction"
-                | "agent_message"
-        )
-    )
-}
-
-fn remove_encrypted_content(value: &mut Value) -> usize {
-    match value {
-        Value::Object(object) => {
-            let removed = usize::from(object.remove("encrypted_content").is_some());
-            removed
-                + object
-                    .values_mut()
-                    .map(remove_encrypted_content)
-                    .sum::<usize>()
-        }
-        Value::Array(items) => items.iter_mut().map(remove_encrypted_content).sum(),
-        _ => 0,
-    }
 }
 
 fn request_contains_model_switch_marker(body: &[u8]) -> bool {
@@ -1651,6 +1584,28 @@ mod tests {
     use tokio::sync::oneshot;
 
     #[test]
+    fn detects_known_upstream_error_codes_in_priority_order() {
+        assert_eq!(
+            detect_upstream_error_code(
+                br#"{"error":{"code":"invalid_encrypted_content","message":"invalid"}}"#
+            )
+            .as_deref(),
+            Some("invalid_encrypted_content")
+        );
+        assert_eq!(
+            detect_upstream_error_code(br#"{"error":{"code":"upstream_unavailable"}}"#),
+            None
+        );
+        assert_eq!(
+            detect_upstream_error_code(
+                b"rate_limit_exceeded appeared first, then invalid_encrypted_content"
+            )
+            .as_deref(),
+            Some("invalid_encrypted_content")
+        );
+    }
+
+    #[test]
     fn normalizes_completed_usage_details() {
         let event = format!(
             "data: {}",
@@ -1843,86 +1798,6 @@ mod tests {
         let prepared = prepare_model_switch_request(&upstream, body.clone(), false)
             .expect("later request should preserve new model state");
 
-        assert_eq!(prepared, body);
-    }
-
-    #[test]
-    fn reads_fork_lineage_from_codex_turn_metadata() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-codex-turn-metadata",
-            HeaderValue::from_static(
-                "{\"thread_id\":\"thread-child\",\"forked_from_thread_id\":\"thread-parent\"}",
-            ),
-        );
-
-        assert_eq!(
-            codex_forked_from_thread_id(&headers).as_deref(),
-            Some("thread-parent")
-        );
-    }
-
-    #[test]
-    fn strips_only_opaque_encrypted_history_from_fork_requests() {
-        let body = serde_json::to_vec(&json!({
-            "model": "gpt-5.6-terra",
-            "input": [
-                {
-                    "type": "reasoning",
-                    "summary": [{"type": "summary_text", "text": "kept summary"}],
-                    "encrypted_content": "stale-reasoning"
-                },
-                {
-                    "type": "context_compaction",
-                    "encrypted_content": "stale-compaction"
-                },
-                {
-                    "type": "function_call_output",
-                    "output": [{
-                        "type": "encrypted_content",
-                        "encrypted_content": "tool-owned-content"
-                    }]
-                },
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": "continue"}]
-                }
-            ]
-        }))
-        .expect("request body");
-
-        let (prepared, removed) =
-            prepare_fork_request(body, true).expect("fork request should prepare");
-        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
-
-        assert_eq!(removed, 2);
-        assert_eq!(prepared["input"][0]["summary"][0]["text"], "kept summary");
-        assert!(prepared["input"][0].get("encrypted_content").is_none());
-        assert!(prepared["input"][1].get("encrypted_content").is_none());
-        assert_eq!(
-            prepared["input"][2]["output"][0]["encrypted_content"],
-            "tool-owned-content"
-        );
-        assert_eq!(prepared["input"][3]["content"][0]["text"], "continue");
-    }
-
-    #[test]
-    fn preserves_encrypted_history_for_non_fork_requests() {
-        let body = serde_json::to_vec(&json!({
-            "model": "gpt-5.6-terra",
-            "input": [{
-                "type": "reasoning",
-                "summary": [],
-                "encrypted_content": "active-thread-state"
-            }]
-        }))
-        .expect("request body");
-
-        let (prepared, removed) =
-            prepare_fork_request(body.clone(), false).expect("request should prepare");
-
-        assert_eq!(removed, 0);
         assert_eq!(prepared, body);
     }
 
