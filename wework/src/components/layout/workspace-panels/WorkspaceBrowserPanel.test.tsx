@@ -30,6 +30,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   evalEmbeddedBrowserJson: vi.fn(),
   goBackEmbeddedBrowser: vi.fn(),
   goForwardEmbeddedBrowser: vi.fn(),
+  listenEmbeddedBrowserAgentState: vi.fn(),
   listenEmbeddedBrowserDownloads: vi.fn(),
   navigateEmbeddedBrowser: vi.fn(),
   openEmbeddedBrowser: vi.fn(),
@@ -37,6 +38,8 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   readEmbeddedBrowserPageState: vi.fn(),
   reloadEmbeddedBrowser: vi.fn(),
   resumeEmbeddedBrowserDownload: vi.fn(),
+  resolveEmbeddedBrowserAgentApproval: vi.fn(),
+  setEmbeddedBrowserAgentControlPaused: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT: 'wework:debug-panel-visibility-change',
   EMBEDDED_BROWSER_OCCLUSION_EVENT: 'wework:embedded-browser-occlusion-change',
@@ -75,6 +78,7 @@ describe('WorkspaceBrowserPanel', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     embeddedBrowserMocks.canUseEmbeddedBrowser.mockReturnValue(true)
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValue(false)
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
       nativeLabel: 'workspace-browser-native-1',
@@ -94,6 +98,8 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.navigateEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.reloadEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.resumeEmbeddedBrowserDownload.mockResolvedValue(undefined)
+    embeddedBrowserMocks.resolveEmbeddedBrowserAgentApproval.mockResolvedValue(undefined)
+    embeddedBrowserMocks.setEmbeddedBrowserAgentControlPaused.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockResolvedValue(undefined)
   })
 
@@ -184,6 +190,181 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
+  })
+
+  test('shows agent browser state and lets the user take over', async () => {
+    let handleAgentState!: (event: {
+      label: string
+      status: string
+      action: string | null
+      target: string | null
+      message: string | null
+      errorCode: string | null
+      createdAtUnixMs: number
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockImplementation(handler => {
+      handleAgentState = handler
+      return null
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+
+    act(() => {
+      handleAgentState({
+        label: 'workspace-browser',
+        status: 'running',
+        action: 'click',
+        target: 'index 2',
+        message: null,
+        errorCode: null,
+        approval: null,
+        createdAtUnixMs: Date.now(),
+      })
+    })
+
+    expect(screen.getByTestId('workspace-browser-agent-status')).toHaveTextContent('AI 正在点击')
+    fireEvent.click(screen.getByTestId('workspace-browser-agent-pause-button'))
+    expect(embeddedBrowserMocks.setEmbeddedBrowserAgentControlPaused).toHaveBeenCalledWith(
+      true,
+      'workspace-browser'
+    )
+  })
+
+  test('keeps agent control paused until the user returns it to AI', async () => {
+    let handleAgentState!: (event: {
+      label: string
+      status: string
+      action: string | null
+      target: string | null
+      message: string | null
+      errorCode: string | null
+      createdAtUnixMs: number
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockImplementation(handler => {
+      handleAgentState = handler
+      return null
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+
+    act(() => {
+      handleAgentState({
+        label: 'workspace-browser',
+        status: 'paused',
+        action: null,
+        target: null,
+        message: null,
+        errorCode: null,
+        approval: null,
+        createdAtUnixMs: Date.now(),
+      })
+    })
+
+    expect(screen.getByTestId('workspace-browser-agent-status')).toHaveTextContent(
+      '你正在接管浏览器'
+    )
+    fireEvent.click(screen.getByTestId('workspace-browser-agent-resume-button'))
+    expect(embeddedBrowserMocks.setEmbeddedBrowserAgentControlPaused).toHaveBeenCalledWith(
+      false,
+      'workspace-browser'
+    )
+  })
+
+  test('shows high-risk agent approval controls', async () => {
+    let handleAgentState!: (event: {
+      label: string
+      status: string
+      action: string | null
+      target: string | null
+      message: string | null
+      errorCode: string | null
+      approval: {
+        approvalId: string
+        risk: string
+        actionKind: string
+        reason: string
+        target: unknown | null
+        expiresAtUnixMs: number
+      } | null
+      createdAtUnixMs: number
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockImplementation(handler => {
+      handleAgentState = handler
+      return null
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+
+    act(() => {
+      handleAgentState({
+        label: 'workspace-browser',
+        status: 'needs_user',
+        action: 'click',
+        target: 'index 3',
+        message: 'This button submits the form.',
+        errorCode: 'approval_required',
+        approval: {
+          approvalId: 'browser-approval-1',
+          risk: 'high',
+          actionKind: 'click',
+          reason: 'This button submits the form.',
+          target: { role: 'button', name: 'Submit' },
+          expiresAtUnixMs: Date.now() + 60_000,
+        },
+        createdAtUnixMs: Date.now(),
+      })
+    })
+
+    expect(screen.getByTestId('workspace-browser-agent-status')).toHaveTextContent('确认 AI 点击')
+    expect(screen.getByTestId('workspace-browser-agent-status')).toHaveTextContent(
+      'This button submits the form.'
+    )
+    fireEvent.click(screen.getByTestId('workspace-browser-agent-approval-approve-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-agent-approval-reject-button'))
+
+    expect(embeddedBrowserMocks.resolveEmbeddedBrowserAgentApproval).toHaveBeenCalledWith(
+      'browser-approval-1',
+      true,
+      'workspace-browser'
+    )
+    expect(embeddedBrowserMocks.resolveEmbeddedBrowserAgentApproval).toHaveBeenCalledWith(
+      'browser-approval-1',
+      false,
+      'workspace-browser'
+    )
+  })
+
+  test('ignores agent browser state from a different label', () => {
+    let handleAgentState!: (event: {
+      label: string
+      status: string
+      action: string | null
+      target: string | null
+      message: string | null
+      errorCode: string | null
+      createdAtUnixMs: number
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockImplementation(handler => {
+      handleAgentState = handler
+      return null
+    })
+
+    render(<WorkspaceBrowserPanel active label="workspace-browser-current" />)
+
+    act(() => {
+      handleAgentState({
+        label: 'workspace-browser-other',
+        status: 'running',
+        action: 'click',
+        target: null,
+        message: null,
+        errorCode: null,
+        approval: null,
+        createdAtUnixMs: Date.now(),
+      })
+    })
+
+    expect(screen.queryByTestId('workspace-browser-agent-status')).not.toBeInTheDocument()
   })
 
   test('shows completed downloads with their saved file path', async () => {
@@ -866,6 +1047,26 @@ describe('WorkspaceBrowserPanel', () => {
         y: 30,
         width: 140,
         height: 120,
+        inspectId: 'wk-inspect-1',
+        matchConfidence: 0.96,
+        target: {
+          inspectId: 'wk-inspect-1',
+          ref: 'wk-mvp:wk-inspect-1:main:2:abc',
+          index: 2,
+          role: 'button',
+          name: '审批',
+          confidence: 0.96,
+        },
+        candidates: [
+          {
+            inspectId: 'wk-inspect-1',
+            ref: 'wk-mvp:wk-inspect-1:main:2:abc',
+            index: 2,
+            role: 'button',
+            name: '审批',
+            confidence: 0.96,
+          },
+        ],
       },
     ])
     render(<WorkspaceBrowserPanel active onAddCodeComment={onAddCodeComment} />)
@@ -896,6 +1097,11 @@ describe('WorkspaceBrowserPanel', () => {
         })
       )
     })
+    const context = onAddCodeComment.mock.calls[0][0]
+    const selectedText = JSON.parse(context.selectedText)
+    expect(selectedText.inspectId).toBe('wk-inspect-1')
+    expect(selectedText.target.ref).toBe('wk-mvp:wk-inspect-1:main:2:abc')
+    expect(selectedText.matchConfidence).toBe(0.96)
     expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveTextContent('1')
   })
 
