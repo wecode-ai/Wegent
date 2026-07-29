@@ -111,8 +111,10 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
-完整流程才创建的任务或 UI 状态。分段命令用于本地快速迭代，推送前仍需运行完整
-`pnpm --filter wework e2e:desktop`：
+完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
+矩阵；共享桌面基础设施、主分支、merge queue、定时任务和 `ci:all` 仍运行完整桌面
+套件。映射规则位于 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
+必须同步登记对应 segment。分段命令也可用于本地快速迭代：
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle

@@ -113,8 +113,12 @@ project initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
 checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
-by the complete flow. Segment commands are for fast local iteration; run the
-complete `pnpm --filter wework e2e:desktop` flow before pushing:
+by the complete flow. PR CI builds the smallest segment matrix for the changed
+feature paths. Shared desktop infrastructure, main, merge queue, scheduled
+runs, and `ci:all` still run the complete desktop suites. The mapping lives in
+`.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
+feature coverage is registered. Segment commands are also useful for focused
+local iteration:
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle

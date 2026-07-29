@@ -758,8 +758,9 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
   })
 
-  test('shows cloud work availability and opens connection settings from the sidebar entry', async () => {
+  test('shows cloud work availability and opens the cloud work page from the sidebar entry', async () => {
     const onOpenSettings = vi.fn()
+    const onOpenCloudWork = vi.fn()
     renderSidebar({
       devices: [
         localDevice(),
@@ -771,7 +772,9 @@ describe('DesktopSidebar', () => {
         }),
       ],
       cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+      activeItem: 'cloud-work',
       onOpenSettings,
+      onOpenCloudWork,
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
@@ -780,6 +783,7 @@ describe('DesktopSidebar', () => {
 
     expect(cloudButton).toHaveTextContent('云端工作')
     expect(cloudButton).toHaveTextContent('可用')
+    expect(cloudButton.parentElement).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
     expect(cloudButton).toHaveClass('pr-2')
     expect(cloudButton).not.toHaveClass('pr-8')
     expect(statusLabel).toHaveClass(
@@ -797,7 +801,8 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(cloudButton)
 
-    expect(onOpenSettings).toHaveBeenCalledWith({ settingsPage: 'connections' })
+    expect(onOpenCloudWork).toHaveBeenCalledTimes(1)
+    expect(onOpenSettings).not.toHaveBeenCalled()
   })
 
   test('opens cloud connection settings from the sidebar cloud management button', async () => {
