@@ -57,6 +57,9 @@ objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["block2", "libc", "NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSView", "NSWindow", "NSWorkspace"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSString", "std"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18.2"
+
 # Wry prints an expected WKDownload cancellation to stderr whenever Wework takes
 # over a browser download. Keep application debug assertions enabled while
 # suppressing that dependency-only false error in development builds.

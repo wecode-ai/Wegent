@@ -128,18 +128,29 @@ fn activate_popout_window(window: &tauri::WebviewWindow) -> Result<(), String> {
         .map_err(|error| format!("Failed to activate Popout Window: {error}"))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn activate_popout_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     let visible_window = window.clone();
     window
         .run_on_main_thread(move || {
-            // On Linux, show and focus are queued separately. Deferring focus by one main-loop
-            // turn ensures Tao observes the window as visible instead of dropping the request.
-            if let Err(error) = visible_window.set_focus() {
-                log::warn!("Failed to focus visible Popout Window: {error}");
-            }
+            use gtk::prelude::*;
+
+            let Ok(gtk_window) = visible_window.gtk_window() else {
+                log::warn!("Failed to access native GTK Popout Window");
+                return;
+            };
+            // Tao discards set_focus while its cached visibility is false. Showing and presenting
+            // the native GTK window in one main-thread turn makes the first reveal focus reliably.
+            gtk_window.show_all();
+            gtk_window.set_focus_on_map(true);
+            gtk_window.present_with_time(gtk::gdk::ffi::GDK_CURRENT_TIME as u32);
         })
         .map_err(|error| format!("Failed to schedule Popout Window activation: {error}"))
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+fn activate_popout_window(_window: &tauri::WebviewWindow) -> Result<(), String> {
+    Ok(())
 }
 
 fn ensure_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {

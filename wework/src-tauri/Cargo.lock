@@ -86,6 +86,7 @@ dependencies = [
  "ctrlc",
  "dirs 5.0.1",
  "fs2",
+ "gtk",
  "libc",
  "log",
  "objc2",
