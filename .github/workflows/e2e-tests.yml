@@ -2,9 +2,12 @@ name: E2E Tests
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  merge_group:
+    types: [checks_requested]
   schedule:
     # Run daily at 2 AM UTC
     - cron: "0 2 * * *"
@@ -12,12 +15,40 @@ on:
 
 # Cancel in-progress runs for the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Platform E2E Changes
+    runs-on: ubuntu-latest
+    outputs:
+      platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+        run: |
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            .github/scripts/classify-ci-changes.sh --all
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+              .github/scripts/classify-ci-changes.sh
+          fi
+
   build-frontend-e2e:
     name: Build Frontend E2E Artifact
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -84,6 +115,8 @@ jobs:
 
   build-executor-e2e-runtime:
     name: Build Executor E2E Runtime Artifact
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -894,8 +927,8 @@ jobs:
   # Merge test reports from all E2E jobs
   merge-reports:
     name: Merge Test Reports
-    needs: [e2e-tests, executor-e2e-tests]
-    if: always()
+    needs: [changes, e2e-tests, executor-e2e-tests]
+    if: always() && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -944,3 +977,51 @@ jobs:
           name: playwright-report-merged
           path: frontend/playwright-report/
           retention-days: 30
+
+  platform-e2e-summary:
+    name: Platform E2E Summary
+    needs:
+      - changes
+      - build-frontend-e2e
+      - build-executor-e2e-runtime
+      - e2e-tests
+      - executor-e2e-tests
+      - merge-reports
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Platform E2E results
+        env:
+          RUN_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true') }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          FRONTEND_BUILD_RESULT: ${{ needs.build-frontend-e2e.result }}
+          EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
+          PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
+          EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
+          REPORT_RESULT: ${{ needs.merge-reports.result }}
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Platform E2E change detection completed with: $CHANGES_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_E2E" != "true" ]]; then
+            echo "Platform E2E is not required for this pull request"
+            exit 0
+          fi
+
+          assert_success() {
+            local result="$1"
+            local name="$2"
+            if [[ "$result" != "success" ]]; then
+              echo "$name completed with: $result"
+              exit 1
+            fi
+          }
+
+          assert_success "$FRONTEND_BUILD_RESULT" "Frontend E2E build"
+          assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
+          assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
+          assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"
+          assert_success "$REPORT_RESULT" "E2E report merge"

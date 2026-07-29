@@ -93,6 +93,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
         limit: Optional[int] = None,
         before_message_id: Optional[str] = None,
         is_group_chat: bool = False,
+        from_latest_compaction: bool = False,
     ) -> list[Message]:
         """Get chat history for a session."""
         total_start = time.perf_counter()
@@ -108,6 +109,8 @@ class RemoteHistoryStore(HistoryStoreInterface):
             params["before_message_id"] = before_message_id
         # Pass is_group_chat to API for proper username prefix handling
         params["is_group_chat"] = str(is_group_chat).lower()
+        if from_latest_compaction:
+            params["from_latest_compaction"] = "true"
 
         url = f"/chat/history/{session_id}"
         full_url = f"{self.base_url}{url}"
@@ -236,6 +239,44 @@ class RemoteHistoryStore(HistoryStoreInterface):
         response = await client.get(
             f"/chat/attachments/{attachment_id}/text",
             params={"session_id": session_id, "offset": offset, "limit": limit},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def list_history_subtasks(
+        self, session_id: str, limit: int | None = None, offset: int = 0
+    ) -> dict:
+        """Fetch a page of the session's subtask summaries (AI backtracking).
+
+        Returns the backend ``SubtaskListResponse`` payload
+        (``subtasks[]`` / ``total`` / ``has_more``).
+        """
+        params: dict[str, Any] = {"offset": offset}
+        if limit is not None:
+            params["limit"] = limit
+        client = await self._get_client()
+        response = await client.get(
+            f"/chat/history/{session_id}/subtasks", params=params
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def get_history_subtask(
+        self,
+        session_id: str,
+        subtask_id: int,
+        cursor: str = "0:0",
+        max_chars: int = 0,
+    ) -> dict:
+        """Fetch one page of a subtask's rendered transcript (un-compaction-scoped).
+
+        Returns the backend ``SubtaskRecordResponse`` payload
+        (``content`` / ``cursor`` / ``next_cursor`` / ``has_more``).
+        """
+        client = await self._get_client()
+        response = await client.get(
+            f"/chat/history/{session_id}/subtasks/{subtask_id}",
+            params={"cursor": cursor, "max_chars": max_chars},
         )
         response.raise_for_status()
         return response.json()

@@ -17,6 +17,7 @@ import {
   localPathExists,
   startLocalTerminal,
 } from '@/lib/local-terminal'
+import { cn } from '@/lib/utils'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
@@ -207,6 +208,9 @@ export function WorkspacePanelCards({
         preferLocalTerminal ? 'local' : 'configured',
       ].join(':')
     : ''
+  const cloudDesktopAvailable = Boolean(
+    cloudToolsAvailable && cloudDesktopExtension.available && activeWorkspaceDeviceId
+  )
   const cloudDesktopLaunchActionRef = useRef<CloudDesktopLaunchAction | null>(null)
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
@@ -580,9 +584,7 @@ export function WorkspacePanelCards({
         run: startTerminalSession,
       },
       desktop: {
-        visible: Boolean(
-          cloudToolsAvailable && cloudDesktopExtension.available && activeWorkspaceDeviceId
-        ),
+        visible: cloudDesktopAvailable,
         disabled: toolsDisabled || projectDevice?.status !== 'online',
         run: async () => {
           await cloudDesktopLaunchActionRef.current?.({ notifyOpened: false })
@@ -590,9 +592,8 @@ export function WorkspacePanelCards({
       },
     }),
     [
-      activeWorkspaceDeviceId,
       availableTools.terminal,
-      cloudToolsAvailable,
+      cloudDesktopAvailable,
       projectDevice?.status,
       projectTerminalAvailable,
       startTerminalSession,
@@ -693,40 +694,42 @@ export function WorkspacePanelCards({
           {error}
         </p>
       )}
-      {!activeTerminalSession && (
-        <div
-          data-testid={testId('workspace-tool-launcher')}
-          className="flex h-full min-h-0 w-full flex-col"
-        >
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-8 py-6">
-            {!hasWorkspaceContext && (
-              <p className="text-center text-sm leading-[18px] text-text-secondary">
-                {t('workbench.project_tool_requires_project', '请选择项目后使用')}
+      <div
+        data-testid={activeTerminalSession ? undefined : testId('workspace-tool-launcher')}
+        className={cn('h-full min-h-0 w-full flex-col', activeTerminalSession ? 'hidden' : 'flex')}
+      >
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-8 py-6">
+          {!hasWorkspaceContext && (
+            <p className="text-center text-sm leading-[18px] text-text-secondary">
+              {t('workbench.project_tool_requires_project', '请选择项目后使用')}
+            </p>
+          )}
+          {error && (
+            <p className="text-center text-sm leading-[18px] text-red-500" role="alert">
+              {error}
+            </p>
+          )}
+          {hasLimitedProjectTools && (
+            <div
+              data-testid={testId('workspace-local-device-limited-tools')}
+              className="rounded-lg border border-border bg-surface px-4 py-5 text-center"
+            >
+              <p className="text-sm font-semibold text-text-primary">
+                {t('workbench.local_device_limited_tools_title')}
               </p>
-            )}
-            {error && (
-              <p className="text-center text-sm leading-[18px] text-red-500" role="alert">
-                {error}
+              <p className="mt-2 text-sm leading-[18px] text-text-secondary">
+                {t('workbench.local_device_limited_tools_desc')}
               </p>
-            )}
-            {hasLimitedProjectTools && (
-              <div
-                data-testid={testId('workspace-local-device-limited-tools')}
-                className="rounded-lg border border-border bg-surface px-4 py-5 text-center"
-              >
-                <p className="text-sm font-semibold text-text-primary">
-                  {t('workbench.local_device_limited_tools_title')}
-                </p>
-                <p className="mt-2 text-sm leading-[18px] text-text-secondary">
-                  {t('workbench.local_device_limited_tools_desc')}
-                </p>
-              </div>
-            )}
-            {projectTerminalAvailable && (
-              <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
+            </div>
+          )}
+          {(projectTerminalAvailable || cloudDesktopAvailable) && (
+            <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
+              {projectTerminalAvailable && (
                 <button
                   type="button"
-                  data-testid={testId('workspace-terminal-card')}
+                  data-testid={
+                    activeTerminalSession ? undefined : testId('workspace-terminal-card')
+                  }
                   onClick={handleTerminalClick}
                   disabled={toolsDisabled || !availableTools.terminal}
                   className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
@@ -745,25 +748,23 @@ export function WorkspacePanelCards({
                       : t('workbench.project_tool_unavailable', '暂不可用')}
                   </span>
                 </button>
-                {cloudToolsAvailable &&
-                  cloudDesktopExtension.available &&
-                  activeWorkspaceDeviceId && (
-                    <cloudDesktopExtension.WorkspaceAction
-                      contextKey={projectKey}
-                      deviceId={activeWorkspaceDeviceId}
-                      disabled={toolsDisabled || projectDevice?.status !== 'online'}
-                      onBusyChange={handleDesktopBusyChange}
-                      onErrorChange={setProjectError}
-                      onLaunchActionChange={handleDesktopLaunchActionChange}
-                      onOpened={handleDesktopOpened}
-                      testIdsEnabled={testIdsEnabled}
-                    />
-                  )}
-              </div>
-            )}
-          </div>
+              )}
+              {cloudDesktopAvailable && activeWorkspaceDeviceId && (
+                <cloudDesktopExtension.WorkspaceAction
+                  contextKey={projectKey}
+                  deviceId={activeWorkspaceDeviceId}
+                  disabled={toolsDisabled || projectDevice?.status !== 'online'}
+                  onBusyChange={handleDesktopBusyChange}
+                  onErrorChange={setProjectError}
+                  onLaunchActionChange={handleDesktopLaunchActionChange}
+                  onOpened={handleDesktopOpened}
+                  testIdsEnabled={testIdsEnabled && !activeTerminalSession}
+                />
+              )}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

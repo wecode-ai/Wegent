@@ -551,8 +551,9 @@ function buildUserTurnsFromNavigation(
   const loadedTurns = buildUserTurns(messages)
   const loadedTurnsByIndex = new Map(loadedTurns.map(turn => [turn.messageIndex, turn]))
   const loadedTurnsById = new Map(loadedTurns.map(turn => [turn.id, turn]))
+  const uniqueNavigation = deduplicateNavigationItems(navigation, loadedTurnsByIndex)
 
-  const navigationTurns = navigation.map((item, index) => {
+  const navigationTurns = uniqueNavigation.map((item, index) => {
     const loadedTurn = loadedTurnsByIndex.get(item.messageIndex) ?? loadedTurnsById.get(item.id)
     return {
       id: loadedTurn?.id ?? item.id,
@@ -569,6 +570,29 @@ function buildUserTurnsFromNavigation(
   return [...navigationTurns, ...loadedTurns.filter(turn => !navigationMessageIds.has(turn.id))]
     .sort((left, right) => left.messageIndex - right.messageIndex)
     .map((turn, turnIndex) => ({ ...turn, turnIndex }))
+}
+
+function deduplicateNavigationItems(
+  navigation: RuntimeTurnNavigationItem[],
+  loadedTurnsByIndex: ReadonlyMap<number, UserTurn>
+): RuntimeTurnNavigationItem[] {
+  const uniqueItems = new Map<string, RuntimeTurnNavigationItem>()
+
+  navigation.forEach(item => {
+    const current = uniqueItems.get(item.id)
+    if (!current) {
+      uniqueItems.set(item.id, item)
+      return
+    }
+
+    const currentIsLoaded = loadedTurnsByIndex.has(current.messageIndex)
+    const itemIsLoaded = loadedTurnsByIndex.has(item.messageIndex)
+    if (!currentIsLoaded && itemIsLoaded) {
+      uniqueItems.set(item.id, item)
+    }
+  })
+
+  return Array.from(uniqueItems.values())
 }
 
 function getUserPromptPreview(message: WorkbenchMessage) {

@@ -8,15 +8,35 @@ import io
 from datetime import datetime
 from typing import BinaryIO
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models.delivery import Delivery, DeliveryAsset
+from app.core.security import create_access_token
+from app.models.delivery import CloudProject, Delivery, DeliveryAsset
 from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
+
+
+class FakeProviderResponse:
+    def __init__(self, payload: object, status_code: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status_code
+        self.content = b"{}"
+
+    def json(self) -> object:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError(
+                "provider error",
+                request=httpx.Request("GET", "https://provider.invalid"),
+                response=httpx.Response(self.status_code),
+            )
 
 
 class FakeCloudFileStorage:
@@ -120,6 +140,551 @@ def test_cloud_project_generates_key_when_omitted(
     assert isinstance(created.json()["id"], str)
     assert created.json()["project_key"].startswith("PRJ")
     assert 2 <= len(created.json()["project_key"]) <= 16
+
+
+def test_cloud_project_list_tolerates_unknown_task_provider(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    known = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "known", "name": "Known provider"},
+    ).json()
+    newer = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "newer", "name": "Newer provider"},
+    ).json()
+    stored = test_db.query(CloudProject).filter(CloudProject.id == newer["id"]).one()
+    stored.metadata_json = {
+        **stored.metadata_json,
+        "task_provider": "provider-from-newer-branch",
+    }
+    test_db.commit()
+
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(test_token))
+
+    assert listed.status_code == 200
+    projects = {item["id"]: item for item in listed.json()["items"]}
+    assert projects[known["id"]]["task_provider"] == "local"
+    assert projects[newer["id"]]["task_provider"] == "provider-from-newer-branch"
+
+
+def test_added_member_can_list_private_cloud_project(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    member = User(
+        user_name="cloud-project-member",
+        password_hash="unused",
+        email="cloud-project-member@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(member)
+    test_db.commit()
+    test_db.refresh(member)
+    member_token = create_access_token(data={"sub": member.user_name})
+
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "sharedprivate",
+            "name": "Shared private project",
+            "visibility": "private",
+        },
+    ).json()
+    added = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(test_token),
+        json={"user_id": member.id, "role": "Developer"},
+    )
+
+    assert added.status_code == 201
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(member_token))
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [project["id"]]
+    assert listed.json()["items"][0]["access_role"] == "Developer"
+
+
+def test_public_project_visitors_only_access_their_own_todo_details(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    visitor = User(
+        user_name="public-project-visitor",
+        password_hash="unused",
+        email="visitor@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(visitor)
+    test_db.commit()
+    test_db.refresh(visitor)
+    visitor_token = create_access_token(data={"sub": visitor.user_name})
+
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "public",
+            "name": "Public collaboration",
+            "visibility": "public",
+        },
+    ).json()
+    owner_item = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Owner task", "description": "private task details"},
+    ).json()
+
+    listed_projects = test_client.get(
+        "/api/v1/cloud-projects", headers=_auth(visitor_token)
+    )
+    assert listed_projects.status_code == 200
+    visible_project = next(
+        item for item in listed_projects.json()["items"] if item["id"] == project["id"]
+    )
+    assert visible_project["visibility"] == "public"
+    assert visible_project["access_role"] == "RestrictedAnalyst"
+    assert visible_project["current_user_id"] == visitor.id
+    assert visible_project["current_user_name"] == visitor.user_name
+
+    listed_items = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+    )
+    assert listed_items.status_code == 200
+    owner_summary = listed_items.json()["items"][0]
+    assert owner_summary["id"] == owner_item["id"]
+    assert owner_summary["description"] == ""
+    assert owner_summary["can_view_detail"] is False
+    assert owner_summary["can_edit"] is False
+
+    hidden_detail = test_client.get(
+        f"/api/v1/loop-items/{owner_item['id']}",
+        headers=_auth(visitor_token),
+    )
+    assert hidden_detail.status_code == 404
+
+    visitor_item = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+        json={"title": "Visitor task", "description": "visitor details"},
+    )
+    assert visitor_item.status_code == 201
+    visitor_item_body = visitor_item.json()
+    assert visitor_item_body["created_by_user_id"] == visitor.id
+    assert visitor_item_body["can_view_detail"] is True
+    assert visitor_item_body["can_edit"] is True
+
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{visitor_item_body['id']}",
+        headers=_auth(visitor_token),
+        json={"version": visitor_item_body["version"], "title": "Visitor task updated"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Visitor task updated"
+
+    external_project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "publicext",
+            "name": "Public external collaboration",
+            "visibility": "public",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "acme/public",
+                "token": "shared-provider-secret",
+            },
+        },
+    ).json()
+    hidden_credential = test_client.get(
+        f"/api/v1/cloud-projects/{external_project['id']}/provider-credential",
+        headers=_auth(visitor_token),
+    )
+    assert hidden_credential.status_code == 404
+
+
+def test_cloud_project_persists_external_task_provider_and_encrypted_token(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GIT_TOKEN_AES_KEY", raising=False)
+    monkeypatch.delenv("GIT_TOKEN_AES_IV", raising=False)
+
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "name": "GitHub issues",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "wecode-ai/Wegent",
+                "domain": "github.com",
+                "token": "github-secret",
+            },
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["project_store"] == "backend"
+    assert created.json()["task_provider"] == "github"
+    assert created.json()["provider_config"] == {
+        "repository": "wecode-ai/Wegent",
+        "domain": "github.com",
+        "credential_configured": True,
+    }
+
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(test_token))
+    match = next(
+        item for item in listed.json()["items"] if item["id"] == created.json()["id"]
+    )
+    assert match["task_provider"] == "github"
+    assert match["provider_config"]["repository"] == "wecode-ai/Wegent"
+    assert match["provider_config"]["credential_configured"] is True
+
+    stored = (
+        test_db.query(CloudProject)
+        .filter(CloudProject.id == created.json()["id"])
+        .one()
+    )
+    serialized = str(stored.metadata_json)
+    assert "github-secret" not in serialized
+    assert "ciphertext" in serialized
+    credential_metadata = stored.metadata_json["provider_config"]["credential"]
+    assert credential_metadata["version"] == 2
+    assert credential_metadata["algorithm"] == "aes-256-gcm"
+
+    credential = test_client.get(
+        f"/api/v1/cloud-projects/{created.json()['id']}/provider-credential",
+        headers=_auth(test_token),
+    )
+    assert credential.status_code == 404
+
+
+def test_cloud_project_can_add_missing_provider_token(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "name": "Existing GitLab project",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "group/project",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+            },
+        },
+    ).json()
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "provider_config": {
+                "repository": "group/project",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+                "token": "gitlab-secret",
+            },
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["provider_config"]["credential_configured"] is True
+    credential = test_client.get(
+        f"/api/v1/cloud-projects/{created['id']}/provider-credential",
+        headers=_auth(test_token),
+    )
+    assert credential.status_code == 404
+
+
+def test_cloud_project_normalizes_gitlab_web_page_repository(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "name": "GitLab web URL",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "hongyu91/tab-prompt/-/issues",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+                "token": "gitlab-secret",
+            },
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["provider_config"]["repository"] == "hongyu91/tab-prompt"
+
+
+def test_external_cloud_project_requires_provider_credential(
+    test_client: TestClient, test_token: str
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "name": "GitLab issues",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "group/project",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+            },
+        },
+    ).json()
+
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+    )
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Must be created in GitLab"},
+    )
+
+    assert listed.status_code == 409
+    assert created.status_code == 409
+    assert "Provider credential is not configured" in created.json()["detail"]
+
+
+def test_backend_routes_cloud_github_issues_without_exposing_token(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_issue = {
+        "number": 7,
+        "title": "Backend issue",
+        "body": "private details",
+        "state": "open",
+        "labels": [
+            {"name": "wegent:creator:1:admin"},
+            {"name": "wegent:status:in_progress"},
+            {"name": "bug"},
+        ],
+        "created_at": "2026-07-28T00:00:00Z",
+        "updated_at": "2026-07-28T00:00:00Z",
+        "closed_at": None,
+    }
+    requests: list[tuple[str, str, object]] = []
+
+    def provider_request(
+        method: str, url: str, **kwargs: object
+    ) -> FakeProviderResponse:
+        requests.append((method, url, kwargs.get("json")))
+        if method == "GET":
+            return FakeProviderResponse([created_issue])
+        return FakeProviderResponse(created_issue)
+
+    monkeypatch.setattr(httpx, "request", provider_request)
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "cloudgh",
+            "name": "Cloud GitHub",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "acme/repo",
+                "token": "server-only-secret",
+            },
+        },
+    ).json()
+
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+    )
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Backend issue", "status": "in_progress", "tags": ["bug"]},
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["id"] == "CLOUDGH-7"
+    assert created.status_code == 201
+    assert any(method == "POST" for method, _, _ in requests)
+    assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
+
+
+def test_public_github_project_enforces_issue_ownership(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    visitor = User(
+        user_name="external-visitor",
+        password_hash="unused",
+        email="external-visitor@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(visitor)
+    test_db.commit()
+    test_db.refresh(visitor)
+    visitor_token = create_access_token(data={"sub": visitor.user_name})
+    issues = {
+        1: {
+            "number": 1,
+            "title": "Owner issue",
+            "body": "owner-only details",
+            "state": "open",
+            "labels": [{"name": "wegent:creator:1:admin"}],
+            "created_at": "2026-07-28T00:00:00Z",
+            "updated_at": "2026-07-28T00:00:00Z",
+        },
+        2: {
+            "number": 2,
+            "title": "Visitor issue",
+            "body": "visitor details",
+            "state": "open",
+            "labels": [{"name": f"wegent:creator:{visitor.id}:{visitor.user_name}"}],
+            "created_at": "2026-07-28T00:00:00Z",
+            "updated_at": "2026-07-28T00:00:00Z",
+        },
+    }
+
+    def provider_request(
+        method: str, url: str, **kwargs: object
+    ) -> FakeProviderResponse:
+        if method == "GET" and url.endswith("/issues"):
+            return FakeProviderResponse(list(issues.values()))
+        number = int(url.rsplit("/", 1)[-1])
+        return FakeProviderResponse(issues[number])
+
+    monkeypatch.setattr(httpx, "request", provider_request)
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "publicgh",
+            "name": "Public GitHub",
+            "visibility": "public",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "acme/public",
+                "token": "server-only-secret",
+            },
+        },
+    ).json()
+
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(visitor_token),
+    )
+    assert listed.status_code == 200
+    by_id = {item["id"]: item for item in listed.json()["items"]}
+    assert by_id["PUBLICGH-1"]["description"] == ""
+    assert by_id["PUBLICGH-1"]["can_view_detail"] is False
+    assert by_id["PUBLICGH-2"]["description"] == "visitor details"
+    assert by_id["PUBLICGH-2"]["created_by_user_name"] == visitor.user_name
+    assert by_id["PUBLICGH-2"]["can_edit"] is True
+
+    hidden = test_client.get(
+        "/api/v1/loop-items/PUBLICGH-1", headers=_auth(visitor_token)
+    )
+    visible = test_client.get(
+        "/api/v1/loop-items/PUBLICGH-2", headers=_auth(visitor_token)
+    )
+    assert hidden.status_code == 404
+    assert visible.status_code == 200
+
+
+def test_backend_routes_gitlab_updates_and_comments(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issue = {
+        "iid": 9,
+        "title": "GitLab issue",
+        "description": "details",
+        "state": "opened",
+        "labels": ["wegent:creator:1:admin", "wegent:status:pending"],
+        "created_at": "2026-07-28T00:00:00Z",
+        "updated_at": "2026-07-28T00:00:00Z",
+    }
+    requests: list[tuple[str, str, object]] = []
+
+    def provider_request(
+        method: str, url: str, **kwargs: object
+    ) -> FakeProviderResponse:
+        payload = kwargs.get("json")
+        requests.append((method, url, payload))
+        if url.endswith("/notes"):
+            return FakeProviderResponse(
+                {
+                    "id": 10,
+                    "body": "ship it",
+                    "author": {"username": "admin"},
+                    "web_url": "https://gitlab.example.com/note/10",
+                    "created_at": "2026-07-28T00:00:00Z",
+                }
+            )
+        if method == "PUT" and isinstance(payload, dict):
+            issue.update(payload)
+            if isinstance(issue.get("labels"), str):
+                issue["labels"] = str(issue["labels"]).split(",")
+            issue["state"] = (
+                "closed" if payload.get("state_event") == "close" else issue["state"]
+            )
+        return FakeProviderResponse(issue)
+
+    monkeypatch.setattr(httpx, "request", provider_request)
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "cloudgl",
+            "name": "Cloud GitLab",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "group/project",
+                "domain": "gitlab.example.com",
+                "api_base": "https://gitlab.example.com/api/v4",
+                "token": "server-only-secret",
+            },
+        },
+    ).json()
+
+    updated = test_client.patch(
+        "/api/v1/loop-items/CLOUDGL-9",
+        headers=_auth(test_token),
+        json={"version": 1, "status": "completed"},
+    )
+    commented = test_client.post(
+        "/api/v1/loop-items/CLOUDGL-9/comments",
+        headers=_auth(test_token),
+        json={"body": "ship it"},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["status"] == "completed"
+    assert commented.status_code == 201
+    assert commented.json()["web_url"] == "https://gitlab.example.com/note/10"
+    assert any(method == "PUT" for method, _, _ in requests)
+    assert any(url.endswith("/notes") for _, url, _ in requests)
+    assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
 
 
 def test_cloud_project_can_link_local_workspace(

@@ -1642,7 +1642,7 @@ describe('MessageList', () => {
     expect(screen.getByText('ls output')).toBeInTheDocument()
   })
 
-  test('keeps completed assistant turns that only have processing blocks', () => {
+  test('hides completed assistant turns that only contain reasoning text', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -1669,9 +1669,40 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-assistant')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('thinking-toggle-button'))
-    expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
+    expect(screen.queryByTestId('message-assistant')).not.toBeInTheDocument()
+    expect(screen.queryByText('正在执行 pwd')).not.toBeInTheDocument()
+  })
+
+  test('shows only the generic thinking indicator while reasoning is streaming', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'thinking-1',
+        subtaskId: 11,
+        type: 'thinking',
+        content: '不应展示的模型思考字符',
+        status: 'streaming',
+        createdAt: 1770000000000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-blocks',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByText('不应展示的模型思考字符')).not.toBeInTheDocument()
+    expect(screen.queryByText('思考过程')).not.toBeInTheDocument()
   })
 
   test('keeps completed process text inside the message-level processing group', () => {
@@ -4596,7 +4627,7 @@ describe('MessageList', () => {
     await user.click(screen.getByTestId('assistant-error-retry'))
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
-    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
   test('classifies hidden raw failed content before generic task status errors', () => {
@@ -4681,7 +4712,7 @@ describe('MessageList', () => {
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
-    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
   test('uses backend error type before raw error text when rendering failed messages', () => {
@@ -4833,6 +4864,10 @@ describe('MessageList', () => {
     const pluginLink = screen.getByTestId('sent-plugin-token-Documents')
 
     expect(pluginLink).toHaveAttribute('href', 'plugin://documents@openai-primary-runtime')
+    fireEvent.click(pluginLink)
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      '/plugins?plugin=documents&marketplace=openai-primary-runtime'
+    )
     expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'Documents Draft a project memo as a document'
@@ -4840,6 +4875,7 @@ describe('MessageList', () => {
     expect(
       screen.queryByText(/plugin:\/\/documents@openai-primary-runtime/)
     ).not.toBeInTheDocument()
+    window.history.replaceState({}, '', '/')
   })
 
   test('renders cloud references in user messages without exposing the internal URI', () => {
@@ -4867,6 +4903,31 @@ describe('MessageList', () => {
       'WEG0001-1 结合代码分析，这个问题可能是因为什么'
     )
     expect(screen.queryByText(/cloud:\/\/projects\/3\/todos/)).not.toBeInTheDocument()
+  })
+
+  test('renders conversation references in user messages without exposing the internal URI', () => {
+    const href =
+      'wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22runtime-42%22%7D'
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: `[$修复登录流程](${href}) 继续分析`,
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const conversationLink = screen.getByTestId(/^sent-conversation-token-/)
+
+    expect(conversationLink).toHaveAttribute('href', href)
+    expect(screen.getByTestId(/^sent-conversation-icon-/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent('修复登录流程 继续分析')
+    expect(screen.queryByText(/wework-conversation:\/\//)).not.toBeInTheDocument()
   })
 })
 

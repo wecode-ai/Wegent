@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode, useMemo } from 'react'
+import { StrictMode, useEffect, useMemo } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
@@ -28,6 +28,7 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
+import { setActiveKeybindings } from '@/lib/keybindings'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
@@ -45,6 +46,10 @@ const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+const deliveryApiMock = vi.hoisted(() => ({
+  available: false,
+  listCloudProjects: vi.fn(),
+}))
 const cloudDesktopExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
 
@@ -58,9 +63,13 @@ const cloudDesktopExtensionMock = vi.hoisted(() => {
         action: ((options?: { notifyOpened?: boolean }) => Promise<void>) | null
       ) => void
     }) => {
-      onLaunchActionChange?.(async options => {
-        await launch(options)
-      })
+      useEffect(() => {
+        const launchAction = async (options?: { notifyOpened?: boolean }) => {
+          await launch(options)
+        }
+        onLaunchActionChange?.(launchAction)
+        return () => onLaunchActionChange?.(null)
+      }, [onLaunchActionChange])
       return null
     },
     isInternalPageUrl: vi.fn(() => false),
@@ -145,7 +154,14 @@ vi.mock('@/lib/native-directory-picker', () => ({
 }))
 
 const tauriMenuMocks = vi.hoisted(() => ({
-  getCurrentWindow: vi.fn(),
+  getCurrentWindow: vi.fn(() => ({
+    startDragging: vi.fn(),
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onResized: vi.fn().mockResolvedValue(vi.fn()),
+  })),
   menuNew: vi.fn(),
   menuPopup: vi.fn(),
 }))
@@ -530,6 +546,8 @@ describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
+    deliveryApiMock.available = false
+    deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [] })
     cloudDesktopExtensionMock.available = false
     cloudDesktopExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
@@ -540,8 +558,21 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
       value: 720,
     })
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
+    setActiveKeybindings([])
     tauriMenuMocks.getCurrentWindow.mockReturnValue({
       label: 'main',
+      startDragging: vi.fn(),
+      minimize: vi.fn(),
+      maximize: vi.fn(),
+      unmaximize: vi.fn(),
+      toggleMaximize: vi.fn(),
+      close: vi.fn(),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      onResized: vi.fn().mockResolvedValue(vi.fn()),
       onDragDropEvent: vi.fn().mockResolvedValue(vi.fn()),
     })
     tauriMenuMocks.menuNew.mockResolvedValue({ popup: tauriMenuMocks.menuPopup })
@@ -981,6 +1012,13 @@ describe('DesktopWorkbenchLayout', () => {
     const lifecycleTaskRunning = props.lifecycleTaskRunning ?? Boolean(state.currentRuntimeTask)
     const workbenchValue = {
       services: {
+        ...(deliveryApiMock.available
+          ? {
+              deliveryApi: {
+                listCloudProjects: deliveryApiMock.listCloudProjects,
+              },
+            }
+          : {}),
         attachmentApi: {
           uploadAttachment: vi.fn().mockImplementation(async (file: File) => ({
             id: 91,
@@ -1329,6 +1367,17 @@ describe('DesktopWorkbenchLayout', () => {
       taskAddresses,
     }
   }
+
+  test('opens the local-capable board route while cloud is disconnected', () => {
+    window.history.pushState({}, '', '/todo')
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('desktop-workbench-content').closest('[aria-hidden="true"]')
+    ).toHaveStyle({ display: 'none' })
+  })
 
   test('submits implementation plan confirmation as a user message response', async () => {
     const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
@@ -1860,6 +1909,41 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+  })
+
+  test('hides cloud project space entries in the @ menu while experimental features are disabled', async () => {
+    experimentalFeatures.enabled = false
+    deliveryApiMock.available = true
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    const editor = (await screen.findByTestId('chat-message-input')) as HTMLElement & {
+      value: string
+    }
+    act(() => {
+      editor.value = '@'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('mention-files-action')).toBeInTheDocument()
+    expect(screen.queryByTestId('mention-cloud-space-direct-action')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mention-cloud-projects-action')).not.toBeInTheDocument()
+  })
+
+  test('shows cloud project space entries in the @ menu while experimental features are enabled', async () => {
+    deliveryApiMock.available = true
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    const editor = (await screen.findByTestId('chat-message-input')) as HTMLElement & {
+      value: string
+    }
+    act(() => {
+      editor.value = '@'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('mention-cloud-space-direct-action')).toBeInTheDocument()
   })
 
   test('forks an earlier completed turn without stopping the running follow-up', async () => {
@@ -2563,6 +2647,62 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-main-header')).toHaveClass('bg-background/20')
     expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('bg-transparent')
     expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('bg-background/95')
+  })
+
+  test('renders the Windows titlebar above the sidebar and workbench content', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.0',
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-windows-titlebar')).toBeInTheDocument()
+    expect(screen.getByTestId('workbench-windows-titlebar')).not.toHaveClass(
+      'border-b',
+      'border-border/40'
+    )
+    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toBeInTheDocument()
+    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-unfocused))]'
+    )
+    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toHaveStyle({
+      left: '240px',
+      right: '138px',
+    })
+    expect(screen.getByTestId('desktop-window-controls')).toBeInTheDocument()
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
+    expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-main-header')).not.toBeInTheDocument()
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('rounded-tl-xl')
+  })
+
+  test('places panel toggles in the Windows titlebar actions, next to the window controls', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.0',
+    })
+
+    renderWorkspacePanelLayout({ mainWidth: 1000 })
+
+    const panelToggles = screen.getByTestId('workbench-panel-toggles')
+    expect(panelToggles).toContainElement(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(panelToggles).toContainElement(
+      screen.getByTestId('toggle-bottom-workspace-panel-button')
+    )
+    expect(screen.queryByTestId('workbench-pinned-panel-toggles')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -3443,8 +3583,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
   })
 
-  test('falls back to the remote-style folder dialog when existing folder targets a remote device', async () => {
-    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+  test('keeps local project creation on the local device when a remote device is preferred', async () => {
+    automationMocks.useNativeDirectoryPicker = false
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
     const onListDeviceDirectories = vi.fn().mockResolvedValue(['repo'])
 
     render(
@@ -3454,10 +3595,21 @@ describe('DesktopWorkbenchLayout', () => {
         onListDeviceDirectories={onListDeviceDirectories}
         state={{
           ...baseProps.state,
+          standaloneDeviceId: 'remote-device',
           devices: [
             {
               id: 1,
-              device_id: 'device-1',
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online',
+              is_default: false,
+              bind_shell: 'claudecode',
+              device_type: 'local',
+              executor_version: '1.8.5',
+            },
+            {
+              id: 2,
+              device_id: 'remote-device',
               name: '10.201.3.200',
               status: 'online',
               is_default: true,
@@ -3473,10 +3625,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-create-local-option'))
 
-    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
+    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('local-device'))
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
-    expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('device-1')
+    expect(screen.getByRole('heading', { name: '使用现有文件夹' })).toBeInTheDocument()
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
   })
 
@@ -4756,17 +4908,22 @@ describe('DesktopWorkbenchLayout', () => {
       const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
       expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
         'absolute',
-        'right-0',
         'top-0',
         'h-full'
       )
+      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
+        right: '5rem',
+      })
       expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('border-l')
       expect(screen.getByTestId('titlebar-actions')).toHaveClass('min-w-[5rem]')
       expect(screen.getByTestId('titlebar-actions')).toContainElement(
         screen.getByTestId('toggle-right-workspace-panel-button')
       )
+      expect(screen.getByTestId('titlebar-actions')).toHaveStyle({
+        right: '0px',
+      })
       expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
-        width: 'calc(100% - 420px)',
+        width: 'calc(100% - 420px - 0px - 5rem)',
       })
       expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
         'after:bg-transparent'

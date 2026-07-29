@@ -96,6 +96,7 @@ vi.mock('@/tauri/localExecutor', () => ({
     ready: true,
     runtimeInstanceId: 'runtime-instance-1',
   }),
+  getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
 
@@ -1107,7 +1108,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
   })
 
-  test('renders the cloud desktop extension action and forwards its opened callback', async () => {
+  test('keeps connection settings open after the cloud desktop extension opens', async () => {
     const onBack = vi.fn()
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
@@ -1115,12 +1116,16 @@ describe('ConnectionsSettingsPage', () => {
 
     const button = await screen.findByTestId('connection-cloud-desktop-button-device-1')
     expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
-      expect.objectContaining({ deviceId: 'device-1', disabled: false }),
+      expect.objectContaining({
+        deviceId: 'device-1',
+        disabled: false,
+        onOpened: expect.any(Function),
+      }),
       undefined
     )
     await userEvent.click(button)
 
-    expect(onBack).toHaveBeenCalledOnce()
+    expect(onBack).not.toHaveBeenCalled()
   })
 
   test('does not render a cloud desktop action when the extension is unavailable', async () => {

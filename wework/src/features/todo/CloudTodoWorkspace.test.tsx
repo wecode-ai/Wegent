@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { User } from '@/types/api'
@@ -12,6 +12,9 @@ const project = {
   project_key: 'WEG',
   name: 'Wegent V4',
   description: 'Shared project',
+  project_store: 'backend' as const,
+  task_provider: 'local' as const,
+  provider_config: {},
   created_by_user_id: 1,
   status: 'active',
   version: 1,
@@ -49,6 +52,8 @@ function services(): WorkbenchServices {
         project_key: values.project_key ?? 'AUTO123',
         name: values.name,
         description: values.description ?? '',
+        task_provider: values.task_provider ?? 'local',
+        provider_config: values.provider_config ?? {},
       })),
       updateLoopItem: vi.fn(async (_itemId, values) => ({
         ...item,
@@ -68,11 +73,16 @@ function services(): WorkbenchServices {
         sha256: 'hash',
         created_by_user_id: 1,
         created_at: '2026-07-22T00:00:00Z',
+        markdown_url: 'wegent://attachments/attachment-1',
+        markdown:
+          '[brief.txt](wegent://attachments/attachment-1)\n<!-- wegent-attachment:attachment-1 -->',
       })),
       accessLoopItemAttachment: vi.fn(async () => ({
         url: 'https://storage.test/attachment-1',
         expires_in_seconds: 900,
       })),
+      readLoopItemAttachment: vi.fn(async () => new Blob(['context'])),
+      downloadLoopItemAttachment: vi.fn(async () => undefined),
       deleteLoopItemAttachment: vi.fn(async () => undefined),
       listTaskBindings: vi.fn(async () => [
         {
@@ -150,6 +160,83 @@ function services(): WorkbenchServices {
 }
 
 describe('CloudTodoWorkspace', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('keeps projects visible when one project issue provider fails', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => {
+      throw new Error('not_found: task not found')
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    expect((await screen.findAllByText('Wegent V4')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('创建第一个项目空间')).not.toBeInTheDocument()
+  })
+
+  it('clears the previous project items and shows a skeleton while switching projects', async () => {
+    const otherProject = {
+      ...project,
+      id: 12,
+      project_key: 'OTHER',
+      name: 'Other Project',
+    }
+    const otherItem = {
+      ...item,
+      id: 'OTHER-1',
+      cloud_project_id: 12,
+      title: 'Other project task',
+    }
+    let resolveBoardFetch: (() => void) | undefined
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [project, otherProject],
+    }))
+    const selectedProjectIds = new Set<number>()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async (projectId: number) => {
+      // The bootstrap preloads counts for every project; only the board fetch
+      // for the selected project stays pending so the skeleton can be asserted.
+      if (selectedProjectIds.has(projectId)) {
+        await new Promise<void>(resolve => {
+          resolveBoardFetch = () => resolve()
+        })
+      }
+      selectedProjectIds.add(projectId)
+      return { items: projectId === 12 ? [otherItem] : [item] }
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await waitFor(() => expect(screen.getByTestId('cloud-todo-board-loading')).toBeInTheDocument())
+    expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
+    resolveBoardFetch?.()
+    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getAllByText('Other Project')[0])
+
+    // The previous project's cards disappear immediately and the skeleton
+    // stays until the new project's items resolve.
+    expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-board-loading')).toBeInTheDocument()
+
+    resolveBoardFetch?.()
+    expect(await screen.findByTestId('cloud-todo-card-OTHER-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-board-loading')).not.toBeInTheDocument()
+  })
+
   it('shows only one hierarchy level at a time on the board', async () => {
     const workbenchServices = services()
     const child = {
@@ -299,6 +386,37 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByText('自动加入')).toBeInTheDocument()
   })
 
+  it('copies the cloud project ID before or after opening the project', async () => {
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-copy-id-11'))
+    expect(writeText).toHaveBeenLastCalledWith('11')
+
+    await userEvent.click(screen.getByTestId('cloud-sidebar-project-11'))
+    await userEvent.click(screen.getByTestId('cloud-sidebar-project-more-11'))
+    expect(screen.getByTestId('cloud-sidebar-project-menu-11')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-header'))
+    expect(screen.queryByTestId('cloud-sidebar-project-menu-11')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-sidebar-project-more-11'))
+    await userEvent.click(screen.getByTestId('cloud-sidebar-copy-project-id-11'))
+
+    expect(writeText).toHaveBeenLastCalledWith('11')
+    expect(screen.queryByTestId('cloud-sidebar-project-menu-11')).not.toBeInTheDocument()
+  })
+
   it('manually adds a project member as a TODO collaborator', async () => {
     const workbenchServices = services()
     render(
@@ -364,6 +482,12 @@ describe('CloudTodoWorkspace', () => {
       )
     )
     expect((await screen.findAllByText('brief.txt')).length).toBeGreaterThan(0)
+
+    await userEvent.click(screen.getByTestId('cloud-todo-attachment-download-attachment-1'))
+    expect(workbenchServices.deliveryApi?.downloadLoopItemAttachment).toHaveBeenCalledWith(
+      'attachment-1',
+      'brief.txt'
+    )
   })
 
   it('collapses and restores the sidebar chrome', async () => {
@@ -394,7 +518,13 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() => expect(screen.getByTestId('cloud-project-add')).toBeInTheDocument())
     await userEvent.click(screen.getByTestId('cloud-project-add'))
     expect(screen.getByTestId('cloud-project-name')).toBeInTheDocument()
-    expect(screen.getByText('项目标识将在创建时自动生成。')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('cloud-project-task-provider-local')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-task-provider-github')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-task-provider-gitlab')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-project-key')).not.toBeInTheDocument()
   })
 
@@ -416,6 +546,9 @@ describe('CloudTodoWorkspace', () => {
       expect(workbenchServices.deliveryApi?.createCloudProject).toHaveBeenCalledWith({
         name: 'Wegent Test',
         description: '',
+        task_provider: 'local',
+        provider_config: {},
+        visibility: 'private',
       })
     )
     expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
@@ -438,7 +571,145 @@ describe('CloudTodoWorkspace', () => {
     expect(workbenchServices.deliveryApi?.createCloudProject).not.toHaveBeenCalled()
   })
 
-  it('opens project member management and filters the board', async () => {
+  it('configures an encrypted GitHub provider for a local project', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectSpaceApis = {
+      local: workbenchServices.deliveryApi,
+      defaultLocation: 'local',
+    }
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.type(screen.getByTestId('cloud-project-name'), 'GitHub board')
+    await userEvent.click(screen.getByTestId('cloud-project-task-provider-github'))
+    await userEvent.type(screen.getByTestId('cloud-project-provider-repository'), 'acme/repo')
+    await userEvent.type(screen.getByTestId('cloud-project-provider-token'), 'github-secret')
+    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi?.createCloudProject).toHaveBeenCalledWith({
+        name: 'GitHub board',
+        description: '',
+        task_provider: 'github',
+        provider_config: {
+          repository: 'acme/repo',
+          token: 'github-secret',
+        },
+      })
+    )
+  })
+
+  it('allows a cloud project to use GitLab Issues', async () => {
+    const workbenchServices = services()
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    await userEvent.type(screen.getByTestId('cloud-project-name'), 'Cloud GitLab board')
+    await userEvent.click(screen.getByTestId('cloud-project-task-provider-gitlab'))
+    await userEvent.type(screen.getByTestId('cloud-project-provider-repository'), 'group/project')
+    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi?.createCloudProject).toHaveBeenCalledWith({
+        name: 'Cloud GitLab board',
+        description: '',
+        task_provider: 'gitlab',
+        provider_config: {
+          repository: 'group/project',
+        },
+        visibility: 'private',
+      })
+    )
+  })
+
+  it('creates a cloud DingTalk AI Table project from a shared link', async () => {
+    const workbenchServices = services()
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.type(screen.getByTestId('cloud-project-name'), '钉钉需求池')
+    await userEvent.click(screen.getByTestId('cloud-project-task-provider-dingtalk_aitable'))
+    expect(screen.getByTestId('cloud-project-create-confirm')).toBeDisabled()
+    await userEvent.type(
+      screen.getByTestId('cloud-project-aitable-url'),
+      'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2'
+    )
+    expect(screen.queryByTestId('cloud-project-aitable-token')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi?.createCloudProject).toHaveBeenCalledWith({
+        name: '钉钉需求池',
+        description: '',
+        task_provider: 'dingtalk_aitable',
+        provider_config: {
+          base_id: 'pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6',
+          table_id: 'hERWDMS',
+          source_url:
+            'https://alidocs.dingtalk.com/i/nodes/pYLaezmVN63PAZGPTPKyr2X3VrMqPxX6?iframeQuery=entrance%3Ddata%26sheetId%3DhERWDMS%26viewId%3DqvGDAH2',
+          view_id: 'qvGDAH2',
+        },
+        visibility: 'private',
+      })
+    )
+  })
+
+  it('routes an explicitly local project to the local project-space API', async () => {
+    const cloudServices = services()
+    const localServices = services()
+    localServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({ items: [] }))
+    cloudServices.projectSpaceApis = {
+      local: localServices.deliveryApi,
+      cloud: cloudServices.deliveryApi,
+      defaultLocation: 'cloud',
+    }
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={cloudServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.click(screen.getByTestId('cloud-project-location-local'))
+    await userEvent.type(screen.getByTestId('cloud-project-name'), 'Local board')
+    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+
+    await waitFor(() =>
+      expect(localServices.deliveryApi?.createCloudProject).toHaveBeenCalledWith({
+        name: 'Local board',
+        description: '',
+        task_provider: 'local',
+        provider_config: {},
+      })
+    )
+    expect(cloudServices.deliveryApi?.createCloudProject).not.toHaveBeenCalled()
+  })
+
+  it('opens project member management and searches tasks without hiding the board', async () => {
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
@@ -452,9 +723,177 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-board-view'))
 
-    await userEvent.click(screen.getByTestId('cloud-search-toggle'))
-    await userEvent.type(screen.getByTestId('cloud-search-input'), 'missing')
-    expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-task-search-toggle'))
+    await userEvent.type(screen.getByTestId('cloud-project-task-search-input'), 'missing')
+    expect(screen.getByText('没有匹配的任务')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+  })
+
+  it('opens the global search with Command+K and opens a task result', async () => {
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await screen.findAllByText('Wegent V4')
+    await userEvent.keyboard('{Meta>}k{/Meta}')
+    await userEvent.type(screen.getByTestId('cloud-global-search-input'), 'WEG-1')
+    await userEvent.click(await screen.findByTestId('cloud-global-search-result-WEG-1'))
+
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
+  })
+
+  it('restores a missing cloud GitLab credential from project management', async () => {
+    const workbenchServices = services()
+    const externalProject = {
+      ...project,
+      task_provider: 'gitlab' as const,
+      provider_config: {
+        repository: 'group/project',
+        domain: 'gitlab.example.com',
+        api_base: 'https://gitlab.example.com/api/v4',
+        credential_configured: false,
+      },
+    }
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [externalProject],
+    }))
+    workbenchServices.deliveryApi!.updateCloudProject = vi.fn(async (_projectId, values) => ({
+      ...externalProject,
+      provider_config: {
+        repository: 'group/project',
+        domain: 'gitlab.example.com',
+        api_base: 'https://gitlab.example.com/api/v4',
+        credential_configured: true,
+      },
+      version: values.version + 1,
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    expect(screen.getByText('需要配置令牌')).toBeInTheDocument()
+    const tagHeading = screen.getByRole('heading', { name: '标签管理' })
+    const providerHeading = screen.getByRole('heading', { name: '任务来源' })
+    expect(
+      tagHeading.compareDocumentPosition(providerHeading) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(screen.getByTestId('cloud-project-provider-manage-save')).toHaveClass(
+      'bg-black',
+      'text-white',
+      'disabled:bg-black',
+      'disabled:text-white'
+    )
+    expect(screen.getByTestId('cloud-project-tag-create-confirm')).toHaveClass(
+      'bg-black',
+      'text-white',
+      'disabled:bg-black',
+      'disabled:text-white'
+    )
+    expect(screen.getByTestId('cloud-project-tag-create-confirm')).not.toHaveClass(
+      'disabled:opacity-50'
+    )
+    await userEvent.type(screen.getByTestId('cloud-project-provider-manage-token'), 'gitlab-secret')
+    await userEvent.click(screen.getByTestId('cloud-project-provider-manage-save'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(11, {
+        version: 1,
+        provider_config: {
+          repository: 'group/project',
+          domain: 'gitlab.example.com',
+          api_base: 'https://gitlab.example.com/api/v4',
+          token: 'gitlab-secret',
+        },
+      })
+    )
+    expect(await screen.findByText('已保存')).toBeInTheDocument()
+  })
+
+  it('updates DingTalk table connection and board mappings from project management', async () => {
+    const workbenchServices = services()
+    const aitableProject = {
+      ...project,
+      task_provider: 'dingtalk_aitable' as const,
+      provider_config: {
+        base_id: 'base-1',
+        table_id: 'table-1',
+        source_url: 'https://alidocs.dingtalk.com/i/nodes/base-1?iframeQuery=sheetId%3Dtable-1',
+        credential_configured: true,
+        board_mapping: { title_field_id: 'fld-title' },
+      },
+    }
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [aitableProject],
+    }))
+    workbenchServices.deliveryApi!.updateCloudProject = vi.fn(async (_projectId, values) => ({
+      ...aitableProject,
+      provider_config: values.provider_config ?? aitableProject.provider_config,
+      version: values.version + 1,
+    }))
+    workbenchServices.aitableApi = {
+      configureProject: vi.fn(async () => undefined),
+      describe: vi.fn(async () => ({
+        base: {},
+        tables: [],
+        active_table: {},
+        fields: [
+          { id: 'fld-title', name: '需求名称', type: 'text', config: {}, raw: {} },
+          { id: 'fld-status', name: '状态', type: 'singleSelect', config: {}, raw: {} },
+        ],
+      })),
+      listRecords: vi.fn(async () => ({ items: [], cursor: null, has_more: false })),
+      createRecord: vi.fn(),
+      updateRecord: vi.fn(),
+      deleteRecord: vi.fn(),
+      createField: vi.fn(),
+      updateField: vi.fn(),
+      deleteField: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    await userEvent.selectOptions(
+      await screen.findByTestId('aitable-mapping-status_field_id'),
+      'fld-status'
+    )
+    await userEvent.click(screen.getByTestId('aitable-manage-save'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(11, {
+        version: 1,
+        provider_config: {
+          base_id: 'base-1',
+          table_id: 'table-1',
+          source_url: 'https://alidocs.dingtalk.com/i/nodes/base-1?iframeQuery=sheetId%3Dtable-1',
+          board_mapping: {
+            title_field_id: 'fld-title',
+            status_field_id: 'fld-status',
+          },
+          status_mode: 'mapped',
+          status_mapping: {},
+          custom_statuses: [],
+        },
+      })
+    )
   })
 
   it('keeps the project header above the macOS drag region and opens new TODO', async () => {

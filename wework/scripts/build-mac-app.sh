@@ -240,6 +240,7 @@ if [ "$NO_SIGN" = "1" ]; then
 fi
 
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \
   "$MACOS_BUILD_TARGET" \

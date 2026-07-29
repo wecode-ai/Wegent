@@ -10,7 +10,7 @@ use super::diagnostics::{
 };
 use super::{codex_error_message, extract_text, message_params};
 use crate::{
-    codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
+    codex_phase::{codex_phase_is_final, codex_phase_is_process, CodexAgentMessagePhaseTracker},
     logging::log_executor_event,
     runner::ExecutionOutcome,
     runtime_work::codex_stream_debug_enabled,
@@ -20,7 +20,11 @@ use crate::{
 #[derive(Default)]
 pub(super) struct CodexRunState {
     final_text: String,
-    saw_delta: bool,
+    final_message_id: Option<String>,
+    final_message_saw_delta: bool,
+    pending_text: String,
+    pending_message_id: Option<String>,
+    pending_message_saw_delta: bool,
     agent_message_phases: CodexAgentMessagePhaseTracker,
     root_thread_id: Option<String>,
     goal_status: Option<String>,
@@ -54,7 +58,11 @@ impl CodexRunState {
 
     pub(super) fn reset_turn_output(&mut self) {
         self.final_text.clear();
-        self.saw_delta = false;
+        self.final_message_id = None;
+        self.final_message_saw_delta = false;
+        self.pending_text.clear();
+        self.pending_message_id = None;
+        self.pending_message_saw_delta = false;
         self.agent_message_phases = CodexAgentMessagePhaseTracker::default();
     }
 
@@ -159,7 +167,24 @@ impl CodexRunState {
             );
             return;
         }
+        if !codex_phase_is_final(phase.as_deref()) {
+            if let Some(delta) = params.get("delta").and_then(Value::as_str) {
+                self.begin_pending_message(codex_item_id(params), true);
+                log_codex_run_state_text(
+                    "delta",
+                    "append_pending",
+                    phase.as_deref(),
+                    params,
+                    params,
+                    delta,
+                );
+                self.pending_text.push_str(delta);
+                self.pending_message_saw_delta = true;
+            }
+            return;
+        }
         if let Some(delta) = params.get("delta").and_then(Value::as_str) {
+            self.begin_final_message(codex_item_id(params), true);
             log_codex_run_state_text(
                 "delta",
                 "append_final",
@@ -169,23 +194,12 @@ impl CodexRunState {
                 delta,
             );
             self.final_text.push_str(delta);
-            self.saw_delta = true;
+            self.final_message_saw_delta = true;
         }
     }
 
     fn append_completed_message(&mut self, params: &Value) {
         let phase = self.agent_message_phases.phase_for_item(params);
-        if self.saw_delta {
-            log_codex_run_state_text(
-                "completed",
-                "skip_after_delta",
-                phase.as_deref(),
-                params,
-                params,
-                "",
-            );
-            return;
-        }
         let item = params.get("item").unwrap_or(params);
         let item_type = item
             .get("type")
@@ -237,6 +251,48 @@ impl CodexRunState {
             return;
         }
         if let Some(text) = extract_text(item) {
+            let item_id = codex_item_id(params);
+            if !codex_phase_is_final(phase.as_deref()) {
+                if self.pending_message_saw_delta
+                    && final_message_ids_match(self.pending_message_id.as_deref(), item_id)
+                {
+                    log_codex_run_state_text(
+                        "completed",
+                        "skip_pending_after_delta",
+                        phase.as_deref(),
+                        params,
+                        item,
+                        &text,
+                    );
+                    return;
+                }
+                self.begin_pending_message(item_id, false);
+                log_codex_run_state_text(
+                    "completed",
+                    "set_pending",
+                    phase.as_deref(),
+                    params,
+                    item,
+                    &text,
+                );
+                self.pending_text = text;
+                self.pending_message_saw_delta = false;
+                return;
+            }
+            if self.final_message_saw_delta
+                && final_message_ids_match(self.final_message_id.as_deref(), item_id)
+            {
+                log_codex_run_state_text(
+                    "completed",
+                    "skip_after_delta",
+                    phase.as_deref(),
+                    params,
+                    item,
+                    &text,
+                );
+                return;
+            }
+            self.begin_final_message(item_id, false);
             log_codex_run_state_text(
                 "completed",
                 "set_final",
@@ -246,8 +302,36 @@ impl CodexRunState {
                 &text,
             );
             self.final_text = text;
-            self.saw_delta = true;
+            self.final_message_saw_delta = false;
         }
+    }
+
+    fn begin_final_message(&mut self, item_id: Option<&str>, clear_on_change: bool) {
+        let Some(item_id) = item_id else {
+            return;
+        };
+        if self.final_message_id.as_deref() == Some(item_id) {
+            return;
+        }
+        if clear_on_change && self.final_message_id.is_some() {
+            self.final_text.clear();
+        }
+        self.final_message_id = Some(item_id.to_owned());
+        self.final_message_saw_delta = false;
+    }
+
+    fn begin_pending_message(&mut self, item_id: Option<&str>, clear_on_change: bool) {
+        let Some(item_id) = item_id else {
+            return;
+        };
+        if self.pending_message_id.as_deref() == Some(item_id) {
+            return;
+        }
+        if clear_on_change && self.pending_message_id.is_some() {
+            self.pending_text.clear();
+        }
+        self.pending_message_id = Some(item_id.to_owned());
+        self.pending_message_saw_delta = false;
     }
 
     fn completed(&self, params: &Value) -> ExecutionOutcome {
@@ -260,7 +344,11 @@ impl CodexRunState {
             .to_ascii_lowercase();
         match status.as_str() {
             "completed" | "complete" | "succeeded" => ExecutionOutcome::Completed {
-                content: self.final_text.clone(),
+                content: if self.final_text.is_empty() {
+                    self.pending_text.clone()
+                } else {
+                    self.final_text.clone()
+                },
             },
             "cancelled" | "canceled" | "interrupted" => {
                 ExecutionOutcome::Cancelled { message: status }
@@ -311,6 +399,29 @@ fn codex_agent_path(value: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+fn codex_item_id(value: &Value) -> Option<&str> {
+    value
+        .get("itemId")
+        .or_else(|| value.get("item_id"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            value
+                .get("item")
+                .and_then(|item| item.get("id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn final_message_ids_match(current_id: Option<&str>, completed_id: Option<&str>) -> bool {
+    match (current_id, completed_id) {
+        (Some(current_id), Some(completed_id)) => current_id == completed_id,
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 fn log_codex_run_state_text(

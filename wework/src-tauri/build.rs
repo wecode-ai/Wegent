@@ -189,15 +189,26 @@ fn copy_sidecar(source: &Path, destination: &Path) {
             source.display()
         );
     }
-    if source != destination {
-        fs::copy(source, destination).unwrap_or_else(|error| {
-            panic!(
-                "Failed to copy local executor sidecar from {} to {}: {error}",
-                source.display(),
-                destination.display()
-            )
-        });
+    if source == destination {
+        make_executable(destination);
+        return;
     }
+    // On Windows the destination may be briefly locked by a previous dev
+    // process or by Cargo's fingerprinting. Remove or rename it first, then
+    // copy the new sidecar into place.
+    if destination.exists() {
+        if fs::remove_file(destination).is_err() {
+            let backup = destination.with_extension("old.exe");
+            let _ = fs::rename(destination, &backup);
+        }
+    }
+    fs::copy(source, destination).unwrap_or_else(|error| {
+        panic!(
+            "Failed to copy local executor sidecar from {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    });
     make_executable(destination);
 }
 

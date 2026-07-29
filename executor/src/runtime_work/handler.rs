@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        combined_codex_developer_instructions, strip_wework_browser_instructions,
-        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_runtime_approval_policy, combined_codex_developer_instructions,
+        strip_wework_browser_instructions, CodexActiveTurnCallback,
+        CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerTurnOptions,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
     },
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
@@ -72,20 +72,17 @@ use super::{
         workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, cached_messages, retain_runtime_handle_user_messages,
+        append_runtime_handle_message, cached_messages, clear_runtime_handle_messages,
         set_runtime_handle_messages,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{
-        full_transcript_messages, merge_missing_user_message_metadata,
-        normalized_user_request_content, transcript_messages,
-    },
+    transcript::{full_transcript_messages, normalized_user_request_content, transcript_messages},
     transcript_page::transcript_page,
     util::{
-        apply_runtime_payload_metadata, bool_field, execution_request, id_field,
+        apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
-        prompt_text, runtime_task_id, string_field, timestamp_ms_field, workspace_group_path,
-        workspace_path,
+        prompt_text, restore_cloud_project_id, runtime_task_id, string_field, timestamp_ms_field,
+        workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -102,6 +99,9 @@ const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
 const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
 const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
+const WORKTREE_AUTO_CLEANUP_BATCH_DELAY: Duration = Duration::from_secs(30);
+const WORKTREE_AUTO_CLEANUP_ERROR_DELAY: Duration = Duration::from_secs(5 * 60);
+const WORKTREE_AUTO_CLEANUP_MAX_EMPTY_ROUNDS: usize = 3;
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 

@@ -212,6 +212,62 @@ describe('createLocalAppServices', () => {
     })
   })
 
+  test('deduplicates catalog reconciliation across local service instances', async () => {
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      toolProfile: 'native',
+    })
+    saveLocalModelConfig({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      modelId: 'pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry,
+      codexCatalogModelId: String(catalogEntry.slug),
+      catalogReady: false,
+    })
+    let resolveRestart: ((value: { restarted: boolean }) => void) | undefined
+    const restart = new Promise<{ restarted: boolean }>(resolve => {
+      resolveRestart = resolve
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return restart
+      return {}
+    })
+    const ensure = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+      version: '1.9.0',
+      runtimeInstanceId: 'runtime-1',
+    })
+    const firstServices = createLocalAppServices({ ensure, request, subscribe: vi.fn() })
+    const secondServices = createLocalAppServices({ ensure, request, subscribe: vi.fn() })
+
+    const firstDevices = firstServices.deviceApi.listDevices()
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith('runtime.codex.app_server.restart', { ifIdle: true })
+    )
+    const secondDevices = secondServices.deviceApi.listDevices()
+    let secondResolved = false
+    void secondDevices.then(() => {
+      secondResolved = true
+    })
+    await Promise.resolve()
+
+    expect(
+      request.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
+    ).toHaveLength(1)
+    expect(
+      request.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
+    ).toHaveLength(1)
+    expect(secondResolved).toBe(false)
+
+    resolveRestart?.({ restarted: true })
+    await Promise.all([firstDevices, secondDevices])
+  })
+
   test('returns Codex provider models in local model list', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.models.list') {
@@ -443,6 +499,7 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
@@ -481,6 +538,7 @@ describe('createLocalAppServices', () => {
       runtimeProjectKey: 'product',
       runtimeProjectName: 'Product',
       runtimeWorkspaceRoots: ['/Users/me/project', '/Users/me/api'],
+      cloudProjectId: 'cloud-project-42',
       taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
@@ -519,6 +577,7 @@ describe('createLocalAppServices', () => {
           user_name: 'hongyu9',
           email: 'hongyu9@example.com',
         },
+        cloudProjectId: 'cloud-project-42',
         task_title: 'Hello',
         subtask_title: 'Hello - Assistant',
         prompt: 'hello',
@@ -1257,7 +1316,7 @@ describe('createLocalAppServices', () => {
       cloudModelGateway: {
         baseUrl: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         apiKey: 'cloud-login-token',
-        mcpUrl: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
+        backendUrl: 'https://cloud.example.com/custom',
       },
     })
 
@@ -1274,7 +1333,8 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
-        weworkCloudModelContextWindow: '128000',
+        weworkCloudModelContextWindow: '1048576',
+        weworkCloudModelMaxOutputTokens: '96000',
       },
     })
 
@@ -1288,7 +1348,8 @@ describe('createLocalAppServices', () => {
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
-        model_context_window: 128000,
+        model_context_window: 1048576,
+        max_output_tokens: 96000,
         codex_responses_compat_proxy: true,
         default_headers: {
           'X-Wegent-Model-Type': 'user',
@@ -1303,14 +1364,13 @@ describe('createLocalAppServices', () => {
         },
       })
     )
-    expect(payload.executionRequest.mcp_servers).toEqual([
-      {
-        name: 'wegent_delivery',
-        type: 'streamable-http',
-        url: 'https://cloud.example.com/custom/api/mcp/delivery/sse',
-        headers: { Authorization: 'Bearer cloud-login-token' },
-      },
-    ])
+    expect(payload.executionRequest.mcp_servers).toEqual([])
+    expect(payload.executionRequest).toEqual(
+      expect.objectContaining({
+        backend_url: 'https://cloud.example.com/custom',
+        auth_token: 'cloud-login-token',
+      })
+    )
     expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
   })
 
@@ -1379,7 +1439,7 @@ describe('createLocalAppServices', () => {
     const additionalContext = {
       cloudCollaboration: {
         kind: 'application' as const,
-        value: 'Current TODO: WEG-1. Use the wegent_delivery MCP tools when needed.',
+        value: 'Current TODO: WEG-1. Use the wework_space MCP tools when needed.',
       },
     }
 
@@ -1434,9 +1494,9 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     const prompt = payload.executionRequest.prompt as string
     expect(prompt).toContain('[projectSpaceCapability]')
-    expect(prompt).toContain('wegent_delivery is a server id, not a callable tool')
-    expect(prompt).toContain('create_cloud_project')
-    expect(prompt).toContain('do not use list_mcp_resources to discover tools')
+    expect(prompt).toContain('Use wework_space as the only interface')
+    expect(prompt).toContain('Do not use git commands')
+    expect(prompt).toContain('read_item_attachment')
   })
 
   test('adds configured local proxy to local runtime execution requests', async () => {

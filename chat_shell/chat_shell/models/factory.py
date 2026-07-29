@@ -111,6 +111,7 @@ class LangChainModelFactory:
                 "temperature": kw.get("temperature"),
                 "max_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
+                "timeout": kw.get("request_timeout"),
                 "model_kwargs": (
                     {"extra_headers": cfg.get("default_headers")}
                     if cfg.get("default_headers")
@@ -143,6 +144,7 @@ class LangChainModelFactory:
                 "temperature": kw.get("temperature"),
                 "max_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
+                "default_request_timeout": kw.get("request_timeout"),
                 # Caching strategy:
                 # - Automatic caching (top-level cache_control): available when
                 #   the provider supports it (is_support_claude_automatic_caching).
@@ -175,6 +177,7 @@ class LangChainModelFactory:
                 "temperature": kw.get("temperature"),
                 "max_output_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
+                "timeout": kw.get("request_timeout"),
                 "additional_headers": cfg.get("default_headers") or None,
             },
         },

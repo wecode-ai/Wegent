@@ -17,9 +17,16 @@ import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
 import type { CloudProject } from '@/api/deliveries'
-import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
+import {
+  resolveDataTransferWorkspacePaths,
+  resolveStoredWorkspacePaths,
+} from '@/lib/workspace-path-transfer'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
+import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface ProjectChatComposerProps {
   value: string
@@ -50,6 +57,7 @@ interface ProjectChatComposerProps {
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
@@ -104,6 +112,7 @@ export function ProjectChatComposer({
   workspaceTarget,
   workspaceFileApi,
   cloudMentionCandidates,
+  conversationMentionCandidates,
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
@@ -144,8 +153,11 @@ export function ProjectChatComposer({
     setIsDraggingFiles(false)
     if (disabled) return
 
-    const files = Array.from(event.dataTransfer.files)
-    if (files.length > 0) onFileSelect(files)
+    void resolveDataTransferWorkspacePaths(
+      event.dataTransfer,
+      'drop',
+      workspaceTarget?.workspaceSource
+    ).then(transfer => applyWorkspacePathTransfer(value, transfer, onChange, onFileSelect))
   }
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content
@@ -160,9 +172,13 @@ export function ProjectChatComposer({
     onCancelGoalDraft?.()
     if (phrase.mode === 'plan') onSetPlanMode?.()
     if (phrase.mode === 'goal') onSetGoal?.()
-    onChange(value ? `${value}\n${phrase.content}` : phrase.content)
+    const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
+    onChange(phraseValue)
     if (phrase.attachmentPaths?.length) {
-      void readDroppedFiles(phrase.attachmentPaths).then(onFileSelect)
+      void resolveStoredWorkspacePaths(
+        phrase.attachmentPaths,
+        workspaceTarget?.workspaceSource === 'remote'
+      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -264,6 +280,7 @@ export function ProjectChatComposer({
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
           cloudMentionCandidates={cloudMentionCandidates}
+          conversationMentionCandidates={conversationMentionCandidates}
           cloudProjectCandidates={cloudProjectCandidates}
           cloudSpaceEnabled={cloudSpaceEnabled}
           onSelectCloudProject={onSelectCloudProject}

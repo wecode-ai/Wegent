@@ -27,7 +27,7 @@ async fn env_lock() -> EnvLockGuard {
         _guard: LOCK
             .get_or_init(|| StdMutex::new(()))
             .lock()
-            .expect("environment lock should be available"),
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
     }
 }
 
@@ -166,17 +166,18 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
                 .collect::<Vec<_>>()
         })
         .expect("workspace list should be present");
-    assert_eq!(product_workspaces.len(), 2);
+    assert_eq!(product_workspaces.len(), 1);
     assert_eq!(
         product_workspaces[0]["projectRoots"],
         json!([first_root, second_root])
     );
-    let total_tasks = product_workspaces
-        .iter()
-        .filter_map(|workspace| workspace["tasks"].as_array())
-        .map(Vec::len)
-        .sum::<usize>();
-    assert_eq!(total_tasks, 1);
+    assert_eq!(
+        product_workspaces[0]["tasks"]
+            .as_array()
+            .expect("project workspace tasks should be present")
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -196,7 +197,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
+    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -1488,7 +1489,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-text-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
+    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -2195,11 +2196,16 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
+    write_fake_codex_for_turns(log_path, 1)
+}
+
+fn write_fake_codex_for_turns(log_path: &Path, exit_after_turns: usize) -> PathBuf {
     let path = temp_path("fake-codex-send", "sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
+turn_count=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -2214,7 +2220,6 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/read"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
-      exit 0
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -2260,6 +2265,7 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)
+      turn_count=$((turn_count + 1))
       progress_id='progress-1'
       case "$line" in
         *'"model":"gpt-4.1"'*) progress_id='progress-2' ;;
@@ -2271,12 +2277,15 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
-      exit 0
+      if [ "$turn_count" -ge {} ]; then
+        exit 0
+      fi
       ;;
   esac
 done
 "#,
-        log_path.display()
+        log_path.display(),
+        exit_after_turns
     );
     write_executable(&path, &content);
     path
@@ -3056,7 +3065,7 @@ async fn recv_events_until<F>(events: &mut broadcast::Receiver<Value>, mut done:
 where
     F: FnMut(&[Value]) -> bool,
 {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut received = Vec::new();
     loop {
         if done(&received) {

@@ -88,6 +88,10 @@ Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打
 
 分页或按发言跳转可能让前端同时持有不连续的 transcript 区间。Wework 会在相邻消息索引之间显示缺失区间，并在该标记首次进入视口时自动请求一次；如果运行时仍无法补齐同一个区间，前端必须停止自动重试，只保留用户点击重试。缺失区间加载只更新当前标记的状态，不能接管发言导航的滚动状态、关闭浏览器滚动锚定或切换消息虚拟化模式，否则无法补齐的历史会形成请求与布局抖动循环。
 
+`loadedTranscriptRanges` 是判断历史区间是否已加载的权威状态，不能只根据当前可见消息的 `messageIndex` 是否连续来判断。模型透明重试等流程可能让前端折叠已经加载的失败尝试，此时可见消息索引会跳号，但中间记录并不缺失。只有相邻可见消息之间存在未被任何已加载区间覆盖的索引时，Wework 才显示缺失区间标记，并且请求范围必须裁剪为实际未覆盖的部分。
+
+发言导航以稳定的客户端消息 ID 标识用户消息。重试或恢复可能让 transcript 导航元数据暂时包含多个指向同一客户端消息的条目；前端必须合并这些重复项，并优先保留与当前已加载消息索引匹配的条目，避免重复刻度、重叠预览和错误跳转。
+
 可用下面的手工 benchmark 复测本机 rollout：
 
 ```bash
@@ -136,6 +140,8 @@ POST /api/runtime-work/guidance
 Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + localTaskId`、用户文本和前端生成的 `clientGuidanceId` 转发为设备 RPC `runtime.tasks.guidance`。executor 必须定位正在运行的 Codex turn，并通过 Codex app-server 原生引导能力把用户文本追加到当前 turn；如果没有可引导的活跃 turn，应返回 `no_active_turn`，前端再把这条消息按普通 follow-up 发送。`runtime.tasks.guidance` 不创建新的中心库任务或子任务，也不把 `workspacePath` 当成任务身份。
 
 前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
+
+Codex 原生任务的持久消息只以 Codex rollout 和 `thread/read` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存合并进 Provider transcript；缺失的消息必须修复 Codex 事件记录或 transcript 解析主路径。前端在当前 pane 中可以用实时事件维护尚未持久化的视图，但后台收到引导成功事件时只能结算引导队列，不能把同一条用户消息写入另一份缓存 transcript。重新打开对话后，消息完全由 `thread/read` 恢复。
 
 用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
 

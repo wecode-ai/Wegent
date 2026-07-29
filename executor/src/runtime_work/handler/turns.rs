@@ -44,6 +44,7 @@ fn hook_user_id(value: &Value) -> Option<String> {
 impl RuntimeWorkRpcHandler {
     pub(super) fn spawn_turn(&self, mut turn: SpawnTurnRequest) {
         self.apply_project_workspace_roots(&mut turn.request);
+        crate::task_runtime::mcp::ensure_space_mcp_server(&mut turn.request);
         let SpawnTurnRequest {
             local_task_id,
             request,
@@ -375,6 +376,9 @@ impl RuntimeWorkRpcHandler {
             "completedAt": timestamp,
         });
         self.store.update_task(local_task_id, |link| {
+            if link.thread_id.is_some() {
+                return;
+            }
             append_runtime_handle_message(&mut link.runtime_handle, message.clone());
             link.updated_at = timestamp;
         });

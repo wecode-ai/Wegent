@@ -81,6 +81,46 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
 }
 
 #[tokio::test]
+async fn codex_app_server_engine_rejects_a_stale_thread_provider_before_turn_start() {
+    let _lock = env_lock().await;
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-stale-provider-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex_with_thread_provider(&log_path, "stale-provider");
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: "codex app-server thread/start applied unexpected model provider: \
+                      expected=openai, actual=stale-provider"
+                .to_owned()
+        }
+    );
+    let messages = read_json_lines(&log_path);
+    assert_eq!(messages[2]["method"], "thread/start");
+    assert!(
+        messages
+            .iter()
+            .all(|message| message["method"] != "turn/start"),
+        "a mismatched provider must be rejected before starting the turn"
+    );
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_maps_vision_prompt_blocks_to_user_input() {
     let _lock = env_lock().await;
     let log_path = std::env::temp_dir().join(format!(
@@ -179,7 +219,7 @@ async fn codex_app_server_engine_routes_provider_overrides_through_local_proxy()
     assert!(args.iter().any(|value| {
         value.as_str().is_some_and(|value| {
             value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-                && value.contains("/v1/codex-router/model-")
+                && value.contains("/v1/codex-router/task-")
         })
     }));
     assert!(!args.iter().any(|value| {
@@ -249,8 +289,14 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
     );
     assert_eq!(messages[0]["env"]["HTTP_PROXY"], "socks5://127.0.0.1:7890");
     assert_eq!(messages[0]["env"]["HTTPS_PROXY"], "socks5://127.0.0.1:7890");
-    assert_eq!(messages[0]["env"]["NO_PROXY"], "localhost,.internal");
-    assert_eq!(messages[0]["env"]["no_proxy"], "localhost,.internal");
+    assert_eq!(
+        messages[0]["env"]["NO_PROXY"],
+        "localhost,.internal,127.0.0.1,::1,host.docker.internal"
+    );
+    assert_eq!(
+        messages[0]["env"]["no_proxy"],
+        "localhost,.internal,127.0.0.1,::1,host.docker.internal"
+    );
     assert_eq!(messages[3]["params"]["modelProvider"], "openai");
 }
 
@@ -440,16 +486,30 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
                     "command": "uvx",
                     "args": ["bot-tool"],
                     "env": {"BOT_ENV": "1"}
+                },
+                "sensitive-shell": {
+                    "type": "stdio",
+                    "command": "node",
+                    "args": ["sensitive-tool"],
+                    "default_tools_approval_mode": "prompt"
                 }
             }
         }]),
-        mcp_servers: vec![json!({
-            "name": "request-docs",
-            "type": "streamable-http",
-            "url": "https://mcp.example.com/request-docs",
-            "bearer_token_env_var": "REQUEST_DOCS_TOKEN",
-            "headers": {"Authorization": "Bearer task-token"}
-        })],
+        mcp_servers: vec![
+            json!({
+                "name": "request-docs",
+                "type": "streamable-http",
+                "url": "https://mcp.example.com/request-docs",
+                "bearer_token_env_var": "REQUEST_DOCS_TOKEN",
+                "headers": {"Authorization": "Bearer task-token"}
+            }),
+            json!({
+                "name": "request-sensitive",
+                "type": "streamable-http",
+                "url": "https://mcp.example.com/request-sensitive",
+                "defaultToolsApprovalMode": "prompt"
+            }),
+        ],
         model_config: json!({
             "model": "openai",
             "model_id": "gpt-5.5",
@@ -486,6 +546,23 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
     assert_config_arg(args, "mcp_servers.bot-shell.command=\"uvx\"");
     assert_config_arg(args, "mcp_servers.bot-shell.args=[\"bot-tool\"]");
     assert_config_arg(args, "mcp_servers.bot-shell.env.BOT_ENV=\"1\"");
+    assert_config_arg(
+        args,
+        "mcp_servers.bot-shell.default_tools_approval_mode=\"approve\"",
+    );
+    assert_config_arg(args, "mcp_servers.sensitive-shell.command=\"node\"");
+    assert_config_arg(
+        args,
+        "mcp_servers.sensitive-shell.default_tools_approval_mode=\"prompt\"",
+    );
+    assert_config_arg(
+        args,
+        "mcp_servers.request-docs.default_tools_approval_mode=\"approve\"",
+    );
+    assert_config_arg(
+        args,
+        "mcp_servers.request-sensitive.default_tools_approval_mode=\"prompt\"",
+    );
 }
 
 #[tokio::test]
@@ -724,6 +801,48 @@ while IFS= read -r line; do
 done
 "#,
         log_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_with_thread_provider(log_path: &Path, provider: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-thread-provider-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":1,"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":2,"result":{{"modelProvider":"{}","thread":{{"id":"thread-1","modelProvider":"{}"}}}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        provider,
+        provider
     );
     fs::write(&path, content).unwrap();
     #[cfg(unix)]

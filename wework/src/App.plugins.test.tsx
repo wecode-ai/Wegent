@@ -7,13 +7,19 @@ import {
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { updateAppPreferences } from '@/tauri/appPreferences'
-import type { InstalledPlugin, LocalDeviceSkill } from '@/types/api'
+import type { InstalledPlugin } from '@/types/api'
 import './i18n'
 import App from './App'
 
-const localCodexPluginMocks = vi.hoisted(() => ({
-  listInstalledPlugins: vi.fn(),
-  listSkills: vi.fn(),
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    startDragging: vi.fn(),
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onResized: vi.fn().mockResolvedValue(vi.fn()),
+  }),
 }))
 
 const localPathMocks = vi.hoisted(() => ({
@@ -32,6 +38,7 @@ vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   requestLocalExecutor: vi.fn().mockResolvedValue({}),
   subscribeLocalExecutorEvents: vi.fn().mockResolvedValue(vi.fn()),
   connectLocalExecutorToBackend: vi
@@ -63,8 +70,6 @@ vi.mock('@/api/local/codexPlugins', async importOriginal => {
         nativeCodexHomeExists: true,
         shouldPromptMigration: false,
       }),
-      listInstalledPlugins: localCodexPluginMocks.listInstalledPlugins,
-      listSkills: localCodexPluginMocks.listSkills,
     }),
   }
 })
@@ -250,23 +255,25 @@ function installedCodexSitesPlugin(): InstalledPlugin {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
     metadata: {
-      name: 'sites',
-      namespace: 'openai-bundled',
-      labels: { id: 'sites' },
+      name: 'wegent-sites',
+      namespace: 'default',
+      labels: { id: '101' },
     },
     spec: {
       source: {
         type: 'marketplace',
-        providerKey: 'openai-bundled',
-        pluginKey: 'sites',
+        providerKey: 'wegent-marketplace',
+        pluginKey: 'wegent-sites',
+        catalogItemId: '100',
+        marketplace: 'wegent',
       },
-      displayName: 'Sites',
-      description: 'Build and deploy websites with Sites',
-      version: '0.1.27',
+      displayName: '站点',
+      description: 'Build and deploy websites with Wegent Sites',
+      version: '0.1.0',
       installState: 'installed',
       enabled: true,
       componentStates: {},
-      manifest: { name: 'sites' },
+      manifest: { name: 'wegent-sites' },
       components: {
         skills: [],
         commands: [],
@@ -279,14 +286,42 @@ function installedCodexSitesPlugin(): InstalledPlugin {
         monitors: [],
         bins: [],
       },
-      interface: null,
+      interface: {
+        displayName: '站点',
+        defaultPrompt: ['Build an internal website and validate it locally'],
+      },
       packageRef: null,
       sourcePayload: {
-        pluginName: 'sites',
-        marketplaceName: 'openai-bundled',
+        filename: 'wegent-sites.zip',
       },
     },
     status: { state: 'enabled' },
+  }
+}
+
+function successfulSitesDeviceSync() {
+  return {
+    success: true,
+    device_id: 'local-device',
+    mode: 'merge',
+    skills: [],
+    plugins: [{ id: 101, name: 'wegent-sites', status: 'synced' }],
+    mcps: [],
+    errors: [],
+    synced: 1,
+    failed: 0,
+    skipped: 0,
+    results: [
+      {
+        device_id: 'local-device',
+        success: true,
+        error: null,
+        skills: [],
+        plugins: [{ id: 101, name: 'wegent-sites', status: 'synced' }],
+        mcps: [],
+        errors: [],
+      },
+    ],
   }
 }
 
@@ -665,13 +700,27 @@ describe('App plugins route', () => {
     sessionStorage.clear()
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
     workbenchValue.state.runtimeWork = null
     workbenchValue.state.currentRuntimeTask = null
+    workbenchValue.state.devices = [
+      {
+        id: 1,
+        device_id: 'local-device',
+        name: 'Local device',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+        executor_version: '1.8.5',
+      },
+    ]
+    workbenchValue.state.standaloneDeviceId = 'local-device'
     vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)
     vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
-    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
-    localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
-    localPathMocks.exists.mockReset().mockResolvedValue(false)
     mockSystemSkillsFetch()
   })
 
@@ -771,6 +820,17 @@ describe('App plugins route', () => {
             }),
         } as Response
       }
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              plugin: installedCodexSitesPlugin(),
+              sync: successfulSitesDeviceSync(),
+            }),
+        } as Response
+      }
       throw new Error(`Unexpected request: ${url}`)
     })
     window.history.pushState({}, '', '/sites')
@@ -784,32 +844,58 @@ describe('App plugins route', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
       })
     )
+
+    await userEvent.click(screen.getByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:9100/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ device_id: 'local-device' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
+      })
+    )
   })
 
-  test('renders Sites and starts a chat with the installed Codex Sites plugin', async () => {
+  test('ensures the cloud Sites plugin and opens it in a new chat', async () => {
     localStorage.setItem('auth_token', 'wegent-secret')
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () =>
-        Promise.resolve({
-          items: [
-            {
-              siteid: 'site-1',
-              name: '产品发布页',
-              internal_url: 'http://sites.internal/product',
-              external_url: null,
-              publish_status: 'unpublished',
-              thumbnail_url: null,
-            },
-          ],
-          total: 1,
-          offset: 0,
-          limit: 20,
-        }),
-    } as Response)
-    localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
-      items: [installedCodexSitesPlugin()],
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              plugin: installedCodexSitesPlugin(),
+              sync: successfulSitesDeviceSync(),
+            }),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: [
+                {
+                  siteid: 'site-1',
+                  name: '产品发布页',
+                  internal_url: 'http://sites.internal/product',
+                  external_url: null,
+                  publish_status: 'unpublished',
+                  thumbnail_url: null,
+                },
+              ],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
     })
     window.history.pushState({}, '', '/sites')
 
@@ -830,94 +916,190 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('sites-create-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
-    expect(localCodexPluginMocks.listInstalledPlugins).toHaveBeenCalledTimes(1)
-    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/builtin/wegent-sites/ensure-installed',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ device_id: 'local-device' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+      })
+    )
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
-        input: '[$Sites](plugin://sites@openai-bundled) ',
-        pluginName: 'Sites',
+        input:
+          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '站点',
       }
     )
   })
 
-  test('falls back to the Wegent Backend Sites skill when Codex Sites is unavailable', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
-    } as Response)
-    vi.mocked(workbenchValue.startNewSkillChat).mockResolvedValue(true)
-    window.history.pushState({}, '', '/sites')
-
-    renderApp()
-
-    await userEvent.click(await screen.findByTestId('sites-create-button'))
-
-    expect(workbenchValue.startNewSkillChat).toHaveBeenCalledWith(['sites:sites-building'], {
-      allowLocalSkills: false,
+  test('keeps Sites open when the target device sync is not confirmed', async () => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ plugin: installedCodexSitesPlugin() }),
+        } as Response
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+      } as Response
     })
-  })
-
-  test('uses the Codex Sites plugin reference when the native bundled Sites skill is available', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
-    } as Response)
-    localCodexPluginMocks.listSkills.mockResolvedValue([
-      {
-        name: 'sites:sites-building',
-        description: 'Build websites with Sites',
-        path: '/Users/alice/.codex/plugins/cache/openai-bundled/sites/0.1.27/skills/sites-building/SKILL.md',
-        source: 'codex',
-        origin: 'local',
-        plugin_name: 'sites',
-        plugin_provider: 'openai-bundled',
-      } satisfies LocalDeviceSkill,
-    ])
     window.history.pushState({}, '', '/sites')
 
     renderApp()
 
     await userEvent.click(await screen.findByTestId('sites-create-button'))
 
-    await waitFor(() => expect(window.location.pathname).toBe('/'))
-    expect(localCodexPluginMocks.listSkills).toHaveBeenCalledWith({ forceReload: true })
-    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
-    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
-      {
-        input: '[$Sites](plugin://sites@openai-bundled) ',
-        pluginName: 'Sites',
-      }
+    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
+      'Sites 插件未能同步到目标设备，请检查设备后重试'
     )
+    expect(window.location.pathname).toBe('/sites')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
-  test('uses the Codex Sites plugin reference when its native plugin cache exists', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
-    } as Response)
-    localPathMocks.exists.mockImplementation(path =>
-      Promise.resolve(path === '/Users/test/.codex/plugins/cache/openai-bundled/sites')
-    )
+  test('keeps Sites open when merge sync does not acknowledge the Sites plugin', async () => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        const sync = successfulSitesDeviceSync()
+        sync.plugins = [{ id: 202, name: 'historical-plugin', status: 'synced' }]
+        sync.results[0].plugins = sync.plugins
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              plugin: installedCodexSitesPlugin(),
+              sync,
+            }),
+        } as Response
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+      } as Response
+    })
     window.history.pushState({}, '', '/sites')
 
     renderApp()
 
     await userEvent.click(await screen.findByTestId('sites-create-button'))
 
-    await waitFor(() => expect(window.location.pathname).toBe('/'))
-    expect(localPathMocks.exists).toHaveBeenCalledWith(
-      '/Users/test/.codex/plugins/cache/openai-bundled/sites'
+    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
+      'Sites 插件未能同步到目标设备，请检查设备后重试'
     )
-    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
-    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
-      {
-        input: '[$Sites](plugin://sites@openai-bundled) ',
-        pluginName: 'Sites',
+    expect(window.location.pathname).toBe('/sites')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('does not install Sites until an online compatible target device is selected', async () => {
+    workbenchValue.state.devices = []
+    workbenchValue.state.standaloneDeviceId = null
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
+      '请选择一个在线且版本兼容的设备后再创建站点'
+    )
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([input]) =>
+          String(input).includes('/plugins/builtin/wegent-sites/ensure-installed')
+        )
+    ).toBe(false)
+  })
+
+  test('keeps Sites open and allows retry when cloud plugin installation fails', async () => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        throw new Error('plugin install failed')
       }
+      return {
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+      } as Response
+    })
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
+      'Sites 插件安装失败，请重试'
     )
+    expect(window.location.pathname).toBe('/sites')
+    expect(screen.getByTestId('sites-create-button')).toBeEnabled()
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('explains when the cloud Backend does not provide the built-in Sites endpoint', async () => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/builtin/wegent-sites/ensure-installed')) {
+        return {
+          ok: false,
+          status: 404,
+          text: () => Promise.resolve('{"detail":"Not Found"}'),
+        } as Response
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+      } as Response
+    })
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
+      '云端 Backend 尚未升级 Sites 插件，请先部署最新 Backend'
+    )
+    expect(window.location.pathname).toBe('/sites')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('requires a cloud connection before installing Sites in local-first mode', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      runtimeMode: 'local-first',
+    }
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+
+    await screen.findByTestId('sites-unavailable-state')
+    await userEvent.click(screen.getByTestId('sites-create-button'))
+
+    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
+      '连接云端后才能使用 Sites 插件'
+    )
+    expect(window.location.pathname).toBe('/sites')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
   test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {

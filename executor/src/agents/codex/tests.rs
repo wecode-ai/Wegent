@@ -117,6 +117,56 @@ fn persistent_app_server_enables_deferred_mcp_tool_search() {
     assert!(!config
         .config_overrides
         .contains(&"features.tool_search_always_defer_mcp_tools=false".to_owned()));
+    assert!(config
+        .config_overrides
+        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+}
+
+#[test]
+fn initialize_params_does_not_advertise_openai_form_elicitation_extension() {
+    let params = initialize_params();
+
+    assert_eq!(params["capabilities"]["experimentalApi"], true);
+    assert!(params["capabilities"]
+        .get("mcpServerOpenaiFormElicitation")
+        .is_none());
+}
+
+#[test]
+fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
+    let params = json!({
+        "serverName": "wegent-sites",
+        "mode": "form",
+        "message": "请选择内网访问范围。",
+        "requestedSchema": {
+            "type": "object",
+            "properties": {
+                "audience": {
+                    "type": "string",
+                    "title": "访问范围",
+                    "description": "请选择站点发布到内网后的访问范围。",
+                    "enum": ["all", "owner", "custom"],
+                    "enumNames": ["所有人", "仅自己", "指定人"]
+                }
+            },
+            "required": ["audience"]
+        }
+    });
+
+    let payload = mcp_server_elicitation_request_user_input_params(&params)
+        .expect("enum + enumNames form should map to request_user_input payload");
+
+    assert_eq!(payload["itemId"], "mcp_server_elicitation");
+    assert_eq!(payload["questions"][0]["id"], "audience");
+    assert_eq!(payload["questions"][0]["header"], "访问范围");
+    assert_eq!(
+        payload["questions"][0]["options"],
+        json!([
+            {"label": "所有人", "description": "all"},
+            {"label": "仅自己", "description": "owner"},
+            {"label": "指定人", "description": "custom"}
+        ])
+    );
 }
 
 #[test]
@@ -274,6 +324,9 @@ fn codex_launch_config_enables_streaming_patch_updates() {
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
 }
 
 #[test]
@@ -320,6 +373,21 @@ fn function_tool_profile_enables_responses_tool_conversion() {
     );
 
     assert!(upstream.convert_custom_tools);
+}
+
+#[test]
+fn explicit_upstream_uses_configured_max_output_tokens() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "moonshot-kimi-k3",
+            "upstream_api_format": "anthropic-messages",
+            "max_output_tokens": 96_000
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert_eq!(upstream.max_output_tokens, Some(96_000));
 }
 
 #[test]
@@ -468,7 +536,7 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
     assert!(launch_config.local_proxy_registration.is_some());
     assert!(launch_config.config_overrides.iter().any(|value| {
         value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && value.contains("/v1/codex-router/model-")
+            && value.contains("/v1/codex-router/task-")
     }));
     for params in [
         thread_start_params(&request, &launch_config),
@@ -496,13 +564,15 @@ fn user_configured_provider_preserves_native_responses_tools() {
     env::set_var(WEGENT_CODEX_HOME_ENV, &root);
     env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
 
-    let upstream = configured_codex_provider("wework-e2e").expect("configured provider");
+    let upstream = configured_codex_provider("wework-e2e", Some("http://127.0.0.1:7890"))
+        .expect("configured provider");
 
     assert_eq!(upstream.api_format, "openai-responses");
     assert_eq!(
         upstream.request_url.as_deref(),
         Some("http://127.0.0.1:3456/v1/responses")
     );
+    assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
     assert!(!upstream.convert_custom_tools);
     let _ = fs::remove_dir_all(root);
 }
@@ -522,7 +592,7 @@ fn user_configured_provider_converts_tools_for_non_responses_upstreams() {
     env::set_var(WEGENT_CODEX_HOME_ENV, &root);
     env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
 
-    let upstream = configured_codex_provider("wework-e2e").expect("configured provider");
+    let upstream = configured_codex_provider("wework-e2e", None).expect("configured provider");
 
     assert_eq!(upstream.api_format, "anthropic-messages");
     assert_eq!(
@@ -575,6 +645,26 @@ fn codex_launch_config_forwards_web_search_mode() {
 }
 
 #[test]
+fn codex_launch_config_defaults_context_window_to_256k() {
+    let request = ExecutionRequest {
+        prompt: Value::String("create a file".to_owned()),
+        model_config: json!({
+            "model_id": "moonshot-kimi-k3",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config = build_codex_launch_config(&request);
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert_eq!(config.get("model_context_window"), Some(&json!(262_144)));
+}
+
+#[test]
 fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
@@ -596,12 +686,58 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
     );
     assert!(launch_config.config_overrides.iter().any(|override_value| {
         override_value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && override_value.contains("/v1/codex-router/model-")
+            && override_value.contains("/v1/codex-router/task-")
     }));
     assert!(!launch_config
         .config_overrides
         .iter()
         .any(|override_value| override_value.contains("experimental_bearer_token")));
+}
+
+#[test]
+fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
+    let task_id = "codex-launch-config-stable-model-switch-task".to_owned();
+    let luna_request = ExecutionRequest {
+        task_id: task_id.clone(),
+        model_config: json!({
+            "model_id": "gpt-5.6-luna",
+            "base_url": "http://luna.local/v1",
+            "api_key": "luna-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+    let sol_request = ExecutionRequest {
+        task_id,
+        model_config: json!({
+            "model_id": "gpt-5.6-sol",
+            "base_url": "http://sol.local/v1",
+            "api_key": "sol-key",
+            "api_format": "responses",
+            "codex_responses_compat_proxy": true,
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let luna_config = build_codex_launch_config(&luna_request);
+    let sol_config = build_codex_launch_config(&sol_request);
+    let proxy_url = |config: &CodexLaunchConfig| {
+        config
+            .config_overrides
+            .iter()
+            .find(|value| value.starts_with("model_providers.wework-router.base_url="))
+            .expect("local proxy base URL")
+            .to_owned()
+    };
+
+    assert_eq!(proxy_url(&luna_config), proxy_url(&sol_config));
+    assert!(luna_config
+        .config_overrides
+        .contains(&"model=gpt-5.6-luna".to_owned()));
+    assert!(sol_config
+        .config_overrides
+        .contains(&"model=gpt-5.6-sol".to_owned()));
 }
 
 #[test]
@@ -636,6 +772,19 @@ fn codex_launch_config_forwards_runtime_proxy_env() {
         launch_config.env.get("ALL_PROXY").map(String::as_str),
         Some("http://127.0.0.1:7890")
     );
+}
+
+#[test]
+fn required_loopback_hosts_are_merged_into_no_proxy() {
+    assert_eq!(
+        merge_required_no_proxy(Some("example.com, localhost")),
+        "example.com,localhost,127.0.0.1,::1,host.docker.internal"
+    );
+    assert_eq!(
+        merge_required_no_proxy(Some("LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL")),
+        "LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL"
+    );
+    assert_eq!(merge_required_no_proxy(None), DEFAULT_NO_PROXY);
 }
 
 #[test]
@@ -959,6 +1108,140 @@ fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
 }
 
 #[test]
+fn codex_run_state_uses_latest_completed_agent_message_in_same_turn() {
+    let mut state = CodexRunState::default();
+
+    for (id, text) in [
+        ("msg-before-tool", "I found the failing step."),
+        (
+            "msg-after-tool",
+            "The failure is caused by a stale lockfile.",
+        ),
+    ] {
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": id,
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "text": text
+                    }
+                }
+            }))
+            .is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "The failure is caused by a stale lockfile.".to_owned()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_prefers_explicit_final_text_over_unphased_text() {
+    let mut state = CodexRunState::default();
+
+    for (id, phase, text) in [
+        ("msg-uncertain", None, "I may need another tool."),
+        ("msg-final", Some("final_answer"), "The task is complete."),
+    ] {
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": id,
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "phase": phase,
+                        "text": text
+                    }
+                }
+            }))
+            .is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "The task is complete.".to_owned()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_does_not_duplicate_completed_text_after_matching_delta() {
+    let mut state = CodexRunState::default();
+
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-final",
+                "delta": "Done."
+            }
+        }))
+        .is_none());
+    assert!(state
+        .handle_message(&json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-final",
+                    "type": "agentMessage",
+                    "role": "assistant",
+                    "text": "Done."
+                }
+            }
+        }))
+        .is_none());
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Done.".to_owned()
+        }
+    );
+}
+
+#[test]
 fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
     let mut request = ExecutionRequest {
         prompt: Value::String("plan this".to_owned()),
@@ -1024,8 +1307,33 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
+        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
+    let request = ExecutionRequest::default();
+    let mut launch_config = CodexLaunchConfig::default();
+    launch_config
+        .config_overrides
+        .push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+
+    let thread_start = thread_start_params(&request, &launch_config);
+    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+
+    for params in [thread_start, thread_resume, thread_fork] {
+        assert_eq!(
+            params["config"]["features.tool_call_mcp_elicitation"],
+            false
+        );
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
     }
 }
 
@@ -1072,6 +1380,30 @@ fn codex_permission_profile_validation_accepts_effective_full_access() {
     });
 
     validate_codex_permission_profile("thread/resume", &response).unwrap();
+}
+
+#[test]
+fn codex_model_provider_validation_rejects_stale_loaded_provider() {
+    let response = json!({
+        "modelProvider": "wework-router",
+        "thread": {"modelProvider": "wework-router"},
+    });
+
+    let error = validate_codex_model_provider("thread/resume", &response, Some("openai"))
+        .expect_err("a stale provider must not start a turn");
+
+    assert!(error.contains("expected=openai"));
+    assert!(error.contains("actual=wework-router"));
+}
+
+#[test]
+fn codex_model_provider_validation_accepts_requested_provider() {
+    let response = json!({
+        "modelProvider": "openai",
+        "thread": {"modelProvider": "openai"},
+    });
+
+    validate_codex_model_provider("thread/resume", &response, Some("openai")).unwrap();
 }
 
 #[test]

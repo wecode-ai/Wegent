@@ -21,6 +21,7 @@ import {
   Folder,
   LibraryBig,
   ListTodo,
+  MessageCircle,
   MessageSquare,
   Package,
   PackageOpen,
@@ -256,6 +257,10 @@ export const MessageList = memo(function MessageList({
         : visibleMessages.findIndex(message => message.id === forceVirtualMessageId),
     [forceVirtualMessageId, visibleMessages]
   )
+  const streamingVirtualMessageIndex = useMemo(
+    () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
+    [visibleMessages]
+  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
@@ -306,10 +311,10 @@ export const MessageList = memo(function MessageList({
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
           ? Array.from({ length: range.count }, (_, index) => index)
           : defaultRangeExtractor(range)
-      if (forcedVirtualMessageIndex < 0 || indexes.includes(forcedVirtualMessageIndex)) {
-        return indexes
-      }
-      return [...indexes, forcedVirtualMessageIndex].sort((left, right) => left - right)
+      const forcedIndexes = [
+        ...new Set([forcedVirtualMessageIndex, streamingVirtualMessageIndex]),
+      ].filter(index => index >= 0 && !indexes.includes(index))
+      return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
     },
     initialMeasurementsCache,
   })
@@ -1653,7 +1658,7 @@ function MessageHoverActions({
 }
 
 const CODEX_MENTION_LINK_PATTERN =
-  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+))\)/g
+  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1667,12 +1672,15 @@ function displayCodexMentionName(name: string): string {
     .join(' ')
 }
 
-function codexMentionKind(href: string): 'skill' | 'app' | 'plugin' | 'file' | 'folder' | 'cloud' {
+function codexMentionKind(
+  href: string
+): 'skill' | 'app' | 'plugin' | 'file' | 'folder' | 'cloud' | 'conversation' {
   if (href.startsWith('app://')) return 'app'
   if (href.startsWith('plugin://')) return 'plugin'
   if (href.startsWith('file://')) return 'file'
   if (href.startsWith('folder://')) return 'folder'
   if (href.startsWith('cloud://')) return 'cloud'
+  if (href.startsWith('wework-conversation://')) return 'conversation'
   return 'skill'
 }
 
@@ -1729,6 +1737,8 @@ function renderUserContent(
               pathReference.directory ? { isDirectory: true } : undefined
             )
           }
+          const pluginReference = parsePluginUri(href)
+          if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
         }}
       >
         {mentionKind === 'folder' ? (
@@ -1745,11 +1755,16 @@ function renderUserContent(
           ) : (
             <LibraryBig data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
           )
+        ) : mentionKind === 'conversation' ? (
+          <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}
         <span className="min-w-0 truncate">
-          {mentionKind === 'file' || mentionKind === 'folder' || mentionKind === 'cloud'
+          {mentionKind === 'file' ||
+          mentionKind === 'folder' ||
+          mentionKind === 'cloud' ||
+          mentionKind === 'conversation'
             ? mentionName
             : displayCodexMentionName(mentionName)}
         </span>
@@ -1794,6 +1809,7 @@ function getDisplayProcessingBlocks(
 
   return blocks
     .filter(block => {
+      if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
       return Boolean(block.content.trim())
@@ -2274,7 +2290,6 @@ function AssistantErrorCard({
 }) {
   const { t } = useTranslation('chat')
   const [isDetailExpanded, setIsDetailExpanded] = useState(false)
-  const [isDismissed, setIsDismissed] = useState(false)
   const displayError = rawError || error
   const hasErrorDetails = Boolean(displayError)
   const parsedError = parseChatError(displayError ?? '', errorType)
@@ -2299,10 +2314,6 @@ function AssistantErrorCard({
             ),
           })
 
-  if (isDismissed) {
-    return null
-  }
-
   return (
     <div
       data-testid="assistant-error-card"
@@ -2326,10 +2337,7 @@ function AssistantErrorCard({
           <button
             type="button"
             data-testid="assistant-error-retry"
-            onClick={() => {
-              setIsDismissed(true)
-              onRetry?.(message)
-            }}
+            onClick={() => onRetry?.(message)}
             className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
           >
             {t('assistant_error.actions.retry', '重试')}
@@ -2369,3 +2377,5 @@ function AssistantErrorCard({
     </div>
   )
 }
+import { buildPluginDetailRoute, parsePluginUri } from '@/features/plugins/pluginNavigation'
+import { navigateTo } from '@/lib/navigation'

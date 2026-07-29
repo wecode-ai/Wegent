@@ -4,6 +4,7 @@ import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
+import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -54,6 +55,7 @@ const LOCAL_DEVICE_ID = 'local-device'
 const CLOUD_BACKGROUND_CACHE_TTL_MS = 30_000
 
 export interface HybridWorkbenchServicesOptions {
+  backendUrl?: string
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
@@ -285,7 +287,7 @@ export function createHybridWorkbenchServices(
   const cloudModelGateway = {
     baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
     apiKey: options.token,
-    mcpUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/mcp/delivery/sse`,
+    ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
   const localServices = createLocalAppServices({ cloudModelGateway, user: options.user })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
@@ -883,9 +885,17 @@ export function createHybridWorkbenchServices(
       }
     },
   }
+  const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
 
   return {
     ...cloudServices,
+    aitableApi: localServices.aitableApi,
+    dwsApi: localServices.dwsApi,
+    projectSpaceApis: {
+      local: localServices.deliveryApi,
+      cloud: cloudProjectSpaceApi,
+      defaultLocation: 'cloud',
+    },
     teamApi: localServices.teamApi,
     skillApi: localServices.skillApi,
     projectApi: {

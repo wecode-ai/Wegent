@@ -36,6 +36,23 @@ provider `base_url` 可以是服务根地址、带版本前缀的 API base，或
 
 云端或远端设备执行任务时，模型选择器不会展示只配置在当前桌面端的本机自定义模型。本机模型只能由本机 executor 使用；Codex 内置模型和云端 Model CRD 可以用于本机或云端执行。
 
+### 模型限流重试
+
+executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型服务返回 HTTP `429 Too Many Requests` 时，会自动重发同一模型请求。默认最多重试 5 次，退避等待依次为 1 秒、5 秒、10 秒、30 秒和 60 秒。
+
+如果上游返回标准 `Retry-After` 响应头，proxy 会优先采用该等待时间，并将单次等待限制在 60 秒以内。非 429 响应不会触发这项策略；重试耗尽后，proxy 会把最后一次 429 状态和错误正文返回给 Codex。已经开始输出的流不会通过这项机制重放，避免重复生成或重复执行工具。
+
+### Namespace 工具兼容
+
+Codex 向 OpenAI Responses API 发送工具时，可以使用 `type: "namespace"` 把多个子工具组织在同一个 namespace 下。OpenAI Chat Completions 和 Anthropic Messages 没有对应的 namespace 字段，因此 executor 的 Codex compat proxy 会在协议转换边界执行可逆映射：
+
+1. 请求转换时，将 namespace 内的子工具展开为 Chat/Anthropic 的普通 function tools。没有重名时保留子工具原名；存在重名时使用包含 namespace 的稳定别名。
+2. 别名只使用 Chat function name 允许的字符，并限制在 64 字节内；过长名称使用稳定哈希截断。
+3. 历史 tool call 和指定 `tool_choice` 使用同一份映射，避免多轮对话切换工具身份。
+4. 上游返回平铺 tool call 后，proxy 恢复原始 `name` 和 `namespace`，再以 Responses 事件交给 Codex 路由。
+
+这个映射属于单次模型请求的协议上下文，不写入模型配置，也不依赖根据工具名猜测 namespace。不同 namespace 中的同名工具仍能准确路由到各自的执行器。
+
 ## 安全收益
 
 - Wework 桌面端和本地 executor 永远不会拿到真实 provider `api_key`。

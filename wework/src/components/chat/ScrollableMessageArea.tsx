@@ -32,6 +32,11 @@ interface RuntimeTranscriptGap {
   end: number
 }
 
+interface RuntimeTranscriptRange {
+  start: number
+  end: number
+}
+
 interface UserViewportAnchor {
   messageId: string
   anchorIndex: number
@@ -45,6 +50,7 @@ interface ScrollableMessageAreaProps {
   hasMoreBefore?: boolean
   loadingMoreBefore?: boolean
   turnNavigation?: RuntimeTurnNavigationItem[]
+  loadedTranscriptRanges?: RuntimeTranscriptRange[]
   className?: string
   scrollerClassName?: string
   contentClassName?: string
@@ -115,6 +121,9 @@ function areScrollableMessageAreaPropsEqual(
     previous.hasMoreBefore !== next.hasMoreBefore ? 'hasMoreBefore' : null,
     previous.loadingMoreBefore !== next.loadingMoreBefore ? 'loadingMoreBefore' : null,
     previous.turnNavigation !== next.turnNavigation ? 'turnNavigation' : null,
+    previous.loadedTranscriptRanges !== next.loadedTranscriptRanges
+      ? 'loadedTranscriptRanges'
+      : null,
     previous.className !== next.className ? 'className' : null,
     previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
     previous.contentClassName !== next.contentClassName ? 'contentClassName' : null,
@@ -188,6 +197,7 @@ function ScrollableMessagePaneContent({
   hasMoreBefore = false,
   loadingMoreBefore = false,
   turnNavigation,
+  loadedTranscriptRanges,
   className,
   scrollerClassName,
   contentClassName,
@@ -236,13 +246,16 @@ function ScrollableMessagePaneContent({
   const turnNavigationScrollingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
+  const previousLatestGuidanceMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const scrollFrameRef = useRef<number | null>(null)
   const restoringScrollKeyRef = useRef<string | null>(null)
   const followingBottomKeyRef = useRef<string | null>(null)
   const userScrollPausedAutoFollowRef = useRef(false)
+  const userScrollIntentRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
+  const lastScrollTopRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
@@ -254,6 +267,7 @@ function ScrollableMessagePaneContent({
   )
   const [loadingTranscriptGapKey, setLoadingTranscriptGapKey] = useState<string | null>(null)
   const lastMessage = messages[messages.length - 1]
+  const latestGuidanceMessageId = findLatestGuidanceMessageId(messages)
   const currentScrollKey = useMemo(() => scrollPositionKey(conversationKey), [conversationKey])
   const messageScrollSignature = useMemo(() => {
     if (!lastMessage) return 'empty'
@@ -381,7 +395,7 @@ function ScrollableMessagePaneContent({
 
   const renderTranscriptGapAfterMessage = useCallback(
     (message: WorkbenchMessage, nextMessage: WorkbenchMessage | undefined) => {
-      const gap = runtimeTranscriptGapBetween(message, nextMessage)
+      const gap = runtimeTranscriptGapBetween(message, nextMessage, loadedTranscriptRanges)
       if (!gap) return null
       const gapKey = runtimeTranscriptGapKey(gap)
       return (
@@ -394,7 +408,7 @@ function ScrollableMessagePaneContent({
         />
       )
     },
-    [loadTranscriptGap, loadingTranscriptGapKey, scrollRef]
+    [loadTranscriptGap, loadedTranscriptRanges, loadingTranscriptGapKey, scrollRef]
   )
 
   const saveCurrentScrollPosition = useCallback(
@@ -404,6 +418,13 @@ function ScrollableMessagePaneContent({
       setConversationScrollSnapshot(currentScrollKey, createScrollSnapshot(element, scrollTop))
     },
     [currentScrollKey, messages.length]
+  )
+
+  useLayoutEffect(
+    () => () => {
+      saveCurrentScrollPosition()
+    },
+    [saveCurrentScrollPosition]
   )
 
   const updateScrollState = useCallback(
@@ -421,6 +442,9 @@ function ScrollableMessagePaneContent({
       const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
       const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
+      const scrolledUp =
+        lastScrollTopRef.current !== null && element.scrollTop < lastScrollTopRef.current - 0.5
+      lastScrollTopRef.current = element.scrollTop
       isAtBottomRef.current = isAtBottom
       if (isScrolledToBottom) {
         userScrollPausedAutoFollowRef.current = false
@@ -428,11 +452,7 @@ function ScrollableMessagePaneContent({
       } else if (options.forceSave) {
         userScrollPausedAutoFollowRef.current = true
       }
-      if (
-        !isAtBottom &&
-        restoringScrollKeyRef.current !== currentScrollKey &&
-        followingBottomKeyRef.current !== currentScrollKey
-      ) {
+      if (!isScrolledToBottom && options.forceSave && scrolledUp) {
         clearScheduledScrolls()
       }
       if (
@@ -459,6 +479,7 @@ function ScrollableMessagePaneContent({
       } else {
         element.scrollTop = element.scrollHeight
       }
+      lastScrollTopRef.current = element.scrollTop
       if (options.saveSnapshot) {
         saveCurrentScrollPosition(element.scrollHeight)
       }
@@ -485,6 +506,7 @@ function ScrollableMessagePaneContent({
     } else {
       element.scrollTop = nextScrollTop
     }
+    lastScrollTopRef.current = element.scrollTop
 
     const overflow = element.scrollHeight > element.clientHeight + 8
     const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
@@ -556,6 +578,12 @@ function ScrollableMessagePaneContent({
     const conversationChanged = previousConversationKeyRef.current !== conversationKey
     const messagesLoaded = previousMessageCountRef.current === 0 && messages.length > 0
     const lastMessageChanged = previousLastMessageIdRef.current !== (lastMessage?.id ?? null)
+    const guidanceMessageApplied =
+      !conversationChanged &&
+      previousMessageCountRef.current > 0 &&
+      lastMessageChanged &&
+      latestGuidanceMessageId !== null &&
+      previousLatestGuidanceMessageIdRef.current !== latestGuidanceMessageId
     const shouldRestoreScroll = Boolean(
       currentScrollKey &&
       messages.length > 0 &&
@@ -566,10 +594,12 @@ function ScrollableMessagePaneContent({
       !shouldRestoreScroll &&
       (conversationChanged ||
         messagesLoaded ||
+        guidanceMessageApplied ||
         (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey
     previousLastMessageIdRef.current = lastMessage?.id ?? null
+    previousLatestGuidanceMessageIdRef.current = latestGuidanceMessageId
     previousMessageCountRef.current = messages.length
 
     if (conversationChanged) {
@@ -606,6 +636,7 @@ function ScrollableMessagePaneContent({
     clearScheduledScrolls,
     isTurnNavigationAutoScrollSuspended,
     lastMessage,
+    latestGuidanceMessageId,
     messageScrollSignature,
     messages.length,
     scheduleStableRestoreSavedScrollPosition,
@@ -657,6 +688,7 @@ function ScrollableMessagePaneContent({
     const offsetDelta = offsetFromScrollerTop - anchor.offsetFromScrollerTop
     if (Math.abs(offsetDelta) < 0.5) return
     scroller.scrollTop += offsetDelta
+    lastScrollTopRef.current = scroller.scrollTop
   }, [])
 
   useEffect(() => {
@@ -722,31 +754,43 @@ function ScrollableMessagePaneContent({
     scrollToBottom('smooth', { saveSnapshot: true })
   }
 
-  const pauseAutoFollowForUserScroll = useCallback(() => {
-    userScrollPausedAutoFollowRef.current = true
-    clearScheduledScrolls()
-    captureUserViewportAnchor()
-  }, [captureUserViewportAnchor, clearScheduledScrolls])
+  const markUserScrollIntent = useCallback(() => {
+    userScrollIntentRef.current = true
+  }, [])
 
   const handleScroll = useCallback(() => {
+    const userInitiated = userScrollIntentRef.current
+    userScrollIntentRef.current = false
     if (restoringScrollKeyRef.current === currentScrollKey) {
-      updateScrollState({ skipSave: true })
-      return
+      if (!userInitiated) {
+        updateScrollState({ skipSave: true })
+        return
+      }
+      clearScheduledScrolls()
     }
-    restoringScrollKeyRef.current = null
     updateScrollState({ forceSave: true })
     if (userScrollPausedAutoFollowRef.current) {
       captureUserViewportAnchor()
     }
-  }, [captureUserViewportAnchor, currentScrollKey, updateScrollState])
+  }, [captureUserViewportAnchor, clearScheduledScrolls, currentScrollKey, updateScrollState])
 
   useEffect(() => {
     const externalScroller = externalScrollRef?.current
     if (!externalScroller || externalScroller === internalScrollRef.current) return
 
     externalScroller.addEventListener('scroll', handleScroll)
-    return () => externalScroller.removeEventListener('scroll', handleScroll)
-  }, [externalScrollRef, handleScroll])
+    externalScroller.addEventListener('wheel', markUserScrollIntent)
+    externalScroller.addEventListener('pointerdown', markUserScrollIntent)
+    externalScroller.addEventListener('touchstart', markUserScrollIntent)
+    externalScroller.addEventListener('keydown', markUserScrollIntent)
+    return () => {
+      externalScroller.removeEventListener('scroll', handleScroll)
+      externalScroller.removeEventListener('wheel', markUserScrollIntent)
+      externalScroller.removeEventListener('pointerdown', markUserScrollIntent)
+      externalScroller.removeEventListener('touchstart', markUserScrollIntent)
+      externalScroller.removeEventListener('keydown', markUserScrollIntent)
+    }
+  }, [externalScrollRef, handleScroll, markUserScrollIntent])
 
   const scrollToBottomButton = showScrollButton ? (
     <button
@@ -794,13 +838,11 @@ function ScrollableMessagePaneContent({
             '[overflow-anchor:none]',
           scrollerClassName
         )}
-        onWheel={event => {
-          if (event.deltaY < 0) {
-            pauseAutoFollowForUserScroll()
-          }
-        }}
-        onTouchMove={pauseAutoFollowForUserScroll}
         onScroll={handleScroll}
+        onWheel={markUserScrollIntent}
+        onPointerDown={markUserScrollIntent}
+        onTouchStart={markUserScrollIntent}
+        onKeyDown={markUserScrollIntent}
       >
         <div
           ref={contentRef}
@@ -907,6 +949,14 @@ function ScrollableMessagePaneContent({
 
 function scrollPositionKey(conversationKey: string | number | null | undefined): string | null {
   return conversationKey == null ? null : String(conversationKey)
+}
+
+function findLatestGuidanceMessageId(messages: WorkbenchMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.runtimeGuidance === true) return message.id
+  }
+  return null
 }
 
 function setConversationScrollSnapshot(key: string, snapshot: ConversationScrollSnapshot) {
@@ -1049,17 +1099,30 @@ function RuntimeTranscriptGapMarker({
 
 function runtimeTranscriptGapBetween(
   message: WorkbenchMessage,
-  nextMessage: WorkbenchMessage | undefined
+  nextMessage: WorkbenchMessage | undefined,
+  loadedRanges: RuntimeTranscriptRange[] | undefined
 ): RuntimeTranscriptGap | null {
   if (!nextMessage) return null
   const currentIndex = runtimeMessageIndex(message)
   const nextIndex = runtimeMessageIndex(nextMessage)
   if (currentIndex === null || nextIndex === null || nextIndex <= currentIndex + 1) return null
 
-  return {
-    start: currentIndex + 1,
-    end: nextIndex,
+  let gapStart = currentIndex + 1
+  const gapEnd = nextIndex
+  const sortedRanges = [...(loadedRanges ?? [])]
+    .filter(range => range.end > range.start)
+    .sort((left, right) => left.start - right.start)
+
+  for (const range of sortedRanges) {
+    if (range.end <= gapStart) continue
+    if (range.start > gapStart) {
+      return { start: gapStart, end: Math.min(range.start, gapEnd) }
+    }
+    gapStart = Math.max(gapStart, range.end)
+    if (gapStart >= gapEnd) return null
   }
+
+  return { start: gapStart, end: gapEnd }
 }
 
 function runtimeMessageIndex(message: WorkbenchMessage): number | null {

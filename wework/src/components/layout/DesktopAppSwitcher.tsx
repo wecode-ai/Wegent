@@ -136,10 +136,6 @@ export function DesktopAppSwitcher({
         key: 'todo',
         label: t('workbench.app_weloop_label', '看板'),
         description: t('workbench.app_weloop_description', '用 AI 管理项目的规划、执行与反馈'),
-        availabilityLabel: cloudConnection?.isConnected
-          ? undefined
-          : t('workbench.app_weloop_requires_cloud', '连接云端后可用'),
-        disabled: !cloudConnection?.isConnected,
       })
     }
 
@@ -280,10 +276,7 @@ export function DesktopAppSwitcher({
     <nav
       data-testid="desktop-app-switcher"
       aria-label={t('workbench.app_navigation', '应用导航')}
-      className={cn(
-        'relative ml-1 flex shrink-0 items-center pl-2 before:absolute before:left-0 before:h-4 before:w-px before:bg-border',
-        className
-      )}
+      className={cn('relative flex shrink-0 items-center', className)}
     >
       <button
         ref={triggerRef}

@@ -73,14 +73,14 @@ Flexible conversation control options:
 
 After a task has started, you can adjust the model used for later responses in the current task. The change only affects the current task. It does not modify the agent, bot, or model defaults, and it does not affect other tasks or newly created conversations.
 
-To keep the runtime protocol consistent, WeWork limits model switching for already running tasks to the same runtime model family in the model selector. Wegent derives the API response field `runtime.family` from the combination of the model CRD's `modelConfig.env.model` and `spec.protocol` values:
+To keep the Codex thread's provider identity consistent, Wework does not allow an existing conversation to switch between official Codex models and third-party models:
 
-- The current task model and the target model must have the same `runtime.family` value
-- For example, Claude, Kimi, or DeepSeek-compatible models whose `runtime.family` is `claude.claude` can be switched between each other
-- Models with the same `env.model` but different `spec.protocol` values are treated as different runtime families
-- Models without `runtime.family` stay visible for an already running task, but are disabled
+- Third-party models are disabled in an official Codex conversation
+- Official Codex models are disabled in a third-party conversation
+- Switching among official Codex models or among third-party models remains available
+- A new conversation can start with any available model
 
-Models with a different `runtime.family` value remain visible, but are disabled in the selector.
+To continue the work across categories, start a new conversation and use `@` to reference the current conversation so the new model receives its context.
 
 ---
 

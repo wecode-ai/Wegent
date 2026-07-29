@@ -2,6 +2,7 @@ import { getToken } from '@/api/auth'
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
+import { createFeedbackApi } from '@/api/feedback'
 import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
 import { createImSessionApi } from '@/api/imSessions'
@@ -47,6 +48,7 @@ export function createBackendWorkbenchServices(
   const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
   const taskApi = createTaskApi(client)
+  const deliveryApi = createDeliveryApi(client)
   const socketClient = createSocketClient({
     socketBaseUrl: () => socketBaseUrl,
     path: socketPath,
@@ -64,7 +66,12 @@ export function createBackendWorkbenchServices(
     gitApi: createGitApi(client),
     taskApi,
     deviceApi,
-    deliveryApi: createDeliveryApi(client),
+    deliveryApi,
+    feedbackApi: createFeedbackApi(apiBaseUrl, resolveToken),
+    projectSpaceApis: {
+      cloud: deliveryApi,
+      defaultLocation: 'cloud',
+    },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
     executorClient: createExecutorClientFromApis({

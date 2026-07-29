@@ -348,6 +348,7 @@ if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
 fi
 
 cd "$WEWORK_DIR"
+WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
   TAURI_ARGS+=(--release)
@@ -355,4 +356,39 @@ fi
 if [ -n "$MACOS_BUILD_TARGET" ]; then
   TAURI_ARGS+=(--target "$MACOS_BUILD_TARGET")
 fi
-exec pnpm exec tauri "${TAURI_ARGS[@]}"
+
+TAURI_PROCESS_GROUP=""
+
+cleanup_dev_processes() {
+  if [ -z "$TAURI_PROCESS_GROUP" ]; then
+    return
+  fi
+
+  kill -TERM -- "-$TAURI_PROCESS_GROUP" 2>/dev/null || true
+  for _ in {1..20}; do
+    if ! kill -0 -- "-$TAURI_PROCESS_GROUP" 2>/dev/null; then
+      TAURI_PROCESS_GROUP=""
+      return
+    fi
+    sleep 0.1
+  done
+  kill -KILL -- "-$TAURI_PROCESS_GROUP" 2>/dev/null || true
+  TAURI_PROCESS_GROUP=""
+}
+
+trap cleanup_dev_processes EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Job control gives the Tauri command and all of its children an isolated
+# process group, allowing Ctrl+C to also terminate the app and its sidecars.
+set -m
+pnpm exec tauri "${TAURI_ARGS[@]}" &
+TAURI_PROCESS_GROUP="$!"
+set +m
+
+set +e
+wait "$TAURI_PROCESS_GROUP"
+TAURI_EXIT_CODE="$?"
+set -e
+exit "$TAURI_EXIT_CODE"

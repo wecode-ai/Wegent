@@ -108,10 +108,14 @@ import {
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
+import { createExternalIssueApi, createLocalDeliveryApi } from './localDelivery'
+import { createLocalAITableApi } from '@/api/aitable'
+import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
@@ -299,18 +303,87 @@ function localRuntimeModels(
   ]
 }
 
+type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+
 interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
-  request?: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+  request?: LocalExecutorRequest
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   cloudModelGateway?: CloudModelGateway
   user?: User
 }
 
+interface CatalogReconciliationTracker {
+  attemptedAt: number
+  inFlight: Promise<void> | null
+  key: string
+}
+
+const catalogReconciliationTrackers = new WeakMap<
+  LocalExecutorRequest,
+  CatalogReconciliationTracker
+>()
+
+function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
+  const existing = catalogReconciliationTrackers.get(request)
+  if (existing) return existing
+  const tracker = { attemptedAt: 0, inFlight: null, key: '' }
+  catalogReconciliationTrackers.set(request, tracker)
+  return tracker
+}
+
+async function reconcilePendingLocalModelCatalog(
+  request: LocalExecutorRequest,
+  runtimeInstanceId?: string
+): Promise<void> {
+  const tracker = catalogReconciliationTracker(request)
+  if (tracker.inFlight) {
+    try {
+      await tracker.inFlight
+    } catch {
+      return
+    }
+    return reconcilePendingLocalModelCatalog(request, runtimeInstanceId)
+  }
+
+  const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+  const pendingCatalogModels = catalogModels.filter(
+    model => !model.catalogReady && model.catalogEntry
+  )
+  const reconciliationKey = pendingCatalogModels
+    .map(model => `${runtimeInstanceId ?? ''}:${model.id}:${model.updatedAt}`)
+    .sort()
+    .join('|')
+  const now = Date.now()
+  const shouldReconcile =
+    reconciliationKey && (reconciliationKey !== tracker.key || now - tracker.attemptedAt >= 30_000)
+  if (!shouldReconcile) return
+
+  tracker.key = reconciliationKey
+  tracker.attemptedAt = now
+  const reconciliation = (async () => {
+    await request('runtime.codex.catalog.custom.write', {
+      models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
+    })
+    const restart = await request<{
+      restarted?: boolean
+    }>('runtime.codex.app_server.restart', { ifIdle: true })
+    if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
+  })()
+  tracker.inFlight = reconciliation
+  try {
+    await reconciliation
+  } catch (error) {
+    console.error('Local model catalog reconciliation failed', error)
+  } finally {
+    if (tracker.inFlight === reconciliation) tracker.inFlight = null
+  }
+}
+
 interface CloudModelGateway {
   baseUrl: string
   apiKey: string
-  mcpUrl?: string
+  backendUrl?: string
 }
 
 interface RuntimeWorkIpcOptions {
@@ -756,6 +829,7 @@ function localRuntimeModelConfig(
       throw new Error('Cloud model identity is incomplete')
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
+    const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
     return {
@@ -775,6 +849,9 @@ function localRuntimeModelConfig(
       },
       ...(Number.isFinite(contextWindow) && contextWindow > 0
         ? { model_context_window: contextWindow }
+        : {}),
+      ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+        ? { max_output_tokens: maxOutputTokens }
         : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
@@ -1128,6 +1205,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
+  cloudProjectId?: string
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
@@ -1147,12 +1225,10 @@ function messageWithApplicationContext(
       {
         kind: 'application',
         value: [
-          'The user activated the Wegent project-space capability.',
-          'Use the wegent_delivery MCP server for project-space operations.',
-          'wegent_delivery is a server id, not a callable tool.',
-          'Use list_cloud_projects to list projects and create_cloud_project to create one.',
-          'Use resolve_cloud_reference to resolve cloud:// references.',
-          'MCP resources describe addressable data; do not use list_mcp_resources to discover tools.',
+          'Use wework_space as the only interface for WeWork project spaces, board items, files, attachments, and deliveries.',
+          'Storage and task providers are internal implementation details.',
+          'Do not use git commands or call GitHub, GitLab, or object-storage APIs to inspect or modify project-space data.',
+          'Use list_spaces to discover spaces, get_board_item for item details, and read_item_attachment for attachment contents.',
         ].join('\n'),
       },
     ])
@@ -1206,19 +1282,14 @@ function buildLocalRuntimeExecutionRequest(
     },
     user_id: input.user.id,
     user_name: input.user.user_name,
+    ...(input.cloudModelGateway?.backendUrl
+      ? {
+          backend_url: input.cloudModelGateway.backendUrl,
+          auth_token: input.cloudModelGateway.apiKey,
+        }
+      : {}),
     bot: [],
-    mcp_servers: input.cloudModelGateway?.mcpUrl
-      ? [
-          {
-            name: 'wegent_delivery',
-            type: 'streamable-http',
-            url: input.cloudModelGateway.mcpUrl,
-            headers: {
-              Authorization: `Bearer ${input.cloudModelGateway.apiKey}`,
-            },
-          },
-        ]
-      : [],
+    mcp_servers: [],
     model_config: modelConfig,
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
     enable_tools: true,
@@ -1240,6 +1311,7 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.runtimeWorkspaceRoots?.length
       ? { runtime_workspace_roots: input.runtimeWorkspaceRoots }
       : {}),
+    ...(input.cloudProjectId ? { cloudProjectId: input.cloudProjectId } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
@@ -1384,6 +1456,7 @@ async function createLocalRuntimeTaskPayload(
       runtimeProjectKey: normalizedData.runtimeProjectKey,
       runtimeProjectName: normalizedData.runtimeProjectName,
       runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
+      cloudProjectId: normalizedData.cloudProjectId,
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,
@@ -2184,8 +2257,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
   let lastStatus: LocalExecutorStatus | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
-  let catalogReconciliationKey = ''
-  let catalogReconciliationAttemptedAt = 0
 
   const ensureStatus = async () => {
     if (!ensurePromise) {
@@ -2193,36 +2264,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         .then(async status => {
           lastStatus = status
           reconcileLocalModelCatalogRuntime(status.runtimeInstanceId)
-          const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
-          const pendingCatalogModels = catalogModels.filter(
-            model => !model.catalogReady && model.catalogEntry
-          )
-          const reconciliationKey = pendingCatalogModels
-            .map(model => `${status.runtimeInstanceId ?? ''}:${model.id}:${model.updatedAt}`)
-            .sort()
-            .join('|')
-          const now = Date.now()
-          const shouldReconcile =
-            reconciliationKey &&
-            (reconciliationKey !== catalogReconciliationKey ||
-              now - catalogReconciliationAttemptedAt >= 30_000)
-          if (shouldReconcile) {
-            catalogReconciliationKey = reconciliationKey
-            catalogReconciliationAttemptedAt = now
-            try {
-              await request('runtime.codex.catalog.custom.write', {
-                models: catalogModels.flatMap(model =>
-                  model.catalogEntry ? [model.catalogEntry] : []
-                ),
-              })
-              const restart = await request<{
-                restarted?: boolean
-              }>('runtime.codex.app_server.restart', { ifIdle: true })
-              if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
-            } catch (error) {
-              console.error('Local model catalog reconciliation failed', error)
-            }
-          }
+          await reconcilePendingLocalModelCatalog(request, status.runtimeInstanceId)
           return status
         })
         .finally(() => {
@@ -2377,6 +2419,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       user: deps.user,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
+  const deliveryApi = createLocalDeliveryApi(request)
+  const externalIssueApi = createExternalIssueApi(request)
+  const aitableApi = createLocalAITableApi(request)
+  const dwsApi = createDwsApi(request)
 
   return {
     teamApi: {
@@ -2429,6 +2475,14 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       revertTurnFileChanges: () => cloudConnectionRequired('revertTurnFileChanges'),
     },
     deviceApi,
+    deliveryApi,
+    externalIssueApi,
+    aitableApi,
+    dwsApi,
+    projectSpaceApis: {
+      local: deliveryApi,
+      defaultLocation: 'local',
+    },
     runtimeWorkApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({

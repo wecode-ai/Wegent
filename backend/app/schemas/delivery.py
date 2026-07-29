@@ -7,7 +7,14 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
@@ -71,6 +78,9 @@ class LoopItemResponse(BaseModel):
     sort_order: int
     tags: list[str] = []
     created_by_user_id: int
+    created_by_user_name: str | None = None
+    can_view_detail: bool = True
+    can_edit: bool = True
     current_delivery_id: str | None
     version: int
     created_at: datetime
@@ -111,6 +121,19 @@ class LoopItemListResponse(BaseModel):
     items: list[LoopItemResponse]
 
 
+class LoopItemCommentCreate(BaseModel):
+    body: str = Field(min_length=1)
+
+
+class LoopItemCommentResponse(BaseModel):
+    id: str
+    body: str
+    author: str
+    web_url: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class LoopItemAttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -122,6 +145,21 @@ class LoopItemAttachmentResponse(BaseModel):
     sha256: str
     created_by_user_id: int
     created_at: datetime
+    markdown: str | None = None
+
+    @computed_field
+    @property
+    def markdown_url(self) -> str:
+        return f"wegent://attachments/{self.id}"
+
+    @model_validator(mode="after")
+    def populate_markdown(self) -> "LoopItemAttachmentResponse":
+        if self.markdown is None:
+            self.markdown = (
+                f"[{self.display_name}]({self.markdown_url})\n"
+                f"<!-- wegent-attachment:{self.id} -->"
+            )
+        return self
 
     @field_validator("content_type", mode="before")
     @classmethod

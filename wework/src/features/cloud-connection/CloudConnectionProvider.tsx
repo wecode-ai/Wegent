@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, createHttpClient } from '@/api/http'
-import { getRuntimeConfig } from '@/config/runtime'
+import { createPluginApi } from '@/api/plugins'
+import { getConfiguredSocketBaseUrl, getRuntimeConfig } from '@/config/runtime'
+import { WEGENT_SITES_PLUGIN_NAME } from '@/features/plugins/builtinPlugins'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -37,23 +39,33 @@ interface WeworkAuthSessionPollResponse {
   error?: string
 }
 
+interface WeworkCloudConfigResponse {
+  web_url?: unknown
+  socket_url?: unknown
+}
+
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2000
 const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重新连接'
 
 function resolveCloudRuntimeConfig(
   backendUrl: string,
-  socketBaseUrlOverride?: string
+  socketBaseUrlOverride?: string,
+  backendSocketUrl?: string
 ): CloudConnectionRuntimeConfig {
   const normalized = normalizeCloudBackendUrl(backendUrl)
   if (socketBaseUrlOverride?.trim()) {
     return normalizeCloudBackendUrl(backendUrl, socketBaseUrlOverride)
   }
   const runtimeConfig = getRuntimeConfig()
-  if (!runtimeConfig.wegentBackendUrl) return normalized
-
-  const configuredBackend = normalizeCloudBackendUrl(runtimeConfig.wegentBackendUrl)
-  return normalized.backendUrl === configuredBackend.backendUrl
-    ? normalizeCloudBackendUrl(backendUrl, runtimeConfig.socketBaseUrl)
+  if (runtimeConfig.wegentBackendUrl) {
+    const configuredBackend = normalizeCloudBackendUrl(runtimeConfig.wegentBackendUrl)
+    const configuredSocketBaseUrl = getConfiguredSocketBaseUrl()
+    if (normalized.backendUrl === configuredBackend.backendUrl && configuredSocketBaseUrl) {
+      return normalizeCloudBackendUrl(backendUrl, configuredSocketBaseUrl)
+    }
+  }
+  return backendSocketUrl?.trim()
+    ? normalizeCloudBackendUrl(backendUrl, backendSocketUrl)
     : normalized
 }
 
@@ -194,21 +206,62 @@ async function checkCloudHealth(config: CloudConnectionRuntimeConfig): Promise<v
   )
 }
 
-async function fetchCloudWebUrl(config: CloudConnectionRuntimeConfig): Promise<string> {
+async function fetchCloudConfig(
+  config: CloudConnectionRuntimeConfig
+): Promise<{ webUrl: string; socketUrl?: string }> {
   const client = createCloudClient(config, null)
-  const metadata = await client.get<{ web_url?: unknown }>('/auth/wework/config', {
+  const metadata = await client.get<WeworkCloudConfigResponse>('/auth/wework/config', {
     redirectOnUnauthorized: false,
   })
   if (typeof metadata.web_url !== 'string' || !metadata.web_url.trim()) {
     throw new Error('Cloud Backend did not provide a Web URL')
   }
-  return metadata.web_url.replace(/\/+$/, '')
+  const socketUrl =
+    typeof metadata.socket_url === 'string' && metadata.socket_url.trim()
+      ? metadata.socket_url.trim()
+      : undefined
+  return {
+    webUrl: metadata.web_url.replace(/\/+$/, ''),
+    socketUrl,
+  }
 }
 
 async function fetchCloudUser(config: CloudConnectionRuntimeConfig, token: string): Promise<User> {
   const client = createCloudClient(config, token)
   return runCloudRequest('读取云端用户', config, '/users/me', () =>
     client.get<User>('/users/me', { redirectOnUnauthorized: false })
+  )
+}
+
+async function ensureCloudSitesPlugin(
+  config: CloudConnectionRuntimeConfig,
+  token: string
+): Promise<void> {
+  const pluginApi = createPluginApi(createCloudClient(config, token))
+  const installedPlugins = await runCloudRequest(
+    '检查云端 Sites 插件',
+    config,
+    '/plugins/installed',
+    () => pluginApi.listInstalledPlugins()
+  )
+  const sitesInstalled = installedPlugins.items.some(plugin => {
+    const source = plugin.spec.source
+    return (
+      source.type === 'marketplace' &&
+      source.providerKey === 'wegent-marketplace' &&
+      source.pluginKey === WEGENT_SITES_PLUGIN_NAME &&
+      source.marketplace === 'wegent' &&
+      plugin.spec.enabled &&
+      plugin.spec.installState === 'installed'
+    )
+  })
+  if (sitesInstalled) return
+
+  await runCloudRequest(
+    '安装云端 Sites 插件',
+    config,
+    `/plugins/builtin/${WEGENT_SITES_PLUGIN_NAME}/ensure-installed`,
+    () => pluginApi.ensureBuiltinPluginInstalled(WEGENT_SITES_PLUGIN_NAME)
   )
 }
 
@@ -290,6 +343,7 @@ function getCloudErrorMessage(error: unknown): string {
 export function CloudConnectionProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const initialRefreshStartedRef = useRef(false)
+  const sitesPluginInitializationKeyRef = useRef<string | null>(null)
 
   const applyConnectedSnapshot = useCallback((nextSnapshot: CloudConnectionSnapshot) => {
     persistSnapshot(nextSnapshot)
@@ -298,19 +352,64 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (snapshot.status !== 'connected' || !snapshot.backendUrl) return
-    const config = resolveCloudRuntimeConfig(snapshot.backendUrl, snapshot.socketBaseUrlOverride)
-    void fetchCloudWebUrl(config)
-      .then(webUrl => {
+    const backendUrl = snapshot.backendUrl
+    const config = resolveCloudRuntimeConfig(backendUrl, snapshot.socketBaseUrlOverride)
+    void fetchCloudConfig(config)
+      .then(metadata => {
+        const resolvedConfig = resolveCloudRuntimeConfig(
+          backendUrl,
+          snapshot.socketBaseUrlOverride,
+          metadata.socketUrl
+        )
         setSnapshot(current => {
-          const nextSnapshot = { ...current, webUrl }
+          const nextSnapshot = {
+            ...current,
+            ...resolvedConfig,
+            webUrl: metadata.webUrl,
+          }
           persistSnapshot(nextSnapshot)
           return nextSnapshot
         })
       })
       .catch(error => {
-        console.error('[CloudConnection] Failed to resolve cloud Web URL', error)
+        console.error('[CloudConnection] Failed to resolve cloud configuration', error)
       })
   }, [snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
+
+  useEffect(() => {
+    if (
+      snapshot.status !== 'connected' ||
+      !snapshot.backendUrl ||
+      !snapshot.apiBaseUrl ||
+      !snapshot.token ||
+      !snapshot.user
+    ) {
+      sitesPluginInitializationKeyRef.current = null
+      return
+    }
+
+    const initializationKey = `${snapshot.apiBaseUrl}:${snapshot.user.id}:${snapshot.token}`
+    if (sitesPluginInitializationKeyRef.current === initializationKey) return
+    sitesPluginInitializationKeyRef.current = initializationKey
+    const config: CloudConnectionRuntimeConfig = {
+      backendUrl: snapshot.backendUrl,
+      apiBaseUrl: snapshot.apiBaseUrl,
+      socketBaseUrl: snapshot.socketBaseUrl ?? snapshot.backendUrl,
+      socketPath: snapshot.socketPath ?? '/socket.io',
+    }
+    void ensureCloudSitesPlugin(config, snapshot.token).catch(error => {
+      sitesPluginInitializationKeyRef.current = null
+      console.error('[CloudConnection] Failed to initialize the Sites plugin', error)
+    })
+  }, [
+    snapshot.apiBaseUrl,
+    snapshot.backendUrl,
+    snapshot.socketBaseUrl,
+    snapshot.socketPath,
+    snapshot.status,
+    snapshot.token,
+    snapshot.user,
+  ])
 
   const connectWithAuthorization = useCallback(
     async (
@@ -318,7 +417,7 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
       openAuthorizationUrl?: OpenCloudAuthorizationUrl,
       socketBaseUrlOverride?: string
     ): Promise<User> => {
-      const config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
+      let config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
       setSnapshot(current => ({
         ...current,
         ...config,
@@ -328,6 +427,12 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
 
       try {
         await checkCloudHealth(config)
+        const metadata = await fetchCloudConfig(config)
+        config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride, metadata.socketUrl)
+        setSnapshot(current => ({
+          ...current,
+          ...config,
+        }))
         const session = await createWeworkAuthSession(config)
         const authorizationHandle = await openAuthorizationUrl?.(session.authorize_url)
         const windowClosed = authWindowClosedPromise(authorizationHandle)

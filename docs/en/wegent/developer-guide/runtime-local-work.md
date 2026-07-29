@@ -88,6 +88,10 @@ The list, read, and thread-management paths share one persistent Codex app-serve
 
 Paging or turn navigation can leave the frontend holding non-contiguous transcript ranges. Wework shows a missing-range marker between adjacent message indexes and automatically requests that range once when the marker first enters the viewport. If the runtime still cannot fill the same range, the frontend must stop automatic retries and keep only explicit user-triggered retry. Loading a missing range only updates that marker's state; it must not take ownership of turn-navigation scrolling, disable browser scroll anchoring, or switch message virtualization modes, because an unfillable range would otherwise create a request and layout-jitter loop.
 
+`loadedTranscriptRanges` is authoritative when deciding whether transcript history has been loaded; visible `messageIndex` continuity alone is insufficient. Flows such as transparent model retries can collapse failed attempts that are already loaded, leaving intentional gaps between visible message indexes without any missing history. Wework shows a missing-range marker only when indexes between adjacent visible messages are not covered by any loaded range, and the requested range must be trimmed to the actually uncovered portion.
+
+Turn navigation identifies user messages by stable client message ID. Retry or recovery can temporarily leave transcript navigation metadata with multiple entries for the same client message; the frontend must merge those duplicates and prefer the entry whose index matches the currently loaded message, preventing duplicate markers, overlapping previews, and incorrect jumps.
+
 Use this manual benchmark to recheck a local rollout:
 
 ```bash
@@ -136,6 +140,8 @@ POST /api/runtime-work/guidance
 Backend only validates the user, device, and LocalTask ownership, then forwards `deviceId + localTaskId`, the user text, and the frontend-generated `clientGuidanceId` as device RPC `runtime.tasks.guidance`. The executor must find the running Codex turn and append the user text through Codex app-server's native guidance capability. If there is no active turn to guide, it should return `no_active_turn`; the frontend then sends the same message as a regular follow-up. `runtime.tasks.guidance` does not create central Task or Subtask rows, and it must not use `workspacePath` as task identity.
 
 The frontend must insert the local guidance user message at the current streaming assistant position immediately when guidance sending starts, not after `runtime.tasks.guidance` returns. That insertion splits the active assistant into a frozen "before guidance" message and a continuing "after guidance" message. The continuing assistant keeps the original `subtaskId` so later stream events land after the guidance message. Later `chat:chunk` or `chat:done` events may still carry full text, so the frontend trims the text prefix recorded at split time. This keeps live streaming order consistent with the refreshed transcript order.
+
+Persisted messages for a native Codex task have one source: the Codex rollout exposed by `thread/read`. The executor must not merge `runtimeHandle.messages` or another LocalTask cache into the Provider transcript; missing messages must be fixed in the Codex event-recording or transcript-parsing path. The frontend may maintain an unpersisted live projection for the currently mounted pane, but a background guidance-applied event may only settle the guidance queue and must not write the same user message into a second cached transcript. Reopening the conversation restores messages entirely from `thread/read`.
 
 Users can also manually compact a local Codex LocalTask from the composer's context-usage control:
 

@@ -672,6 +672,26 @@ semantics for all three.
 - External URLs, applications, and windows must be clear before activation.
 - Essential information and actions cannot exist only on hover.
 
+### 7.3 Runtime and conversation state
+
+- Keep task execution lifecycle state separate from conversation delivery
+  state. The runtime task state machine owns execution, turns, and goals; the
+  conversation queue reducer owns queued messages and guidance delivery.
+- Runtime conversation events are keyed by task address and must update the
+  shared conversation cache even when that task's pane is not active or
+  mounted.
+- A guidance item remains pending until a matching runtime
+  `guidance_applied` event settles it. Match the client identifier first and
+  use guidance content only when the runtime replaces that identifier.
+- Returning to a conversation before its guidance is applied must restore the
+  pending guidance item. After it is applied, returning must show exactly one
+  user guidance message and no pending guidance item.
+- UI labels such as “Guiding” are projections of typed delivery state. Do not
+  use localized display text as state or transition input.
+- Navigation between tasks must not leak queue state into the newly active
+  conversation, and reopening a background task must show every event received
+  while it was inactive.
+
 ## 8. Motion
 
 Codex motion is short and functional:

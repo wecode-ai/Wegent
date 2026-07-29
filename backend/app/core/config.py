@@ -219,6 +219,8 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public Socket.IO origin returned to Wework desktop clients.
+    WEGENT_SOCKET_URL: str = ""
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
@@ -485,6 +487,7 @@ class Settings(BaseSettings):
     INIT_DATA_FORCE: bool = (
         False  # Force re-initialize YAML resources (delete and recreate)
     )
+    BUILTIN_PLUGINS_DIR: str = "/app/init_data/plugins"
 
     # Default headers forwarded to the model backend on every LLM call.
     # Keys are sent verbatim as HTTP headers (resolved by model_resolver against
@@ -652,6 +655,10 @@ class Settings(BaseSettings):
     DEFAULT_TEAM_WEWORK: str = (
         "wegent-wework#default"  # Default team for WeWork workbench
     )
+    # Cloud project that receives authenticated Wework feedback submissions.
+    # An empty value disables the feedback channel.
+    WEWORK_FEEDBACK_PROJECT_ID: str = ""
+    WEWORK_FEEDBACK_MAX_BUNDLE_SIZE_MB: int = 250
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:

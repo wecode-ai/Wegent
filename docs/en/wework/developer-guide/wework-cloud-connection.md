@@ -21,7 +21,7 @@ Users may enter either the Backend root URL or an `/api` URL. The frontend norma
 
 The desktop authorization window defaults to `1000 × 640` with a minimum size of `960 × 620`, which accommodates enterprise login pages that do not provide responsive layouts. The authorization window uses the Wework main window as its native parent, so it remains above Wework throughout authorization without becoming globally always-on-top across other applications.
 
-When the entered address matches the packaged `VITE_WEGENT_BACKEND_URL` or `VITE_API_BASE_URL`, Wework uses the packaged `VITE_SOCKET_BASE_URL` and `VITE_SOCKET_PATH`, allowing the HTTP API and Socket.IO service to use separate domains. This also covers manually entered Backends when `VITE_WEGENT_BACKEND_URL` is unset but the address corresponds to the packaged API. Connections saved with the old same-origin Socket URL are migrated on startup. Other user-entered Backends continue to use same-origin normalization.
+Wework resolves the Socket.IO address in this order: the URL explicitly entered by the user, the packaged Socket URL when it belongs to the current Backend, the `socket_url` returned by Backend `/auth/wework/config`, and finally the Backend same-origin default. Backend declares its public Socket.IO origin through `WEGENT_SOCKET_URL`; HTTPS deployments should configure a `wss://` URL. Saved connections are refreshed and migrated with the same priority order on startup.
 
 Local Wework does not render cloud username/password forms and does not call `/auth/login` or `/auth/admin-password/setup`. Cloud login, OIDC, and admin initialization all happen on the cloud Wegent Web authorization page. After login, the user must explicitly approve Wework access; only then does Backend store a one-time claimable cloud JWT in the authorization session. Local Wework claims it, verifies the user through `/users/me`, and persists the cloud connection state.
 
@@ -121,7 +121,7 @@ The Proxy page manages local device proxy and cloud device proxy separately. The
 
 Saving a local device proxy does not immediately interrupt running Codex tasks. The UI asks the user to restart Codex manually. After confirmation, Wework restarts only the persistent Codex app-server maintained by the current App's local executor; it does not terminate other Codex processes on the machine. The new Codex app-server receives proxy-related environment variables, and later new chats use that proxy.
 
-Codex Responses-compatible models may be routed through the executor's built-in `codex responses proxy` before reaching the upstream model service. That proxy must also use the same local device proxy; otherwise model requests would bypass the Codex app-server process environment. Logs record only whether a proxy is configured and do not print the proxy URL.
+Codex Responses-compatible models may be routed through the executor's built-in `codex responses proxy` before reaching the upstream model service. For custom model providers configured by the user in Codex `config.toml`, that proxy uses the same local device proxy carried by the task when connecting to the upstream service; otherwise model requests would bypass the Codex app-server process environment. Logs record only whether a proxy is configured and do not print the proxy URL.
 
 ## Local Auth Status
 

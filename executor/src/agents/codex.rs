@@ -63,6 +63,8 @@ const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
+const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
+    "features.tool_call_mcp_elicitation=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
@@ -712,7 +714,7 @@ fn persistent_codex_app_server_launch_config(
     ]);
     launch_config
         .config_overrides
-        .extend(codex_streaming_patch_config_overrides());
+        .extend(codex_runtime_default_config_overrides());
     launch_config
 }
 
@@ -901,9 +903,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         let forking_thread = fork_thread_id.is_some();
         if direct_thread_id.is_none() {
             if let Some(thread_id) = resume_thread_id.as_deref() {
-                // Codex ignores thread/resume configuration overrides while this client remains
-                // subscribed to the loaded thread. Release our idle subscription so a changed
-                // custom model provider can be applied during resume; the resume subscribes again.
+                // Release this client's idle subscription before resume. The task-scoped local
+                // router keeps a stable provider URL, so model changes only update its upstream.
                 client.unsubscribe_thread(thread_id).await;
             }
         }
@@ -938,6 +939,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared thread request started", &thread_fields);
             let thread = client.request(thread_operation, thread_params).await?;
             validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_model_provider(
+                thread_operation,
+                &thread,
+                launch_config.model_provider.as_deref(),
+            )?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -951,6 +957,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared thread request finished", &thread_fields);
             thread_id
         };
+        bind_local_proxy_thread(&launch_config, &thread_id)?;
         subscribed_thread_id = Some(thread_id.clone());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
@@ -1200,6 +1207,11 @@ pub async fn run_codex_app_server_turn_with_cancel(
             )
             .await?;
             validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_model_provider(
+                thread_operation,
+                &thread,
+                launch_config.model_provider.as_deref(),
+            )?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -1213,6 +1225,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             log_executor_event("codex thread request finished", &thread_fields);
             thread_id
         };
+        bind_local_proxy_thread(&launch_config, &thread_id)?;
         if let Some(sender) = &notifications {
             let _ = sender.send(json!({
                 "method": "thread/started",
@@ -1891,10 +1904,26 @@ struct CodexLaunchConfig {
 #[derive(Debug)]
 struct LocalProxyRegistration(String);
 
+impl LocalProxyRegistration {
+    fn bind_thread(&self, thread_id: &str) -> Result<(), String> {
+        local_model_proxy::bind_thread(&self.0, thread_id)
+    }
+}
+
 impl Drop for LocalProxyRegistration {
     fn drop(&mut self) {
         local_model_proxy::unregister(&self.0);
     }
+}
+
+fn bind_local_proxy_thread(
+    launch_config: &CodexLaunchConfig,
+    thread_id: &str,
+) -> Result<(), String> {
+    if let Some(registration) = launch_config.local_proxy_registration.as_deref() {
+        registration.bind_thread(thread_id)?;
+    }
+    Ok(())
 }
 
 struct PreparedCodexExecutionRequest {
@@ -1925,7 +1954,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .push(shell_path_config_override());
     launch_config
         .config_overrides
-        .extend(codex_streaming_patch_config_overrides());
+        .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
@@ -1940,8 +1969,16 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     let project_id = project_id(request);
     if use_user_config {
         let inference_provider = inference_model_provider(&request.model_config);
-        if let Some(upstream) = configured_codex_provider(&inference_provider) {
-            configure_codex_router(&mut launch_config, upstream, model.clone());
+        if let Some(upstream) = configured_codex_provider(
+            &inference_provider,
+            runtime_proxy_url(&request.model_config),
+        ) {
+            configure_codex_router(
+                &mut launch_config,
+                &request.task_id,
+                upstream,
+                model.clone(),
+            );
         } else {
             launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
@@ -1956,6 +1993,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     ) {
         configure_codex_router(
             &mut launch_config,
+            &request.task_id,
             explicit_codex_upstream(&request.model_config, &base_url, &api_key),
             model.clone(),
         );
@@ -1978,11 +2016,12 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
 
 fn configure_codex_router(
     launch_config: &mut CodexLaunchConfig,
+    task_id: &str,
     mut upstream: LocalModelProxyUpstream,
     routing_model_id: Option<String>,
 ) {
     upstream.routing_model_id = routing_model_id;
-    let local_token = local_model_proxy::register(upstream);
+    let local_token = local_model_proxy::register(task_id, upstream);
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
     let provider = codex_model_catalog::PROVIDER_ID;
@@ -2007,7 +2046,6 @@ fn explicit_codex_upstream(
     api_key: &str,
 ) -> LocalModelProxyUpstream {
     LocalModelProxyUpstream {
-        registration_id: model_provider(model_config),
         base_url: base_url.trim_end_matches('/').to_owned(),
         request_url: non_empty_config(model_config, "responses_url")
             .or_else(|| non_empty_config(model_config, "responsesUrl")),
@@ -2022,6 +2060,11 @@ fn explicit_codex_upstream(
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
         model_id: non_empty_config(model_config, "model_id"),
         routing_model_id: None,
+        max_output_tokens: model_config
+            .get("max_output_tokens")
+            .or_else(|| model_config.get("maxOutputTokens"))
+            .and_then(value_u64)
+            .filter(|value| *value > 0),
     }
 }
 
@@ -2040,7 +2083,15 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
     ]
 }
 
+fn codex_runtime_default_config_overrides() -> Vec<String> {
+    let mut overrides = codex_streaming_patch_config_overrides();
+    overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    overrides
+}
+
 fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
+    const DEFAULT_CODEX_MODEL_CONTEXT_WINDOW: i64 = 262_144;
+
     let mut overrides = Vec::new();
     if let Some(web_search) = codex_web_search_mode(model_config) {
         overrides.push(format!("web_search={}", toml_value(&web_search)));
@@ -2048,9 +2099,9 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     if let Some(image_generation) = codex_image_generation_enabled(model_config) {
         overrides.push(format!("features.image_generation={image_generation}"));
     }
-    if let Some(context_window) = codex_model_context_window(model_config) {
-        overrides.push(format!("model_context_window={context_window}"));
-    }
+    let context_window =
+        codex_model_context_window(model_config).unwrap_or(DEFAULT_CODEX_MODEL_CONTEXT_WINDOW);
+    overrides.push(format!("model_context_window={context_window}"));
     overrides
 }
 
@@ -2099,7 +2150,10 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
-fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> {
+fn configured_codex_provider(
+    provider: &str,
+    proxy_url: Option<&str>,
+) -> Option<LocalModelProxyUpstream> {
     use toml_edit::DocumentMut;
 
     let document = fs::read_to_string(wework_codex_home().join("config.toml"))
@@ -2156,16 +2210,16 @@ fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> 
     let base_url = base_url.trim_end_matches('/').to_owned();
 
     Some(LocalModelProxyUpstream {
-        registration_id: provider.to_owned(),
         request_url: Some(format!("{base_url}{request_path}")),
         base_url,
         api_format,
         convert_custom_tools,
         api_key,
         default_headers,
-        proxy_url: None,
+        proxy_url: proxy_url.map(str::to_owned),
         model_id: None,
         routing_model_id: None,
+        max_output_tokens: None,
     })
 }
 
@@ -2220,11 +2274,11 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
         return BTreeMap::new();
     };
 
-    let no_proxy = env::var("NO_PROXY")
+    let configured_no_proxy = env::var("NO_PROXY")
         .ok()
         .or_else(|| env::var("no_proxy").ok())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_NO_PROXY.to_owned());
+        .filter(|value| !value.trim().is_empty());
+    let no_proxy = merge_required_no_proxy(configured_no_proxy.as_deref());
     [
         ("ALL_PROXY", proxy_url),
         ("HTTP_PROXY", proxy_url),
@@ -2238,6 +2292,27 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value.to_owned()))
     .collect()
+}
+
+fn merge_required_no_proxy(configured: Option<&str>) -> String {
+    let mut entries = configured
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    for required in DEFAULT_NO_PROXY.split(',') {
+        if !entries
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(required))
+        {
+            entries.push(required.to_owned());
+        }
+    }
+
+    entries.join(",")
 }
 
 fn runtime_proxy_url(model_config: &Value) -> Option<&str> {
@@ -2267,10 +2342,6 @@ fn bool_value(value: Option<&Value>) -> Option<bool> {
         },
         _ => None,
     }
-}
-
-fn model_provider(model_config: &Value) -> String {
-    explicit_model_provider(model_config).unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned())
 }
 
 fn inference_model_provider(model_config: &Value) -> String {
@@ -3252,6 +3323,18 @@ fn resolve_codex_binary(value: &str) -> String {
 
 const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
 
+pub(crate) fn codex_runtime_approval_policy() -> Value {
+    json!({
+        "granular": {
+            "sandbox_approval": false,
+            "rules": false,
+            "skill_approval": false,
+            "request_permissions": false,
+            "mcp_elicitations": true,
+        }
+    })
+}
+
 fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>) {
     params.insert(
         "permissions".to_owned(),
@@ -3303,6 +3386,36 @@ fn validate_codex_permission_profile(operation: &str, response: &Value) -> Resul
     ))
 }
 
+fn validate_codex_model_provider(
+    operation: &str,
+    response: &Value,
+    expected_provider: Option<&str>,
+) -> Result<(), String> {
+    let Some(expected_provider) = expected_provider else {
+        return Ok(());
+    };
+    let applied_provider = response
+        .get("modelProvider")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            response
+                .get("thread")
+                .and_then(|thread| thread.get("modelProvider"))
+                .and_then(Value::as_str)
+        });
+
+    match applied_provider {
+        Some(applied_provider) if applied_provider == expected_provider => Ok(()),
+        Some(applied_provider) => Err(format!(
+            "codex app-server {operation} applied unexpected model provider: \
+             expected={expected_provider}, actual={applied_provider}"
+        )),
+        // Minimal test doubles and older app-server builds may omit provider metadata. Current
+        // Codex builds return it, so reject an explicit mismatch without breaking those clients.
+        None => Ok(()),
+    }
+}
+
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
     if let Some(model) = codex_request_model(request) {
@@ -3313,10 +3426,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
+    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
     insert_codex_runtime_permissions(&mut params);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
@@ -3344,10 +3454,7 @@ fn thread_fork_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
+    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
     insert_codex_runtime_permissions(&mut params);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
@@ -3408,10 +3515,7 @@ fn thread_resume_params(
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
+    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
     insert_codex_runtime_permissions(&mut params);
     Value::Object(params)
 }
@@ -3459,10 +3563,7 @@ fn turn_start_params(
             Value::String(client_user_message_id.to_owned()),
         );
     }
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
+    params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
     insert_codex_runtime_permissions(&mut params);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
