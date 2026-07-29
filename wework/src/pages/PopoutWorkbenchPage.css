@@ -1,0 +1,103 @@
+.popout-document,
+.popout-document body,
+.popout-document #root {
+  background: transparent !important;
+}
+
+.popout-window [data-testid='workbench-main-header'] {
+  display: none;
+}
+
+.popout-window-collapsed {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.popout-window-collapsed .popout-window-content {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 470px;
+  height: 154px;
+  overflow: visible;
+  transform: translateX(-50%);
+  isolation: isolate;
+}
+
+.popout-window-collapsed .popout-window-content::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 0.5px solid rgb(var(--color-border));
+  border-radius: 30px;
+  background: rgb(247 247 248);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 8%);
+  content: '';
+}
+
+.popout-window-compact-context .popout-window-content {
+  height: 112px;
+}
+
+.popout-window-collapsed [data-testid='desktop-workbench-content'],
+.popout-window-collapsed [data-testid='desktop-empty-composer-frame'],
+.popout-window-collapsed [data-testid='desktop-empty-composer-dock'],
+.popout-window-collapsed [data-testid='desktop-workbench-main'] {
+  background: transparent !important;
+  overflow: visible !important;
+}
+
+.popout-window-collapsed .popout-window-content > div,
+.popout-window-collapsed .popout-window-content > div > div {
+  overflow: visible !important;
+}
+
+.popout-window-collapsed .popout-window-content main {
+  background: transparent !important;
+  overflow: visible;
+}
+
+.popout-window-collapsed [data-testid='desktop-empty-composer-frame'] {
+  padding: 0;
+}
+
+.popout-window-collapsed [data-testid='desktop-empty-composer-frame'] > div:first-child {
+  display: none;
+}
+
+.popout-window-collapsed [data-testid='desktop-empty-composer-dock'] {
+  width: 100%;
+}
+
+.popout-window-collapsed [data-testid='project-chat-composer'] {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.popout-window-collapsed [data-testid='project-chat-composer-form'] {
+  min-height: 112px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.popout-window-collapsed [data-testid='composer-toolbar'] {
+  margin-top: 8px;
+  transform: translateY(-10px);
+}
+
+.popout-window-compact-context [data-testid='project-chat-composer'] > div:first-child {
+  display: none;
+}
+
+.popout-window-collapsed [data-testid='desktop-workbench-main'] {
+  background: transparent;
+}
+
+.popout-window [data-testid='desktop-empty-composer-dock'] > div {
+  margin: 0;
+}

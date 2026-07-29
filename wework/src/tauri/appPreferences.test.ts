@@ -29,6 +29,8 @@ const mergedDefaultPreferences = {
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  popoutWindowShortcut: 'Alt+Shift+Space',
+  popoutWindowProjectlessDefaultEnabled: false,
   quickPhrases: [
     {
       id: 'default-summary-progress',
@@ -218,6 +220,22 @@ describe('appPreferences', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
       patch: { browserDownloadDirectory: '' },
+    })
+  })
+
+  test('serializes a cleared Popout Window shortcut for the native command', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      ...mergedDefaultPreferences,
+      popoutWindowShortcut: null,
+    })
+
+    const { updateAppPreferences } = await import('./appPreferences')
+
+    await updateAppPreferences({ popoutWindowShortcut: null })
+
+    expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
+      patch: { popoutWindowShortcut: '' },
     })
   })
 })

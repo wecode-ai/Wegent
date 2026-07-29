@@ -3,11 +3,17 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import type {
+  ModelOptions,
+  ProjectExecutionMode,
+  RuntimeContextUsage,
+  UnifiedModel,
+} from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
+import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 
@@ -36,6 +42,20 @@ interface ComposerToolbarProps {
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
   onPause?: () => void
+  showWorkspaceMenu?: boolean
+  projectWorkMenuContext?: {
+    branchName?: string | null
+    currentProjectId?: number
+    executionMode: ProjectExecutionMode
+    executionModeLocked?: boolean
+    isGitProject?: boolean
+    projectName?: string | null
+    projects: import('@/types/api').ProjectWithTasks[]
+    onCheckoutBranch?: (branchName: string) => Promise<void>
+    onExecutionModeChange: (mode: ProjectExecutionMode) => void
+    onListBranches?: () => Promise<string[]>
+    onSelectProject: (projectId: number | null) => void
+  }
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   leadingContext?: ReactNode
@@ -69,6 +89,8 @@ export function ComposerToolbar({
   onCancelGoalDraft,
   isStreaming = false,
   onPause,
+  showWorkspaceMenu,
+  projectWorkMenuContext,
   onQuickPhraseSelect,
   onSubmit,
   leadingContext,
@@ -155,6 +177,22 @@ export function ComposerToolbar({
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
         )}
+        {showWorkspaceMenu && projectWorkMenuContext ? (
+          <PopoutWorkspaceMenu
+            branchName={projectWorkMenuContext.branchName}
+            currentProjectId={projectWorkMenuContext.currentProjectId}
+            disabled={disabled}
+            executionMode={projectWorkMenuContext.executionMode}
+            executionModeLocked={projectWorkMenuContext.executionModeLocked}
+            isGitProject={projectWorkMenuContext.isGitProject}
+            projectName={projectWorkMenuContext.projectName}
+            projects={projectWorkMenuContext.projects}
+            onCheckoutBranch={projectWorkMenuContext.onCheckoutBranch}
+            onExecutionModeChange={projectWorkMenuContext.onExecutionModeChange}
+            onListBranches={projectWorkMenuContext.onListBranches}
+            onSelectProject={projectWorkMenuContext.onSelectProject}
+          />
+        ) : null}
         {isStreaming && !canSend ? (
           <button
             type="button"

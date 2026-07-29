@@ -11,7 +11,16 @@ import {
   Search,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -51,6 +60,11 @@ const PROJECT_MENU_WIDTH = 320
 const PROJECT_MENU_ANCHOR_GAP = 8
 const PROJECT_MENU_VIEWPORT_MARGIN = 16
 const EXECUTION_MODE_MENU_HEIGHT = 126
+
+function ProjectMenuPortal({ children, enabled }: { children: ReactNode; enabled: boolean }) {
+  if (!enabled || typeof document === 'undefined') return children
+  return createPortal(children, document.body)
+}
 
 function workspaceFolderName(path: string): string {
   const normalized = path.trim().replace(/[\\/]+$/, '')
@@ -127,6 +141,7 @@ export function ProjectWorkBar({
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const executionModeContainerRef = useRef<HTMLDivElement>(null)
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
   const executionModeButtonRef = useRef<HTMLButtonElement>(null)
@@ -141,6 +156,7 @@ export function ProjectWorkBar({
   const [externalMenuAnchorElement, setExternalMenuAnchorElement] = useState<HTMLElement | null>(
     null
   )
+  const outsideMenuRefs = useMemo(() => [menuRef], [])
   const [menuLayout, setMenuLayout] = useState<{
     placement: 'below' | 'above'
     maxHeight: number
@@ -400,7 +416,7 @@ export function ProjectWorkBar({
     !selectedDeviceWorkspace
   const projectWorkTriggerAriaLabel = currentProject?.name ?? projectWorkTriggerLabel
 
-  useOutsideClick(containerRef, open, closeMenu)
+  useOutsideClick(containerRef, open, closeMenu, outsideMenuRefs)
   useOutsideClick(executionModeContainerRef, executionModeOpen, closeExecutionModeMenu)
 
   useEffect(() => {
@@ -570,305 +586,312 @@ export function ProjectWorkBar({
       >
         {open && isMobile && renderMobileBackdrop(closeMenu)}
         {open && (
-          <div
-            data-testid="project-work-menu"
-            data-mobile={isMobile ? 'true' : undefined}
-            className={cn(
-              isMobile
-                ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-                : cn(
-                    'z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-                    externalMenuAnchorElement
-                      ? 'fixed'
-                      : `absolute left-0 ${menuLayout.placement === 'below' ? 'top-9' : 'bottom-9'}`
-                  ),
-              !isMobile && menuClassName
-            )}
-            style={
-              isMobile
-                ? undefined
-                : {
-                    maxHeight: menuLayout.maxHeight,
-                    top: menuLayout.fixedTop,
-                    left: menuLayout.fixedLeft,
-                  }
-            }
-          >
-            {isMobile &&
-              renderMobileSheetHeader(
-                t('workbench.project_sheet_title', '选择项目'),
-                currentProject?.name ??
-                  emptyLabel ??
-                  t('workbench.enter_project_work', '进入项目工作'),
-                closeMenu
+          <ProjectMenuPortal enabled={!isMobile && externalMenuAnchorElement !== null}>
+            <div
+              ref={menuRef}
+              data-testid="project-work-menu"
+              data-mobile={isMobile ? 'true' : undefined}
+              className={cn(
+                isMobile
+                  ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+                  : cn(
+                      'z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                      externalMenuAnchorElement
+                        ? 'fixed'
+                        : `absolute left-0 ${menuLayout.placement === 'below' ? 'top-9' : 'bottom-9'}`
+                    ),
+                !isMobile && menuClassName
               )}
-            <div className={cn(isMobile && 'flex min-h-0 flex-col px-5 pb-5')}>
-              <label
-                className={cn(
-                  'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
-                  isMobile && 'h-11 rounded-2xl text-base'
+              style={
+                isMobile
+                  ? undefined
+                  : {
+                      maxHeight: menuLayout.maxHeight,
+                      top: menuLayout.fixedTop,
+                      left: menuLayout.fixedLeft,
+                    }
+              }
+            >
+              {isMobile &&
+                renderMobileSheetHeader(
+                  t('workbench.project_sheet_title', '选择项目'),
+                  currentProject?.name ??
+                    emptyLabel ??
+                    t('workbench.enter_project_work', '进入项目工作'),
+                  closeMenu
                 )}
-              >
-                <Search className="h-4 w-4 shrink-0" />
-                <input
-                  ref={searchInputRef}
-                  data-testid="project-search-input"
-                  type="search"
-                  value={projectQuery}
-                  onChange={event => setProjectQuery(event.target.value)}
-                  placeholder={t('workbench.search_projects', '搜索项目')}
+              <div className={cn(isMobile && 'flex min-h-0 flex-col px-5 pb-5')}>
+                <label
                   className={cn(
-                    'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
-                    isMobile && 'text-base leading-5'
+                    'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
+                    isMobile && 'h-11 rounded-2xl text-base'
                   )}
-                />
-              </label>
-              {availableProjects.length === 0 ? (
-                <div className="px-4 py-3 text-sm leading-[18px] text-text-muted">
-                  {t('workbench.no_projects', '暂无项目')}
-                </div>
-              ) : filteredProjects.length === 0 ? (
-                <div
-                  data-testid="project-search-empty"
-                  className="px-4 py-3 text-sm leading-[18px] text-text-muted"
                 >
-                  {t('workbench.project_search_no_results', '没有匹配的项目')}
-                </div>
-              ) : (
-                <div
-                  data-testid="project-options-list"
-                  className={cn(
-                    'min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1',
-                    isMobile && 'scrollbar-none max-h-[calc(45dvh-168px)] space-y-2 py-2'
-                  )}
-                  style={{ maxHeight: isMobile ? undefined : PROJECT_MENU_LIST_MAX_HEIGHT }}
-                >
-                  {filteredProjects.map(project => {
-                    const option = projectWorkspaceOptionByProjectId.get(project.id)
-                    const singleWorkspace = option?.kind === 'single' ? option.workspace : null
-                    const summaryWorkspace = singleWorkspace ?? option?.workspaces[0] ?? null
-                    const summaryWorkspaceDevice = summaryWorkspace
-                      ? devices.find(item => item.device_id === summaryWorkspace.deviceId)
-                      : undefined
-                    const device = getDeviceForProject(project) ?? summaryWorkspaceDevice
-                    const deviceLabel = getProjectMenuDeviceLabel(device, summaryWorkspace)
-                    const deviceStatus = device?.status ?? summaryWorkspace?.deviceStatus
-                    const versionCompatible = device
-                      ? isWeWorkExecutorVersionCompatible(device.executor_version)
-                      : true
-                    const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
-                    const localMultiRootWorkspace =
-                      option?.kind === 'multi' &&
-                      option.workspaces.every(workspace => {
-                        const workspaceDevice = devices.find(
-                          item => item.device_id === workspace.deviceId
-                        )
-                        return Boolean(
-                          workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice)
-                        )
-                      })
-                        ? ((project.id === currentProjectId
-                            ? option.workspaces.find(
-                                workspace => workspace.id === selectedDeviceWorkspaceId
-                              )
-                            : null) ?? option.workspaces[0])
+                  <Search className="h-4 w-4 shrink-0" />
+                  <input
+                    ref={searchInputRef}
+                    data-testid="project-search-input"
+                    type="search"
+                    value={projectQuery}
+                    onChange={event => setProjectQuery(event.target.value)}
+                    placeholder={t('workbench.search_projects', '搜索项目')}
+                    className={cn(
+                      'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
+                      isMobile && 'text-base leading-5'
+                    )}
+                  />
+                </label>
+                {availableProjects.length === 0 ? (
+                  <div className="px-4 py-3 text-sm leading-[18px] text-text-muted">
+                    {t('workbench.no_projects', '暂无项目')}
+                  </div>
+                ) : filteredProjects.length === 0 ? (
+                  <div
+                    data-testid="project-search-empty"
+                    className="px-4 py-3 text-sm leading-[18px] text-text-muted"
+                  >
+                    {t('workbench.project_search_no_results', '没有匹配的项目')}
+                  </div>
+                ) : (
+                  <div
+                    data-testid="project-options-list"
+                    className={cn(
+                      'min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1',
+                      isMobile && 'scrollbar-none max-h-[calc(45dvh-168px)] space-y-2 py-2'
+                    )}
+                    style={{ maxHeight: isMobile ? undefined : PROJECT_MENU_LIST_MAX_HEIGHT }}
+                  >
+                    {filteredProjects.map(project => {
+                      const option = projectWorkspaceOptionByProjectId.get(project.id)
+                      const singleWorkspace = option?.kind === 'single' ? option.workspace : null
+                      const summaryWorkspace = singleWorkspace ?? option?.workspaces[0] ?? null
+                      const summaryWorkspaceDevice = summaryWorkspace
+                        ? devices.find(item => item.device_id === summaryWorkspace.deviceId)
+                        : undefined
+                      const device = getDeviceForProject(project) ?? summaryWorkspaceDevice
+                      const deviceLabel = getProjectMenuDeviceLabel(device, summaryWorkspace)
+                      const deviceStatus = device?.status ?? summaryWorkspace?.deviceStatus
+                      const versionCompatible = device
+                        ? isWeWorkExecutorVersionCompatible(device.executor_version)
+                        : true
+                      const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
+                      const localMultiRootWorkspace =
+                        option?.kind === 'multi' &&
+                        option.workspaces.every(workspace => {
+                          const workspaceDevice = devices.find(
+                            item => item.device_id === workspace.deviceId
+                          )
+                          return Boolean(
+                            workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice)
+                          )
+                        })
+                          ? ((project.id === currentProjectId
+                              ? option.workspaces.find(
+                                  workspace => workspace.id === selectedDeviceWorkspaceId
+                                )
+                              : null) ?? option.workspaces[0])
+                          : null
+                      const localMultiRootSummary = localMultiRootWorkspace
+                        ? workspaceFolderName(localMultiRootWorkspace.workspacePath)
                         : null
-                    const localMultiRootSummary = localMultiRootWorkspace
-                      ? workspaceFolderName(localMultiRootWorkspace.workspacePath)
-                      : null
-                    const selected = project.id === currentProjectId
-                    const expanded =
-                      option?.kind === 'multi' &&
-                      !localMultiRootWorkspace &&
-                      (expandedMultiProjectId === project.id ||
-                        pendingProjectWorkspaceProjectId === project.id)
-                    const bindRequired =
-                      hasRuntimeWork && option?.kind === 'empty' && Boolean(onBindProjectWorkspace)
-                    return (
-                      <div key={project.id} className="space-y-0.5">
-                        <button
-                          type="button"
-                          data-testid={`project-option-${project.id}`}
-                          onClick={() => handleSelectProject(project.id)}
-                          className="flex h-9 w-full rounded-lg px-4 text-left text-text-primary hover:bg-muted"
-                        >
-                          <div className="flex min-h-0 w-full items-center gap-3">
-                            <ProjectFolderIcon
-                              project={project}
-                              testId={`project-available-icon-${project.id}`}
-                              className="h-4 w-4 shrink-0 text-text-secondary"
-                            />
-                            <div className="flex min-w-0 flex-1 items-center gap-2">
-                              <span
-                                className={cn(
-                                  'min-w-0 truncate text-sm font-normal leading-[18px]',
-                                  deviceLabel || localMultiRootSummary
-                                    ? 'max-w-[9rem] shrink'
-                                    : 'flex-1',
-                                  'text-text-primary'
-                                )}
-                              >
-                                {project.name}
-                              </span>
-                              {localMultiRootSummary ? (
-                                <span className="min-w-0 flex-1 truncate text-sm font-normal text-text-muted">
-                                  {localMultiRootSummary}
-                                </span>
-                              ) : deviceLabel ? (
-                                <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
-                                  <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
-                                  <span
-                                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${getWorkspaceStatusDotClass(deviceStatus)}`}
-                                  />
-                                  <span className="min-w-0 truncate text-text-secondary">
-                                    {deviceLabel}
-                                  </span>
-                                  <span className="shrink-0">
-                                    {getCompactWorkspaceStatusLabel(
-                                      deviceStatus,
-                                      versionCompatible
-                                    )}
-                                  </span>
-                                </span>
-                              ) : null}
-                            </div>
-                            {selected && (
-                              <Check
-                                data-testid={`project-selected-icon-${project.id}`}
-                                className="h-3.5 w-3.5 shrink-0 text-text-primary"
-                              />
-                            )}
-                          </div>
-                        </button>
-                        {bindRequired && (
+                      const selected = project.id === currentProjectId
+                      const expanded =
+                        option?.kind === 'multi' &&
+                        !localMultiRootWorkspace &&
+                        (expandedMultiProjectId === project.id ||
+                          pendingProjectWorkspaceProjectId === project.id)
+                      const bindRequired =
+                        hasRuntimeWork &&
+                        option?.kind === 'empty' &&
+                        Boolean(onBindProjectWorkspace)
+                      return (
+                        <div key={project.id} className="space-y-0.5">
                           <button
                             type="button"
-                            data-testid={`project-bind-workspace-${project.id}`}
-                            onClick={() => {
-                              onBindProjectWorkspace?.(project.id)
-                              closeMenu()
-                            }}
-                            className="ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                            data-testid={`project-option-${project.id}`}
+                            onClick={() => handleSelectProject(project.id)}
+                            className="flex h-9 w-full rounded-lg px-4 text-left text-text-primary hover:bg-muted"
                           >
-                            <FolderPlus className="h-3.5 w-3.5 shrink-0" />
-                            <span>{t('workbench.bind_project_workspace', '绑定设备工作区')}</span>
-                          </button>
-                        )}
-                        {expanded &&
-                          option?.workspaces.map((workspace, workspaceIndex) => {
-                            const workspaceSelected =
-                              selectedDeviceWorkspaceId != null &&
-                              workspace.id === selectedDeviceWorkspaceId
-                            const selectable = isSelectableProjectWorkspace(workspace, devices)
-                            const workspaceDevice = devices.find(
-                              item => item.device_id === workspace.deviceId
-                            )
-                            const WorkspaceDeviceIcon =
-                              workspaceDevice && isCloudDevice(workspaceDevice) ? Cloud : HardDrive
-                            const localWorkspace = Boolean(
-                              workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice)
-                            )
-                            return (
-                              <button
-                                key={`${workspace.deviceId}:${workspace.workspacePath}`}
-                                type="button"
-                                data-testid={`project-workspace-option-${workspace.id ?? `${workspace.deviceId}-${workspaceIndex}`}`}
-                                disabled={!selectable}
-                                onClick={() => handleSelectDeviceWorkspace(project.id, workspace)}
-                                className={cn(
-                                  'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
-                                  selectable
-                                    ? 'text-text-secondary hover:bg-muted'
-                                    : 'cursor-not-allowed text-text-muted opacity-60',
-                                  workspaceSelected && 'bg-muted text-text-primary'
-                                )}
-                              >
-                                {localWorkspace ? (
-                                  <Folder className="h-4 w-4 shrink-0" />
-                                ) : (
-                                  <WorkspaceDeviceIcon className="h-3.5 w-3.5 shrink-0" />
-                                )}
-                                {!localWorkspace && (
-                                  <span
-                                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                                      workspace.deviceStatus === 'online'
-                                        ? 'bg-primary'
-                                        : workspace.deviceStatus === 'busy'
-                                          ? 'bg-amber-500'
-                                          : 'bg-text-muted'
-                                    }`}
-                                  />
-                                )}
+                            <div className="flex min-h-0 w-full items-center gap-3">
+                              <ProjectFolderIcon
+                                project={project}
+                                testId={`project-available-icon-${project.id}`}
+                                className="h-4 w-4 shrink-0 text-text-secondary"
+                              />
+                              <div className="flex min-w-0 flex-1 items-center gap-2">
                                 <span
-                                  className="min-w-0 flex-1 truncate"
-                                  title={workspace.workspacePath}
+                                  className={cn(
+                                    'min-w-0 truncate text-sm font-normal leading-[18px]',
+                                    deviceLabel || localMultiRootSummary
+                                      ? 'max-w-[9rem] shrink'
+                                      : 'flex-1',
+                                    'text-text-primary'
+                                  )}
                                 >
-                                  {localWorkspace
-                                    ? workspaceFolderName(workspace.workspacePath)
-                                    : workspace.deviceName || workspace.deviceId}
+                                  {project.name}
                                 </span>
-                                {!localWorkspace && (
-                                  <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
-                                    {workspace.workspacePath}
+                                {localMultiRootSummary ? (
+                                  <span className="min-w-0 flex-1 truncate text-sm font-normal text-text-muted">
+                                    {localMultiRootSummary}
                                   </span>
-                                )}
-                                {workspaceSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
-                              </button>
-                            )
-                          })}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              <div className="my-1.5 shrink-0 border-t border-border" />
-              <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
-                {onCreateProjectMode && (
+                                ) : deviceLabel ? (
+                                  <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
+                                    <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                    <span
+                                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${getWorkspaceStatusDotClass(deviceStatus)}`}
+                                    />
+                                    <span className="min-w-0 truncate text-text-secondary">
+                                      {deviceLabel}
+                                    </span>
+                                    <span className="shrink-0">
+                                      {getCompactWorkspaceStatusLabel(
+                                        deviceStatus,
+                                        versionCompatible
+                                      )}
+                                    </span>
+                                  </span>
+                                ) : null}
+                              </div>
+                              {selected && (
+                                <Check
+                                  data-testid={`project-selected-icon-${project.id}`}
+                                  className="h-3.5 w-3.5 shrink-0 text-text-primary"
+                                />
+                              )}
+                            </div>
+                          </button>
+                          {bindRequired && (
+                            <button
+                              type="button"
+                              data-testid={`project-bind-workspace-${project.id}`}
+                              onClick={() => {
+                                onBindProjectWorkspace?.(project.id)
+                                closeMenu()
+                              }}
+                              className="ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                            >
+                              <FolderPlus className="h-3.5 w-3.5 shrink-0" />
+                              <span>{t('workbench.bind_project_workspace', '绑定设备工作区')}</span>
+                            </button>
+                          )}
+                          {expanded &&
+                            option?.workspaces.map((workspace, workspaceIndex) => {
+                              const workspaceSelected =
+                                selectedDeviceWorkspaceId != null &&
+                                workspace.id === selectedDeviceWorkspaceId
+                              const selectable = isSelectableProjectWorkspace(workspace, devices)
+                              const workspaceDevice = devices.find(
+                                item => item.device_id === workspace.deviceId
+                              )
+                              const WorkspaceDeviceIcon =
+                                workspaceDevice && isCloudDevice(workspaceDevice)
+                                  ? Cloud
+                                  : HardDrive
+                              const localWorkspace = Boolean(
+                                workspaceDevice && isLocalProjectWorkspaceDevice(workspaceDevice)
+                              )
+                              return (
+                                <button
+                                  key={`${workspace.deviceId}:${workspace.workspacePath}`}
+                                  type="button"
+                                  data-testid={`project-workspace-option-${workspace.id ?? `${workspace.deviceId}-${workspaceIndex}`}`}
+                                  disabled={!selectable}
+                                  onClick={() => handleSelectDeviceWorkspace(project.id, workspace)}
+                                  className={cn(
+                                    'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                                    selectable
+                                      ? 'text-text-secondary hover:bg-muted'
+                                      : 'cursor-not-allowed text-text-muted opacity-60',
+                                    workspaceSelected && 'bg-muted text-text-primary'
+                                  )}
+                                >
+                                  {localWorkspace ? (
+                                    <Folder className="h-4 w-4 shrink-0" />
+                                  ) : (
+                                    <WorkspaceDeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                  )}
+                                  {!localWorkspace && (
+                                    <span
+                                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                        workspace.deviceStatus === 'online'
+                                          ? 'bg-primary'
+                                          : workspace.deviceStatus === 'busy'
+                                            ? 'bg-amber-500'
+                                            : 'bg-text-muted'
+                                      }`}
+                                    />
+                                  )}
+                                  <span
+                                    className="min-w-0 flex-1 truncate"
+                                    title={workspace.workspacePath}
+                                  >
+                                    {localWorkspace
+                                      ? workspaceFolderName(workspace.workspacePath)
+                                      : workspace.deviceName || workspace.deviceId}
+                                  </span>
+                                  {!localWorkspace && (
+                                    <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
+                                      {workspace.workspacePath}
+                                    </span>
+                                  )}
+                                  {workspaceSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                                </button>
+                              )
+                            })}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                <div className="my-1.5 shrink-0 border-t border-border" />
+                <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
+                  {onCreateProjectMode && (
+                    <div>
+                      <button
+                        type="button"
+                        data-testid="add-local-project-option"
+                        onClick={() => handleCreateProject('existing')}
+                        className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                      >
+                        <FolderPlus className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0 flex-1">
+                          {t('workbench.add_local_project', '添加本地项目')}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                  {onCreateProjectMode && (
+                    <div>
+                      <button
+                        type="button"
+                        data-testid="add-remote-project-option"
+                        onClick={() => handleCreateProject('git')}
+                        className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                      >
+                        <Cloud className="h-4 w-4 shrink-0" />
+                        <span className="min-w-0 flex-1">
+                          {t('workbench.add_remote_project', '添加远程项目')}
+                        </span>
+                      </button>
+                    </div>
+                  )}
                   <div>
                     <button
                       type="button"
-                      data-testid="add-local-project-option"
-                      onClick={() => handleCreateProject('existing')}
+                      data-testid="no-project-option"
+                      onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
                       className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                     >
-                      <FolderPlus className="h-4 w-4 shrink-0" />
+                      <FolderX className="h-4 w-4 shrink-0" />
                       <span className="min-w-0 flex-1">
-                        {t('workbench.add_local_project', '添加本地项目')}
+                        {t('workbench.no_project', '不使用项目')}
                       </span>
                     </button>
                   </div>
-                )}
-                {onCreateProjectMode && (
-                  <div>
-                    <button
-                      type="button"
-                      data-testid="add-remote-project-option"
-                      onClick={() => handleCreateProject('git')}
-                      className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                    >
-                      <Cloud className="h-4 w-4 shrink-0" />
-                      <span className="min-w-0 flex-1">
-                        {t('workbench.add_remote_project', '添加远程项目')}
-                      </span>
-                    </button>
-                  </div>
-                )}
-                <div>
-                  <button
-                    type="button"
-                    data-testid="no-project-option"
-                    onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
-                    className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                  >
-                    <FolderX className="h-4 w-4 shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      {t('workbench.no_project', '不使用项目')}
-                    </span>
-                  </button>
                 </div>
               </div>
             </div>
-          </div>
+          </ProjectMenuPortal>
         )}
         {isMobile ? (
           <button

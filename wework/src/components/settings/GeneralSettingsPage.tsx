@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Activity, Bell, Check, CircleDot, Gauge, Loader2, type LucideIcon } from 'lucide-react'
+import {
+  Activity,
+  Bell,
+  Check,
+  CircleDot,
+  Gauge,
+  Loader2,
+  Pencil,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react'
+import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   SettingsGroup,
@@ -18,8 +29,13 @@ import {
   type AppPreferences,
   type AppPreferencesPatch,
 } from '@/tauri/appPreferences'
+import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 
-type BooleanPreferenceKey = keyof AppPreferencesPatch
+type BooleanPreferenceKey = {
+  [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
+    ? Key
+    : never
+}[keyof AppPreferencesPatch]
 
 interface SwitchRowProps {
   preferenceKey: BooleanPreferenceKey
@@ -46,6 +62,7 @@ export function GeneralSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showImportDialog, setShowImportDialog] = useState(false)
+  const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -92,6 +109,43 @@ export function GeneralSettingsPage() {
       setSaving(false)
     }
   }
+
+  const savePopoutShortcut = async (shortcut: string | null) => {
+    const previousShortcut = preferences.popoutWindowShortcut
+    setPreferences(current => ({ ...current, popoutWindowShortcut: shortcut }))
+    setSaving(true)
+    setError(null)
+    try {
+      const nextPreferences = await updateAppPreferences({ popoutWindowShortcut: shortcut })
+      setPreferences(nextPreferences)
+      setRecordingPopoutShortcut(false)
+    } catch (saveError) {
+      console.error('[Wework] Failed to update Popout Window shortcut', saveError)
+      setPreferences(current => ({ ...current, popoutWindowShortcut: previousShortcut }))
+      setError(t('workbench.general_settings_popout_shortcut_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!recordingPopoutShortcut) return undefined
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.key === 'Escape') {
+        setRecordingPopoutShortcut(false)
+        return
+      }
+      const shortcut = normalizeKeybinding(keybindingFromKeyboardEvent(event))
+      if (!shortcut || !shortcut.includes('+')) return
+      void savePopoutShortcut(shortcut)
+    }
+
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  })
 
   const renderSwitchRow = ({ preferenceKey, testId, label, description }: SwitchRowProps) => (
     <SettingsRow
@@ -166,7 +220,7 @@ export function GeneralSettingsPage() {
         description={t('workbench.general_settings_subtitle')}
       />
 
-      <section>
+      <section data-testid="general-settings-basic-section">
         <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
           {t('workbench.general_settings_title')}
         </div>
@@ -210,12 +264,6 @@ export function GeneralSettingsPage() {
             description: t('workbench.general_settings_show_main_window_on_launch_description'),
           })}
           {renderSwitchRow({
-            preferenceKey: 'systemDragEnabled',
-            testId: 'general-system-drag-toggle',
-            label: t('workbench.general_settings_system_drag'),
-            description: t('workbench.general_settings_system_drag_description'),
-          })}
-          {renderSwitchRow({
             preferenceKey: 'experimentalFeaturesEnabled',
             testId: 'general-experimental-features-toggle',
             label: t('workbench.general_settings_experimental_features'),
@@ -237,6 +285,14 @@ export function GeneralSettingsPage() {
               </button>
             }
           />
+        </SettingsGroup>
+      </section>
+
+      <section data-testid="general-settings-runtime-section" className="mt-12">
+        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+          {t('workbench.general_settings_runtime_title')}
+        </div>
+        <SettingsGroup className="rounded-xl !bg-background">
           {renderSwitchRow({
             preferenceKey: 'closeToTrayEnabled',
             testId: 'general-close-to-tray-toggle',
@@ -312,6 +368,66 @@ export function GeneralSettingsPage() {
               </div>
             }
           />
+        </SettingsGroup>
+      </section>
+
+      <section data-testid="general-settings-popout-section" className="mt-12">
+        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+          {t('workbench.general_settings_popout_title')}
+        </div>
+        <SettingsGroup className="rounded-xl !bg-background">
+          <SettingsRow
+            label={t('workbench.general_settings_popout_shortcut')}
+            description={t('workbench.general_settings_popout_shortcut_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="flex min-w-[220px] items-center justify-end gap-1">
+                <button
+                  type="button"
+                  data-testid="general-popout-shortcut-record-button"
+                  disabled={loading || saving}
+                  onClick={() => setRecordingPopoutShortcut(true)}
+                  className="inline-flex min-h-8 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label={t('workbench.general_settings_popout_shortcut_edit')}
+                >
+                  {recordingPopoutShortcut ? (
+                    <span className="rounded-full bg-muted px-2.5 py-1">
+                      {t('workbench.keyboard_shortcuts_recording')}
+                    </span>
+                  ) : preferences.popoutWindowShortcut ? (
+                    <KeyboardShortcut
+                      value={preferences.popoutWindowShortcut.replace(
+                        'CommandOrControl',
+                        'Command'
+                      )}
+                      className="bg-muted text-text-secondary"
+                    />
+                  ) : (
+                    <span>{t('workbench.keyboard_shortcuts_unassigned')}</span>
+                  )}
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  data-testid="general-popout-shortcut-clear-button"
+                  disabled={loading || saving || !preferences.popoutWindowShortcut}
+                  onClick={() => void savePopoutShortcut(null)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label={t('workbench.keyboard_shortcuts_clear')}
+                  title={t('workbench.keyboard_shortcuts_clear')}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            }
+          />
+          {renderSwitchRow({
+            preferenceKey: 'systemDragEnabled',
+            testId: 'general-system-drag-toggle',
+            label: t('workbench.general_settings_system_drag'),
+            description: t('workbench.general_settings_system_drag_description'),
+          })}
         </SettingsGroup>
       </section>
 
