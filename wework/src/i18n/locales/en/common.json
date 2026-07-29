@@ -3,7 +3,13 @@
     "home": "Home"
   },
   "common": {
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "window": {
+      "minimize": "Minimize",
+      "maximize": "Maximize",
+      "restore": "Restore",
+      "close": "Close"
+    }
   },
   "workbench": {
     "brand": "Wework",
@@ -985,6 +991,8 @@
     "keyboard_shortcuts_open_terminal_description": "Show or hide the bottom panel",
     "keyboard_shortcuts_open_settings": "Open settings",
     "keyboard_shortcuts_open_settings_description": "Open the settings page",
+    "keyboard_shortcuts_open_search": "Open search",
+    "keyboard_shortcuts_open_search_description": "Open the search panel",
     "keyboard_shortcuts_go_back": "Go back",
     "keyboard_shortcuts_go_back_description": "Go back in navigation history",
     "keyboard_shortcuts_go_forward": "Go forward",
@@ -1868,6 +1876,12 @@
     "uploading": "Uploading…",
     "running": "Running…",
     "executor_required": "Select an employee or AI agent before running",
+    "window": {
+      "minimize": "Minimize",
+      "maximize": "Maximize",
+      "restore": "Restore",
+      "close": "Close"
+    },
     "project_visibility": "Project access",
     "project_visibility_private": "Private",
     "project_visibility_public": "Public",
