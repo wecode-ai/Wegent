@@ -500,7 +500,7 @@ fn local_executor_isolation_enabled() -> Result<bool, String> {
             .unwrap_or(true))
 }
 
-fn local_executor_home_path() -> Result<PathBuf, String> {
+pub(crate) fn local_executor_home_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
         let trimmed = path.trim();
         if !trimmed.is_empty() {

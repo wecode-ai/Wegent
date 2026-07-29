@@ -63,11 +63,6 @@ pub(crate) fn tools() -> Vec<Value> {
             &["text"],
         ),
         tool(
-            "browser_fill_form",
-            "Deprecated for WKWebView. Use browser_fill once per inspected field.",
-            &["fields"],
-        ),
-        tool(
             "browser_press_key",
             "Press a keyboard key on the target or focused element.",
             &["key"],
@@ -82,7 +77,6 @@ pub(crate) fn tools() -> Vec<Value> {
         ),
         tool("browser_select_option", "Select option values.", &[]),
         tool("browser_set_checked", "Set checkbox or radio checked state.", &[]),
-        tool("browser_drag", "Drag between two elements.", &[]),
         tool("browser_wait_for", "Wait for page state.", &[]),
         tool(
             "browser_wait_and_inspect",
@@ -124,18 +118,6 @@ pub(crate) fn tools() -> Vec<Value> {
             "Evaluate read-only JavaScript for diagnostics. Use dedicated tools for page actions.",
             &[],
         ),
-        tool(
-            "browser_tab_list",
-            "List browser tabs in Wegent's Wework desktop app.",
-            &[],
-        ),
-        tool(
-            "browser_tab_new",
-            "Open a URL in the browser tab.",
-            &["url"],
-        ),
-        tool("browser_tab_select", "Focus the embedded browser tab.", &[]),
-        tool("browser_tab_close", "Close an embedded browser tab.", &[]),
     ]
 }
 
@@ -162,8 +144,6 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
         "mode",
         "by",
         "direction",
-        "startRef",
-        "endRef",
     ] {
         properties.insert(key.to_owned(), json!({ "type": "string" }));
     }
@@ -215,7 +195,6 @@ fn tool(name: &str, description: &str, required: &[&str]) -> Value {
             "description": "Element index from the latest browser_inspect result, for example 0 for [0] textbox."
         }),
     );
-    properties.insert("fields".to_owned(), json!({ "type": "array" }));
     properties.insert("condition".to_owned(), json!({ "type": "object" }));
     properties.insert("inspectOptions".to_owned(), json!({ "type": "object" }));
     for key in [

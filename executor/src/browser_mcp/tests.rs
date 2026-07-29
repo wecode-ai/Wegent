@@ -9,7 +9,7 @@ use super::payload::{
 use super::result_text::{
     action_text_result, combined_text_result, inspect_text_result, inspect_text_result_with_options,
 };
-use super::{bridge_value_is_error, execute_tool, handle_request};
+use super::{bridge_payload_is_read_only, bridge_value_is_error, execute_tool, handle_request};
 
 #[tokio::test]
 async fn exposes_expected_browser_tools() {
@@ -45,7 +45,10 @@ async fn exposes_expected_browser_tools() {
     assert!(names.contains(&"browser_scroll_into_view"));
     assert!(names.contains(&"browser_select_option"));
     assert!(names.contains(&"browser_set_checked"));
-    assert_eq!(names.len(), 34);
+    assert!(!names.contains(&"browser_fill_form"));
+    assert!(!names.contains(&"browser_drag"));
+    assert!(!names.iter().any(|name| name.starts_with("browser_tab_")));
+    assert_eq!(names.len(), 28);
 }
 
 #[tokio::test]
@@ -196,6 +199,22 @@ fn action_text_result_is_concise_and_drives_the_next_requested_action() {
 }
 
 #[test]
+fn unverified_click_result_requires_follow_up_observation() {
+    let text = action_text_result(&json!({
+        "ok": true,
+        "action": "click",
+        "outcome": "dispatched_unverified",
+        "effectObserved": false,
+        "effect": {}
+    }))
+    .unwrap();
+
+    assert!(text.contains("dispatched_unverified"));
+    assert!(text.contains("browser_wait_and_inspect"));
+    assert!(!text.contains("The click succeeded"));
+}
+
+#[test]
 fn full_json_output_remains_available_for_e2e_diagnostics() {
     let data = json!({
         "kind": "browser.inspect",
@@ -268,6 +287,15 @@ fn evaluate_rejects_page_action_expressions_but_allows_diagnostics() {
     );
 }
 
+#[test]
+fn bridge_reconnect_replays_only_observation_requests() {
+    assert!(bridge_payload_is_read_only(&json!({ "action": "inspect" })));
+    assert!(bridge_payload_is_read_only(&json!({ "action": "waitFor" })));
+    assert!(!bridge_payload_is_read_only(&json!({ "action": "click" })));
+    assert!(!bridge_payload_is_read_only(&json!({ "action": "fill" })));
+    assert!(!bridge_payload_is_read_only(&json!({ "action": "open" })));
+}
+
 #[tokio::test]
 async fn evaluate_tool_rejects_click_without_calling_bridge() {
     let result = execute_tool(
@@ -285,39 +313,6 @@ async fn evaluate_tool_rejects_click_without_calling_bridge() {
         .and_then(Value::as_str)
         .unwrap()
         .contains("Use browser_fill/browser_click"));
-}
-
-#[tokio::test]
-async fn evaluate_based_legacy_actions_are_disabled() {
-    let fill_form = execute_tool(
-        &reqwest::Client::new(),
-        "browser_fill_form",
-        &json!({ "fields": [] }),
-        1,
-        Instant::now(),
-    )
-    .await;
-    let drag = execute_tool(
-        &reqwest::Client::new(),
-        "browser_drag",
-        &json!({ "startRef": "#a", "endRef": "#b" }),
-        1,
-        Instant::now(),
-    )
-    .await;
-
-    assert_eq!(fill_form["isError"], true);
-    assert!(fill_form
-        .pointer("/content/0/text")
-        .and_then(Value::as_str)
-        .unwrap()
-        .contains("unrestricted JavaScript"));
-    assert_eq!(drag["isError"], true);
-    assert!(drag
-        .pointer("/content/0/text")
-        .and_then(Value::as_str)
-        .unwrap()
-        .contains("trusted drag input"));
 }
 
 #[test]
@@ -423,6 +418,29 @@ fn wait_payload_does_not_treat_fill_text_as_wait_text() {
     assert!(payload.get("text").is_none());
     assert!(payload.get("expression").is_some());
     assert_eq!(payload["options"]["condition"]["waitUntil"], "pageStable");
+}
+
+#[test]
+fn open_and_inspect_waits_for_page_stability_across_redirects() {
+    let payload = wait_payload(
+        "browser_open_and_inspect",
+        &json!({
+            "url": "http://example.com/start"
+        }),
+    );
+
+    assert!(payload.get("url").is_none());
+    assert_eq!(payload["options"]["condition"]["waitUntil"], "pageStable");
+    assert!(payload.get("expression").is_some());
+
+    let explicit = wait_payload(
+        "browser_open_and_inspect",
+        &json!({
+            "url": "http://example.com/start",
+            "condition": { "urlIncludes": "/dashboard" }
+        }),
+    );
+    assert_eq!(explicit["url"], "/dashboard");
 }
 
 #[test]

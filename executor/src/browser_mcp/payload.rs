@@ -173,8 +173,7 @@ pub(crate) fn wait_payload(name: &str, arguments: &Value) -> Value {
     if let Some(timeout_ms) = optional_u64_arg(arguments, "timeoutMs") {
         payload.insert("timeoutMs".to_owned(), json!(timeout_ms));
     }
-    let allow_flat_wait_target =
-        name == "browser_wait_and_inspect" || name == "browser_open_and_inspect";
+    let allow_flat_wait_target = name == "browser_wait_and_inspect";
     apply_wait_condition(
         &mut payload,
         arguments,
@@ -195,11 +194,6 @@ pub(crate) fn wait_payload(name: &str, arguments: &Value) -> Value {
             },
         ),
     );
-    if name == "browser_open_and_inspect" && !payload.contains_key("url") {
-        if let Some(url) = optional_string_arg(arguments, "url") {
-            payload.insert("url".to_owned(), Value::String(url));
-        }
-    }
     if !payload.contains_key("text")
         && !payload.contains_key("selector")
         && !payload.contains_key("url")

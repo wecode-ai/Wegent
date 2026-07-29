@@ -27,7 +27,9 @@
 
     const after = observePage(target.element)
     const effect = effectFor(before, after)
-    if (!hasObservableEffect(effect)) {
+    const effectObserved = hasObservableEffect(effect)
+    const outcome = effectObserved ? 'effect_observed' : 'dispatched_unverified'
+    if (!effectObserved) {
       warnings.push(
         warning('no_observable_effect', `${action} was dispatched but no page change was observed.`)
       )
@@ -39,6 +41,8 @@
       backend: 'wkwebview-js',
       executionKind: 'synthetic-event',
       synthetic: true,
+      outcome,
+      effectObserved,
       target: {
         ...target.summary,
         ...preflight.summary,

@@ -11,10 +11,12 @@ use chrono::Local;
 use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+mod bridge_identity;
 mod payload;
 mod result_text;
 mod tools;
 
+use bridge_identity::{current_bridge_identity, BridgeIdentity};
 use payload::{
     action_target_payload, collect_warnings, combined_action_payload, combined_inspect_payload,
     evaluate_action_violation, evaluate_expression, inspect_payload, normalize_wait_result,
@@ -188,7 +190,7 @@ async fn execute_tool(
     started: Instant,
 ) -> Value {
     let bridge_payload = match name {
-        "browser_open" | "browser_navigate" | "browser_tab_new" => {
+        "browser_open" | "browser_navigate" => {
             json!({ "action": "open", "url": string_arg(arguments, "url") })
         }
         "browser_inspect" => inspect_payload(arguments),
@@ -232,16 +234,6 @@ async fn execute_tool(
             }
         }),
         "browser_present_probe" => json!({ "action": "present" }),
-        "browser_tab_list" => json!({ "action": "pageState" }),
-        "browser_tab_select" => {
-            return text_result(json!({ "ok": true, "targetId": "embedded" }), false)
-        }
-        "browser_tab_close" => {
-            return text_result(
-                "Embedded browser tabs are managed by the Wework right panel.",
-                true,
-            )
-        }
         "browser_click" => action_target_payload("click", arguments),
         "browser_click_coordinates" => json!({
             "action": "click",
@@ -293,18 +285,6 @@ async fn execute_tool(
         }),
         "browser_select_option" => action_target_payload("select", arguments),
         "browser_set_checked" => action_target_payload("setChecked", arguments),
-        "browser_fill_form" => {
-            return text_result(
-                "browser_fill_form is disabled for WKWebView because it previously used unrestricted JavaScript evaluation. Use browser_fill once per inspected field.",
-                true,
-            )
-        }
-        "browser_drag" => {
-            return text_result(
-                "browser_drag is disabled for WKWebView because trusted drag input is not available in the current browser backend.",
-                true,
-            )
-        }
         _ => return text_result(format!("Unknown tool: {name}"), true),
     };
 
@@ -400,8 +380,7 @@ async fn execute_combined_tool(
             WaitConditionOptions {
                 allow_flat_text: name == "browser_wait_and_inspect",
                 allow_flat_selector: name == "browser_wait_and_inspect",
-                allow_flat_url: name == "browser_wait_and_inspect"
-                    || name == "browser_open_and_inspect",
+                allow_flat_url: name == "browser_wait_and_inspect",
             },
         ),
         Err(message) => json!({
@@ -488,7 +467,7 @@ async fn call_bridge(
             object.insert("label".to_owned(), Value::String(label));
         }
     }
-    let base_url = bridge_url();
+    let identity = current_bridge_identity();
     log_request(
         sequence,
         "bridge_http_send_start",
@@ -497,15 +476,34 @@ async fn call_bridge(
         started,
         None,
     );
-    let mut request = client
-        .post(format!("{}/browser", base_url.trim_end_matches('/')))
-        .json(&payload);
-    if let Some(token) = non_empty_env(BRIDGE_TOKEN_ENV) {
-        request = request.bearer_auth(token);
-    }
-    let response = request.send().await.map_err(|error| {
-        format!("Embedded browser bridge is unavailable at {base_url}: {error}")
-    })?;
+    let first = send_bridge_request(client, &identity, &payload).await;
+    let response = match first {
+        Ok(response) => response,
+        Err(error) if error.refresh_identity => {
+            let refreshed = current_bridge_identity();
+            if refreshed == identity {
+                return Err(error.message);
+            }
+            if !bridge_payload_is_read_only(&payload) {
+                return Err(format!(
+                    "{} The browser bridge changed during this action, so it was not replayed automatically; inspect the current page before retrying.",
+                    error.message
+                ));
+            }
+            log_request(
+                sequence,
+                "bridge_identity_refreshed",
+                "tools/call",
+                Some(tool),
+                started,
+                None,
+            );
+            send_bridge_request(client, &refreshed, &payload)
+                .await
+                .map_err(|retry_error| retry_error.message)?
+        }
+        Err(error) => return Err(error.message),
+    };
     log_request(
         sequence,
         "bridge_http_headers_received",
@@ -542,11 +540,64 @@ async fn call_bridge(
         .unwrap_or_else(|| json!({ "ok": true })))
 }
 
+struct BridgeRequestError {
+    message: String,
+    refresh_identity: bool,
+}
+
+async fn send_bridge_request(
+    client: &reqwest::Client,
+    identity: &BridgeIdentity,
+    payload: &Value,
+) -> Result<reqwest::Response, BridgeRequestError> {
+    let mut request = client
+        .post(format!(
+            "{}/browser",
+            identity.base_url.trim_end_matches('/')
+        ))
+        .json(payload);
+    if let Some(token) = identity.token.as_deref() {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.map_err(|error| BridgeRequestError {
+        message: format!(
+            "Embedded browser bridge is unavailable at {}: {error}",
+            identity.base_url
+        ),
+        refresh_identity: true,
+    })?;
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(BridgeRequestError {
+            message: format!("Embedded browser bridge returned HTTP {status}"),
+            refresh_identity: status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN,
+        });
+    }
+    Ok(response)
+}
+
+fn bridge_payload_is_read_only(payload: &Value) -> bool {
+    matches!(
+        payload.get("action").and_then(Value::as_str),
+        Some(
+            "status"
+                | "pageState"
+                | "capabilities"
+                | "inspect"
+                | "resolveRef"
+                | "evaluate"
+                | "waitFor"
+                | "screenshot"
+                | "nativeInputProbe"
+                | "axProbe"
+                | "present"
+        )
+    )
+}
+
 fn bridge_url() -> String {
-    env::var(BRIDGE_URL_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_BRIDGE_URL.to_owned())
+    current_bridge_identity().base_url
 }
 
 fn browser_label() -> Option<String> {
@@ -648,7 +699,6 @@ fn bridge_value_is_error(tool: &str, value: &Value) -> bool {
             tool,
             "browser_open"
                 | "browser_navigate"
-                | "browser_tab_new"
                 | "browser_click"
                 | "browser_click_coordinates"
                 | "browser_type"
@@ -661,8 +711,6 @@ fn bridge_value_is_error(tool: &str, value: &Value) -> bool {
                 | "browser_scroll"
                 | "browser_select_option"
                 | "browser_set_checked"
-                | "browser_fill_form"
-                | "browser_drag"
         )
 }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,6 +15,8 @@ const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_PATH = '/embedded-browser-agent-fixture'
+const REDIRECT_PATH = '/embedded-browser-agent-redirect'
+const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const READY_TEXT = 'Embedded Browser Agent Fixture'
 const FILLED_TEXT = 'filled: Alpha Beta'
 const CLICKED_TEXT = 'clicked: Alpha Beta'
@@ -88,30 +90,29 @@ function fixtureHtml() {
 </html>`
 }
 
-async function waitForBridgeUrl(resultDir, timeoutMs) {
-  const logPath = join(resultDir, 'app.log')
+async function waitForBridgeIdentity(executorHome, timeoutMs) {
+  const runtimePath = join(executorHome, 'runtime', BRIDGE_RUNTIME_FILE)
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const entries = await readdir(resultDir).catch(() => [])
-    const logPaths = [
-      logPath,
-      ...entries
-        .filter(name => /^wework-tauri-.*\.log$/.test(name))
-        .map(name => join(resultDir, name)),
-    ]
-    const contents = await Promise.all(logPaths.map(path => readFile(path, 'utf8').catch(() => '')))
-    const content = contents.join('\n')
-    const match = content.match(/Embedded browser bridge listening on ([^\s]+)/)
-    if (match) return `http://${match[1]}`
+    const content = await readFile(runtimePath, 'utf8').catch(() => '')
+    if (content) {
+      const record = JSON.parse(content)
+      if (record.schemaVersion === 1 && record.address && record.token) {
+        return { baseUrl: `http://${record.address}`, token: record.token, runtimePath }
+      }
+    }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error('Timed out waiting for embedded browser bridge address in app.log')
+  throw new Error('Timed out waiting for authenticated embedded browser bridge runtime')
 }
 
-async function callBridge(baseUrl, payload) {
-  const response = await fetch(`${baseUrl}/browser`, {
+async function callBridge(identity, payload) {
+  const response = await fetch(`${identity.baseUrl}/browser`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      authorization: `Bearer ${identity.token}`,
+      'content-type': 'application/json',
+    },
     body: JSON.stringify({ label: BROWSER_LABEL, ...payload }),
   })
   const body = await response.json()
@@ -139,7 +140,7 @@ async function waitForControlValue(control, selector, expected, timeoutMs, messa
   throw new Error(message)
 }
 
-async function withBrowserMcp(bridgeUrl, callback) {
+async function withBrowserMcp(identity, callback) {
   const executorPath =
     process.env.WEWORK_E2E_EXECUTOR_BIN ||
     join(
@@ -153,7 +154,9 @@ async function withBrowserMcp(bridgeUrl, callback) {
     cwd: repoDir,
     env: {
       ...process.env,
-      WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: bridgeUrl,
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: identity.baseUrl,
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
+      WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: identity.runtimePath,
       WEWORK_EMBEDDED_BROWSER_LABEL: BROWSER_LABEL,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -247,9 +250,14 @@ function parseToolJson(text) {
   return JSON.parse(text)
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
+export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
   return {
     async handleHttp(request, response, url) {
+      if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
+        response.writeHead(302, { location: FIXTURE_PATH })
+        response.end()
+        return true
+      }
       if (request.method !== 'GET' || url.pathname !== FIXTURE_PATH) return false
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       response.end(fixtureHtml())
@@ -258,6 +266,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
 
     async verify(control) {
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
+      const redirectUrl = `${control.url}${REDIRECT_PATH}`
       await control.command('waitFor', RIGHT_PANEL_TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR)
       await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
@@ -271,15 +280,16 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         'Browser URL input did not receive fixture URL before submit'
       )
       await control.command('press', BROWSER_INPUT_SELECTOR, { key: 'Enter' })
-      const bridgeUrl = await waitForBridgeUrl(resultDir, uiTimeoutMs)
-      const openResult = await callBridge(bridgeUrl, {
+      const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
+      const bridgeCall = payload => callBridge(bridgeIdentity, payload)
+      const openResult = await bridgeCall({
         action: 'open',
         url: fixtureUrl,
         timeoutMs: 8_000,
       })
       assert.equal(openResult.ok, true, `Bridge open failed: ${JSON.stringify(openResult)}`)
 
-      const pendingAgentWait = callBridge(bridgeUrl, {
+      const pendingAgentWait = bridgeCall({
         action: 'waitFor',
         text: 'WEWORK_AGENT_STATUS_E2E_NEVER_APPEARS',
         timeoutMs: 4_000,
@@ -288,12 +298,16 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       await control.command('waitFor', BROWSER_AGENT_PAUSE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', BROWSER_AGENT_PAUSE_SELECTOR)
       await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { timeoutMs: uiTimeoutMs })
-      const pausedClick = await callBridge(bridgeUrl, {
-        action: 'click',
-        x: 12,
-        y: 12,
-        timeoutMs: 2_000,
-      })
+      const pausedClick = await withTimeout(
+        bridgeCall({
+          action: 'click',
+          x: 12,
+          y: 12,
+          timeoutMs: 2_000,
+        }),
+        2_500,
+        'A pending bridge wait blocked an independent browser request'
+      )
       assert.equal(
         pausedClick.ok,
         false,
@@ -303,9 +317,9 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
       await pendingAgentWait
 
-      const mcpResult = await withBrowserMcp(bridgeUrl, async callTool => {
+      const mcpResult = await withBrowserMcp(bridgeIdentity, async callTool => {
         const openText = await callTool('browser_open_and_inspect', {
-          url: fixtureUrl,
+          url: redirectUrl,
           inspectOptions: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
           timeoutMs: 8_000,
         })
@@ -331,14 +345,19 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
           text: 'Alpha Beta',
           timeoutMs: 8_000,
         })
-        assert.ok(fillText.includes('{"action":"fill","success":true}'))
-        assert.ok(fillText.includes('"valueChanged": true'))
+        const fillJson = parseToolJson(fillText)
+        assert.equal(fillJson.action, 'fill')
+        assert.equal(fillJson.ok, true)
+        assert.equal(fillJson.effect.valueChanged, true)
 
         const clickText = await callTool('browser_click', {
           ref: mcpButtonNode.ref,
           timeoutMs: 8_000,
         })
-        assert.ok(clickText.includes('{"action":"click","success":true}'))
+        const clickJson = parseToolJson(clickText)
+        assert.equal(clickJson.action, 'click')
+        assert.equal(clickJson.ok, true)
+        assert.equal(clickJson.effect.domChanged, true)
 
         const waitText = await callTool('browser_wait_and_inspect', {
           condition: { textVisible: CLICKED_TEXT },
@@ -413,7 +432,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         }
       })
 
-      const initialInspect = await callBridge(bridgeUrl, {
+      const initialInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
         timeoutMs: 5_000,
@@ -435,7 +454,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         node => node.role === 'button' && node.name === 'Delete agent record',
         'Delete button'
       )
-      const fillResult = await callBridge(bridgeUrl, {
+      const fillResult = await bridgeCall({
         action: 'fill',
         ref: inputNode.ref,
         text: 'Gamma Delta',
@@ -444,14 +463,14 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       assert.equal(fillResult.ok, true, `Fill failed: ${JSON.stringify(fillResult)}`)
       assert.equal(fillResult.effect.valueChanged, true)
 
-      const afterFillInspect = await callBridge(bridgeUrl, {
+      const afterFillInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
         timeoutMs: 5_000,
       })
       assert.ok(afterFillInspect.inspectText.includes(DIRECT_FILLED_TEXT))
 
-      const clickResult = await callBridge(bridgeUrl, {
+      const clickResult = await bridgeCall({
         action: 'click',
         ref: buttonNode.ref,
         timeoutMs: 5_000,
@@ -459,14 +478,14 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       assert.equal(clickResult.ok, true, `Click failed: ${JSON.stringify(clickResult)}`)
       assert.equal(clickResult.effect.domChanged, true)
 
-      const finalInspect = await callBridge(bridgeUrl, {
+      const finalInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
         timeoutMs: 5_000,
       })
       assert.ok(finalInspect.inspectText.includes(DIRECT_CLICKED_TEXT))
 
-      const deleteApproval = await callBridge(bridgeUrl, {
+      const deleteApproval = await bridgeCall({
         action: 'click',
         ref: deleteNode.ref,
         timeoutMs: 5_000,
@@ -481,7 +500,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
 
-      const approvedDeleteResult = await callBridge(bridgeUrl, {
+      const approvedDeleteResult = await bridgeCall({
         action: 'click',
         ref: deleteNode.ref,
         timeoutMs: 5_000,
@@ -492,7 +511,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         `Approved delete click failed: ${JSON.stringify(approvedDeleteResult)}`
       )
 
-      const afterDeleteInspect = await callBridge(bridgeUrl, {
+      const afterDeleteInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
         timeoutMs: 5_000,
@@ -504,7 +523,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         'Current scrollable results region'
       )
 
-      const waitResult = await callBridge(bridgeUrl, {
+      const waitResult = await bridgeCall({
         action: 'waitFor',
         options: { condition: { waitUntil: 'pageStable' }, quietMs: 100 },
         timeoutMs: 5_000,
@@ -512,7 +531,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       assert.equal(waitResult.kind, 'browser.wait')
       assert.equal(waitResult.ok, true)
 
-      const scrollResult = await callBridge(bridgeUrl, {
+      const scrollResult = await bridgeCall({
         action: 'scroll',
         ref: currentScrollBoxNode.ref,
         options: { direction: 'down', amount: 500 },
@@ -520,14 +539,14 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       })
       assert.equal(scrollResult.ok, true, `Scroll failed: ${JSON.stringify(scrollResult)}`)
 
-      const afterScrollInspect = await callBridge(bridgeUrl, {
+      const afterScrollInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
         timeoutMs: 5_000,
       })
       findReadonlyNode(afterScrollInspect, node => node.name === SCROLLED_TEXT, 'Scroll marker')
 
-      const screenshotResult = await callBridge(bridgeUrl, {
+      const screenshotResult = await bridgeCall({
         action: 'screenshot',
       })
       assert.equal(screenshotResult.kind, 'browser.screenshot')
@@ -535,7 +554,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
       assert.ok(screenshotResult.screenshotId)
       assert.ok(screenshotResult.path.endsWith('.png'))
 
-      const capabilities = await callBridge(bridgeUrl, {
+      const capabilities = await bridgeCall({
         action: 'capabilities',
       })
       assert.equal(capabilities.kind, 'browser.capabilities')
@@ -545,7 +564,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         join(resultDir, 'embedded-browser-agent-result.json'),
         `${JSON.stringify(
           {
-            bridgeUrl,
+            bridgeUrl: bridgeIdentity.baseUrl,
             mcpResult,
             initialInspectId: initialInspect.inspectId,
             inputRef: inputNode.ref,

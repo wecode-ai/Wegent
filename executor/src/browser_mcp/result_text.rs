@@ -43,6 +43,9 @@ fn combined_text_result_with_options(data: &Value, include_json: bool) -> Option
             .unwrap_or("action");
         let action_ok = action.get("ok").and_then(Value::as_bool).unwrap_or(false);
         sections.push(format!("Action: {action_name} ok={action_ok}"));
+        if let Some(outcome) = action.get("outcome").and_then(Value::as_str) {
+            sections.push(format!("Action outcome: {outcome}"));
+        }
         if let Some(effect) = action.get("effect") {
             sections.push(format!(
                 "Effect: {}",
@@ -141,11 +144,15 @@ pub(crate) fn action_text_result(data: &Value) -> Option<String> {
 fn action_text_result_with_options(data: &Value, include_json: bool) -> Option<String> {
     let action = data.get("action").and_then(Value::as_str)?;
     let ok = data.get("ok").and_then(Value::as_bool)?;
-    let mut sections = vec![serde_json::to_string(&json!({
+    let outcome = data.get("outcome").and_then(Value::as_str);
+    let mut summary = json!({
         "success": ok,
         "action": action,
-    }))
-    .unwrap_or_default()];
+    });
+    if let (Some(outcome), Some(summary)) = (outcome, summary.as_object_mut()) {
+        summary.insert("outcome".to_owned(), Value::String(outcome.to_owned()));
+    }
+    let mut sections = vec![serde_json::to_string(&summary).unwrap_or_default()];
     if let Some(error) = data.get("error") {
         sections.push(format!(
             "Error: {}",
@@ -154,6 +161,8 @@ fn action_text_result_with_options(data: &Value, include_json: bool) -> Option<S
     }
     let next = if ok && matches!(action, "fill" | "type" | "typeText") {
         "Next: Continue any remaining requested action and reuse known targets without another inspect."
+    } else if ok && action == "click" && outcome == Some("dispatched_unverified") {
+        "Next: The click event was dispatched, but no immediate effect was observed. Call browser_wait_and_inspect for an expected condition or inspect once before treating the click as complete."
     } else if ok && action == "click" {
         "Next: The click succeeded. Continue any remaining user-requested actions. If none remain and the task needs final-page understanding, call browser_inspect once, summarize that page, and stop."
     } else if !ok {
