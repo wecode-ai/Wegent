@@ -149,7 +149,7 @@ impl AutomationStore {
             return Vec::new();
         };
         let mut items = state.automations.values().cloned().collect::<Vec<_>>();
-        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        items.sort_by_key(|item| std::cmp::Reverse(item.updated_at));
         items
     }
 
@@ -392,7 +392,7 @@ impl AutomationStore {
             .filter(|run| automation_id.map_or(true, |id| run.automation_id == id))
             .cloned()
             .collect::<Vec<_>>();
-        runs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        runs.sort_by_key(|run| std::cmp::Reverse(run.created_at));
         runs
     }
 
@@ -527,7 +527,7 @@ fn prune_runs(state: &mut AutomationState) {
     let mut counts = HashMap::<String, usize>::new();
     state
         .runs
-        .sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        .sort_by_key(|run| std::cmp::Reverse(run.created_at));
     state.runs.retain(|run| {
         let count = counts.entry(run.automation_id.clone()).or_default();
         *count += 1;
