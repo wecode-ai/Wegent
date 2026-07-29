@@ -1588,6 +1588,21 @@ async function waitForSnapshot(
   throw new Error(`${message}; relevant test IDs: ${JSON.stringify(relevantTestIds)}`)
 }
 
+async function assertMentionRenderedAsToken(
+  control,
+  { tokenSelector, tokenText, plainTextMention, errorLabel }
+) {
+  await control.command('waitFor', tokenSelector, {
+    ...(tokenText ? { text: tokenText } : {}),
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const userMessageText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  assert.equal(userMessageText.includes(plainTextMention), false, errorLabel)
+}
+
 async function getElementMetrics(control, selector) {
   return JSON.parse(await control.command('getElementMetrics', selector))
 }
@@ -2786,17 +2801,12 @@ async function verifyPluginLifecycle({
     text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="sent-plugin-token-OpenAI-Developers"]', {
-    text: OFFICIAL_PLUGIN_DISPLAY_NAME,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  await assertMentionRenderedAsToken(control, {
+    tokenSelector: '[data-testid="sent-plugin-token-OpenAI-Developers"]',
+    tokenText: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    plainTextMention: `@${OFFICIAL_PLUGIN_NAME}`,
+    errorLabel: 'The sent plugin reference degraded to its plain-text mention',
   })
-  assert.equal(
-    (
-      await control.command('getText', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`)
-    ).includes(`@${OFFICIAL_PLUGIN_NAME}`),
-    false,
-    'The sent plugin reference degraded to its plain-text mention'
-  )
   await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
   await sendPrompt(
     control,
@@ -2853,17 +2863,12 @@ async function verifyPluginLifecycle({
     text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="sent-plugin-token-OpenAI-Developers"]', {
-    text: OFFICIAL_PLUGIN_DISPLAY_NAME,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  await assertMentionRenderedAsToken(control, {
+    tokenSelector: '[data-testid="sent-plugin-token-OpenAI-Developers"]',
+    tokenText: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    plainTextMention: `@${OFFICIAL_PLUGIN_NAME}`,
+    errorLabel: 'The reopened plugin reference degraded to its plain-text mention',
   })
-  assert.equal(
-    (
-      await control.command('getText', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`)
-    ).includes(`@${OFFICIAL_PLUGIN_NAME}`),
-    false,
-    'The reopened plugin reference degraded to its plain-text mention'
-  )
   await control.command('clickWhenEnabled', qualifiedSkillTaskRow, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -2871,20 +2876,11 @@ async function verifyPluginLifecycle({
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'waitFor',
-    `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  assert.equal(
-    (
-      await control.command('getText', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`)
-    ).includes(`$${qualifiedSkillName}`),
-    false,
-    'The reloaded qualified skill reference degraded to its plain-text mention'
-  )
+  await assertMentionRenderedAsToken(control, {
+    tokenSelector: `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
+    plainTextMention: `$${qualifiedSkillName}`,
+    errorLabel: 'The reloaded qualified skill reference degraded to its plain-text mention',
+  })
 
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', actionsSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })

@@ -637,6 +637,38 @@ fn transcript_only_adds_presentations_missing_from_provider_content() {
 }
 
 #[test]
+fn transcript_presentation_matches_a_complete_reference_token() {
+    let provider_content = "Use $skill-advanced before $skill.";
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": provider_content
+    })];
+    let presentations = vec![json!({
+        "clientMessageId": "runtime-local-pane-1",
+        "references": [{
+            "token": "$skill",
+            "href": "/tmp/skill/SKILL.md"
+        }]
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    let expected_start = provider_content
+        .rfind("$skill")
+        .expect("complete skill token");
+    assert_eq!(
+        provider_messages[0]["presentationReferences"],
+        json!([{
+            "start": expected_start,
+            "end": expected_start + "$skill".len(),
+            "href": "/tmp/skill/SKILL.md"
+        }])
+    );
+}
+
+#[test]
 fn transcript_navigation_uses_client_message_id_for_live_message_matching() {
     let navigation = transcript_turn_navigation(&[json!({
         "id": "provider-user",

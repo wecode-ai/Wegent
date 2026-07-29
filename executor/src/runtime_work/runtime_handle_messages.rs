@@ -70,39 +70,25 @@ pub(crate) fn append_runtime_handle_user_message_presentation(
 }
 
 fn runtime_handle_messages_mut(runtime_handle: &mut Value) -> &mut Vec<Value> {
-    if !runtime_handle.is_object() {
-        *runtime_handle = Value::Object(Map::new());
-    }
-    let object = runtime_handle
-        .as_object_mut()
-        .expect("runtime handle object was just inserted");
-    if !object.get("messages").is_some_and(Value::is_array) {
-        object.insert("messages".to_owned(), Value::Array(Vec::new()));
-    }
-    object
-        .get_mut("messages")
-        .and_then(Value::as_array_mut)
-        .expect("messages array was just inserted")
+    runtime_handle_array_mut(runtime_handle, "messages")
 }
 
 fn runtime_handle_user_message_presentations_mut(runtime_handle: &mut Value) -> &mut Vec<Value> {
+    runtime_handle_array_mut(runtime_handle, "userMessagePresentations")
+}
+
+fn runtime_handle_array_mut<'a>(runtime_handle: &'a mut Value, key: &str) -> &'a mut Vec<Value> {
     if !runtime_handle.is_object() {
         *runtime_handle = Value::Object(Map::new());
     }
     let object = runtime_handle
         .as_object_mut()
         .expect("runtime handle object was just inserted");
-    if !object
-        .get("userMessagePresentations")
-        .is_some_and(Value::is_array)
-    {
-        object.insert(
-            "userMessagePresentations".to_owned(),
-            Value::Array(Vec::new()),
-        );
+    if !object.get(key).is_some_and(Value::is_array) {
+        object.insert(key.to_owned(), Value::Array(Vec::new()));
     }
     object
-        .get_mut("userMessagePresentations")
+        .get_mut(key)
         .and_then(Value::as_array_mut)
-        .expect("user message presentations array was just inserted")
+        .expect("runtime handle array was just inserted")
 }

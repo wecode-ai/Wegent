@@ -264,7 +264,7 @@ fn presentation_reference_ranges(references: &[Value], content: &str) -> Vec<Val
             continue;
         };
         let tail = &content[offset..];
-        let token_start = tail.find(&token);
+        let token_start = find_complete_presentation_token(tail, &token);
         let rich_reference = format!("[{token}]({href})");
         if let Some(rich_start) = tail.find(&rich_reference) {
             if token_start.map_or(true, |start| rich_start <= start) {
@@ -286,6 +286,22 @@ fn presentation_reference_ranges(references: &[Value], content: &str) -> Vec<Val
     }
 
     ranges
+}
+
+fn find_complete_presentation_token(content: &str, token: &str) -> Option<usize> {
+    content.match_indices(token).find_map(|(start, _)| {
+        let end = start + token.len();
+        content[end..]
+            .chars()
+            .next()
+            .map_or(Some(start), |next| {
+                (!is_presentation_token_continuation(next)).then_some(start)
+            })
+    })
+}
+
+fn is_presentation_token_continuation(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '-' | '_' | ':')
 }
 
 fn is_local_skill_reference(href: &str) -> bool {
