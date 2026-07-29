@@ -86,6 +86,8 @@ Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打
 
 列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。没有使用 Codex app-server `thread/turns/list` 做长会话分页，因为当前 Codex 实现仍会在每次请求时 replay 整个 rollout 文件；对 Wework 来说它和全量读取成本相同，却不能复用 executor 已经标准化好的 tool/message cache。打开时也不请求 `includeTurns: true`，因为大 transcript 会把完整 turns 通过 app-server 再序列化一次，反而增加 IPC 和前端压力。
 
+本地设备代理属于这个共享 Codex app-server 的进程级配置，而不是单次任务配置。Wework 在本地 executor 启动完成后、插件列表、模型列表、限额读取或任务 RPC 可能首次启动 app-server 之前，通过 `runtime.codex.runtime_config.update` 同步当前代理。无论哪个 RPC 首先触发进程，executor 都必须使用同一份代理环境启动唯一的 app-server，后续任务继续复用该进程。用户修改或关闭代理后，Wework 会把新配置随 app-server 重启请求一起发送；executor 不能让没有任务上下文的辅助 RPC 用默认环境提前启动一个绕过代理的共享进程。
+
 分页或按发言跳转可能让前端同时持有不连续的 transcript 区间。Wework 会在相邻消息索引之间显示缺失区间，并在该标记首次进入视口时自动请求一次；如果运行时仍无法补齐同一个区间，前端必须停止自动重试，只保留用户点击重试。缺失区间加载只更新当前标记的状态，不能接管发言导航的滚动状态、关闭浏览器滚动锚定或切换消息虚拟化模式，否则无法补齐的历史会形成请求与布局抖动循环。
 
 `loadedTranscriptRanges` 是判断历史区间是否已加载的权威状态，不能只根据当前可见消息的 `messageIndex` 是否连续来判断。模型透明重试等流程可能让前端折叠已经加载的失败尝试，此时可见消息索引会跳号，但中间记录并不缺失。只有相邻可见消息之间存在未被任何已加载区间覆盖的索引时，Wework 才显示缺失区间标记，并且请求范围必须裁剪为实际未覆盖的部分。
