@@ -13,13 +13,13 @@ const packageJson = require.resolve('dingtalk-workspace-cli/package.json')
 const packageRoot = dirname(packageJson)
 const target =
   process.env.WEWORK_DWS_TARGET?.trim() ||
-  ({
+  {
     'darwin-arm64': 'aarch64-apple-darwin',
     'darwin-x64': 'x86_64-apple-darwin',
     'linux-x64': 'x86_64-unknown-linux-gnu',
     'linux-arm64': 'aarch64-unknown-linux-gnu',
     'win32-x64': 'x86_64-pc-windows-msvc',
-  }[`${platform}-${arch}`])
+  }[`${platform}-${arch}`]
 
 if (!target) throw new Error(`Unsupported DWS build platform: ${platform}-${arch}`)
 
@@ -49,14 +49,28 @@ async function findBinary(directory) {
   return null
 }
 
-try {
-  const archive = join(packageRoot, 'assets', archiveName)
-  const command = archiveName.endsWith('.zip') ? 'unzip' : 'tar'
-  const args = archiveName.endsWith('.zip')
-    ? ['-q', archive, '-d', temporaryDirectory]
-    : ['-xzf', archive, '-C', temporaryDirectory]
+function extractArchive(archive, destination) {
+  const isZip = archive.endsWith('.zip')
+  if (process.platform === 'win32') {
+    if (isZip) {
+      const result = spawnSync('tar', ['-xf', archive, '-C', destination], { stdio: 'inherit' })
+      if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
+      return
+    }
+    const result = spawnSync('tar', ['-xzf', archive, '-C', destination], { stdio: 'inherit' })
+    if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
+    return
+  }
+
+  const command = isZip ? 'unzip' : 'tar'
+  const args = isZip ? ['-q', archive, '-d', destination] : ['-xzf', archive, '-C', destination]
   const result = spawnSync(command, args, { stdio: 'inherit' })
   if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
+}
+
+try {
+  const archive = join(packageRoot, 'assets', archiveName)
+  extractArchive(archive, temporaryDirectory)
   const source = await findBinary(temporaryDirectory)
   if (!source) throw new Error(`DWS binary is missing from ${archiveName}`)
   const destination = resolve(
