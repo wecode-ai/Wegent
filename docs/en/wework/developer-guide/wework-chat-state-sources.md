@@ -61,16 +61,23 @@ must ignore the completed snapshot to avoid duplicate text. Temporary chats
 use ephemeral threads and cannot depend on `thread/read(includeTurns)` to
 recover live text that was dropped.
 
-After a task settles, a work-list refresh may immediately reload its completed
-transcript. That transcript owns the final text, message status, and file
-changes, but Codex `thread/read` may temporarily omit tool items that already
-completed in the live stream. The `assistant_done` ingress normalizes the live
-message's `subtaskId` to its canonical `turnId`, and `useWorkbenchPaneSession`
-reconciles messages only when their normalized `subtaskId` values match. It
-keeps the transcript's authoritative fields while restoring live tool blocks
-whose status is `done` or `error` and whose block id is absent from the
-transcript. It must not restore `pending` or `streaming` blocks, which would
-make a completed task appear active again.
+After a task settles in the background, reopening its pane may initially load
+a stale transcript that contains only an older turn. `useWorkbenchPaneSession`
+must compare the latest cached turn identity with settled assistant identities
+from the transcript. A turn identity includes both `turnId` and normalized
+`subtaskId`. The cache remains authoritative until the transcript settles the
+same turn; only then does the transcript become authoritative. Content length,
+block count, or any other content-weight heuristic must not determine recency.
+
+A work-list refresh may also immediately reload the completed transcript. That
+transcript owns the final text, message status, and file changes, but Codex
+`thread/read` may temporarily omit tool items that already completed in the
+live stream. The `assistant_done` ingress normalizes the live message's
+`subtaskId` to its canonical `turnId`. After switching to the matching
+transcript turn, `useWorkbenchPaneSession` keeps the transcript's authoritative
+fields while restoring live tool blocks whose status is `done` or `error` and
+whose block id is absent from the transcript. It must not restore `pending` or
+`streaming` blocks, which would make a completed task appear active again.
 
 A single Codex turn can be split into multiple assistant messages by tool
 calls or mid-turn guidance. Each message must have a distinct message `id`
@@ -220,6 +227,8 @@ Running Codex LocalTasks can send a queued message as native guidance. Guidance 
 5. Later `chat:chunk` and `chat:done` events may carry full text, so trim the assistant text prefix recorded at split time before sending them to the reducer.
 
 Do not append the user message to the bottom after guidance succeeds, and do not wait for `runtime.tasks.guidance` to return before splitting the assistant. Assistant text generated while the guidance request is waiting would otherwise appear before the user guidance message, making live streaming order differ from refreshed transcript order.
+
+After inserting guidance, the message area must scroll to the bottom and briefly maintain stable bottom-following even if the user had previously scrolled upward, so the new user message and assistant continuation remain visible. This forced scroll applies only to newly applied guidance in the current conversation; loading a historical page that contains older guidance must preserve the user's current viewport anchor.
 
 ## Right-Side Temporary Chats
 

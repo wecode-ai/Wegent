@@ -57,13 +57,18 @@ Codex provider 可能只发送带完整正文的 `item/completed`，而不发送
 重复正文。临时聊天是 ephemeral thread，不能依赖 `thread/read(includeTurns)` 补回
 丢失的实时文本。
 
-任务结算后，work list 刷新可能立即触发一次已完成 transcript 重载。该 transcript
-负责最终文本、消息状态和文件变更，但 Codex 的 `thread/read` 可能暂时缺少实时流中
-已经完成的工具条目。实时消息在 `assistant_done` 入口用规范 `turnId` 标准化
-`subtaskId`，`useWorkbenchPaneSession` 只按相同的标准化 `subtaskId` 归并两份消息：
-保留 transcript 的权威字段，同时补回实时消息中状态为 `done` 或 `error` 且 transcript
-尚未包含的 tool block。不得补回 `pending` 或 `streaming` block，否则已完成任务会
-重新显示为执行中。
+任务在后台结算后，用户切回 pane 时可能先加载到只包含上一轮的旧 transcript。
+`useWorkbenchPaneSession` 必须比较缓存最新轮和 transcript 已结算 assistant 的轮身份；
+轮身份由 `turnId` 与标准化 `subtaskId` 共同表示。transcript 尚未覆盖同一轮时，缓存仍
+是当前消息的权威来源；只有同一轮 assistant 已在 transcript 中结算后，才切换为
+transcript。不得按正文长度、block 数量或其他内容权重推断新旧。
+
+work list 刷新也可能立即触发一次已完成 transcript 重载。该 transcript 负责最终文本、
+消息状态和文件变更，但 Codex 的 `thread/read` 可能暂时缺少实时流中已经完成的工具
+条目。实时消息在 `assistant_done` 入口用规范 `turnId` 标准化 `subtaskId`；切换到同一
+轮 transcript 后，`useWorkbenchPaneSession` 保留 transcript 的权威字段，同时补回实时
+消息中状态为 `done` 或 `error` 且 transcript 尚未包含的 tool block。不得补回
+`pending` 或 `streaming` block，否则已完成任务会重新显示为执行中。
 
 同一个 Codex turn 可能因为工具调用或中途引导被拆成多条 assistant 消息。每条消息
 必须使用不同的消息 `id`，但都保留相同的规范 `turnId`。fork、回滚等 turn 级操作
@@ -198,6 +203,8 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 5. 后续 `chat:chunk` 和 `chat:done` 可能携带完整文本，必须按拆分时记录的 assistant 文本前缀裁剪后再进入 reducer。
 
 不要把引导成功后的 user message append 到对话底部，也不要等 `runtime.tasks.guidance` 返回后才拆分 assistant；这会让引导请求等待期间产生的 assistant 文本出现在用户引导消息之前，造成流式显示和刷新后 transcript 顺序不一致。
+
+引导消息插入后，即使用户此前已经向上滚动，消息区域也必须主动滚动到底部并保持一段短暂的稳定跟随，使新插入的 user message 和 assistant continuation 可见。该强制滚动只适用于当前会话中新应用的引导；加载包含旧引导的历史页面时，必须保留用户当前的视口锚点。
 
 ## 右侧临时聊天
 

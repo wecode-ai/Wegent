@@ -3,7 +3,13 @@
     "home": "首页"
   },
   "common": {
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "window": {
+      "minimize": "最小化",
+      "maximize": "最大化",
+      "restore": "还原",
+      "close": "关闭"
+    }
   },
   "workbench": {
     "brand": "Wework",
@@ -985,6 +991,8 @@
     "keyboard_shortcuts_open_terminal_description": "显示或隐藏底部面板",
     "keyboard_shortcuts_open_settings": "打开设置",
     "keyboard_shortcuts_open_settings_description": "打开设置页面",
+    "keyboard_shortcuts_open_search": "打开搜索",
+    "keyboard_shortcuts_open_search_description": "打开搜索面板",
     "keyboard_shortcuts_go_back": "返回",
     "keyboard_shortcuts_go_back_description": "返回导航历史",
     "keyboard_shortcuts_go_forward": "前进",
@@ -1867,6 +1875,12 @@
     "uploading": "上传中…",
     "running": "运行中…",
     "executor_required": "请先选择员工或 AI 智能体作为执行者",
+    "window": {
+      "minimize": "最小化",
+      "maximize": "最大化",
+      "restore": "还原",
+      "close": "关闭"
+    },
     "project_visibility": "项目权限",
     "project_visibility_private": "私有",
     "project_visibility_public": "公开",

@@ -417,6 +417,24 @@ function desktopControlElementVisible(element: HTMLElement): boolean {
   )
 }
 
+async function expandDesktopProcessingSummaries(): Promise<string> {
+  const clickCollapsed = (selector: string) => {
+    const buttons = findDesktopControlElements(selector).filter(desktopControlElementEnabled)
+    buttons.forEach(button => button.click())
+    return buttons.length
+  }
+
+  const finalCount = clickCollapsed(
+    '[data-testid="final-processing-toggle"][aria-expanded="false"]'
+  )
+  await waitForDesktopControlTick()
+  const summaryCount = clickCollapsed(
+    '[data-testid="processing-summary-toggle"][aria-expanded="false"]'
+  )
+  await waitForDesktopControlTick()
+  return JSON.stringify({ finalCount, summaryCount })
+}
+
 async function waitForDesktopControlTick(): Promise<void> {
   const url = desktopControlUrl()
   if (!url) throw new Error('Desktop E2E control URL is not configured')
@@ -763,8 +781,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
+      element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return element.textContent?.trim() ?? ''
     }
+    case 'expandProcessingSummaries':
+      return expandDesktopProcessingSummaries()
     case 'scrollIntoViewAsUser': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -852,6 +873,52 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       element.click()
       return element.textContent?.trim() ?? ''
+    }
+    case 'clickDescendantInElementWithText': {
+      const text = command.text ?? ''
+      const targetSelector = command.target?.trim()
+      if (!text) throw new Error('clickDescendantInElementWithText requires text')
+      if (!targetSelector) throw new Error('clickDescendantInElementWithText requires target')
+      const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+      const startedAt = Date.now()
+      let lastFailure = `Unable to find selector "${command.selector}" containing "${text}"`
+      while (Date.now() - startedAt < timeoutMs) {
+        const container = findDesktopControlElements(command.selector).find(element =>
+          (element.textContent ?? '').includes(text)
+        )
+        const target = container?.querySelector<HTMLElement>(targetSelector)
+        if (target && desktopControlElementEnabled(target)) {
+          target.scrollIntoView({ block: 'center', inline: 'nearest' })
+          target.click()
+          return target.textContent?.trim() ?? ''
+        }
+        if (container && !target) {
+          lastFailure = `Unable to find descendant "${targetSelector}" inside "${command.selector}"`
+        } else if (target && !desktopControlElementEnabled(target)) {
+          lastFailure = `Descendant "${targetSelector}" inside "${command.selector}" is disabled`
+        }
+        await waitForDesktopControlTick()
+      }
+      throw new Error(lastFailure)
+    }
+    case 'markElementWithText': {
+      const text = command.text ?? ''
+      const value = command.value?.trim()
+      if (!text) throw new Error('markElementWithText requires text')
+      if (!value) throw new Error('markElementWithText requires value')
+      const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+      const startedAt = Date.now()
+      while (Date.now() - startedAt < timeoutMs) {
+        const element = findDesktopControlElements(command.selector).find(candidate =>
+          (candidate.textContent ?? '').includes(text)
+        )
+        if (element) {
+          element.dataset.e2eAnchorId = value
+          return element.textContent?.trim() ?? ''
+        }
+        await waitForDesktopControlTick()
+      }
+      throw new Error(`Unable to find selector "${command.selector}" containing "${text}"`)
     }
     case 'fill': {
       const element = findDesktopControlElements(command.selector)[0]

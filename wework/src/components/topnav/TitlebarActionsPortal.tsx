@@ -5,6 +5,7 @@ export const TITLEBAR_ACTIONS_PORTAL_ID = 'titlebar-actions-portal'
 export const TITLEBAR_CENTER_PORTAL_ID = 'titlebar-center-portal'
 export const TITLEBAR_RIGHT_PANEL_PORTAL_ID = 'titlebar-right-panel-portal'
 export const WORKBENCH_MAIN_HEADER_PORTAL_ID = 'workbench-main-header-portal'
+export const WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID = 'workbench-windows-titlebar-middle-portal'
 
 interface TitlebarActionsPortalProps {
   children: ReactNode
@@ -40,6 +41,16 @@ export function WorkbenchMainHeaderPortal({ children }: TitlebarActionsPortalPro
   const portalTarget = useSyncExternalStore(
     subscribeToPortalTarget,
     () => document.getElementById(WORKBENCH_MAIN_HEADER_PORTAL_ID),
+    () => null
+  )
+
+  return portalTarget ? createPortal(children, portalTarget) : null
+}
+
+export function WorkbenchWindowsTitlebarMiddlePortal({ children }: TitlebarActionsPortalProps) {
+  const portalTarget = useSyncExternalStore(
+    subscribeToPortalTarget,
+    () => document.getElementById(WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID),
     () => null
   )
 

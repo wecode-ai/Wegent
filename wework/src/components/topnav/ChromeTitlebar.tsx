@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import type { AppTab } from '@/config/apps'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
@@ -9,16 +10,12 @@ import {
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
-import type { ReactNode } from 'react'
-
-function getPlatform(): 'mac' | 'win' | 'linux' {
-  if (typeof navigator === 'undefined') return 'mac'
-
-  const userAgent = navigator.userAgent || ''
-  if (/Mac/i.test(userAgent)) return 'mac'
-  if (/Win/i.test(userAgent)) return 'win'
-  return 'linux'
-}
+import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
+import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import { useTranslation } from '@/hooks/useTranslation'
+import { MessageSquareWarning } from 'lucide-react'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
+import { useState, type ReactNode } from 'react'
 
 interface ChromeTitlebarProps {
   tabs: AppTab[]
@@ -117,11 +114,18 @@ export function ChromeTitlebar({
       >
         {isTauri && <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />}
       </div>
+      {isTauri && platform === 'mac' && <TopnavFeedbackButton />}
       {isTauri && <TitlebarExtensionSlot />}
       <div
         data-testid="titlebar-right-workspace-zone"
-        className="pointer-events-none absolute right-0 top-0 z-chrome flex h-full items-center"
+        className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
         style={{
+          right:
+            isTauri && platform === 'win'
+              ? 'calc(138px + 5rem)'
+              : isTauri && platform === 'linux'
+                ? 'calc(138px + 5rem)'
+                : '5rem',
           width: 'var(--right-workspace-titlebar-width, auto)',
         }}
       >
@@ -136,19 +140,58 @@ export function ChromeTitlebar({
             </div>
           ) : null}
         </div>
-        <div
-          id={TITLEBAR_ACTIONS_PORTAL_ID}
-          data-testid="titlebar-actions"
-          className="pointer-events-auto flex h-full shrink-0 items-center gap-1 pr-3"
-        />
       </div>
+      <div
+        id={TITLEBAR_ACTIONS_PORTAL_ID}
+        data-testid="titlebar-actions"
+        className="pointer-events-auto absolute right-0 top-0 z-chrome flex h-full w-[5rem] shrink-0 items-center justify-end gap-1 pr-3"
+        style={{
+          right: isTauri && (platform === 'linux' || platform === 'win') ? '138px' : undefined,
+        }}
+      />
 
-      {/* Windows/Linux: right spacer for native window controls */}
-      {isTauri && platform !== 'mac' && (
+      {/* Linux: right spacer for native window controls */}
+      {isTauri && platform === 'linux' && (
         <div className="w-[138px] shrink-0 self-stretch" data-tauri-drag-region>
           <MacOSTitleBarDragRegion />
         </div>
       )}
+
+      {/* Windows: custom window frame controls */}
+      {isTauri && platform === 'win' && (
+        <div
+          className="relative z-chrome w-[138px] shrink-0 self-stretch"
+          data-tauri-drag-region={false}
+        >
+          <WindowFrameControls className="h-full justify-end" />
+        </div>
+      )}
     </div>
+  )
+}
+
+function TopnavFeedbackButton() {
+  const { t } = useTranslation('common')
+  const [open, setOpen] = useState(false)
+
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="topnav-feedback-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.feedback_button')}
+        title={t('workbench.feedback_button')}
+        onClick={() => setOpen(true)}
+      >
+        <MessageSquareWarning className="h-4 w-4" />
+      </button>
+      <TaskFeedbackDialog
+        open={open}
+        hasActiveTask={false}
+        onClose={() => setOpen(false)}
+        getTaskContext={() => Promise.resolve({})}
+      />
+    </>
   )
 }

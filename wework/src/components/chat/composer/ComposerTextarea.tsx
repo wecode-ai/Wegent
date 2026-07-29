@@ -138,6 +138,17 @@ export function ComposerTextarea({
       conversationMentionCandidates
     )
 
+  // The `$` trigger searches skills and apps only. Conversation and cloud
+  // references belong to the `@` mention menu, so they must be excluded here
+  // even though both menus share the same candidate pipeline.
+  const filteredSkillCandidates = useMemo(
+    () =>
+      filteredMentionCandidates.filter(
+        candidate => candidate.kind === 'skill' || candidate.kind === 'app'
+      ),
+    [filteredMentionCandidates]
+  )
+
   const workspaceSearch = useWorkspaceMentionSearch(
     activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
     workspaceTarget,
@@ -293,7 +304,7 @@ export function ComposerTextarea({
   const mentionMenuRows = useMemo<MentionMenuRow[]>(() => {
     if (!showSkillMenu) return []
     if (activeMenu?.kind === 'skill') {
-      return filteredMentionCandidates.map(candidate => ({ kind: 'candidate', candidate }))
+      return filteredSkillCandidates.map(candidate => ({ kind: 'candidate', candidate }))
     }
     if (!activeMenu?.trigger.query.trim()) {
       const nonCloudCandidates = filteredMentionCandidates.filter(
@@ -344,6 +355,7 @@ export function ComposerTextarea({
     cloudSpaceEnabled,
     filteredCloudProjectCandidates,
     filteredMentionCandidates,
+    filteredSkillCandidates,
     onSetGoal,
     onSetPlanMode,
     planModeActive,

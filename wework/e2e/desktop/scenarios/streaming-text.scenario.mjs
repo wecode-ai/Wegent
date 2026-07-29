@@ -8,26 +8,41 @@ const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
 const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
 const INITIAL_PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL'
-const INITIAL_COMPLETION = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE'
+const HISTORY_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_HISTORY'
 const PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT: keep the partial response active until released.'
 const MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_PARTIAL'
 const VIEWPORT_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_VIEWPORT_ANCHOR'
-const VIEWPORT_MARKER_URL = 'https://wework-e2e.invalid/streaming-viewport-anchor'
 const APPEND_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_APPENDED'
 const ATTACHMENT_FILENAME = 'streaming-turn-navigation.png'
 const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
-const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"] p[data-scroll-anchor]:has(a[href="${VIEWPORT_MARKER_URL}"])`
-const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
+const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
+const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
+const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] [data-scroll-anchor]`
+const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${VIEWPORT_ANCHOR_E2E_ID}"]`
+const HISTORY_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   if (index === 11) {
-    return `[${VIEWPORT_MARKER}](${VIEWPORT_MARKER_URL}): this paragraph must remain fixed after the user scrolls upward.`
+    return VIEWPORT_ANCHOR_TEXT
   }
+  return `Completed history paragraph ${index + 1}: this content belongs to the previous assistant turn.`
+})
+const INITIAL_COMPLETION = `WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE\n\n${HISTORY_PARAGRAPHS.join('\n\n')}`
+const HISTORY_TURNS = Array.from({ length: 4 }, (_, index) => ({
+  prompt: `${HISTORY_PROMPT_PREFIX}_${index + 1}`,
+  completion: `WEWORK_DESKTOP_E2E_STREAMING_TEXT_HISTORY_COMPLETE_${index + 1}\n\n${Array.from(
+    { length: 4 },
+    (_, paragraphIndex) =>
+      `Follow-up history paragraph ${index + 1}.${paragraphIndex + 1}: this turn keeps the conversation on the virtualized path.`
+  ).join('\n\n')}`,
+}))
+const STREAMING_TURN_INDEX = HISTORY_TURNS.length + 1
+const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   return `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
 })
 const APPENDED_PARAGRAPHS = Array.from({ length: 14 }, (_, index) =>
-  index === 13
+  index === 0
     ? `${APPEND_MARKER}: later streamed content is now visible in the response.`
     : `Later streaming paragraph ${index + 1}: this content arrives after the user pauses automatic following.`
 )
@@ -189,19 +204,16 @@ function streamingEvents(id) {
 }
 
 function textDeltaEvents(itemId, text, initialOffset = 0) {
-  let offset = initialOffset
-  return (text.match(/[\s\S]{1,48}/g) ?? []).map(delta => {
-    const event = {
+  return [
+    {
       type: 'response.output_text.delta',
       item_id: itemId,
       output_index: 0,
       content_index: 0,
-      delta,
-      offset,
-    }
-    offset += [...delta].length
-    return event
-  })
+      delta: text,
+      offset: initialOffset,
+    },
+  ]
 }
 
 async function writeSseEvents(response, events) {
@@ -224,6 +236,11 @@ function requestContainsPrompt(body) {
 
 function requestContainsInitialPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(INITIAL_PROMPT)
+}
+
+function findHistoryTurn(body) {
+  const input = JSON.stringify(body.input ?? [])
+  return HISTORY_TURNS.findLast(turn => input.includes(turn.prompt))
 }
 
 function requestContainsToolRegressionPrompt(body) {
@@ -277,6 +294,19 @@ async function waitForBottom(control, description, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
+}
+
+async function waitForScrollHeightIncrease(control, previousHeight, description, timeoutMs) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
+    if (metrics.scrollHeight > previousHeight + 8) return metrics
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `${description} remained at ${metrics?.scrollHeight ?? previousHeight}px after content was appended`
+  )
 }
 
 async function waitForFolderPath(control, expectedPath, timeoutMs) {
@@ -405,10 +435,7 @@ export function createDesktopScenario({
         response.write(sse(stream.start))
         await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
         await appendRelease
-        await writeSseEvents(
-          response,
-          textDeltaEvents(stream.itemId, APPENDED_TEXT, PARTIAL_TEXT.length)
-        )
+        await writeSseEvents(response, [assistantMessage(APPENDED_TEXT)])
         await responseRelease
         response.end(sse(stream.finish))
         return true
@@ -431,6 +458,19 @@ export function createDesktopScenario({
           return true
         }
         throw new Error(`Unexpected tool-text-offset stage: ${toolRegressionStage}`)
+      }
+
+      const historyTurn = findHistoryTurn(body)
+      if (historyTurn) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(historyTurn.completion),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
       }
 
       if (requestContainsInitialPrompt(body)) {
@@ -491,7 +531,7 @@ export function createDesktopScenario({
       await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: INITIAL_COMPLETION,
+        text: 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE',
         timeoutMs: uiTimeoutMs,
       })
       const taskRowTestId = await waitForNewTaskRow(
@@ -500,13 +540,15 @@ export function createDesktopScenario({
         INITIAL_PROMPT,
         uiTimeoutMs
       )
+      for (const historyTurn of HISTORY_TURNS) {
+        await control.command('fill', COMPOSER_SELECTOR, { value: historyTurn.prompt })
+        await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: historyTurn.completion.split('\n')[0],
+          timeoutMs: uiTimeoutMs,
+        })
+      }
       await capture(control, 'streaming-text-00-ready-to-send.png')
-      const finalContentCountBeforeStreaming = Number(
-        await control.command(
-          'getElementCount',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
-        )
-      )
       await control.command('pasteFile', COMPOSER_SELECTOR, {
         filename: ATTACHMENT_FILENAME,
         mimeType: 'image/png',
@@ -539,11 +581,6 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
-        { text: VIEWPORT_MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
-      )
       const streamingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -551,16 +588,88 @@ export function createDesktopScenario({
         streamingSnapshot.text.includes(MARKER),
         'The process text after the streaming tool call lost its prefix'
       )
+      await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.18' })
+      await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+        text: VIEWPORT_ANCHOR_TEXT,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('markElementWithText', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+        text: VIEWPORT_ANCHOR_TEXT,
+        value: VIEWPORT_ANCHOR_E2E_ID,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
-          )
-        ),
-        finalContentCountBeforeStreaming,
-        'Ambiguous streaming text was rendered as final assistant content'
+        await control.command('getText', VIEWPORT_ANCHOR_SELECTOR),
+        VIEWPORT_ANCHOR_TEXT,
+        'The viewport anchor paragraph was not rendered at the expected position'
       )
+      const userScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The streaming conversation immediately after the user scrolled upward'
+      )
+      assert.ok(
+        distanceFromBottom(userScrollPosition) > 8,
+        'The simulated user scroll did not move the streaming conversation away from the bottom'
+      )
+      await new Promise(resolve => setTimeout(resolve, 750))
+      const stableUserScrollPosition = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The streaming conversation after pending bottom restores had time to run'
+      )
+      assert.ok(
+        Math.abs(stableUserScrollPosition.scrollTop - userScrollPosition.scrollTop) <= 8,
+        `The streaming conversation jumped from ${userScrollPosition.scrollTop}px to ${stableUserScrollPosition.scrollTop}px after the user scrolled upward`
+      )
+
+      await control.command('scrollIntoViewAsUser', VIEWPORT_ANCHOR_SELECTOR)
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const scrollerBeforeAppend = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The streaming conversation scroller before later content'
+      )
+      assert.ok(
+        distanceFromBottom(scrollerBeforeAppend) > 8,
+        'The simulated user scroll did not move the streaming conversation away from the bottom'
+      )
+      const anchorBeforeAppend = await getSingleElementMetrics(
+        control,
+        VIEWPORT_ANCHOR_SELECTOR,
+        'The viewport anchor before later content'
+      )
+      assert.ok(
+        anchorBeforeAppend.top >= scrollerBeforeAppend.top &&
+          anchorBeforeAppend.bottom <= scrollerBeforeAppend.bottom,
+        `The viewport anchor was not visible after the user scroll (top=${anchorBeforeAppend.top}px, bottom=${anchorBeforeAppend.bottom}px)`
+      )
+      await capture(control, 'streaming-text-01-user-scrolled-up.png')
+
+      releaseAppend()
+      const scrollerAfterAppend = await waitForScrollHeightIncrease(
+        control,
+        scrollerBeforeAppend.scrollHeight,
+        'The virtualized streaming conversation after later content',
+        uiTimeoutMs
+      )
+      await new Promise(resolve => setTimeout(resolve, 750))
+      const anchorAfterAppend = await getSingleElementMetrics(
+        control,
+        VIEWPORT_ANCHOR_SELECTOR,
+        'The viewport anchor after later content'
+      )
+      assert.ok(
+        Math.abs(anchorAfterAppend.top - anchorBeforeAppend.top) <= 8,
+        `The user-selected streaming text moved from ${anchorBeforeAppend.top}px to ${anchorAfterAppend.top}px while later content arrived`
+      )
+      assert.ok(
+        Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
+        `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
+      )
+      await capture(control, 'streaming-text-02-anchor-stable-after-append.png')
+
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
       const pinnedBeforeSwitch = await waitForBottom(
         control,
@@ -591,16 +700,19 @@ export function createDesktopScenario({
         distanceFromBottom(pinnedAfterSwitch) <= 8,
         `The bottom-pinned streaming conversation reopened ${distanceFromBottom(pinnedAfterSwitch)}px from the bottom`
       )
-      await capture(control, 'streaming-text-01-bottom-restored-after-task-switch.png')
+      await capture(control, 'streaming-text-03-bottom-restored-after-task-switch.png')
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
-        2,
-        'Two user turns were rendered with duplicate turn-navigation markers'
+        HISTORY_TURNS.length + 2,
+        'The user turns were rendered with duplicate turn-navigation markers'
       )
-      await control.command('hover', `${TURN_NAVIGATION_MARKER_SELECTOR}[data-turn-index="1"]`)
+      await control.command(
+        'hover',
+        `${TURN_NAVIGATION_MARKER_SELECTOR}[data-turn-index="${STREAMING_TURN_INDEX}"]`
+      )
       const streamingTurnPreview = await control.command(
         'getText',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"][data-turn-index="1"]`
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"][data-turn-index="${STREAMING_TURN_INDEX}"]`
       )
       assert.ok(
         streamingTurnPreview.includes('WEWORK_DESKTOP_E2E_STREAMING_TEXT'),
@@ -614,86 +726,7 @@ export function createDesktopScenario({
         !streamingTurnPreview.includes('application_context'),
         'The streaming turn preview exposed injected application context'
       )
-      await capture(control, 'streaming-text-02-thinking-below-partial-response.png')
-
-      await control.command('waitFor', VIEWPORT_ANCHOR_SELECTOR, {
-        text: VIEWPORT_MARKER,
-        timeoutMs: uiTimeoutMs,
-      })
-      assert.equal(
-        await control.command('getText', VIEWPORT_ANCHOR_SELECTOR),
-        `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`,
-        'The viewport anchor paragraph was not rendered at the expected position'
-      )
-      await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.35' })
-      const userScrollPosition = await getSingleElementMetrics(
-        control,
-        SCROLLER_SELECTOR,
-        'The streaming conversation immediately after the user scrolled upward'
-      )
-      assert.ok(
-        distanceFromBottom(userScrollPosition) > 8,
-        'The simulated user scroll did not move the streaming conversation away from the bottom'
-      )
-      await new Promise(resolve => setTimeout(resolve, 750))
-      const stableUserScrollPosition = await getSingleElementMetrics(
-        control,
-        SCROLLER_SELECTOR,
-        'The streaming conversation after pending bottom restores had time to run'
-      )
-      assert.ok(
-        Math.abs(stableUserScrollPosition.scrollTop - userScrollPosition.scrollTop) <= 8,
-        `The streaming conversation jumped from ${userScrollPosition.scrollTop}px to ${stableUserScrollPosition.scrollTop}px after the user scrolled upward`
-      )
-
-      await control.command('scrollIntoView', VIEWPORT_ANCHOR_SELECTOR)
-      await new Promise(resolve => setTimeout(resolve, 250))
-      const scrollerBeforeAppend = await getSingleElementMetrics(
-        control,
-        SCROLLER_SELECTOR,
-        'The streaming conversation scroller before later content'
-      )
-      assert.ok(
-        distanceFromBottom(scrollerBeforeAppend) > 8,
-        'The simulated user scroll did not move the streaming conversation away from the bottom'
-      )
-      const anchorBeforeAppend = await getSingleElementMetrics(
-        control,
-        VIEWPORT_ANCHOR_SELECTOR,
-        'The viewport anchor before later content'
-      )
-      assert.ok(
-        anchorBeforeAppend.top >= scrollerBeforeAppend.top &&
-          anchorBeforeAppend.bottom <= scrollerBeforeAppend.bottom,
-        `The viewport anchor was not visible after the user scroll (top=${anchorBeforeAppend.top}px, bottom=${anchorBeforeAppend.bottom}px)`
-      )
-      await capture(control, 'streaming-text-03-user-scrolled-up.png')
-
-      releaseAppend()
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
-        { text: APPEND_MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
-      )
-      const scrollerAfterAppend = await getSingleElementMetrics(
-        control,
-        SCROLLER_SELECTOR,
-        'The streaming conversation scroller after later content'
-      )
-      const anchorAfterAppend = await getSingleElementMetrics(
-        control,
-        VIEWPORT_ANCHOR_SELECTOR,
-        'The viewport anchor after later content'
-      )
-      assert.ok(
-        Math.abs(anchorAfterAppend.top - anchorBeforeAppend.top) <= 8,
-        `The user-selected streaming text moved from ${anchorBeforeAppend.top}px to ${anchorAfterAppend.top}px while later content arrived`
-      )
-      assert.ok(
-        Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
-        `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
-      )
-      await capture(control, 'streaming-text-04-anchor-stable-after-append.png')
+      await capture(control, 'streaming-text-04-thinking-below-partial-response.png')
 
       releaseResponse()
       await control.command(
@@ -716,16 +749,6 @@ export function createDesktopScenario({
       assert.ok(
         completedSnapshot.testIds.includes('assistant-message-content'),
         'The completed response did not promote ambiguous text to final assistant content'
-      )
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
-          )
-        ),
-        finalContentCountBeforeStreaming + 1,
-        'Turn completion did not add exactly one final assistant content block'
       )
       assert.ok(
         !completedSnapshot.testIds.includes('thinking-indicator'),

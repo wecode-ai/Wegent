@@ -6,6 +6,8 @@ mod feedback;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
+#[cfg(desktop)]
+mod storage_maintenance;
 mod system_drag;
 mod system_sleep;
 mod todo_store;
@@ -523,6 +525,28 @@ fn env_flag_enabled(key: &str) -> bool {
         .ok()
         .and_then(normalized_non_empty)
         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
+#[cfg(desktop)]
+const E2E_BACKGROUND_WINDOW_ENV: &str = "WEWORK_E2E_BACKGROUND_WINDOW";
+
+#[cfg(desktop)]
+fn should_activate_main_window() -> bool {
+    !env_flag_enabled(E2E_BACKGROUND_WINDOW_ENV)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn enforce_e2e_background_application_policy<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if should_activate_main_window() {
+        return;
+    }
+    if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Prohibited) {
+        log::warn!("Failed to prohibit macOS activation for desktop E2E: {error}");
+    }
+    if let Err(error) = app.hide() {
+        log::warn!("Failed to hide macOS desktop E2E application: {error}");
+    }
+    set_dock_icon_visible(app, false);
 }
 
 #[cfg(desktop)]
@@ -2443,6 +2467,9 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 fn set_dock_icon_visible<R: tauri::Runtime>(app: &tauri::AppHandle<R>, visible: bool) {
     #[cfg(target_os = "macos")]
     {
+        if visible && !should_activate_main_window() {
+            return;
+        }
         let state = app.state::<MainWindowLifecycleState>();
         if state.dock_icon_visible.swap(visible, Ordering::SeqCst) == visible {
             return;
@@ -2545,9 +2572,11 @@ fn create_main_window<R: tauri::Runtime>(
             let _ = window.set_fullscreen(true);
         }
     }
-    let _ = window.show();
-    set_dock_icon_visible(app, true);
-    let _ = window.set_focus();
+    if should_activate_main_window() {
+        let _ = window.show();
+        set_dock_icon_visible(app, true);
+        let _ = window.set_focus();
+    }
     Ok(())
 }
 
@@ -2557,10 +2586,12 @@ pub(crate) fn ensure_main_window<R: tauri::Runtime>(
     action: Option<MainWindowOpenAction>,
 ) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        set_dock_icon_visible(app, true);
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        if should_activate_main_window() {
+            let _ = window.unminimize();
+            let _ = window.show();
+            set_dock_icon_visible(app, true);
+            let _ = window.set_focus();
+        }
         if let Some(action) = action {
             emit_main_window_open_action(app, action);
         }
@@ -4302,6 +4333,9 @@ pub fn run() {
                 get_app_log_directory(app.handle().clone()).unwrap_or_else(|error| error)
             );
 
+            #[cfg(all(desktop, target_os = "macos"))]
+            enforce_e2e_background_application_policy(app.handle());
+
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
@@ -4338,6 +4372,8 @@ pub fn run() {
             {
                 log::warn!("Failed to start embedded browser bridge: {error}");
             }
+            #[cfg(desktop)]
+            storage_maintenance::schedule(app.handle().clone());
             #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
@@ -4443,7 +4479,13 @@ pub fn run() {
     app.run(|app_handle, event| {
         #[cfg(desktop)]
         match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Ready => {
+                enforce_e2e_background_application_policy(app_handle);
+            }
             tauri::RunEvent::Resumed => {
+                #[cfg(target_os = "macos")]
+                enforce_e2e_background_application_policy(app_handle);
                 if app_handle
                     .get_webview_window(MAIN_WINDOW_LABEL)
                     .and_then(|window| window.is_focused().ok())
@@ -4460,6 +4502,7 @@ pub fn run() {
                 if let Err(error) = ensure_main_window(app_handle, None) {
                     log::warn!("Failed to reopen main window from macOS activation: {error}");
                 }
+                enforce_e2e_background_application_policy(app_handle);
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 let lifecycle = app_handle.state::<MainWindowLifecycleState>();

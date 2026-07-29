@@ -101,7 +101,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 矩阵提交等待上限为 10 秒。如果编辑器已经显示提交错误，runner 会立即抛出该错误；否则在协议阶段未按时推进时输出当前阶段和已捕获请求，避免失败后长时间无反馈。
 
-`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景先验证“正在思考”位于可见回复下方，再在长回复持续追加时向上滚动，记录一个可见文本锚点，断言后续流式增量不会改变该锚点的视口位置；释放响应后还会验证“正在思考”消失。该场景会保存就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
+`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景会构造超过虚拟化阈值的多轮长对话，先验证“正在思考”位于可见回复下方，再滚动到已完成的历史消息，使活动响应位于屏幕外并继续增长。测试等待列表总高度真实增长，并断言当前可见文本锚点和 `scrollTop` 在流式过程、完成以及重新打开任务后都保持稳定；释放响应后还会验证“正在思考”消失。该场景会保存就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
 
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
@@ -136,6 +136,8 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
 可选的 `WEWORK_E2E_EXECUTOR_BIN` 和 `WEWORK_E2E_APP_BIN` 分别允许复用已经构建的真实 Executor 和真实 Tauri 应用。传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在 `wework/test-results/desktop-e2e/`。
+
+在 macOS 上，桌面 E2E 会通过临时 `.app` bundle 和 `open -g` 在后台启动。测试专用的 `WEWORK_E2E_BACKGROUND_WINDOW=1` 会让 Tauri 保持主窗口隐藏、禁止应用激活并隐藏 Dock 图标；隐藏 WebView 会关闭后台节流，因此 DOM 控制、计时器和截图仍正常工作。runner 在连接控制器后还会断言测试应用不是当前前台进程，防止窗口抢焦点行为回归。该环境变量只由桌面 E2E runner 注入，不改变正常开发或生产启动行为。
 
 云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。场景同时验证云端 Model CRD 经 backend 代理转发三种模型协议，以及同一云端账号下的 Codex/云端模型在本机 executor 中执行。测试只模拟 provider 模型端点；不得模拟 Backend HTTP 或 WebSocket 接口。清理项目之前必须等待任务的运行状态结束；助手文本已经渲染并不代表任务状态已经完成持久化。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
