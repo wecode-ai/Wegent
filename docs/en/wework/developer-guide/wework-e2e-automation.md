@@ -366,6 +366,14 @@ Executor, and Codex verification semantics while removing the serial wait
 between the three scenarios. Matrix fail-fast is disabled so the remaining
 scenarios can finish and upload diagnostics when one scenario fails.
 
+The Linux desktop scenarios cache the downloaded `.deb` files for Tauri system
+dependencies in the runner user's home directory. Cache keys rotate weekly and
+are scoped by operating system and CPU architecture. Every run still executes
+`apt-get update`; an older cache is only a restore source, and missing or
+updated packages are downloaded from the Ubuntu repositories. Installation
+uses `--no-install-recommends` plus repository retries and timeouts to reduce
+whole-job timeouts caused by transient hosted-runner mirror degradation.
+
 The memory gate depends on macOS WebKit process association and physical-footprint sampling, so run it separately on a macOS runner:
 
 ```bash
