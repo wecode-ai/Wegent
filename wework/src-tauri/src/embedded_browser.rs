@@ -41,6 +41,7 @@ const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS 
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
+const EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT: &str = include_str!("embedded_browser_diagnostics.js");
 const EMBEDDED_BROWSER_ACTION_SCRIPT: &str = include_str!("embedded_browser_action.js");
 const EMBEDDED_BROWSER_INSPECT_SCRIPT: &str = include_str!("embedded_browser_inspect.js");
 const EMBEDDED_BROWSER_WAIT_SCRIPT: &str = include_str!("embedded_browser_wait.js");
@@ -64,6 +65,7 @@ struct EmbeddedBrowserEntry {
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    opened_at_unix_ms: u128,
     phase: EmbeddedBrowserPhase,
 }
 
@@ -967,14 +969,157 @@ fn page_state_for_label(
     })
 }
 
+fn embedded_browser_entry_snapshot(
+    state: &EmbeddedBrowserState,
+    label: &str,
+) -> Option<Value> {
+    let webviews = state.webviews.lock().ok()?;
+    let entry = webviews.get(label)?;
+    let readiness = match entry.readiness() {
+        EmbeddedBrowserReadiness::Opening => "opening",
+        EmbeddedBrowserReadiness::Ready => "ready",
+    };
+    Some(json!({
+        "label": label,
+        "nativeLabel": &entry.native_label,
+        "title": &entry.title,
+        "url": &entry.url,
+        "readiness": readiness,
+        "openedAtUnixMs": entry.opened_at_unix_ms,
+        "ageMs": current_unix_millis().saturating_sub(entry.opened_at_unix_ms),
+    }))
+}
+
+fn embedded_browser_page_diagnostics_script() -> String {
+    r#"(() => {
+  try {
+    const navigation = performance.getEntriesByType('navigation')[0] || null;
+    return {
+      ok: true,
+      kind: 'browser.pageDiagnostics',
+      href: location.href,
+      title: document.title || '',
+      readyState: document.readyState,
+      visibilityState: document.visibilityState || '',
+      referrer: document.referrer || '',
+      bodyChildElementCount: document.body ? document.body.children.length : null,
+      bodyTextLength: document.body ? (document.body.innerText || '').length : null,
+      bodyHtmlLength: document.body ? (document.body.innerHTML || '').length : null,
+      htmlLength: document.documentElement ? (document.documentElement.outerHTML || '').length : null,
+      navigation: navigation ? {
+        type: navigation.type || '',
+        redirectCount: navigation.redirectCount ?? null,
+        transferSize: navigation.transferSize ?? null,
+        encodedBodySize: navigation.encodedBodySize ?? null,
+        decodedBodySize: navigation.decodedBodySize ?? null,
+        domContentLoadedEventEnd: navigation.domContentLoadedEventEnd ?? null,
+        loadEventEnd: navigation.loadEventEnd ?? null,
+        responseStart: navigation.responseStart ?? null,
+        responseEnd: navigation.responseEnd ?? null,
+      } : null,
+      timestampUnixMs: Date.now(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      kind: 'browser.pageDiagnostics',
+      error: String(error?.stack || error?.message || error),
+      timestampUnixMs: Date.now(),
+    };
+  }
+})()"#
+    .to_string()
+}
+
+fn log_embedded_browser_diagnostic(
+    state: &EmbeddedBrowserState,
+    label: &str,
+    stage: &str,
+    detail: Value,
+) {
+    let Some(entry_snapshot) = embedded_browser_entry_snapshot(state, label) else {
+        log::info!(
+            "Embedded browser diagnostic stage={stage} label={label} detail={detail}"
+        );
+        return;
+    };
+    let payload = json!({
+        "kind": "browser.navigationDiagnostic",
+        "stage": stage,
+        "timestampUnixMs": current_unix_millis(),
+        "entry": entry_snapshot,
+        "detail": detail,
+    });
+    log::info!("Embedded browser diagnostic: {payload}");
+}
+
+fn log_embedded_browser_page_diagnostics(
+    state: EmbeddedBrowserState,
+    label: String,
+    stage: &'static str,
+) {
+    thread::spawn(move || {
+        let detail = match eval_json(
+            &state,
+            &label,
+            embedded_browser_page_diagnostics_script(),
+            BRIDGE_EVAL_TIMEOUT_MS,
+        ) {
+            Ok(value) => value,
+            Err(error) => json!({
+                "ok": false,
+                "kind": "browser.pageDiagnostics",
+                "error": error,
+                "timestampUnixMs": current_unix_millis(),
+            }),
+        };
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            stage,
+            json!({
+                "page": detail,
+            }),
+        );
+    });
+}
+
 fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Result<(), String> {
     let parsed_url = browser_url(&url)?;
+    let parsed_url_string = parsed_url.to_string();
     let entry = get_entry(state, label)?;
-    entry
-        .ready_webview()?
-        .navigate(parsed_url)
-        .map_err(|error| format!("Failed to navigate embedded browser: {error}"))?;
-    set_entry_url_for_native_label(state, &entry.native_label, url)
+    log_embedded_browser_diagnostic(
+        state,
+        label,
+        "navigate_requested",
+        json!({
+            "requestedUrl": &url,
+            "parsedUrl": parsed_url_string,
+        }),
+    );
+    if let Err(error) = entry.ready_webview()?.navigate(parsed_url) {
+        let message = format!("Failed to navigate embedded browser: {error}");
+        log_embedded_browser_diagnostic(
+            state,
+            label,
+            "navigate_failed",
+            json!({
+                "requestedUrl": &url,
+                "error": &message,
+            }),
+        );
+        return Err(message);
+    }
+    set_entry_url_for_native_label(state, &entry.native_label, url.clone())?;
+    log_embedded_browser_diagnostic(
+        state,
+        label,
+        "navigate_dispatched",
+        json!({
+            "requestedUrl": url,
+        }),
+    );
+    Ok(())
 }
 
 fn is_browser_open(state: &EmbeddedBrowserState, label: &str) -> Result<bool, String> {
@@ -1002,11 +1147,39 @@ fn request_browser_open(
         }
     }
 
-    wait_for_browser_ready(
+    log_embedded_browser_diagnostic(
+        state,
+        label,
+        "open_waiting_for_ready",
+        json!({
+            "requestedUrl": url,
+        }),
+    );
+    if let Err(error) = wait_for_browser_ready(
         || entry_readiness(state, label),
         BRIDGE_OPEN_WAIT_TIMEOUT_MS / BRIDGE_OPEN_WAIT_INTERVAL_MS,
         Duration::from_millis(BRIDGE_OPEN_WAIT_INTERVAL_MS),
-    )
+    ) {
+        log_embedded_browser_diagnostic(
+            state,
+            label,
+            "open_wait_timeout",
+            json!({
+                "requestedUrl": url,
+                "error": error,
+            }),
+        );
+        return Err(error);
+    }
+    log_embedded_browser_diagnostic(
+        state,
+        label,
+        "open_ready",
+        json!({
+            "requestedUrl": url,
+        }),
+    );
+    Ok(())
 }
 
 fn eval_json(
@@ -2102,13 +2275,55 @@ pub async fn embedded_browser_open(
     if let Some(entry) = existing {
         let webview = entry.ready_webview()?;
         apply_webview_bounds(&webview, normalized_bounds)?;
-        webview
-            .navigate(parsed_url)
-            .map_err(|error| format!("Failed to navigate embedded browser: {error}"))?;
-        webview
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_reuse_existing",
+            json!({
+                "requestedUrl": &url,
+                "nativeLabel": &entry.native_label,
+            }),
+        );
+        if let Err(error) = webview.navigate(parsed_url) {
+            let message = format!("Failed to navigate embedded browser: {error}");
+            log_embedded_browser_diagnostic(
+                &state,
+                &label,
+                "open_reuse_navigate_failed",
+                json!({
+                    "requestedUrl": &url,
+                    "nativeLabel": &entry.native_label,
+                    "error": &message,
+                }),
+            );
+            return Err(message);
+        }
+        if let Err(error) = webview
             .show()
-            .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
+            .map_err(|error| format!("Failed to show embedded browser: {error}"))
+        {
+            log_embedded_browser_diagnostic(
+                &state,
+                &label,
+                "open_reuse_show_failed",
+                json!({
+                    "requestedUrl": &url,
+                    "nativeLabel": &entry.native_label,
+                    "error": &error,
+                }),
+            );
+            return Err(error);
+        }
         set_entry_url(&state, &label, Some(url.clone()))?;
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_reuse_dispatched",
+            json!({
+                "requestedUrl": &url,
+                "nativeLabel": &entry.native_label,
+            }),
+        );
         return Ok(EmbeddedBrowserPageState {
             native_label: entry.native_label,
             title: entry.title,
@@ -2128,6 +2343,7 @@ pub async fn embedded_browser_open(
     let native_label_for_load = native_label.clone();
     let native_label_for_title = native_label.clone();
     let native_label_for_popup = native_label.clone();
+    let label_for_load = label.clone();
     let label_for_popup = label.clone();
     let app_for_popup = app.clone();
     let data_directory = browser_data_directory(&app)?;
@@ -2136,6 +2352,7 @@ pub async fn embedded_browser_open(
         native_label: native_label.clone(),
         title: None,
         url: Some(url.clone()),
+        opened_at_unix_ms: current_unix_millis(),
         phase: EmbeddedBrowserPhase::Opening,
     };
     state
@@ -2144,20 +2361,70 @@ pub async fn embedded_browser_open(
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?
         .insert(label.clone(), entry);
 
+    log_embedded_browser_diagnostic(
+        &state,
+        &label,
+        "open_requested",
+        json!({
+            "requestedUrl": &url,
+            "bounds": {
+                "x": normalized_bounds.position.x,
+                "y": normalized_bounds.position.y,
+                "width": normalized_bounds.size.width,
+                "height": normalized_bounds.size.height,
+            },
+            "nativeLabel": &native_label,
+        }),
+    );
+
     let builder =
         tauri::webview::WebviewBuilder::new(&native_label, browser_webview_url(parsed_url))
             .user_agent(EMBEDDED_BROWSER_USER_AGENT)
             .data_directory(data_directory)
             .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
+            .initialization_script(EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT)
             .devtools(true)
             .accept_first_mouse(true)
-            .on_page_load(move |_webview, payload| {
+            .on_navigation({
+                let state = state.inner().clone();
+                let label = label.clone();
+                move |url| {
+                    log_embedded_browser_diagnostic(
+                        &state,
+                        &label,
+                        "navigation_requested",
+                        json!({
+                            "requestedUrl": url.to_string(),
+                        }),
+                    );
+                    true
+                }
+            })
+            .on_page_load(move |webview, payload| {
+                let event = format!("{:?}", payload.event());
+                let current_url = payload.url().to_string();
+                let webview_url = webview.url().ok().map(|url| url.to_string());
+                log_embedded_browser_diagnostic(
+                    &load_state_handle,
+                    &label_for_load,
+                    "page_load_event",
+                    json!({
+                        "event": event,
+                        "payloadUrl": current_url,
+                        "webviewUrl": webview_url.clone(),
+                    }),
+                );
                 if matches!(payload.event(), PageLoadEvent::Finished) {
-                    let loaded_url = payload.url().to_string();
+                    let loaded_url = webview_url.clone().or(Some(current_url.clone()));
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
-                        |entry| entry.url = Some(loaded_url),
+                        |entry| entry.url = loaded_url,
+                    );
+                    log_embedded_browser_page_diagnostics(
+                        load_state_handle.clone(),
+                        label_for_load.clone(),
+                        "page_load_finished",
                     );
                 }
             })
@@ -2249,6 +2516,15 @@ pub async fn embedded_browser_open(
         match window.add_child(builder, normalized_bounds.position, normalized_bounds.size) {
             Ok(webview) => webview,
             Err(error) => {
+                log_embedded_browser_diagnostic(
+                    &state,
+                    &label,
+                    "open_create_failed",
+                    json!({
+                        "nativeLabel": &native_label,
+                        "error": error.to_string(),
+                    }),
+                );
                 if let Ok(mut webviews) = state.webviews.lock() {
                     remove_logical_entry_if_native_matches(
                         &mut webviews,
@@ -2261,10 +2537,28 @@ pub async fn embedded_browser_open(
             }
         };
 
+    log_embedded_browser_diagnostic(
+        &state,
+        &label,
+        "open_created",
+        json!({
+            "nativeLabel": &native_label,
+        }),
+    );
+
     if let Err(error) = webview
         .show()
         .map_err(|error| format!("Failed to show embedded browser: {error}"))
     {
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_show_failed",
+            json!({
+                "nativeLabel": &native_label,
+                "error": &error,
+            }),
+        );
         if let Ok(mut webviews) = state.webviews.lock() {
             remove_logical_entry_if_native_matches(
                 &mut webviews,
@@ -2276,7 +2570,24 @@ pub async fn embedded_browser_open(
         let _ = webview.close();
         return Err(error);
     }
+    log_embedded_browser_diagnostic(
+        &state,
+        &label,
+        "open_visible",
+        json!({
+            "nativeLabel": &native_label,
+        }),
+    );
     if let Err(error) = mark_entry_ready_for_native_label(&state, &native_label, webview.clone()) {
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_ready_failed",
+            json!({
+                "nativeLabel": &native_label,
+                "error": &error,
+            }),
+        );
         if let Ok(mut webviews) = state.webviews.lock() {
             remove_logical_entry_if_native_matches(
                 &mut webviews,
@@ -2288,6 +2599,14 @@ pub async fn embedded_browser_open(
         let _ = webview.close();
         return Err(error);
     }
+    log_embedded_browser_diagnostic(
+        &state,
+        &label,
+        "open_ready",
+        json!({
+            "nativeLabel": &native_label,
+        }),
+    );
 
     Ok(EmbeddedBrowserPageState {
         native_label,
