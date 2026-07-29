@@ -483,6 +483,16 @@ function hoverDesktopControlElement(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
+function leaveDesktopControlElement(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const options = desktopControlEventOptions(element)
+  for (const type of ['pointerout', 'pointerleave', 'mouseout', 'mouseleave']) {
+    dispatchDesktopControlPointerEvent(element, type, options)
+  }
+  return element.textContent?.trim() ?? ''
+}
+
 function moveDesktopControlPointer(command: DesktopControlCommand): string {
   const selector = command.target ?? command.selector
   const element = findDesktopControlElements(selector)[0]
@@ -705,6 +715,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'toggleSidebar': {
+      const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
+      window.dispatchEvent(event)
+      if (!event.defaultPrevented) {
+        throw new Error('No desktop sidebar handled the toggle request')
+      }
+      return ''
+    }
     case 'performanceSnapshot': {
       const processMemory = navigator.platform.toLowerCase().includes('mac')
         ? await invoke('get_wework_process_snapshot')
@@ -926,10 +944,24 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
+    case 'finishAnimations': {
+      let finishedCount = 0
+      for (const animation of document.getAnimations()) {
+        try {
+          animation.finish()
+          finishedCount += 1
+        } catch {
+          // Infinite animations cannot be finished and are unrelated to layout settling.
+        }
+      }
+      return String(finishedCount)
+    }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'hover':
       return hoverDesktopControlElement(command.selector)
+    case 'pointerLeave':
+      return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
     case 'navigate': {
@@ -951,6 +983,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         )
       }
       return element.textContent?.trim() ?? ''
+    }
+    case 'submit': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const form = element instanceof HTMLFormElement ? element : element.closest('form')
+      if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
+      form.requestSubmit()
+      return ''
     }
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
