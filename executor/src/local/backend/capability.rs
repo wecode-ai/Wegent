@@ -159,6 +159,31 @@ impl CapabilityPluginRuntime for CodexCapabilityPluginRuntime {
                         spec.name
                     ))
                 })?;
+            self.client
+                .request(
+                    "config/value/write",
+                    json!({
+                        "keyPath": format!(
+                            "plugins.{}.enabled",
+                            serde_json::to_string(&format!(
+                                "{}@{}",
+                                spec.name, spec.marketplace
+                            ))
+                            .map_err(|error| CapabilitySyncError::invalid_payload(
+                                format!("Failed to encode plugin config key: {error}")
+                            ))?
+                        ),
+                        "value": spec.enabled,
+                        "mergeStrategy": "upsert",
+                    }),
+                )
+                .await
+                .map_err(|error| {
+                    CapabilitySyncError::invalid_payload(format!(
+                        "Codex app-server plugin enablement update failed for {}: {error}",
+                        spec.name
+                    ))
+                })?;
             Ok(())
         })
     }

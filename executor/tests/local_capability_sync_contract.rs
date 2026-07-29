@@ -436,6 +436,7 @@ async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_auth
                     "installed_plugin_id": 21,
                     "name": "github",
                     "marketplace": "wegent",
+                    "enabled": false,
                     "version": "2.0.0",
                     "download_path": "https://objects/github.zip",
                     "checksum": github_checksum
@@ -451,13 +452,13 @@ async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_auth
         calls.lock().unwrap().as_slice(),
         &[
             format!(
-                "install:gitlab:{}",
+                "install:gitlab:true:{}",
                 plugins_dir
                     .join("marketplaces/wegent/.agents/plugins/marketplace.json")
                     .display()
             ),
             format!(
-                "install:github:{}",
+                "install:github:false:{}",
                 plugins_dir
                     .join("marketplaces/wegent/.agents/plugins/marketplace.json")
                     .display()
@@ -468,6 +469,10 @@ async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_auth
     assert_eq!(
         read_json(&manifest_path)["plugins"]["gitlab@wegent"]["install_authority"],
         "codex_app_server"
+    );
+    assert_eq!(
+        read_json(&manifest_path)["plugins"]["github@wegent"]["enabled"],
+        false
     );
     assert_eq!(
         read_json(plugins_dir.join("marketplaces/wegent/.claude-plugin/marketplace.json"))
@@ -1126,8 +1131,9 @@ impl CapabilityPluginRuntime for RecordingPluginRuntime {
         marketplace_path: &'a Path,
     ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
         self.calls.lock().unwrap().push(format!(
-            "install:{}:{}",
+            "install:{}:{}:{}",
             spec.name,
+            spec.enabled,
             marketplace_path.display()
         ));
         Box::pin(std::future::ready(Ok(())))

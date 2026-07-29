@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import type { InstalledPlugin } from '@/types/api'
@@ -72,5 +72,23 @@ describe('InstalledPluginRow', () => {
 
     expect(screen.queryByTestId('installed-plugin-logo-59')).not.toBeInTheDocument()
     expect(container.querySelector('svg')).toBeInTheDocument()
+  })
+
+  test('uses the switch only for enablement and keeps uninstall on the trash action', () => {
+    const onToggle = vi.fn()
+    const onUninstall = vi.fn()
+    render(
+      <InstalledPluginRow plugin={createPlugin()} onToggle={onToggle} onUninstall={onUninstall} />
+    )
+
+    fireEvent.click(screen.getByTestId('installed-plugin-toggle-59'))
+
+    expect(onToggle).toHaveBeenCalledTimes(1)
+    expect(onUninstall).not.toHaveBeenCalled()
+    expect(screen.getByTestId('installed-plugin-toggle-59')).toHaveAccessibleName('禁用 GitHub')
+
+    fireEvent.click(screen.getByTestId('installed-plugin-uninstall-59'))
+
+    expect(onUninstall).toHaveBeenCalledTimes(1)
   })
 })

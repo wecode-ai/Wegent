@@ -283,7 +283,7 @@ async def update_installed_plugin(
         current_user.id,
         required_device_id=device_id,
         required_installed_kind_id=installed_id,
-        expect_installed=installed.spec.enabled,
+        expect_installed=True,
     )
     return plugin_marketplace_service.enrich_installed_list(
         db,

@@ -8,6 +8,7 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { ComposerTextarea } from './ComposerTextarea'
 
@@ -31,7 +32,7 @@ const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
 const GITHUB_PLUGIN: LocalDeviceApp = {
   id: 'github',
   name: 'GitHub',
-  description: 'View repositories, issues, pull requests, and Actions',
+  description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
   logoUrl: 'https://example.com/github.png',
   isAccessible: true,
   isEnabled: true,
@@ -252,9 +253,91 @@ describe('ComposerTextarea', () => {
       'src',
       'https://example.com/github.png'
     )
+    expect(pluginOption).toHaveTextContent(
+      '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。'
+    )
 
     fireEvent.click(pluginOption)
     await waitFor(() => expect(editor.value).toBe('[$GitHub](/tmp/github/SKILL.md) '))
+  })
+
+  test('preloads callable plugins before the slash menu opens', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onListLocalApps = vi.fn().mockResolvedValue([GITHUB_PLUGIN])
+
+    render(
+      <ComposerTextarea
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend={false}
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        onListLocalApps={onListLocalApps}
+      />
+    )
+
+    await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
+
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('slash-command-option-app-github')).toBeInTheDocument()
+    expect(onListLocalApps).toHaveBeenCalledTimes(1)
+  })
+
+  test('reloads plugin metadata after the installed plugin state changes', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const rawGithubApp: LocalDeviceApp = {
+      ...GITHUB_PLUGIN,
+      description: 'GitHub repositories, issues, pull requests, and Actions',
+      logoUrl: null,
+    }
+    const onListLocalApps = vi
+      .fn<() => Promise<LocalDeviceApp[]>>()
+      .mockResolvedValueOnce([rawGithubApp])
+      .mockResolvedValueOnce([GITHUB_PLUGIN])
+
+    render(
+      <ComposerTextarea
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend={false}
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+        onListLocalApps={onListLocalApps}
+      />
+    )
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('slash-command-option-app-github')).toHaveTextContent(
+      'GitHub repositories, issues, pull requests, and Actions'
+    )
+
+    act(() => notifyLocalPluginSkillsChanged())
+
+    await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(2))
+    const refreshedOption = screen.getByTestId('slash-command-option-app-github')
+    expect(refreshedOption).toHaveTextContent(
+      '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。'
+    )
+    expect(refreshedOption.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://example.com/github.png'
+    )
   })
 
   test('inserts an authorized cloud reference from the @ menu', async () => {

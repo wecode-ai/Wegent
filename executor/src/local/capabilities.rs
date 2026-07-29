@@ -161,6 +161,7 @@ pub struct PluginSyncSpec {
     key: String,
     installed_plugin_id: Option<i64>,
     pub marketplace: String,
+    pub enabled: bool,
     version: String,
     checksum: Option<String>,
     download_path: Option<String>,
@@ -191,6 +192,10 @@ impl PluginSyncSpec {
             key,
             installed_plugin_id,
             marketplace,
+            enabled: value
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             version,
             checksum: value_string(value.get("checksum")),
             download_path: value_string(value.get("download_path")),
@@ -340,6 +345,10 @@ impl GlobalCapabilityStore {
                             .map(|(_, marketplace)| marketplace.to_owned())
                     })
                     .unwrap_or_else(|| DEFAULT_PLUGIN_MARKETPLACE.to_owned()),
+                enabled: plugin
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
                 version: value_string(plugin.get("version")).unwrap_or_else(|| "latest".to_owned()),
                 checksum: value_string(plugin.get("checksum")),
                 download_path: None,
@@ -373,7 +382,7 @@ impl GlobalCapabilityStore {
         link_or_copy_dir(store_path, &runtime_link)?;
         link_or_copy_dir(store_path, &codex_link)?;
         upsert_installed_plugin(&self.plugins_dir, spec, &runtime_link)?;
-        enable_plugin(&self.plugins_dir, &spec.key)?;
+        set_plugin_enabled(&self.plugins_dir, &spec.key, spec.enabled)?;
         let entry = plugin_manifest_entry(spec, store_path, &runtime_link, &codex_link);
         ensure_object_field(manifest, "plugins").insert(spec.key.clone(), entry);
         Ok(())
@@ -453,6 +462,7 @@ impl GlobalCapabilityStore {
                 "key": spec.key,
                 "installed_plugin_id": spec.installed_plugin_id,
                 "marketplace": spec.marketplace,
+                "enabled": spec.enabled,
                 "version": spec.version,
                 "checksum": spec.checksum,
                 "store_path": store_path.display().to_string(),

@@ -49,10 +49,10 @@ class DeviceCapabilitySyncService:
         user_id: int,
         mode: str = "replace",
     ) -> dict[str, Any]:
-        """Build the full enabled capability set from user install records."""
+        """Build the full desired capability set from user install records."""
         self._validate_mode(mode)
         skills = self._load_enabled_installed_skills(db, user_id=user_id)
-        plugins = self._load_enabled_installed_plugins(db, user_id=user_id)
+        plugins = self._load_installed_plugins(db, user_id=user_id)
         mcps = self._load_enabled_installed_mcps(db, user_id=user_id)
         logger.info(
             "Built desired capabilities: user_id=%s mode=%s skill_names=%s plugin_names=%s mcp_names=%s",
@@ -362,7 +362,7 @@ class DeviceCapabilitySyncService:
             installed_skill_ids=enabled_ids,
         )
 
-    def _load_enabled_installed_plugins(
+    def _load_installed_plugins(
         self,
         db: Session,
         *,
@@ -379,15 +379,13 @@ class DeviceCapabilitySyncService:
             )
             .all()
         )
-        enabled_ids = [
-            row.id
-            for row in rows
-            if self._should_include_installed_plugin(user_id, row)
+        installed_ids = [
+            row.id for row in rows if self._should_sync_installed_plugin(user_id, row)
         ]
         return self._resolve_plugin_payloads(
             db,
             user_id=user_id,
-            installed_plugin_ids=enabled_ids,
+            installed_plugin_ids=installed_ids,
         )
 
     def _load_enabled_installed_mcps(
@@ -647,6 +645,7 @@ class DeviceCapabilitySyncService:
             "name": self._plugin_payload_name(installed, spec, source),
             "display_name": spec.get("displayName") or installed.name,
             "description": spec.get("description", ""),
+            "enabled": spec.get("enabled", True),
             "marketplace": marketplace,
             "version": spec.get("version"),
             "source": source,
@@ -762,9 +761,9 @@ class DeviceCapabilitySyncService:
         )
         return include
 
-    def _should_include_installed_plugin(self, user_id: int, row: Kind) -> bool:
+    def _should_sync_installed_plugin(self, user_id: int, row: Kind) -> bool:
         spec = row.json.get("spec", {})
-        include = row.is_active and self._is_enabled_install(row)
+        include = row.is_active and spec.get("installState", "installed") == "installed"
         logger.info(
             "Desired-state InstalledPlugin candidate: user_id=%s installed_id=%s name=%s active=%s enabled=%s state=%s source=%s include=%s",
             user_id,

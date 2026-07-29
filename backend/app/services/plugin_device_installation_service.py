@@ -233,7 +233,7 @@ class PluginDeviceInstallationService:
         return None
 
     def _desired_installs(self, db: Session, user_id: int) -> list[Kind]:
-        rows = (
+        return (
             db.query(Kind)
             .filter(
                 Kind.user_id == user_id,
@@ -243,7 +243,6 @@ class PluginDeviceInstallationService:
             )
             .all()
         )
-        return [row for row in rows if row.json.get("spec", {}).get("enabled", True)]
 
 
 plugin_device_installation_service = PluginDeviceInstallationService()

@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { stripAppBasePath } from '@/config/runtime'
+import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
@@ -27,11 +27,16 @@ import {
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { createHttpClient } from '@/api/http'
+import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
+import { mergeInstalledPlugins } from '@/components/plugins/installedPluginMerge'
+import { enrichComposerApps } from '@/features/plugins/composerPluginMetadata'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
   LocalDeviceSkill,
+  InstalledPlugin,
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
   PluginPathComponent,
@@ -219,6 +224,16 @@ export function WorkbenchProvider({
   >(new Map())
   const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const cloudPluginApi = useMemo(() => {
+    const runtime = getRuntimeConfig()
+    return createPluginApi(
+      createHttpClient({
+        baseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
+        getToken: () => cloudConnection.token,
+        redirectOnUnauthorized: false,
+      })
+    )
+  }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   useLayoutEffect(() => {
     lifecycleStore.syncRuntimeWork(state.runtimeWork)
@@ -1333,10 +1348,25 @@ export function WorkbenchProvider({
     }
 
     let apps: LocalDeviceApp[] = []
+    let installedPlugins: InstalledPlugin[] = []
     try {
       apps = await localPluginApi.listApps()
     } catch (error) {
       console.warn('[Wework] Failed to load local Codex apps; continuing with skills only.', error)
+    }
+    try {
+      const localState = await localPluginApi.readState()
+      const cloudItems = await cloudPluginApi
+        .listInstalledPlugins(localState.deviceId || undefined)
+        .then(response => response.items)
+        .catch(() => [])
+      installedPlugins = mergeInstalledPlugins(
+        cloudItems,
+        localState.installedPlugins,
+        localState.deviceId
+      )
+    } catch (error) {
+      console.warn('[Wework] Failed to load Codex app plugin metadata.', error)
     }
     if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
       try {
@@ -1373,6 +1403,7 @@ export function WorkbenchProvider({
         console.warn('[Wework] Failed to load Wegent connector apps.', error)
       }
     }
+    apps = enrichComposerApps(apps, installedPlugins)
     localAppsCacheRef.current = {
       expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
       apps,
@@ -1382,6 +1413,7 @@ export function WorkbenchProvider({
     cloudConnection.apiBaseUrl,
     cloudConnection.isConnected,
     cloudConnection.token,
+    cloudPluginApi,
     localPluginApi,
   ])
 

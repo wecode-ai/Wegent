@@ -40,14 +40,14 @@ const defaultCodexPlugin: CodexPluginMock = {
   defaultPrompt: 'Draft a document outline from this chat',
 }
 
-function codexPluginSummary(plugin: CodexPluginMock, installed: boolean) {
+function codexPluginSummary(plugin: CodexPluginMock, installed: boolean, enabled = installed) {
   return {
     id: plugin.id,
     remotePluginId: plugin.remotePluginId ?? plugin.id,
     localVersion: '1.0.0',
     name: plugin.name,
     installed,
-    enabled: installed,
+    enabled,
     installPolicy: 'AVAILABLE',
     authPolicy: 'ON_USE',
     interface: {
@@ -72,7 +72,8 @@ function codexPluginSummary(plugin: CodexPluginMock, installed: boolean) {
 function codexMarketplaceResponse(
   marketplace: CodexMarketplaceMock,
   installedPluginNames: Set<string>,
-  installedOnly: boolean
+  installedOnly: boolean,
+  pluginEnabledById: Map<string, boolean>
 ) {
   const plugins = marketplace.plugins ?? [defaultCodexPlugin]
   const visiblePlugins = installedOnly
@@ -85,7 +86,11 @@ function codexMarketplaceResponse(
       displayName: marketplace.displayName ?? marketplace.name,
     },
     plugins: visiblePlugins.map(plugin =>
-      codexPluginSummary(plugin, installedPluginNames.has(plugin.name))
+      codexPluginSummary(
+        plugin,
+        installedPluginNames.has(plugin.name),
+        pluginEnabledById.get(plugin.id) ?? installedPluginNames.has(plugin.name)
+      )
     ),
   }
 }
@@ -145,6 +150,13 @@ function mockCodexAppServerInvoke(
 ) {
   const marketplaces = [...(options.marketplaces ?? [])]
   const installedPluginNames = new Set(options.installedPluginNames ?? [])
+  const pluginEnabledById = new Map<string, boolean>()
+  marketplaces.forEach(marketplace => {
+    const plugins = marketplace.plugins ?? [defaultCodexPlugin]
+    plugins.forEach(plugin => {
+      if (installedPluginNames.has(plugin.name)) pluginEnabledById.set(plugin.id, true)
+    })
+  })
   const skills = options.skills ?? []
   const apps = options.apps ?? []
 
@@ -183,14 +195,14 @@ function mockCodexAppServerInvoke(
     if (method === 'plugin/list') {
       return Promise.resolve({
         marketplaces: marketplaces.map(marketplace =>
-          codexMarketplaceResponse(marketplace, installedPluginNames, false)
+          codexMarketplaceResponse(marketplace, installedPluginNames, false, pluginEnabledById)
         ),
       })
     }
     if (method === 'plugin/installed') {
       return Promise.resolve({
         marketplaces: marketplaces.map(marketplace =>
-          codexMarketplaceResponse(marketplace, installedPluginNames, true)
+          codexMarketplaceResponse(marketplace, installedPluginNames, true, pluginEnabledById)
         ),
       })
     }
@@ -235,6 +247,7 @@ function mockCodexAppServerInvoke(
             (plugin.remotePluginId ?? plugin.id) === pluginName
         )
       installedPluginNames.add(plugin?.name ?? pluginName)
+      if (plugin) pluginEnabledById.set(plugin.id, true)
       return Promise.resolve({ authPolicy: 'ON_USE', appsNeedingAuth: [] })
     }
     if (method === 'plugin/uninstall') {
@@ -242,6 +255,19 @@ function mockCodexAppServerInvoke(
       for (const marketplace of marketplaces) {
         for (const plugin of marketplace.plugins ?? [defaultCodexPlugin]) {
           if (plugin.id === pluginId) installedPluginNames.delete(plugin.name)
+          if (plugin.id === pluginId) pluginEnabledById.delete(plugin.id)
+        }
+      }
+      return Promise.resolve({})
+    }
+    if (method === 'config/value/write') {
+      const keyPath = String(params.keyPath ?? '')
+      for (const marketplace of marketplaces) {
+        for (const plugin of marketplace.plugins ?? [defaultCodexPlugin]) {
+          const configId = `${plugin.name}@${marketplace.name}`
+          if (keyPath === `plugins.${JSON.stringify(configId)}.enabled`) {
+            pluginEnabledById.set(plugin.id, params.value !== false)
+          }
         }
       }
       return Promise.resolve({})
@@ -1377,6 +1403,46 @@ describe('PluginsWorkspace', () => {
       marketplacePath: '/Users/test/.codex/plugins/marketplaces/openai',
       pluginName: 'documents',
     })
+  })
+
+  test('disables an installed plugin without uninstalling it', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'openai-official',
+          displayName: 'OpenAI',
+          path: 'https://github.com/openai/plugins',
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+    const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+    const localPluginApi = createLocalCodexPluginApi()
+
+    await localPluginApi.readState({ refresh: true })
+    const updated = await localPluginApi.updateInstalledPlugin('101', { enabled: false })
+
+    expect(updated.spec.enabled).toBe(false)
+    expectCodexAppServerRequest('config/value/write', {
+      keyPath: 'plugins."documents@openai-official".enabled',
+      value: false,
+      mergeStrategy: 'upsert',
+    })
+    expectCodexAppServerRequest('plugin/installed', {
+      cwds: null,
+      installSuggestionPluginNames: null,
+    })
+    expect(invoke).not.toHaveBeenCalledWith(
+      'local_executor_request',
+      expect.objectContaining({
+        params: expect.objectContaining({ method: 'plugin/uninstall' }),
+      })
+    )
   })
 
   test('lists local skills through Codex app-server', async () => {

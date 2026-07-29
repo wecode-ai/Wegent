@@ -796,6 +796,8 @@
     "plugins_create_mcp": "MCP",
     "plugins_create_plugin": "创建插件",
     "plugins_create_new_plugin": "创建插件",
+    "plugins_enable": "启用",
+    "plugins_disable": "禁用",
     "plugins_enabled": "已启用",
     "plugins_disabled": "已停用",
     "plugins_more_actions": "更多操作",

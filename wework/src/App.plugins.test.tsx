@@ -7,6 +7,7 @@ import {
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { updateAppPreferences } from '@/tauri/appPreferences'
+import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
 import type { InstalledPlugin, LocalDeviceSkill } from '@/types/api'
 import './i18n'
 import App from './App'
@@ -235,6 +236,46 @@ function installedCodexSitesPlugin(): InstalledPlugin {
       },
     },
     status: { state: 'enabled' },
+  }
+}
+
+function installedGithubPlugin(enabled = true): InstalledPlugin {
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'github',
+      namespace: 'wegent',
+      labels: { id: '59' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'wegent',
+        pluginKey: 'github',
+      },
+      origin: 'market',
+      pluginId: 4,
+      releaseId: 6,
+      displayName: 'GitHub',
+      description: '检查仓库、处理拉取请求和 Issue。',
+      installState: 'installed',
+      enabled,
+      manifest: { name: 'github' },
+      components: {
+        skills: [],
+        commands: [],
+        apps: [{ name: 'GitHub', path: 'github' }],
+        agents: [],
+        mcps: [],
+        hooks: [],
+        lsps: [],
+        monitors: [],
+        bins: [],
+      },
+      interface: { composerIcon: '/plugins/github/icon.png' },
+    },
+    status: { state: enabled ? 'enabled' : 'disabled' },
   }
 }
 
@@ -1104,6 +1145,46 @@ describe('App plugins route', () => {
         body: JSON.stringify({ enabled: false }),
       })
     )
+  })
+
+  test('refreshes composer plugin candidates after toggling an installed plugin', async () => {
+    const enabledPlugin = installedGithubPlugin()
+    const disabledPlugin = installedGithubPlugin(false)
+    const fallbackFetch = vi.mocked(fetch).getMockImplementation()
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.includes('/plugins/installed/59') && init?.method === 'PUT') {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(disabledPlugin),
+        } as Response
+      }
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [enabledPlugin] }),
+        } as Response
+      }
+      return fallbackFetch!(input, init)
+    })
+    const pluginStateChanged = vi.fn()
+    window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, pluginStateChanged)
+    window.history.pushState({}, '', '/plugins/manage')
+
+    renderApp()
+    await userEvent.click(await screen.findByTestId('installed-plugin-toggle-59'))
+
+    await waitFor(() => expect(pluginStateChanged).toHaveBeenCalledTimes(1))
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/plugins/installed/59'),
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ enabled: false }),
+      })
+    )
+    window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, pluginStateChanged)
   })
 
   test('opens the unified plugin creator from management', async () => {

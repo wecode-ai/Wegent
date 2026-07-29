@@ -1,9 +1,13 @@
 import { ClipboardList, Cpu, ExternalLink, Package, Plug, Store, Target } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
+import {
+  FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
+  LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+} from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
+import { resolvePluginAssetUrl } from '@/components/plugins/plugin-assets'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
@@ -264,7 +268,7 @@ export function ComposerTextarea({
       group: pluginGroup,
       searchAliases: candidate.searchAliases,
       Icon: Plug,
-      iconUrl: candidate.app.logoUrl,
+      iconUrl: resolvePluginAssetUrl(candidate.app.logoUrl),
       enabled: candidate.enabled,
       testId: slashAppTestId(candidate.app.id),
       app: candidate.app,
@@ -500,6 +504,40 @@ export function ComposerTextarea({
     },
     [loadLocalApps, loadLocalSkills]
   )
+
+  useEffect(() => {
+    loadLocalApps()
+  }, [loadLocalApps])
+
+  useEffect(() => {
+    const invalidateLocalPluginCandidates = () => {
+      skillsLoadedRef.current = false
+      skillsLoadingRef.current = false
+      skillsRequestIdRef.current += 1
+      appsLoadedRef.current = false
+      appsLoadingRef.current = false
+      appsRequestIdRef.current += 1
+      setSkills([])
+      setApps([])
+      setLoading(false)
+      setLoadError(false)
+      setAppsLoading(false)
+      setAppsLoadError(false)
+
+      queueMicrotask(() => {
+        if (!mountedRef.current) return
+        loadLocalApps({ force: true })
+        if (showSkillMenuRef.current || showSlashMenuRef.current) {
+          loadLocalSkills({ force: true })
+        }
+      })
+    }
+
+    window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, invalidateLocalPluginCandidates)
+    return () => {
+      window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, invalidateLocalPluginCandidates)
+    }
+  }, [loadLocalApps, loadLocalSkills])
 
   const updateAutocompleteTrigger = useCallback(
     (snapshot?: ComposerEditorSnapshot) => {

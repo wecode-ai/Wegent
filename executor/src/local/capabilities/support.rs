@@ -311,13 +311,17 @@ pub(super) fn upsert_installed_plugin(
     write_json(&path, &installed)
 }
 
-pub(super) fn enable_plugin(plugins_dir: &Path, key: &str) -> Result<(), CapabilitySyncError> {
+pub(super) fn set_plugin_enabled(
+    plugins_dir: &Path,
+    key: &str,
+    enabled: bool,
+) -> Result<(), CapabilitySyncError> {
     let settings_path = plugins_dir
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("settings.json");
     let mut settings = read_json_or_default(&settings_path, || json!({}))?;
-    ensure_object_field(&mut settings, "enabledPlugins").insert(key.to_owned(), json!(true));
+    ensure_object_field(&mut settings, "enabledPlugins").insert(key.to_owned(), json!(enabled));
     write_json(&settings_path, &settings)
 }
 
@@ -335,6 +339,7 @@ pub(super) fn plugin_manifest_entry(
         entry.insert("installed_plugin_id".to_owned(), json!(id));
     }
     entry.insert("marketplace".to_owned(), json!(spec.marketplace));
+    entry.insert("enabled".to_owned(), json!(spec.enabled));
     entry.insert("version".to_owned(), json!(spec.version));
     if let Some(checksum) = &spec.checksum {
         entry.insert("checksum".to_owned(), json!(checksum));

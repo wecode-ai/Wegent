@@ -476,11 +476,17 @@ export function PluginManagementWorkspace({
           currentDeviceId || undefined
         )
       : localPluginApi.updateInstalledPlugin(id, { enabled: !plugin.enabled })
-    updatePromise.catch(() => {
-      setInstalledPlugins(previous =>
-        previous.map(item => (item.id === id ? { ...item, enabled: plugin.enabled } : item))
-      )
-    })
+    updatePromise
+      .then(updated => {
+        const nextItem = toInstalledPluginItem(updated)
+        setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
+        notifyLocalPluginSkillsChanged()
+      })
+      .catch(() => {
+        setInstalledPlugins(previous =>
+          previous.map(item => (item.id === id ? { ...item, enabled: plugin.enabled } : item))
+        )
+      })
   }
 
   const togglePluginComponent = (id: string | number, componentKey: string, enabled: boolean) => {

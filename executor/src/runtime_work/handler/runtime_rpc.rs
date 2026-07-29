@@ -59,6 +59,7 @@ pub(super) fn is_allowed_plugin_app_server_method(method: &str) -> bool {
             | "plugin/skill/read"
             | "plugin/install"
             | "plugin/uninstall"
+            | "config/value/write"
             | "skills/list"
             | "skills/config/write"
             | "app/list"

@@ -42,6 +42,9 @@ export function InstalledSkillRow({
   onUninstall: () => void
 }) {
   const { t } = useTranslation('common')
+  const toggleLabel = skill.enabled
+    ? t('workbench.plugins_disable', '禁用')
+    : t('workbench.plugins_enable', '启用')
 
   return (
     <article className="grid grid-cols-[64px_minmax(0,1fr)_112px] items-center gap-4">
@@ -66,7 +69,8 @@ export function InstalledSkillRow({
           type="button"
           role="switch"
           aria-checked={skill.enabled}
-          aria-label={skill.name}
+          aria-label={`${toggleLabel} ${skill.name}`}
+          title={toggleLabel}
           data-testid={`installed-skill-toggle-${skill.id}`}
           className={[
             'relative h-7 w-12 rounded-full transition-colors',
@@ -96,6 +100,9 @@ export function InstalledMcpRow({
   onUninstall: () => void
 }) {
   const { t } = useTranslation('common')
+  const toggleLabel = mcp.enabled
+    ? t('workbench.plugins_disable', '禁用')
+    : t('workbench.plugins_enable', '启用')
 
   return (
     <article className="grid grid-cols-[64px_minmax(0,1fr)_112px] items-center gap-4">
@@ -125,7 +132,8 @@ export function InstalledMcpRow({
           type="button"
           role="switch"
           aria-checked={mcp.enabled}
-          aria-label={mcp.name}
+          aria-label={`${toggleLabel} ${mcp.name}`}
+          title={toggleLabel}
           data-testid={`installed-mcp-toggle-${mcp.id}`}
           className={[
             'relative h-7 w-12 rounded-full transition-colors',
@@ -157,6 +165,9 @@ export function InstalledPluginRow({
   onUninstall: () => void
 }) {
   const { t } = useTranslation('common')
+  const toggleLabel = plugin.enabled
+    ? t('workbench.plugins_disable', '禁用')
+    : t('workbench.plugins_enable', '启用')
   const logo = resolvePluginAssetUrl(
     plugin.raw.spec.interface?.logo || plugin.raw.spec.interface?.composerIcon
   )
@@ -244,7 +255,8 @@ export function InstalledPluginRow({
           type="button"
           role="switch"
           aria-checked={plugin.enabled}
-          aria-label={plugin.name}
+          aria-label={`${toggleLabel} ${plugin.name}`}
+          title={toggleLabel}
           data-testid={`installed-plugin-toggle-${plugin.id}`}
           className={[
             'relative h-7 w-12 rounded-full transition-colors',

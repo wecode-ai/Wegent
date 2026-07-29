@@ -367,6 +367,7 @@ fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
         "plugin/skill/read",
         "plugin/install",
         "plugin/uninstall",
+        "config/value/write",
         "skills/list",
         "skills/config/write",
         "app/list",

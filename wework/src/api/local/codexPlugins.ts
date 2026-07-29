@@ -218,6 +218,23 @@ function installedPluginId(plugin: InstalledPlugin): unknown {
   return (labels as Record<string, unknown>).id
 }
 
+export function pluginEnabledConfigKeyPath(id: string | number): string {
+  return `plugins.${JSON.stringify(String(id))}.enabled`
+}
+
+function installedPluginConfigId(plugin: InstalledPlugin, fallbackId: string | number): string {
+  const id = String(fallbackId)
+  if (id.includes('@')) return id
+
+  const payload = plugin.spec.sourcePayload
+  const payloadRecord = payload && typeof payload === 'object' ? payload : {}
+  const marketplace =
+    (typeof payloadRecord.marketplaceName === 'string' && payloadRecord.marketplaceName.trim()) ||
+    (typeof plugin.metadata.namespace === 'string' && plugin.metadata.namespace.trim()) ||
+    plugin.spec.source.providerKey
+  return `${plugin.spec.source.pluginKey}@${marketplace}`
+}
+
 function isLocalMarketplacePath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
 }
@@ -798,11 +815,19 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return installed
     },
     async updateInstalledPlugin(id, data) {
+      const currentState = cachedState ?? (await readState())
+      const plugin = currentState.installedPlugins.find(
+        plugin => String(installedPluginId(plugin)) === String(id)
+      )
+      if (!plugin) throw new Error('Codex plugin is not installed')
+      if (data.enabled !== undefined) {
+        await codexAppServerRequest('config/value/write', {
+          keyPath: pluginEnabledConfigKeyPath(installedPluginConfigId(plugin, id)),
+          value: data.enabled,
+          mergeStrategy: 'upsert',
+        })
+      }
       if (data.componentStates) {
-        const currentState = cachedState ?? (await readState())
-        const plugin = currentState.installedPlugins.find(
-          plugin => String(installedPluginId(plugin)) === String(id)
-        )
         await Promise.all(
           Object.entries(data.componentStates).map(([componentKey, enabled]) => {
             const skillName = componentKey.startsWith('skill:')

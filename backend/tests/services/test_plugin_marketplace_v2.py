@@ -24,7 +24,11 @@ from app.models.plugin_marketplace import (
 )
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.skill_binary import SkillBinary
-from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
+from app.schemas.device import (
+    DeviceCapabilityItemResult,
+    DeviceCapabilitySyncResponse,
+    DeviceCapabilitySyncResult,
+)
 from app.schemas.installed_plugin import (
     PluginSubmissionInitRequest,
     PluginUpstreamCreateRequest,
@@ -895,6 +899,28 @@ def test_device_sync_requires_a_result_for_each_desired_plugin(test_db, test_use
     assert row.actual_release_id is None
     assert row.state == "failed"
     assert row.error_message == "Device response omitted plugin result"
+
+
+def test_device_sync_keeps_disabled_plugin_materialized(test_db, test_user):
+    installed, release = _device_install(test_db, test_user.id)
+    installed.json["spec"]["enabled"] = False
+    test_db.commit()
+
+    PluginDeviceInstallationService().record_device_sync_result(
+        test_db,
+        user_id=test_user.id,
+        result=DeviceCapabilitySyncResult(
+            device_id="current-device",
+            success=True,
+            plugins=[DeviceCapabilityItemResult(id=str(installed.id), status="synced")],
+        ),
+    )
+
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.installed_kind_id == installed.id
+    assert row.desired_release_id == release.id
+    assert row.actual_release_id == release.id
+    assert row.state == "installed"
 
 
 def test_catalog_uses_current_device_materialization_state(test_db, test_user):

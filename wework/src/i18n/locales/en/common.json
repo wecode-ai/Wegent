@@ -793,6 +793,8 @@
     "plugins_create_mcp": "MCP",
     "plugins_create_plugin": "Create plugin",
     "plugins_create_new_plugin": "Create plugin",
+    "plugins_enable": "Enable",
+    "plugins_disable": "Disable",
     "plugins_enabled": "Enabled",
     "plugins_disabled": "Disabled",
     "plugins_more_actions": "More actions",
