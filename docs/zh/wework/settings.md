@@ -34,6 +34,8 @@ Windows 和 Linux 使用界面中显示的对应组合键。
 
 在“设置 → 模型”中点击“添加模型”后，先选择提供商。Wework 内置 Kimi Coding、Kimi 开放平台、DeepSeek 和 GLM profile；填写对应平台的 API Key 后，可以从提供商的 `/models` 接口读取可用模型。连接地址、Chat Completions 协议、工具模式和已知模型的上下文长度由 profile 自动填写，其中 Kimi 开放平台使用中国区 `api.moonshot.cn` 端点。Kimi Coding 的 K3 会自动使用内置的 Codex Catalog profile，包括 256K 上下文和默认 `low` 推理等级。
 
+Kimi K3、K3-256K 和 `kimi-k3` 在本机自定义模型与 Wegent 云端模型中都支持 Codex 动态工具加载。Wework 会根据 provider 的真实 `model_id` 识别这项能力，因此云端 Model CRD 可以使用自定义显示名称。动态加载与 namespace 不是同一个概念：动态加载由 `tool_search` 按需发现工具，namespace 用于组织工具并保留调用路由身份；Wework 会在 Kimi 的 Chat Completions 协议边界展开 namespace，并在工具调用返回时恢复原始 namespace。
+
 每个自定义模型都可以设置可选的“分组”，模型选择器会使用该名称组织模型。Kimi Coding 默认填写“Kimi”，用户可以修改或清空；未设置分组的模型统一显示在“自定义模型”下。
 
 选择“完全自定义”可以配置兼容 OpenAI Responses、Chat Completions 或 Anthropic Messages 的接口。模型能力使用结构化表单维护，不需要编辑 Catalog JSON：

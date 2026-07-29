@@ -28,7 +28,11 @@ const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   10_000,
   'WEWORK_E2E_STEP_TIMEOUT_MS'
 )
-const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 10_000
+const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = readPositiveTimeout(
+  process.env.WEWORK_E2E_MODEL_MATRIX_TIMEOUT_MS,
+  10_000,
+  'WEWORK_E2E_MODEL_MATRIX_TIMEOUT_MS'
+)
 const COMPOSER_READY_STABILITY_MS = 750
 const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS
 const DESKTOP_CONTROL_RESULT_GRACE_MS = 5_000
@@ -184,15 +188,34 @@ const LOCAL_MODEL_CASES = [
     label: 'Desktop E2E Anthropic',
     modelId: 'desktop-e2e-anthropic-model',
   },
+  {
+    protocol: 'chat',
+    optionId: 'local-model:desktop-e2e-kimi-k3',
+    label: 'Desktop E2E Kimi K3',
+    modelId: 'k3',
+    variant: 'kimi-k3',
+    kimiDynamicTools: true,
+  },
 ]
 const MODEL_PROTOCOLS = ['responses', 'chat', 'anthropic']
-const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
-  source: 'cloud',
-  protocol,
-  optionId: `desktop-e2e-cloud-${protocol}`,
-  label: `desktop-e2e-cloud-${protocol}`,
-  modelId: `desktop-e2e-cloud-${protocol}-upstream`,
-}))
+const CLOUD_MODEL_CASES = [
+  ...MODEL_PROTOCOLS.map(protocol => ({
+    source: 'cloud',
+    protocol,
+    optionId: `desktop-e2e-cloud-${protocol}`,
+    label: `desktop-e2e-cloud-${protocol}`,
+    modelId: `desktop-e2e-cloud-${protocol}-upstream`,
+  })),
+  {
+    source: 'cloud',
+    protocol: 'chat',
+    optionId: 'desktop-e2e-cloud-kimi-k3',
+    label: 'k3',
+    modelId: 'k3',
+    variant: 'kimi-k3',
+    kimiDynamicTools: true,
+  },
+]
 const MODEL_PROTOCOL_MATRIX_CASES = [
   ...LOCAL_MODEL_CASES.map(model => ({ ...model, source: 'local' })),
   ...MODEL_PROTOCOLS.map(protocol => ({
@@ -229,6 +252,23 @@ const MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_CUSTOM_MODEL_PROTOCOL_
 )
 const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
   LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
+const KIMI_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.kimiDynamicTools === true
+)
+const KIMI_LOCAL_MODEL_PROTOCOL_MATRIX_CASES = KIMI_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.source === 'local'
+)
+const KIMI_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = KIMI_MODEL_PROTOCOL_MATRIX_CASES.filter(
+  model => model.source === 'cloud'
+)
+assert.ok(
+  KIMI_LOCAL_MODEL_PROTOCOL_MATRIX_CASES.length > 0,
+  'The local Kimi K3 E2E matrix must contain at least one case'
+)
+assert.ok(
+  KIMI_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.length > 0,
+  'The cloud Kimi K3 E2E matrix must contain at least one case'
+)
 const HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
   model => model.source === 'local'
 )
@@ -331,6 +371,7 @@ const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
 const MESSAGE_RESTORATION_ONLY = process.argv.includes('--message-restoration-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
+const KIMI_ONLY = process.env.WEWORK_E2E_KIMI_ONLY === '1'
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
 const DESKTOP_CHECKPOINTS = [
@@ -4544,7 +4585,7 @@ function localModelSwitchCommand() {
 }
 
 function matrixCaseId(model) {
-  return `${model.execution}-${model.source}-${model.protocol}`
+  return `${model.execution}-${model.source}-${model.variant ?? model.protocol}`
 }
 
 function matrixTextPrompt(model) {
@@ -8416,6 +8457,7 @@ async function buildDesktopApp(
 }
 
 async function verifyConnectedModelsOnLocalExecution({
+  cases = LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES,
   control,
   cloudEnvironment,
   setCodexUpstreamProtocol,
@@ -8459,7 +8501,7 @@ async function verifyConnectedModelsOnLocalExecution({
   const newConversationSelector = `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
 
   await verifyModelProtocolMatrix({
-    cases: LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES,
+    cases,
     composerSelector,
     control,
     newConversationSelector,
@@ -9178,6 +9220,7 @@ async function main() {
     if (CLOUD_ONLY) {
       phase = 'local-connected-model-protocol-matrix'
       await verifyConnectedModelsOnLocalExecution({
+        ...(KIMI_ONLY ? { cases: KIMI_CLOUD_MODEL_PROTOCOL_MATRIX_CASES } : {}),
         control,
         cloudEnvironment,
         setCodexUpstreamProtocol: protocol =>
@@ -9189,6 +9232,15 @@ async function main() {
           ),
         workspacePath,
       })
+      if (KIMI_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework cloud Kimi K3 desktop E2E passed. Evidence: ${resultDir}`)
+        return
+      }
       phase = 'cloud-project-flow'
       await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
       await writeFile(
@@ -9748,14 +9800,16 @@ async function main() {
       return
     }
 
-    if (MIXED_TOOL_TURNS_ONLY) {
-      phase = 'mixed-assistant-tool-turns'
+    if (KIMI_ONLY || MIXED_TOOL_TURNS_ONLY) {
+      phase = KIMI_ONLY ? 'kimi-model-protocol-matrix' : 'mixed-assistant-tool-turns'
       await verifyModelProtocolMatrix({
-        cases: MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
+        cases: KIMI_ONLY
+          ? KIMI_LOCAL_MODEL_PROTOCOL_MATRIX_CASES
+          : MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
         composerSelector,
         control,
         newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-        screenshotPrefix: 'mixed-assistant-tool-turn',
+        screenshotPrefix: KIMI_ONLY ? 'kimi-matrix' : 'mixed-assistant-tool-turn',
         workspacePath,
       })
       await writeFile(
@@ -9763,7 +9817,9 @@ async function main() {
         `${JSON.stringify(control.modelRequests, null, 2)}\n`,
         'utf8'
       )
-      console.log(`Wework mixed assistant tool-turn desktop E2E passed. Evidence: ${resultDir}`)
+      console.log(
+        `Wework ${KIMI_ONLY ? 'Kimi K3' : 'mixed assistant tool-turn'} desktop E2E passed. Evidence: ${resultDir}`
+      )
       return
     }
 

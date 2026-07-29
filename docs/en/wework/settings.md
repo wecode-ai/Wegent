@@ -22,6 +22,8 @@ Common macOS shortcuts include:
 
 In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, and GLM. After entering the corresponding platform API key, Wework discovers available models through the provider's `/models` endpoint. Each profile supplies its connection URL, Chat Completions protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
 
+Kimi K3, K3-256K, and `kimi-k3` support Codex dynamic tool loading for both local custom models and Wegent cloud models. Wework detects this capability from the provider's real `model_id`, so a cloud Model CRD may use a custom display name. Dynamic loading and namespaces are different concepts: `tool_search` discovers tools on demand, while a namespace organizes tools and preserves their routing identity. At Kimi's Chat Completions protocol boundary, Wework expands namespace tools and restores the original namespace when a tool call returns.
+
 Each custom model has an optional **Group** field that controls how it appears in the model picker. Kimi Coding defaults this field to **Kimi**, but users can edit or clear it. Models without a group appear under **Custom models**.
 
 Choose **Custom** to configure an OpenAI Responses, Chat Completions, or Anthropic Messages-compatible endpoint. Model capabilities use structured controls instead of raw Catalog JSON:

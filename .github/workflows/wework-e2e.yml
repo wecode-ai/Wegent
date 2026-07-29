@@ -139,6 +139,9 @@ jobs:
           - id: cloud
             name: Cloud
             command: e2e:desktop:cloud
+          - id: kimi
+            name: Kimi K3
+            command: e2e:desktop:kimi
 
     steps:
       - name: Checkout code

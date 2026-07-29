@@ -16,6 +16,9 @@ export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUser
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
 export const CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION = 'weworkCloudModelMaxOutputTokens'
 export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = 'weworkCloudModelUpstreamApiFormat'
+export const CLOUD_MODEL_KIMI_DYNAMIC_TOOLS_OPTION = 'weworkCloudModelKimiDynamicTools'
+
+export const KIMI_DYNAMIC_TOOL_MODEL_IDS = new Set(['k3', 'k3-256k', 'kimi-k3'])
 
 function getStringConfigValue(
   config: Record<string, unknown> | null | undefined,
@@ -90,6 +93,10 @@ function isCodexCompatibleModel(model: UnifiedModel): boolean {
   return supportsCloudExecution(model)
 }
 
+export function supportsKimiDynamicTools(modelId: string | null | undefined): boolean {
+  return KIMI_DYNAMIC_TOOL_MODEL_IDS.has(modelId?.trim().toLowerCase() ?? '')
+}
+
 export function resolveAutomaticModel(models: UnifiedModel[]): UnifiedModel | null {
   return models.find(model => !model.compatibilityDisabled) ?? null
 }
@@ -146,6 +153,9 @@ export function selectedModelExecutionFields(
     const upstreamApiFormat = getCloudModelUpstreamApiFormat(selectedModel)
     if (upstreamApiFormat) {
       modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
+    }
+    if (supportsKimiDynamicTools(selectedModel.modelId)) {
+      modelOptions[CLOUD_MODEL_KIMI_DYNAMIC_TOOLS_OPTION] = 'true'
     }
 
     const contextWindow =

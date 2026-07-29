@@ -9,7 +9,7 @@
 //! shapes and custom-tool mapping preserve Codex semantics across protocols.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     pin::Pin,
 };
 
@@ -49,6 +49,7 @@ Valid update example:
 enum ToolKind {
     Function,
     Custom,
+    ToolSearch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +96,10 @@ impl ToolContext {
             == Some(&ToolKind::Custom)
     }
 
+    fn is_tool_search(&self, name: &str) -> bool {
+        self.tools.get(name).map(|tool| &tool.kind) == Some(&ToolKind::ToolSearch)
+    }
+
     fn wire_name(&self, namespace: Option<&str>, name: &str) -> Option<&str> {
         self.wire_names
             .get(&(namespace.map(str::to_owned), name.to_owned()))
@@ -107,9 +112,17 @@ impl ToolContext {
 }
 
 pub(super) fn responses_to_chat(body: &Value) -> Result<(Value, ToolContext), String> {
+    responses_to_chat_with_options(body, false)
+}
+
+pub(super) fn responses_to_chat_with_options(
+    body: &Value,
+    kimi_dynamic_tools: bool,
+) -> Result<(Value, ToolContext), String> {
     let mut result = Map::new();
     copy_field(body, &mut result, "model", "model");
     let context = build_tool_context(body);
+    let kimi_dynamic_tools = kimi_dynamic_tools || supports_kimi_dynamic_tools(body);
     let mut messages = Vec::new();
 
     if let Some(instructions) = body.get("instructions") {
@@ -119,7 +132,7 @@ pub(super) fn responses_to_chat(body: &Value) -> Result<(Value, ToolContext), St
         }
     }
     if let Some(input) = body.get("input") {
-        append_input(input, &context, &mut messages)?;
+        append_input(input, &context, &mut messages, kimi_dynamic_tools)?;
     }
     result.insert(
         "messages".to_owned(),
@@ -151,7 +164,10 @@ pub(super) fn responses_to_chat(body: &Value) -> Result<(Value, ToolContext), St
         result.insert("reasoning_effort".to_owned(), effort.clone());
     }
 
-    let tools = chat_tools(body, &context);
+    let mut tools = chat_tools(body, &context);
+    if kimi_dynamic_tools {
+        normalize_kimi_chat_tools(&mut tools);
+    }
     if !tools.is_empty() {
         result.insert("tools".to_owned(), Value::Array(tools));
         if let Some(choice) = body.get("tool_choice") {
@@ -163,6 +179,18 @@ pub(super) fn responses_to_chat(body: &Value) -> Result<(Value, ToolContext), St
     Ok((Value::Object(result), context))
 }
 
+fn supports_kimi_dynamic_tools(body: &Value) -> bool {
+    // Keep this compatibility fallback aligned with
+    // wework/src/features/workbench/runtimeModelSelection.ts.
+    matches!(
+        body.get("model")
+            .and_then(Value::as_str)
+            .map(|model| model.to_ascii_lowercase())
+            .as_deref(),
+        Some("k3" | "k3-256k" | "kimi-k3")
+    )
+}
+
 fn copy_field(body: &Value, result: &mut Map<String, Value>, source: &str, target: &str) {
     if let Some(value) = body.get(source) {
         result.insert(target.to_owned(), value.clone());
@@ -170,31 +198,73 @@ fn copy_field(body: &Value, result: &mut Map<String, Value>, source: &str, targe
 }
 
 fn build_tool_context(body: &Value) -> ToolContext {
-    let tools = body
-        .get("tools")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let tools = tool_definitions(body);
     let mut name_counts = BTreeMap::<String, usize>::new();
-    for tool in tools {
-        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
-            for inner_tool in tool
-                .get("tools")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(name) = inner_tool.get("name").and_then(Value::as_str) {
-                    *name_counts.entry(name.to_owned()).or_default() += 1;
-                }
+    let mut identities = BTreeSet::new();
+    for (namespace, tool) in &tools {
+        if let Some(name) = tool_definition_name(tool) {
+            if !identities.insert((namespace.clone(), name.to_owned())) {
+                continue;
             }
-        } else if let Some(name) = tool.get("name").and_then(Value::as_str) {
             *name_counts.entry(name.to_owned()).or_default() += 1;
         }
     }
 
     let mut context = ToolContext::default();
-    for tool in tools {
+    for (namespace, tool) in tools {
+        let Some(name) = tool_definition_name(tool) else {
+            continue;
+        };
+        if context.wire_name(namespace.as_deref(), name).is_some() {
+            continue;
+        };
+        let kind = match tool.get("type").and_then(Value::as_str) {
+            Some("custom") => ToolKind::Custom,
+            Some("tool_search") => ToolKind::ToolSearch,
+            _ => ToolKind::Function,
+        };
+        let preferred_wire_name = if name_counts.get(name) == Some(&1) {
+            bounded_wire_name(name)
+        } else if let Some(namespace) = namespace.as_deref() {
+            flattened_namespace_tool_name(namespace, name)
+        } else {
+            bounded_wire_name(&format!("functions__{name}"))
+        };
+        let wire_name = unique_wire_name(&context, preferred_wire_name);
+        context.insert_tool(
+            wire_name,
+            ToolIdentity {
+                name: name.to_owned(),
+                namespace,
+                kind,
+            },
+        );
+    }
+    context
+}
+
+fn tool_definitions(body: &Value) -> Vec<(Option<String>, &Value)> {
+    let mut definitions = Vec::new();
+    collect_tool_definitions(body.get("tools"), &mut definitions);
+    let input_items = body.get("input").into_iter().flat_map(|input| {
+        input
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_else(|| std::slice::from_ref(input))
+    });
+    for item in input_items {
+        if item.get("type").and_then(Value::as_str) == Some("tool_search_output") {
+            collect_tool_definitions(item.get("tools"), &mut definitions);
+        }
+    }
+    definitions
+}
+
+fn collect_tool_definitions<'a>(
+    tools: Option<&'a Value>,
+    definitions: &mut Vec<(Option<String>, &'a Value)>,
+) {
+    for tool in tools.and_then(Value::as_array).into_iter().flatten() {
         if tool.get("type").and_then(Value::as_str) == Some("namespace") {
             let Some(namespace) = tool.get("name").and_then(Value::as_str) else {
                 continue;
@@ -205,50 +275,18 @@ fn build_tool_context(body: &Value) -> ToolContext {
                 .into_iter()
                 .flatten()
             {
-                let Some(name) = inner_tool.get("name").and_then(Value::as_str) else {
-                    continue;
-                };
-                let preferred_wire_name = if name_counts.get(name) == Some(&1) {
-                    bounded_wire_name(name)
-                } else {
-                    flattened_namespace_tool_name(namespace, name)
-                };
-                let wire_name = unique_wire_name(&context, preferred_wire_name);
-                context.insert_tool(
-                    wire_name,
-                    ToolIdentity {
-                        name: name.to_owned(),
-                        namespace: Some(namespace.to_owned()),
-                        kind: ToolKind::Function,
-                    },
-                );
+                definitions.push((Some(namespace.to_owned()), inner_tool));
             }
-            continue;
+        } else {
+            definitions.push((None, tool));
         }
-        let Some(name) = tool.get("name").and_then(Value::as_str) else {
-            continue;
-        };
-        let kind = if tool.get("type").and_then(Value::as_str) == Some("custom") {
-            ToolKind::Custom
-        } else {
-            ToolKind::Function
-        };
-        let preferred_wire_name = if name_counts.get(name) == Some(&1) {
-            bounded_wire_name(name)
-        } else {
-            bounded_wire_name(&format!("functions__{name}"))
-        };
-        let wire_name = unique_wire_name(&context, preferred_wire_name);
-        context.insert_tool(
-            wire_name,
-            ToolIdentity {
-                name: name.to_owned(),
-                namespace: None,
-                kind,
-            },
-        );
     }
-    context
+}
+
+fn tool_definition_name(tool: &Value) -> Option<&str> {
+    tool.get("name").and_then(Value::as_str).or_else(|| {
+        (tool.get("type").and_then(Value::as_str) == Some("tool_search")).then_some("tool_search")
+    })
 }
 
 fn flattened_namespace_tool_name(namespace: &str, name: &str) -> String {
@@ -330,8 +368,27 @@ fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
 }
 
 fn chat_tool(tool: &Value, namespace: Option<&str>, context: &ToolContext) -> Option<Value> {
-    let name = tool.get("name")?.as_str()?;
+    let name = tool_definition_name(tool)?;
     let wire_name = context.wire_name(namespace, name)?;
+    if context.is_tool_search(wire_name) {
+        return Some(json!({
+            "type": "function",
+            "function": {
+                "name": wire_name,
+                "description": tool.get("description").cloned().unwrap_or(Value::Null),
+                "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "number"}
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                })),
+                "strict": false
+            }
+        }));
+    }
     if context.is_custom(wire_name) {
         let definition = serde_json::to_string(tool).ok()?;
         let contract = if name == "apply_patch" {
@@ -372,6 +429,103 @@ fn chat_tool(tool: &Value, namespace: Option<&str>, context: &ToolContext) -> Op
             "strict": tool.get("strict").cloned().unwrap_or(Value::Bool(false))
         }
     }))
+}
+
+fn chat_dynamic_tools(tools: &Value, context: &ToolContext) -> Vec<Value> {
+    let mut converted = Vec::new();
+    for tool in tools.as_array().into_iter().flatten() {
+        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+            let Some(namespace) = tool.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            for inner_tool in tool
+                .get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(converted_tool) = chat_tool(inner_tool, Some(namespace), context) {
+                    converted.push(converted_tool);
+                }
+            }
+        } else if let Some(converted_tool) = chat_tool(tool, None, context) {
+            converted.push(converted_tool);
+        }
+    }
+    converted
+}
+
+fn normalize_kimi_chat_tools(tools: &mut [Value]) {
+    for tool in tools {
+        if let Some(parameters) = tool.pointer_mut("/function/parameters") {
+            normalize_kimi_root_tool_schema(parameters);
+            normalize_kimi_tool_schema(parameters);
+        }
+    }
+}
+
+fn normalize_kimi_root_tool_schema(schema: &mut Value) {
+    let Some(object) = schema.as_object_mut() else {
+        *schema = json!({"type": "object", "properties": {}});
+        return;
+    };
+    let variants = object.remove("anyOf").and_then(|value| match value {
+        Value::Array(variants) => Some(variants),
+        _ => None,
+    });
+    if let Some(variants) = variants {
+        let properties = object
+            .entry("properties".to_owned())
+            .or_insert_with(|| json!({}));
+        if let Some(properties) = properties.as_object_mut() {
+            for variant in variants {
+                let Some(variant_properties) = variant.get("properties").and_then(Value::as_object)
+                else {
+                    continue;
+                };
+                for (name, definition) in variant_properties {
+                    properties
+                        .entry(name.to_owned())
+                        .or_insert_with(|| definition.clone());
+                }
+            }
+        }
+        object.remove("required");
+    }
+    object.insert("type".to_owned(), Value::String("object".to_owned()));
+}
+
+fn normalize_kimi_tool_schema(schema: &mut Value) {
+    match schema {
+        Value::Object(object) => {
+            let inherited_type = if object.get("anyOf").and_then(Value::as_array).is_some() {
+                object.remove("type")
+            } else {
+                None
+            };
+            if let (Some(inherited_type), Some(variants)) = (
+                inherited_type,
+                object.get_mut("anyOf").and_then(Value::as_array_mut),
+            ) {
+                for variant in variants {
+                    if let Some(variant) = variant.as_object_mut() {
+                        variant
+                            .entry("type".to_owned())
+                            .or_insert_with(|| inherited_type.clone());
+                    }
+                }
+            }
+            for value in object.values_mut() {
+                normalize_kimi_tool_schema(value);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                normalize_kimi_tool_schema(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn responses_tools(tools: &[Value], context: &ToolContext) -> Vec<Value> {
@@ -534,6 +688,7 @@ fn append_input(
     input: &Value,
     context: &ToolContext,
     messages: &mut Vec<Value>,
+    kimi_dynamic_tools: bool,
 ) -> Result<(), String> {
     let items: Vec<&Value> = match input {
         Value::Array(values) => values.iter().collect(),
@@ -548,8 +703,14 @@ fn append_input(
             Some("reasoning") => {
                 append_text(&mut pending_reasoning, &reasoning_text(item));
             }
-            Some("function_call") | Some("custom_tool_call") => {
-                let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+            Some("function_call") | Some("custom_tool_call") | Some("tool_search_call") => {
+                let is_tool_search =
+                    item.get("type").and_then(Value::as_str) == Some("tool_search_call");
+                let name = if is_tool_search {
+                    "tool_search"
+                } else {
+                    item.get("name").and_then(Value::as_str).unwrap_or_default()
+                };
                 let namespace = item.get("namespace").and_then(Value::as_str);
                 let wire_name = context.wire_name(namespace, name).unwrap_or(name);
                 let call_id = item
@@ -589,6 +750,29 @@ fn append_input(
                     output
                 };
                 messages.push(json!({"role": "tool", "tool_call_id": call_id, "content": output}));
+            }
+            Some("tool_search_output") => {
+                flush_calls(messages, &mut pending_calls, &mut pending_reasoning);
+                let call_id = item
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let tools = item.get("tools").cloned().unwrap_or_else(|| json!([]));
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": json!({"tools": tools}).to_string()
+                }));
+                if kimi_dynamic_tools {
+                    let mut tools = chat_dynamic_tools(&tools, context);
+                    normalize_kimi_chat_tools(&mut tools);
+                    if !tools.is_empty() {
+                        messages.push(json!({
+                            "role": "system",
+                            "tools": tools
+                        }));
+                    }
+                }
             }
             _ => {
                 flush_calls(messages, &mut pending_calls, &mut pending_reasoning);
@@ -718,7 +902,9 @@ fn collapse_system_messages(messages: Vec<Value>) -> Vec<Value> {
     let mut system = Vec::new();
     let mut rest = Vec::new();
     for message in messages {
-        if message.get("role").and_then(Value::as_str) == Some("system") {
+        if message.get("role").and_then(Value::as_str) == Some("system")
+            && message.get("tools").is_none()
+        {
             let text = text_value(message.get("content").unwrap_or(&Value::Null));
             if !text.is_empty() {
                 system.push(text);
@@ -805,6 +991,7 @@ struct CallState {
     name: String,
     namespace: Option<String>,
     custom: bool,
+    tool_search: bool,
     arguments: String,
 }
 
@@ -1519,7 +1706,15 @@ impl<S> ChatStreamState<S> {
             }
             _ => String::new(),
         };
-        let (needs_start, call_id, complete_name, complete_namespace, custom, matched_tool) = {
+        let (
+            needs_start,
+            call_id,
+            complete_name,
+            complete_namespace,
+            custom,
+            tool_search,
+            matched_tool,
+        ) = {
             let state = self.calls.entry(index).or_default();
             if !id.is_empty() {
                 state.call_id = super::normalized_responses_api_id(id);
@@ -1530,11 +1725,13 @@ impl<S> ChatStreamState<S> {
                     state.name = identity.name.clone();
                     state.namespace = identity.namespace.clone();
                     state.custom = identity.kind == ToolKind::Custom;
+                    state.tool_search = identity.kind == ToolKind::ToolSearch;
                     matched_tool = true;
                 } else {
                     state.name = name.to_owned();
                     state.namespace = None;
                     state.custom = false;
+                    state.tool_search = false;
                 }
             }
             if !arguments.is_empty() {
@@ -1550,6 +1747,7 @@ impl<S> ChatStreamState<S> {
                 state.name.clone(),
                 state.namespace.clone(),
                 state.custom,
+                state.tool_search,
                 matched_tool,
             )
         };
@@ -1566,12 +1764,16 @@ impl<S> ChatStreamState<S> {
             state.output_index = output_index;
             state.item_id = item_id.clone();
             state.call_id = call_id.clone();
-            let item_type = if custom {
+            let item_type = if tool_search {
+                "tool_search_call"
+            } else if custom {
                 "custom_tool_call"
             } else {
                 "function_call"
             };
-            let mut item = if item_type == "custom_tool_call" {
+            let mut item = if tool_search {
+                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "execution": "client", "arguments": {}})
+            } else if custom {
                 json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name.clone(), "input": ""})
             } else {
                 json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name.clone(), "arguments": ""})
@@ -1594,16 +1796,22 @@ impl<S> ChatStreamState<S> {
                             .to_owned(),
                     ),
                     ("custom_tool", custom.to_string()),
+                    ("tool_search", tool_search.to_string()),
                 ],
             );
             self.emit(sse("response.output_item.added", json!({"type": "response.output_item.added", "output_index": output_index, "item": item})));
         }
         if !arguments.is_empty() {
-            let (output_index, item_id, custom) = {
+            let (output_index, item_id, custom, tool_search) = {
                 let state = self.calls.entry(index).or_default();
-                (state.output_index, state.item_id.clone(), state.custom)
+                (
+                    state.output_index,
+                    state.item_id.clone(),
+                    state.custom,
+                    state.tool_search,
+                )
             };
-            if !custom && !item_id.is_empty() {
+            if !custom && !tool_search && !item_id.is_empty() {
                 let event = "response.function_call_arguments.delta";
                 self.emit(sse(event, json!({"type": event, "item_id": item_id, "output_index": output_index, "delta": arguments})));
             }
@@ -1669,16 +1877,27 @@ impl<S> ChatStreamState<S> {
                     ("tool_name", state.name.clone()),
                     ("namespace", state.namespace.clone().unwrap_or_default()),
                     ("custom_tool", state.custom.to_string()),
+                    ("tool_search", state.tool_search.to_string()),
                     ("arguments_bytes", state.arguments.len().to_string()),
                 ],
             );
             let custom = state.custom;
+            let tool_search = state.tool_search;
             let arguments = if custom {
                 custom_input(&state.name, &state.arguments)
             } else {
                 normalize_arguments(&state.arguments)
             };
-            let mut item = if custom {
+            let mut item = if tool_search {
+                json!({
+                    "id": state.item_id,
+                    "type": "tool_search_call",
+                    "status": "completed",
+                    "call_id": state.call_id,
+                    "execution": "client",
+                    "arguments": parse_arguments_value(&arguments)
+                })
+            } else if custom {
                 json!({"id": state.item_id, "type": "custom_tool_call", "status": "completed", "call_id": state.call_id, "name": state.name, "input": arguments})
             } else {
                 json!({"id": state.item_id, "type": "function_call", "status": "completed", "call_id": state.call_id, "name": state.name, "arguments": arguments})
@@ -1703,12 +1922,14 @@ impl<S> ChatStreamState<S> {
                     }),
                 ));
             }
-            let done_payload = if custom {
-                json!({"type": done_event, "item_id": state.item_id, "output_index": state.output_index, "input": arguments})
-            } else {
-                json!({"type": done_event, "item_id": state.item_id, "output_index": state.output_index, "arguments": arguments})
-            };
-            self.emit(sse(done_event, done_payload));
+            if !tool_search {
+                let done_payload = if custom {
+                    json!({"type": done_event, "item_id": state.item_id, "output_index": state.output_index, "input": arguments})
+                } else {
+                    json!({"type": done_event, "item_id": state.item_id, "output_index": state.output_index, "arguments": arguments})
+                };
+                self.emit(sse(done_event, done_payload));
+            }
             self.emit(sse("response.output_item.done", json!({"type": "response.output_item.done", "output_index": state.output_index, "item": item})));
             output.push((state.output_index, item));
         }
@@ -1907,6 +2128,19 @@ fn normalize_arguments(arguments: &str) -> String {
     } else {
         arguments.to_owned()
     }
+}
+
+fn parse_arguments_value(arguments: &str) -> Value {
+    serde_json::from_str(arguments).unwrap_or_else(|error| {
+        log_executor_event(
+            "local model proxy tool search arguments unparsable",
+            &[
+                ("error", error.to_string()),
+                ("arguments_bytes", arguments.len().to_string()),
+            ],
+        );
+        json!({})
+    })
 }
 
 fn responses_usage(usage: Option<&Value>) -> Value {
@@ -2136,6 +2370,189 @@ mod tests {
     }
 
     #[test]
+    fn converts_tool_search_and_injects_kimi_dynamic_namespace_tools() {
+        let input = json!({
+            "model": "k3",
+            "instructions": "Use deferred tools when necessary.",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "Calculate 19 * 23"}]},
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "arguments": {"query": "calculator", "limit": 1}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "search_1",
+                    "status": "completed",
+                    "execution": "client",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "math",
+                        "description": "Arithmetic tools.",
+                        "tools": [{
+                            "type": "function",
+                            "name": "calculate",
+                            "description": "Calculate an expression.",
+                            "defer_loading": true,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"expression": {"type": "string"}},
+                                "required": ["expression"],
+                                "additionalProperties": false
+                            }
+                        }]
+                    }]
+                }
+            ],
+            "tools": [{
+                "type": "tool_search",
+                "execution": "client",
+                "description": "Search deferred tools.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "number"}
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }
+            }]
+        });
+
+        let (converted, context) = responses_to_chat(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(
+            converted["tools"][0]["function"]["name"],
+            Value::String("tool_search".to_owned())
+        );
+        assert_eq!(
+            messages[2]["tool_calls"][0]["function"]["name"],
+            Value::String("tool_search".to_owned())
+        );
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[4]["role"], "system");
+        assert!(messages[4].get("content").is_none());
+        assert_eq!(
+            messages[4]["tools"][0]["function"]["name"],
+            Value::String("calculate".to_owned())
+        );
+        assert_eq!(
+            context.identity("calculate"),
+            Some(&ToolIdentity {
+                name: "calculate".to_owned(),
+                namespace: Some("math".to_owned()),
+                kind: ToolKind::Function,
+            })
+        );
+    }
+
+    #[test]
+    fn does_not_emit_kimi_dynamic_system_messages_for_other_chat_models() {
+        let input = json!({
+            "model": "other-model",
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "status": "completed",
+                "execution": "client",
+                "tools": [{
+                    "type": "function",
+                    "name": "calculate",
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "tool");
+        assert!(messages
+            .iter()
+            .all(|message| message.get("tools").is_none()));
+    }
+
+    #[test]
+    fn emits_kimi_dynamic_tools_for_cloud_model_alias_when_capability_is_explicit() {
+        let input = json!({
+            "model": "shared-kimi-model",
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search_1",
+                "status": "completed",
+                "execution": "client",
+                "tools": [{
+                    "type": "function",
+                    "name": "calculate",
+                    "parameters": {"type": "object"}
+                }]
+            }]
+        });
+
+        let (converted, _) =
+            responses_to_chat_with_options(&input, true).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "system");
+        assert_eq!(messages[1]["tools"][0]["function"]["name"], "calculate");
+    }
+
+    #[test]
+    fn normalizes_root_and_nested_any_of_schemas_for_kimi() {
+        let input = json!({
+            "model": "k3",
+            "input": "Choose a value.",
+            "tools": [{
+                "type": "function",
+                "name": "choose",
+                "parameters": {
+                    "type": "object",
+                    "anyOf": [
+                        {
+                            "properties": {"text": {"type": "string"}},
+                            "required": ["text"]
+                        },
+                        {
+                            "properties": {
+                                "count": {
+                                    "type": "number",
+                                    "anyOf": [
+                                        {"minimum": 1},
+                                        {"maximum": 10}
+                                    ]
+                                }
+                            },
+                            "required": ["count"]
+                        }
+                    ]
+                }
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let parameters = &converted["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("anyOf").is_none());
+        assert!(parameters.get("required").is_none());
+        assert_eq!(parameters["properties"]["text"]["type"], "string");
+        assert_eq!(
+            parameters["properties"]["count"]["anyOf"][0]["type"],
+            "number"
+        );
+        assert_eq!(
+            parameters["properties"]["count"]["anyOf"][1]["type"],
+            "number"
+        );
+    }
+
+    #[test]
     fn explains_apply_patch_hunk_failures_and_requests_a_retry() {
         let input = json!({
             "model": "kimi-for-coding",
@@ -2208,6 +2625,31 @@ mod tests {
         assert!(output.contains("\"input\":\"patch\""));
         assert!(output.contains("response.completed"));
         assert!(output.contains("\"input_tokens\":10"));
+    }
+
+    #[tokio::test]
+    async fn converts_chat_tool_search_call_to_responses_tool_search_item() {
+        let chunks = vec![Ok::<_, std::io::Error>(Bytes::from(
+            "data: {\"id\":\"chatcmpl-1\",\"model\":\"k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_1\",\"function\":{\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"calculator\\\",\\\"limit\\\":1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+        ))];
+        let mut context = ToolContext::default();
+        context.insert("tool_search".to_owned(), ToolKind::ToolSearch);
+
+        let output = chat_sse_to_responses(futures_util::stream::iter(chunks), context)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect::<String>();
+
+        assert!(
+            output.contains("\"type\":\"tool_search_call\""),
+            "unexpected converted stream: {output}"
+        );
+        assert!(output.contains("\"execution\":\"client\""));
+        assert!(output.contains("\"query\":\"calculator\""));
+        assert!(!output.contains("response.function_call_arguments.done"));
     }
 
     #[tokio::test]

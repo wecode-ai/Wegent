@@ -115,10 +115,12 @@ import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_KIMI_DYNAMIC_TOOLS_OPTION,
   CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
+  supportsKimiDynamicTools,
 } from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -762,6 +764,13 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
   return `local-${config.id}`.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
 }
 
+function localModelSupportsKimiDynamicTools(config: LocalModelConfig): boolean {
+  return (
+    (config.providerProfileId === 'kimi-coding' || config.providerProfileId === 'kimi') &&
+    supportsKimiDynamicTools(config.modelId)
+  )
+}
+
 function localRuntimeModelConfig(
   modelName?: string,
   modelType?: string | null,
@@ -798,6 +807,7 @@ function localRuntimeModelConfig(
       ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
+      kimi_dynamic_tools: localModelSupportsKimiDynamicTools(localModel),
       ...(localModelDefaultReasoningEffort(localModel)
         ? { reasoning: { effort: localModelDefaultReasoningEffort(localModel) } }
         : {}),
@@ -832,6 +842,7 @@ function localRuntimeModelConfig(
     const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
+    const kimiDynamicTools = modelOptions?.[CLOUD_MODEL_KIMI_DYNAMIC_TOOLS_OPTION] === 'true'
     return {
       model: 'openai',
       model_id: modelName,
@@ -842,6 +853,7 @@ function localRuntimeModelConfig(
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,
+      kimi_dynamic_tools: kimiDynamicTools,
       default_headers: {
         'X-Wegent-Model-Type': modelType,
         'X-Wegent-Model-Namespace': namespace,

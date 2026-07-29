@@ -62,6 +62,7 @@ pub(crate) struct LocalModelProxyUpstream {
     pub request_url: Option<String>,
     pub api_format: String,
     pub convert_custom_tools: bool,
+    pub kimi_dynamic_tools: bool,
     pub api_key: String,
     pub default_headers: Vec<(String, String)>,
     pub proxy_url: Option<String>,
@@ -290,6 +291,7 @@ async fn handle_for_token(
     let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
         upstream.convert_custom_tools,
+        upstream.kimi_dynamic_tools,
         upstream.max_output_tokens,
         &request_body,
         history.as_ref(),
@@ -780,6 +782,7 @@ where
 async fn prepare_request_with_history(
     api_format: &str,
     convert_custom_tools: bool,
+    kimi_dynamic_tools: bool,
     max_output_tokens: Option<u64>,
     body: &[u8],
     history: &history::CodexToolHistory,
@@ -806,7 +809,13 @@ async fn prepare_request_with_history(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize enriched Codex request: {error}"),
         })?;
-        return prepare_request(api_format, convert_custom_tools, max_output_tokens, &body);
+        return prepare_request(
+            api_format,
+            convert_custom_tools,
+            kimi_dynamic_tools,
+            max_output_tokens,
+            &body,
+        );
     }
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -829,6 +838,7 @@ async fn prepare_request_with_history(
     prepare_request(
         api_format,
         convert_custom_tools,
+        kimi_dynamic_tools,
         max_output_tokens,
         &enriched,
     )
@@ -838,6 +848,7 @@ async fn prepare_request_with_history(
 fn prepare_request(
     api_format: &str,
     convert_custom_tools: bool,
+    kimi_dynamic_tools: bool,
     max_output_tokens: Option<u64>,
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
@@ -871,8 +882,10 @@ fn prepare_request(
         return Ok((body, conversion, expanded_browser_tools));
     }
     let (converted, context) = match api_format {
-        "openai-chat-completions" => chat::responses_to_chat(&responses_body)
-            .map(|(body, context)| (body, Conversion::Chat(context))),
+        "openai-chat-completions" => {
+            chat::responses_to_chat_with_options(&responses_body, kimi_dynamic_tools)
+                .map(|(body, context)| (body, Conversion::Chat(context)))
+        }
         "anthropic-messages" => anthropic::responses_to_anthropic(&responses_body)
             .map(|(body, context)| (body, Conversion::Anthropic(context))),
         _ => return Ok((body.to_vec(), None, HashSet::new())),
@@ -1632,6 +1645,7 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            kimi_dynamic_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1686,6 +1700,7 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            kimi_dynamic_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1717,6 +1732,7 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            kimi_dynamic_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -1753,7 +1769,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_chat_request() {
-        let error = prepare_request("openai-chat-completions", false, None, b"not-json")
+        let error = prepare_request("openai-chat-completions", false, false, None, b"not-json")
             .expect_err("invalid JSON should fail");
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
     }
@@ -1772,7 +1788,7 @@ mod tests {
         .expect("request body");
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", false, None, &body).expect("native request");
+            prepare_request("openai-responses", false, false, None, &body).expect("native request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["tools"][0]["type"], "custom");
@@ -1784,7 +1800,7 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", false, None, &body).expect("native request");
+            prepare_request("openai-responses", false, false, None, &body).expect("native request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["input"][0];
         let output = &prepared["input"][1];
@@ -1804,7 +1820,8 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("openai-chat-completions", false, None, &body).expect("chat request");
+            prepare_request("openai-chat-completions", false, false, None, &body)
+                .expect("chat request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["messages"][0]["tool_calls"][0];
         let output = &prepared["messages"][1];
@@ -1821,7 +1838,8 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("anthropic-messages", false, None, &body).expect("Anthropic request");
+            prepare_request("anthropic-messages", false, false, None, &body)
+                .expect("Anthropic request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["messages"][0]["content"][0];
         let output = &prepared["messages"][1]["content"][0];
@@ -1841,8 +1859,8 @@ mod tests {
         }))
         .expect("request body");
 
-        let (prepared, _, _) =
-            prepare_request("anthropic-messages", false, None, &body).expect("Anthropic request");
+        let (prepared, _, _) = prepare_request("anthropic-messages", false, false, None, &body)
+            .expect("Anthropic request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["max_tokens"], 96_000);
@@ -1856,8 +1874,9 @@ mod tests {
         }))
         .expect("request body");
 
-        let (prepared, _, _) = prepare_request("anthropic-messages", false, Some(12_345), &body)
-            .expect("Anthropic request");
+        let (prepared, _, _) =
+            prepare_request("anthropic-messages", false, false, Some(12_345), &body)
+                .expect("Anthropic request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["max_tokens"], 12_345);
@@ -1872,8 +1891,9 @@ mod tests {
         }))
         .expect("request body");
 
-        let (prepared, _, _) = prepare_request("anthropic-messages", false, Some(96_000), &body)
-            .expect("Anthropic request");
+        let (prepared, _, _) =
+            prepare_request("anthropic-messages", false, false, Some(96_000), &body)
+                .expect("Anthropic request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["max_tokens"], 2_048);
@@ -1920,7 +1940,8 @@ mod tests {
         .expect("request body");
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", true, None, &body).expect("converted request");
+            prepare_request("openai-responses", true, false, None, &body)
+                .expect("converted request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["tools"][0]["type"], "function");
@@ -2068,6 +2089,7 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            kimi_dynamic_tools: false,
             api_key: "luna-secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2089,6 +2111,7 @@ mod tests {
             request_url: Some("https://sol.example.com/v1/responses".to_owned()),
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            kimi_dynamic_tools: false,
             api_key: "sol-secret".to_owned(),
             default_headers: vec![("x-route".to_owned(), "sol".to_owned())],
             proxy_url: None,
@@ -2141,6 +2164,7 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            kimi_dynamic_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2181,6 +2205,7 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "luna-secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2213,6 +2238,7 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "sol-secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2254,6 +2280,7 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            kimi_dynamic_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2275,6 +2302,7 @@ mod tests {
             request_url: None,
             api_format: "openai-responses".to_owned(),
             convert_custom_tools: false,
+            kimi_dynamic_tools: false,
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
@@ -2298,6 +2326,7 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2339,6 +2368,7 @@ mod tests {
                 request_url: None,
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2403,6 +2433,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/chat/completions")),
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2477,6 +2508,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/chat/completions")),
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2537,6 +2569,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/responses")),
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2596,6 +2629,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/responses")),
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2619,6 +2653,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/responses")),
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2694,6 +2729,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/chat/completions")),
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2781,6 +2817,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/chat/completions")),
                 api_format: "openai-chat-completions".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -2819,6 +2856,246 @@ mod tests {
         assert!(response_body.contains("response.output_text.delta"));
         assert!(response_body.contains("\"type\":\"function_call\""));
         assert!(response_body.contains("\"name\":\"exec_command\""));
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn kimi_k3_dynamic_tool_loading_round_trips_end_to_end() {
+        let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn({
+            let requests = requests.clone();
+            async move {
+                axum::serve(
+                    listener,
+                    Router::new().route(
+                        "/chat/completions",
+                        post(move |Json(body): Json<Value>| {
+                            let requests = requests.clone();
+                            async move {
+                                let stage = {
+                                    let mut requests =
+                                        requests.lock().expect("captured request lock");
+                                    let stage = requests.len();
+                                    requests.push(body);
+                                    stage
+                                };
+                                let response = match stage {
+                                    0 => concat!(
+                                        "data: {\"id\":\"chatcmpl-search\",\"model\":\"k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_1\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"calculator\\\",\\\"limit\\\":1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                                        "data: [DONE]\n\n"
+                                    ),
+                                    1 => concat!(
+                                        "data: {\"id\":\"chatcmpl-dynamic\",\"model\":\"k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"calculate\",\"arguments\":\"{\\\"expression\\\":\\\"19 * 23\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                                        "data: [DONE]\n\n"
+                                    ),
+                                    2 => concat!(
+                                        "data: {\"id\":\"chatcmpl-final\",\"model\":\"k3\",\"choices\":[{\"delta\":{\"content\":\"The result is 437.\"},\"finish_reason\":\"stop\"}]}\n\n",
+                                        "data: [DONE]\n\n"
+                                    ),
+                                    _ => panic!("unexpected Kimi request stage {stage}"),
+                                };
+                                (
+                                    [(
+                                        header::CONTENT_TYPE,
+                                        HeaderValue::from_static("text/event-stream"),
+                                    )],
+                                    response,
+                                )
+                            }
+                        }),
+                    ),
+                )
+                .await
+                .expect("upstream server");
+            }
+        });
+        let token = register(
+            "kimi-dynamic-tools-e2e",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/chat/completions")),
+                api_format: "openai-chat-completions".to_owned(),
+                convert_custom_tools: false,
+                kimi_dynamic_tools: true,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("shared-kimi-model".to_owned()),
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let first = json!({
+            "model": "cloud-alias",
+            "stream": true,
+            "input": "Calculate 19 * 23.",
+            "tools": [
+                {
+                    "type": "tool_search",
+                    "execution": "client",
+                    "description": "Search deferred tools.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "limit": {"type": "number"}
+                        },
+                        "required": ["query"],
+                        "additionalProperties": false
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "schema_probe",
+                    "parameters": {
+                        "type": "object",
+                        "anyOf": [
+                            {"properties": {"text": {"type": "string"}}},
+                            {"properties": {"count": {"type": "number"}}}
+                        ]
+                    }
+                }
+            ]
+        });
+        let first_response = handle(
+            proxy_headers(&token),
+            Bytes::from(serde_json::to_vec(&first).expect("first request")),
+        )
+        .await
+        .expect("first proxy response");
+        let first_body = String::from_utf8_lossy(
+            &to_bytes(first_response.into_body(), usize::MAX)
+                .await
+                .expect("first response body"),
+        )
+        .into_owned();
+        assert!(first_body.contains("\"type\":\"tool_search_call\""));
+        assert!(first_body.contains("\"execution\":\"client\""));
+
+        let search_output = json!({
+            "type": "tool_search_output",
+            "call_id": "search_1",
+            "status": "completed",
+            "execution": "client",
+            "tools": [{
+                "type": "namespace",
+                "name": "math",
+                "description": "Arithmetic tools.",
+                "tools": [{
+                    "type": "function",
+                    "name": "calculate",
+                    "description": "Calculate an expression.",
+                    "defer_loading": true,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"expression": {"type": "string"}},
+                        "required": ["expression"],
+                        "additionalProperties": false
+                    }
+                }]
+            }]
+        });
+        let second = json!({
+            "model": "cloud-alias",
+            "stream": true,
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "Calculate 19 * 23."}]},
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "arguments": {"query": "calculator", "limit": 1}
+                },
+                search_output
+            ],
+            "tools": [first["tools"][0].clone()]
+        });
+        let second_response = handle(
+            proxy_headers(&token),
+            Bytes::from(serde_json::to_vec(&second).expect("second request")),
+        )
+        .await
+        .expect("second proxy response");
+        let second_body = String::from_utf8_lossy(
+            &to_bytes(second_response.into_body(), usize::MAX)
+                .await
+                .expect("second response body"),
+        )
+        .into_owned();
+        assert!(second_body.contains("\"type\":\"function_call\""));
+        assert!(second_body.contains("\"namespace\":\"math\""));
+        assert!(second_body.contains("\"name\":\"calculate\""));
+
+        let third = json!({
+            "model": "cloud-alias",
+            "stream": true,
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "Calculate 19 * 23."}]},
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "arguments": {"query": "calculator", "limit": 1}
+                },
+                search_output,
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "namespace": "math",
+                    "name": "calculate",
+                    "arguments": "{\"expression\":\"19 * 23\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "437"
+                }
+            ],
+            "tools": [first["tools"][0].clone()]
+        });
+        let third_response = handle(
+            proxy_headers(&token),
+            Bytes::from(serde_json::to_vec(&third).expect("third request")),
+        )
+        .await
+        .expect("third proxy response");
+        let third_body = String::from_utf8_lossy(
+            &to_bytes(third_response.into_body(), usize::MAX)
+                .await
+                .expect("third response body"),
+        )
+        .into_owned();
+        assert!(third_body.contains("The result is 437."));
+
+        let requests = requests.lock().expect("captured requests");
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests[0]["tools"][1]["function"]["parameters"]["type"],
+            "object"
+        );
+        assert!(requests[0]["tools"][1]["function"]["parameters"]
+            .get("anyOf")
+            .is_none());
+        let dynamic_message = requests[1]["messages"]
+            .as_array()
+            .expect("second messages")
+            .iter()
+            .find(|message| message["role"] == "system" && message.get("tools").is_some())
+            .expect("dynamic system message");
+        assert!(dynamic_message.get("content").is_none());
+        assert_eq!(dynamic_message["tools"][0]["function"]["name"], "calculate");
+        assert!(requests[2]["messages"]
+            .as_array()
+            .expect("third messages")
+            .iter()
+            .any(|message| message["role"] == "tool" && message["content"] == "437"));
 
         unregister(&token);
         server.abort();
@@ -2890,6 +3167,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/messages")),
                 api_format: "anthropic-messages".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3015,6 +3293,7 @@ mod tests {
                 request_url: Some(format!("http://{address}/responses")),
                 api_format: "openai-responses".to_owned(),
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key: "secret".to_owned(),
                 default_headers: Vec::new(),
                 proxy_url: None,
@@ -3075,6 +3354,7 @@ mod tests {
                 request_url: Some(request_url),
                 api_format,
                 convert_custom_tools: false,
+                kimi_dynamic_tools: false,
                 api_key,
                 default_headers: Vec::new(),
                 proxy_url: None,

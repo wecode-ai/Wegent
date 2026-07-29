@@ -1241,6 +1241,7 @@ describe('createLocalAppServices', () => {
         codex_catalog_model_id: 'wework-kimi-k3',
         model_context_window: 262_144,
         reasoning: { effort: 'low' },
+        kimi_dynamic_tools: true,
       })
     )
   })
@@ -1400,6 +1401,7 @@ describe('createLocalAppServices', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        weworkCloudModelKimiDynamicTools: 'true',
       },
     })
 
@@ -1414,6 +1416,7 @@ describe('createLocalAppServices', () => {
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
         api_key: 'cloud-login-token',
+        kimi_dynamic_tools: true,
         default_headers: {
           'X-Wegent-Model-Type': 'user',
           'X-Wegent-Model-Namespace': 'default',
