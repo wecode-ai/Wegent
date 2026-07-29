@@ -110,11 +110,26 @@ mod tests {
                 {
                     "type": "reasoning",
                     "summary": [{"type": "summary_text", "text": "kept summary"}],
-                    "encrypted_content": "stale-reasoning"
+                    "encrypted_content": "stale-reasoning",
+                    "details": {
+                        "encrypted_content": "nested-stale-reasoning"
+                    }
+                },
+                {
+                    "type": "compaction",
+                    "encrypted_content": "stale-compaction"
+                },
+                {
+                    "type": "compaction_summary",
+                    "encrypted_content": "stale-compaction-summary"
                 },
                 {
                     "type": "context_compaction",
-                    "encrypted_content": "stale-compaction"
+                    "encrypted_content": "stale-context-compaction"
+                },
+                {
+                    "type": "agent_message",
+                    "encrypted_content": "stale-agent-message"
                 },
                 {
                     "type": "function_call_output",
@@ -136,15 +151,21 @@ mod tests {
             prepare_fork_request(body, true).expect("fork request should prepare");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
-        assert_eq!(removed, 2);
+        assert_eq!(removed, 6);
         assert_eq!(prepared["input"][0]["summary"][0]["text"], "kept summary");
         assert!(prepared["input"][0].get("encrypted_content").is_none());
-        assert!(prepared["input"][1].get("encrypted_content").is_none());
+        assert!(prepared["input"][0]["details"]
+            .get("encrypted_content")
+            .is_none());
+        let input = prepared["input"].as_array().expect("prepared input array");
+        for item in &input[1..5] {
+            assert!(item.get("encrypted_content").is_none());
+        }
         assert_eq!(
-            prepared["input"][2]["output"][0]["encrypted_content"],
+            prepared["input"][5]["output"][0]["encrypted_content"],
             "tool-owned-content"
         );
-        assert_eq!(prepared["input"][3]["content"][0]["text"], "continue");
+        assert_eq!(prepared["input"][6]["content"][0]["text"], "continue");
     }
 
     #[test]
