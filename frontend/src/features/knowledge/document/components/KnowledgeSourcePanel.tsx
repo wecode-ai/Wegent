@@ -13,7 +13,6 @@ interface KnowledgeSourcePanelProps {
   knowledgeBase: KnowledgeBase
   selectedDocumentIds: number[]
   availableDocumentCount: number | null
-  processingDocumentCount: number
   canUploadDocuments: boolean
   canManageAllDocuments: boolean
   mobileVisible: boolean
@@ -32,7 +31,6 @@ export function KnowledgeSourcePanel({
   knowledgeBase,
   selectedDocumentIds,
   availableDocumentCount,
-  processingDocumentCount,
   canUploadDocuments,
   canManageAllDocuments,
   mobileVisible,
@@ -73,7 +71,6 @@ export function KnowledgeSourcePanel({
             sourceWorkspace
             selectedDocumentIds={selectedDocumentIds}
             availableDocumentCount={availableDocumentCount}
-            processingDocumentCount={processingDocumentCount}
             refreshToken={refreshToken}
             groupInfo={groupInfo}
             onGroupClick={onGroupClick}

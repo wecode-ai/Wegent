@@ -1089,9 +1089,7 @@ function ChatAreaContent({
       hasInitializedTeamRef.current = false
       lastSyncedTaskIdRef.current = null
 
-      void clearQuickPresetAttachments().catch(error => {
-        console.error('Failed to clear quick preset attachments:', error)
-      })
+      quickPresetAttachmentIdsRef.current = new Set()
       resetAttachment()
       resetContexts()
       resetSelectedSkills()
@@ -1100,7 +1098,6 @@ function ChatAreaContent({
     },
     [
       applyQuickPhraseToInput,
-      clearQuickPresetAttachments,
       resetAttachment,
       resetContexts,
       resetSelectedSkills,

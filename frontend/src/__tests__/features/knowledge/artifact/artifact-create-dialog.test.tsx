@@ -66,6 +66,8 @@ describe('ArtifactCreateDialog', () => {
         instruction: 'Focus on risks',
       })
     )
+    await waitFor(() => expect(screen.getByTestId('artifact-title-input')).toHaveValue(''))
+    expect(screen.getByTestId('artifact-instruction-input')).toHaveValue('')
   })
 
   it('keeps the selected capability and explicit document scope', async () => {
@@ -139,11 +141,19 @@ describe('ArtifactCreateDialog', () => {
       />
     )
 
+    fireEvent.change(screen.getByTestId('artifact-title-input'), {
+      target: { value: 'Retry title' },
+    })
+    fireEvent.change(screen.getByTestId('artifact-instruction-input'), {
+      target: { value: 'Retry instruction' },
+    })
     fireEvent.click(screen.getByTestId('artifact-create-submit'))
 
     await waitFor(() => expect(onCreate).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByTestId('artifact-create-submit')).toBeEnabled())
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(screen.getByTestId('artifact-title-input')).toHaveValue('Retry title')
+    expect(screen.getByTestId('artifact-instruction-input')).toHaveValue('Retry instruction')
     expect(screen.getByTestId('artifact-create-dialog')).toBeInTheDocument()
   })
 })

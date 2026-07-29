@@ -34,7 +34,10 @@ jest.mock('@/components/ui/dialog', () => ({
   DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
-const document = (id: number, overrides: Partial<KnowledgeDocument> = {}): KnowledgeDocument => ({
+const createDocument = (
+  id: number,
+  overrides: Partial<KnowledgeDocument> = {}
+): KnowledgeDocument => ({
   id,
   kind_id: 1,
   attachment_id: 1,
@@ -59,9 +62,9 @@ describe('ArtifactSourceDialog', () => {
     jest.clearAllMocks()
     ;(useDocuments as jest.Mock).mockReturnValue({
       documents: [
-        document(11),
-        document(12, { index_status: 'indexing' }),
-        document(13, { is_active: false }),
+        createDocument(11),
+        createDocument(12, { index_status: 'indexing' }),
+        createDocument(13, { is_active: false }),
       ],
       loading: false,
       error: null,
@@ -71,6 +74,7 @@ describe('ArtifactSourceDialog', () => {
       totalPages: 1,
       goToPage: jest.fn(),
       changePageSize: jest.fn(),
+      refresh: jest.fn(),
     })
   })
 

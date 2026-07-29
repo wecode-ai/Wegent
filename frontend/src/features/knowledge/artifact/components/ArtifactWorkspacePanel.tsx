@@ -16,8 +16,6 @@ interface ArtifactWorkspacePanelProps {
   mobileVisible: boolean
   onAdjustSources: (onApplied?: () => void) => void
   onAvailableDocumentCountChange: (count: number | null) => void
-  onProcessingDocumentCountChange: (count: number) => void
-  onCanManageChange: (canManage: boolean) => void
   onAskNode?: (request: ArtifactPromptRequest) => void
   onCreatePptDraft: () => void
 }
@@ -29,8 +27,6 @@ export function ArtifactWorkspacePanel({
   mobileVisible,
   onAdjustSources,
   onAvailableDocumentCountChange,
-  onProcessingDocumentCountChange,
-  onCanManageChange,
   onAskNode,
   onCreatePptDraft,
 }: ArtifactWorkspacePanelProps) {
@@ -69,8 +65,6 @@ export function ArtifactWorkspacePanel({
               layout={isDesktopCollapsed ? 'rail' : 'full'}
               onAdjustSources={onAdjustSources}
               onAvailableDocumentCountChange={onAvailableDocumentCountChange}
-              onProcessingDocumentCountChange={onProcessingDocumentCountChange}
-              onCanManageChange={onCanManageChange}
               onAskNode={onAskNode}
               onCreatePptDraft={onCreatePptDraft}
             />

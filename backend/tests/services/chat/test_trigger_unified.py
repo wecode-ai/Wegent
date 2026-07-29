@@ -441,6 +441,60 @@ class TestBuildExecutionRequestUserSubtaskId:
                         preload_selected_kb_skill=True,
                     )
 
+    async def test_artifact_task_disables_selected_kb_skill_preload(self):
+        """Artifact tasks should use scoped built-in tools without management skills."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.execution.TaskRequestBuilder",
+                return_value=mock_builder,
+            ),
+            patch.object(
+                trigger_unified,
+                "_process_contexts",
+                new=AsyncMock(return_value=request_from_builder),
+            ) as mock_process_contexts,
+        ):
+            task = MagicMock()
+            task.id = 1
+            task.json = {
+                "metadata": {
+                    "labels": {
+                        "source": "knowledge_artifact",
+                    }
+                }
+            }
+            assistant_subtask = MagicMock()
+            assistant_subtask.id = 2
+            team = MagicMock()
+            user = MagicMock()
+            user.id = 7
+
+            await trigger_unified.build_execution_request(
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=team,
+                user=user,
+                message="generate artifact",
+                payload=None,
+                user_subtask_id=123,
+            )
+
+        mock_process_contexts.assert_awaited_once_with(
+            mock_db,
+            request_from_builder,
+            123,
+            7,
+            preload_selected_kb_skill=False,
+        )
+
     async def test_does_not_process_contexts_when_user_subtask_id_is_none(self):
         """When user_subtask_id is missing, contexts processing should be skipped."""
         from app.services.chat.trigger import unified as trigger_unified

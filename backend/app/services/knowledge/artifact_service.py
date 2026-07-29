@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.timezone import database_datetime_timezone
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -41,7 +42,6 @@ _ACTIVE_STATUSES = {
     KnowledgeArtifactStatus.QUEUED,
     KnowledgeArtifactStatus.RUNNING,
 }
-_MYSQL_SESSION_TIMEZONE = timezone(timedelta(hours=8))
 _PROCESSING_DOCUMENT_STATUSES = (
     DocumentIndexStatus.QUEUED,
     DocumentIndexStatus.PENDING_CONVERSION,
@@ -276,6 +276,18 @@ class ArtifactService:
             )
         return node, source_document_ids
 
+    def resolve_knowledge_base_name(self, knowledge_base_id: int) -> str:
+        """Return the display name for an accessible knowledge base."""
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+            self.db,
+            knowledge_base_id,
+            self.user.id,
+        )
+        if knowledge_base is None or not has_access:
+            raise ArtifactNotFoundError("Knowledge base not found")
+        spec = knowledge_base.json.get("spec", {})
+        return str(spec.get("name") or knowledge_base.name)
+
     async def _launch(
         self,
         artifact: KnowledgeArtifact,
@@ -474,13 +486,7 @@ class ArtifactService:
         return (now - activity_at).total_seconds() >= stall_seconds
 
     def _subtask_datetime_as_utc(self, value: datetime) -> datetime:
-        bind = self.db.get_bind()
-        naive_timezone = (
-            _MYSQL_SESSION_TIMEZONE
-            if bind is not None and bind.dialect.name == "mysql"
-            else timezone.utc
-        )
-        return self._as_utc_naive(value, naive_timezone)
+        return self._as_utc_naive(value, database_datetime_timezone(self.db))
 
     @staticmethod
     def _as_utc_naive(value: datetime, naive_timezone: timezone) -> datetime:
@@ -552,11 +558,6 @@ class ArtifactService:
         requested_ids: list[int],
     ) -> list[int]:
         ordered_ids = list(dict.fromkeys(requested_ids))
-        query = self.db.query(KnowledgeDocument).filter(
-            KnowledgeDocument.kind_id == knowledge_base_id,
-            KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
-            KnowledgeDocument.is_active.is_(True),
-        )
         if ordered_ids:
             try:
                 return KnowledgeService.resolve_usable_document_ids(
@@ -568,6 +569,11 @@ class ArtifactService:
             except KnowledgeDocumentScopeValidationError as exc:
                 raise ArtifactValidationError(str(exc)) from exc
 
+        query = self.db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kind_id == knowledge_base_id,
+            KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+            KnowledgeDocument.is_active.is_(True),
+        )
         document_ids = [
             row[0]
             for row in query.order_by(KnowledgeDocument.id.asc()).with_entities(

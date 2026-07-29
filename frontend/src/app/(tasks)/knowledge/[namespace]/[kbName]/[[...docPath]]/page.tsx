@@ -47,7 +47,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeView } from '@/types/knowledge'
 import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
-import { useWorkspaceTaskSidebar } from '@/features/knowledge/document/hooks/useWorkspaceTaskSidebar'
+import { useKnowledgeTaskSidebar } from '@/features/knowledge/document/hooks/useKnowledgeTaskSidebar'
 
 const AddRepoModal = dynamic(() => import('@/features/knowledge/AddRepoModal'), {
   ssr: false,
@@ -108,9 +108,6 @@ function KnowledgeVirtualPageContent() {
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
-  // Collapsed sidebar state (task sidebar)
-  const [isCollapsed, setIsCollapsed] = useState(false)
-
   // Knowledge sidebar collapsed state (for document tab)
   const [isKnowledgeSidebarCollapsed, setIsKnowledgeSidebarCollapsed] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -152,33 +149,16 @@ function KnowledgeVirtualPageContent() {
     )
   }, [])
 
-  // Load collapsed state from localStorage
-  useEffect(() => {
-    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
-    if (savedCollapsed === 'true') {
-      setIsCollapsed(true)
-    }
-  }, [])
-
   useEffect(() => {
     saveLastTab('wiki')
   }, [])
 
   const isWorkspaceView =
     knowledgeViewState.visible && knowledgeViewState.currentView === 'notebook'
-  const toggleUserSidebar = useCallback(() => {
-    setIsCollapsed(previous => {
-      const next = !previous
-      localStorage.setItem('task-sidebar-collapsed', String(next))
-      return next
-    })
-  }, [])
   const { isCollapsed: isTaskSidebarCollapsed, toggle: handleToggleCollapsed } =
-    useWorkspaceTaskSidebar({
+    useKnowledgeTaskSidebar({
       isMobile,
       isWorkspaceView,
-      userCollapsed: isCollapsed,
-      onToggleUserCollapsed: toggleUserSidebar,
     })
 
   // Handle new task from collapsed sidebar button

@@ -108,7 +108,7 @@ async def test_delete_allows_manager_after_generation_finishes():
 
 
 @pytest.mark.asyncio
-async def test_delete_rejects_active_artifact_and_read_only_user():
+async def test_delete_rejects_active_artifact():
     service, repository = _service()
     active = _artifact(KnowledgeArtifactStatus.RUNNING)
     repository.get.return_value = active
@@ -124,7 +124,13 @@ async def test_delete_rejects_active_artifact_and_read_only_user():
     ):
         await service.delete(12, "artifact-1")
 
-    repository.reset_mock()
+    repository.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_read_only_user():
+    service, repository = _service()
+
     with (
         patch.object(service, "_require_read_access"),
         patch(

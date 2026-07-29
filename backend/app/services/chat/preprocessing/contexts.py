@@ -1444,6 +1444,8 @@ async def prepare_contexts_for_chat(
         scope.knowledge_base_id: scope for scope in kb_result.knowledge_base_scopes
     }
     for selected_scope in selected_scopes:
+        # An explicit document selection deliberately narrows an unrestricted KB
+        # scope; selected-document scope takes precedence over whole-KB access.
         existing_scope = merged_scopes_by_kb.get(selected_scope.knowledge_base_id)
         existing_document_ids = (
             existing_scope.document_ids if existing_scope is not None else []

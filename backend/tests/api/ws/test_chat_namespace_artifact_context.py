@@ -64,9 +64,15 @@ def build_payload() -> ChatSendPayload:
 def test_artifact_node_scope_replaces_client_document_selection():
     payload = build_payload()
 
-    with patch(
-        "app.services.knowledge.artifact_service.ArtifactService.resolve_mind_map_node",
-        return_value=(SimpleNamespace(id="node-2"), [101, 102]),
+    with (
+        patch(
+            "app.services.knowledge.artifact_service.ArtifactService.resolve_mind_map_node",
+            return_value=(SimpleNamespace(id="node-2"), [101, 102]),
+        ),
+        patch(
+            "app.services.knowledge.artifact_service.ArtifactService.resolve_knowledge_base_name",
+            return_value="项目资料",
+        ),
     ):
         _apply_artifact_node_scope(
             db=MagicMock(),
@@ -78,6 +84,7 @@ def test_artifact_node_scope_replaces_client_document_selection():
     assert payload.attachment_id is None
     assert payload.attachment_ids is None
     resolved = payload.contexts[0].data
+    assert resolved["name"] == "项目资料"
     assert resolved["document_ids"] == [101, 102]
     assert resolved["scope_restricted"] is True
 

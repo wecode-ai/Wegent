@@ -213,7 +213,7 @@ export function InteractiveMindMap({ content, onAskNode }: InteractiveMindMapPro
         id: `${node.parent_id}-${node.id}`,
         source: node.parent_id!,
         target: node.id,
-        type: 'bezier',
+        type: 'default',
         style: { stroke: 'rgb(var(--color-primary) / 0.5)', strokeWidth: 1.5 },
       }))
     const nextNodes: MindMapFlowNode[] = content.nodes

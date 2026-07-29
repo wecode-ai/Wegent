@@ -868,6 +868,9 @@ async def _process_contexts(
         request: ExecutionRequest to enhance
         user_subtask_id: User subtask ID for context retrieval
         user_id: User ID for context retrieval
+        preload_selected_kb_skill: Whether a selected knowledge base should preload
+            the knowledge-management skill (default: True)
+
     Returns:
         Enhanced ExecutionRequest with context information
     """

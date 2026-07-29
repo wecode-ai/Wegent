@@ -13,11 +13,12 @@ database operations in a thread pool without blocking the event loop.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from app.db.timezone import database_datetime_timezone
 from app.models.subtask import SubtaskStatus
 from app.services.chat.storage.db import with_session_in_executor
 from app.stores.tasks import subtask_store, task_access_store
@@ -31,7 +32,6 @@ _ACTIVE_STREAMING_SUBTASK_STATUSES = {
 _ACTIVE_STREAMING_STATUS_VALUES = {
     status.value for status in _ACTIVE_STREAMING_SUBTASK_STATUSES
 }
-_MYSQL_SESSION_TIMEZONE = timezone(timedelta(hours=8))
 
 
 def _serialize_database_datetime(db: Session, value: datetime | None) -> str | None:
@@ -41,11 +41,7 @@ def _serialize_database_datetime(db: Session, value: datetime | None) -> str | N
     if value.tzinfo is not None:
         return value.isoformat()
 
-    bind = db.get_bind()
-    database_timezone = (
-        timezone.utc if bind.dialect.name == "sqlite" else _MYSQL_SESSION_TIMEZONE
-    )
-    return value.replace(tzinfo=database_timezone).isoformat()
+    return value.replace(tzinfo=database_datetime_timezone(db)).isoformat()
 
 
 @with_session_in_executor

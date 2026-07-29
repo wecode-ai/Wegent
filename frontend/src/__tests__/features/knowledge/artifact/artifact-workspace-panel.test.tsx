@@ -46,8 +46,6 @@ const defaultProps = {
   mobileVisible: false,
   onAdjustSources: jest.fn(),
   onAvailableDocumentCountChange: jest.fn(),
-  onProcessingDocumentCountChange: jest.fn(),
-  onCanManageChange: jest.fn(),
   onCreatePptDraft: jest.fn(),
 }
 

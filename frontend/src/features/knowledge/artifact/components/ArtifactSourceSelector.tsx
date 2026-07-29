@@ -86,7 +86,7 @@ export function ArtifactSourceSelector({
     if (defaultDocumentsExpanded === undefined || expansionInitializedRef.current) return
     expansionInitializedRef.current = true
     setDocumentsExpanded(defaultDocumentsExpanded)
-  }, [defaultDocumentsExpanded])
+  }, [defaultDocumentsExpanded, knowledgeBaseId])
 
   useEffect(() => {
     if (!active || !documentsExpanded) {

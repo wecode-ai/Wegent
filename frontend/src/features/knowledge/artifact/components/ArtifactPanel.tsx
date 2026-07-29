@@ -44,8 +44,6 @@ interface ArtifactPanelProps {
   selectedDocumentIds: number[]
   onAdjustSources: (onApplied?: () => void) => void
   onAvailableDocumentCountChange?: (count: number | null) => void
-  onProcessingDocumentCountChange?: (count: number) => void
-  onCanManageChange?: (canManage: boolean) => void
   onAskNode?: (request: ArtifactPromptRequest) => void
   onCreatePptDraft: () => void
   refreshToken?: number
@@ -179,8 +177,6 @@ export function ArtifactPanel({
   selectedDocumentIds,
   onAdjustSources,
   onAvailableDocumentCountChange,
-  onProcessingDocumentCountChange,
-  onCanManageChange,
   onAskNode,
   onCreatePptDraft,
   refreshToken = 0,
@@ -223,19 +219,6 @@ export function ArtifactPanel({
     previousRefreshTokenRef.current = refreshToken
     void refresh()
   }, [refresh, refreshToken])
-
-  useEffect(() => {
-    if (isLoading || error) return
-    onProcessingDocumentCountChange?.(processingDocumentCount)
-    onCanManageChange?.(canManage)
-  }, [
-    canManage,
-    error,
-    isLoading,
-    onCanManageChange,
-    onProcessingDocumentCountChange,
-    processingDocumentCount,
-  ])
 
   const showError = (nextError: unknown) => {
     toast({
@@ -421,6 +404,7 @@ export function ArtifactPanel({
           <AlertDialogFooter>
             <AlertDialogCancel>{t('artifact.cancel')}</AlertDialogCancel>
             <AlertDialogAction
+              variant="primary"
               data-testid="artifact-delete-confirm"
               onClick={() => {
                 if (!pendingDeleteArtifactId) return

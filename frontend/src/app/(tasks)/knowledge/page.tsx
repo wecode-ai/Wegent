@@ -33,7 +33,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { KnowledgeView } from '@/types/knowledge'
 import type { KnowledgeTabType } from '@/features/knowledge/KnowledgeTabs'
 import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
-import { useWorkspaceTaskSidebar } from '@/features/knowledge/document/hooks/useWorkspaceTaskSidebar'
+import { useKnowledgeTaskSidebar } from '@/features/knowledge/document/hooks/useKnowledgeTaskSidebar'
 
 const WikiProjectList = dynamic(() => import('@/features/knowledge/WikiProjectList'), {
   ssr: false,
@@ -113,9 +113,6 @@ function KnowledgePageContent() {
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-
-  // Collapsed sidebar state (task sidebar)
-  const [isCollapsed, setIsCollapsed] = useState(false)
 
   // Knowledge sidebar collapsed state (for document tab)
   // This is synced with KnowledgeDocumentPageDesktop via localStorage and custom events
@@ -216,19 +213,10 @@ function KnowledgePageContent() {
     activeTab === 'document' &&
     knowledgeViewState.visible &&
     knowledgeViewState.currentView === 'notebook'
-  const toggleUserSidebar = useCallback(() => {
-    setIsCollapsed(previous => {
-      const next = !previous
-      localStorage.setItem('task-sidebar-collapsed', String(next))
-      return next
-    })
-  }, [])
   const { isCollapsed: isTaskSidebarCollapsed, toggle: handleToggleCollapsed } =
-    useWorkspaceTaskSidebar({
+    useKnowledgeTaskSidebar({
       isMobile,
       isWorkspaceView,
-      userCollapsed: isCollapsed,
-      onToggleUserCollapsed: toggleUserSidebar,
     })
 
   // Filter projects to show only those with user's generations
@@ -245,14 +233,6 @@ function KnowledgePageContent() {
         project.generations[0].status === 'CANCELLED')
     )
   })
-
-  // Load collapsed state from localStorage
-  useEffect(() => {
-    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
-    if (savedCollapsed === 'true') {
-      setIsCollapsed(true)
-    }
-  }, [])
 
   useEffect(() => {
     saveLastTab('wiki')

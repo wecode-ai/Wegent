@@ -317,13 +317,12 @@ export function useChatStreamHandlers({
   // Refs
   const selectedContextsRef = useRef(selectedContexts)
   selectedContextsRef.current = selectedContexts
-  const lastFailedMessageRef = useRef<string | null>(null)
+  const lastFailedMessageRef = useRef<{
+    message: string
+    options?: SendMessageOptions
+  } | null>(null)
   const handleSendMessageRef = useRef<
-    | ((
-        message?: string,
-        options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
-      ) => Promise<void>)
-    | null
+    ((message?: string, options?: SendMessageOptions) => Promise<void>) | null
   >(null)
   const retryQueuedMessageRef = useRef<((id: string) => void) | null>(null)
 
@@ -393,7 +392,7 @@ export function useChatStreamHandlers({
 
   // Helper: handle send errors
   const handleSendError = useCallback(
-    (error: Error, message: string) => {
+    (error: Error, message: string, options?: SendMessageOptions) => {
       if (runtimeDerived?.blocksQueuedDispatch) {
         void recoverCurrentTask('manual-refresh')
         return
@@ -401,7 +400,7 @@ export function useChatStreamHandlers({
 
       resetStreamingState()
       const parsedError = parseError(error)
-      lastFailedMessageRef.current = message
+      lastFailedMessageRef.current = { message, options }
 
       // Use getErrorDisplayMessage for consistent error display logic
       const errorMessage = getErrorDisplayMessage(error, (key: string) => t(`chat:${key}`))
@@ -412,7 +411,8 @@ export function useChatStreamHandlers({
         action: parsedError.retryable
           ? createRetryButton(() => {
               if (lastFailedMessageRef.current && handleSendMessageRef.current) {
-                handleSendMessageRef.current(lastFailedMessageRef.current)
+                const failedMessage = lastFailedMessageRef.current
+                void handleSendMessageRef.current(failedMessage.message, failedMessage.options)
               }
             })
           : undefined,
@@ -768,7 +768,7 @@ export function useChatStreamHandlers({
           }
         },
         onError: (error: Error) => {
-          handleSendError(error, message)
+          handleSendError(error, message, sendOptions)
         },
       }
 
@@ -1141,7 +1141,7 @@ export function useChatStreamHandlers({
       try {
         await sendPreparedChatMessage(prepared)
       } catch (err) {
-        handleSendError(err as Error, message)
+        handleSendError(err as Error, message, sendOptions)
       }
     },
     [

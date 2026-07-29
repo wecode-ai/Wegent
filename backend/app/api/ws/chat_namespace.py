@@ -124,6 +124,7 @@ def _apply_artifact_node_scope(
         artifact_context.artifact_id,
         artifact_context.node_id,
     )
+    knowledge_base_name = service.resolve_knowledge_base_name(payload.knowledge_base_id)
 
     knowledge_base_id = payload.knowledge_base_id
     payload.attachment_id = None
@@ -133,7 +134,7 @@ def _apply_artifact_node_scope(
             type="knowledge_base",
             data={
                 "knowledge_id": knowledge_base_id,
-                "name": f"Knowledge Base {knowledge_base_id}",
+                "name": knowledge_base_name,
                 "document_ids": document_ids,
                 "scope_restricted": True,
             },

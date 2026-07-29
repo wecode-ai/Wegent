@@ -39,6 +39,7 @@ import type { KnowledgeBase, KnowledgeView } from '@/types/knowledge'
 import type { Team } from '@/types/api'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
+import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
 
 interface KnowledgeDetailPanelProps {
   /** Currently selected knowledge base */
@@ -87,8 +88,6 @@ export function KnowledgeDetailPanel({
   // State for selected document IDs (for notebook mode context injection)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([])
   const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
-  const [processingDocumentCount, setProcessingDocumentCount] = useState(0)
-  const [, setCanManageArtifacts] = useState<boolean | null>(null)
   const [sourceRefreshToken, setSourceRefreshToken] = useState(0)
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
   const sourceApplyContinuationRef = useRef<(() => void) | null>(null)
@@ -176,15 +175,12 @@ export function KnowledgeDetailPanel({
   // Support multiple parameter formats for compatibility
   const searchParams = useSearchParams()
   const taskIdFromUrl = useMemo(() => {
-    const fromSearchParams =
-      searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+    const fromSearchParams = getTaskQueryParam(searchParams)
     if (fromSearchParams) return fromSearchParams
     // Fallback for replaceState scenarios where useSearchParams hasn't synced yet
     if (typeof window !== 'undefined') {
       const browserParams = new URLSearchParams(window.location.search)
-      return (
-        browserParams.get('taskId') || browserParams.get('task_id') || browserParams.get('taskid')
-      )
+      return getTaskQueryParam(browserParams)
     }
     return null
   }, [searchParams])
@@ -216,8 +212,6 @@ export function KnowledgeDetailPanel({
       setActiveTab('documents')
       setSelectedDocumentIds([])
       setAvailableDocumentCount(null)
-      setProcessingDocumentCount(0)
-      setCanManageArtifacts(null)
       setSourceDialogOpen(false)
       sourceApplyContinuationRef.current = null
       setMobileWorkspaceTab('chat')
@@ -281,7 +275,6 @@ export function KnowledgeDetailPanel({
           knowledgeBase={selectedKb}
           selectedDocumentIds={selectedDocumentIds}
           availableDocumentCount={availableDocumentCount}
-          processingDocumentCount={processingDocumentCount}
           canUploadDocuments={canUploadDocuments}
           canManageAllDocuments={canManageKb}
           mobileVisible={mobileWorkspaceTab === 'sources'}
@@ -348,8 +341,6 @@ export function KnowledgeDetailPanel({
           mobileVisible={mobileWorkspaceTab === 'generation'}
           onAdjustSources={openSourceDialog}
           onAvailableDocumentCountChange={setAvailableDocumentCount}
-          onProcessingDocumentCountChange={setProcessingDocumentCount}
-          onCanManageChange={setCanManageArtifacts}
           onAskNode={request => {
             setArtifactPromptRequest(request)
             setMobileWorkspaceTab('chat')

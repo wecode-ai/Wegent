@@ -338,10 +338,11 @@ export function DocumentUpload({
       const createdAttachmentIds = new Set(
         results.filter(result => result.documentId !== undefined).map(result => result.attachmentId)
       )
-      const hasRemainingFiles = state.files.some(
+      const targetedFiles = state.files.filter(file => !targetFileIds || targetFileIds.has(file.id))
+      const hasRemainingTargetFiles = targetedFiles.some(
         file => !file.attachment || !createdAttachmentIds.has(file.attachment.id)
       )
-      if (results.every(result => result.documentId !== undefined) && !hasRemainingFiles) {
+      if (results.every(result => result.documentId !== undefined) && !hasRemainingTargetFiles) {
         handleClose()
       }
     } catch {

@@ -53,6 +53,8 @@ export function ArtifactCreateDialog({
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(instruction.trim() ? { instruction: instruction.trim() } : {}),
       })
+      setTitle('')
+      setInstruction('')
       onOpenChange(false)
     } catch {
       // The parent displays the API error. Keep the dialog open for retry.
@@ -135,6 +137,7 @@ export function ArtifactCreateDialog({
             {t('artifact.cancel')}
           </Button>
           <Button
+            variant="primary"
             onClick={() => void handleCreate()}
             disabled={isSubmitting}
             data-testid="artifact-create-submit"

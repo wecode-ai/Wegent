@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task, Team
 from app.schemas.knowledge_artifact import KnowledgeArtifactType
@@ -24,6 +25,7 @@ from app.services.execution.emitters import SSEResultEmitter
 from app.services.readers import KindType, kindReader
 from app.stores.tasks import task_store
 from shared.models.db import Kind
+from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +183,7 @@ class ArtifactTaskLauncher:
 
     def _mark_task_as_artifact(
         self,
-        task,
+        task: TaskResource,
         artifact_id: str,
         attempt: int,
     ) -> None:
@@ -230,7 +232,7 @@ class ArtifactTaskLauncher:
             f"补充要求：{extra}"
         )
 
-    def _schedule_execution(self, request) -> None:
+    def _schedule_execution(self, request: ExecutionRequest) -> None:
         task = asyncio.create_task(
             self._dispatch_and_drain(request),
             name=f"knowledge-artifact-{request.task_id}",
@@ -239,7 +241,7 @@ class ArtifactTaskLauncher:
         task.add_done_callback(_running_artifact_tasks.discard)
 
     @staticmethod
-    async def _dispatch_and_drain(request) -> None:
+    async def _dispatch_and_drain(request: ExecutionRequest) -> None:
         emitter = SSEResultEmitter(
             task_id=request.task_id,
             subtask_id=request.subtask_id,

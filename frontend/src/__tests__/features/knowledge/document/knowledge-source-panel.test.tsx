@@ -65,7 +65,6 @@ const defaultProps = {
   knowledgeBase,
   selectedDocumentIds: [] as number[],
   availableDocumentCount: null,
-  processingDocumentCount: 0,
   canUploadDocuments: false,
   canManageAllDocuments: false,
   mobileVisible: true,
@@ -118,7 +117,6 @@ describe('KnowledgeSourcePanel', () => {
         canManageAllDocuments
         selectedDocumentIds={[7]}
         availableDocumentCount={36}
-        processingDocumentCount={2}
         refreshToken={3}
         groupInfo={groupInfo}
         onGroupClick={onGroupClick}
@@ -135,7 +133,6 @@ describe('KnowledgeSourcePanel', () => {
         canManageAllDocuments: true,
         selectedDocumentIds: [7],
         availableDocumentCount: 36,
-        processingDocumentCount: 2,
         refreshToken: 3,
         groupInfo,
         onGroupClick,

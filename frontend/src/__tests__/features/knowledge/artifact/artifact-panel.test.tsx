@@ -211,27 +211,6 @@ describe('ArtifactPanel AI Workshop', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('artifact.type.presentationHint')
   })
 
-  it('reports generation permission and processing state to the source browser', async () => {
-    const onCanManageChange = jest.fn()
-    const onProcessingDocumentCountChange = jest.fn()
-
-    render(
-      <ArtifactPanel
-        knowledgeBaseId={12}
-        selectedDocumentIds={[]}
-        onAdjustSources={jest.fn()}
-        onCreatePptDraft={createPptDraftMock}
-        onCanManageChange={onCanManageChange}
-        onProcessingDocumentCountChange={onProcessingDocumentCountChange}
-      />
-    )
-
-    await waitFor(() => {
-      expect(onCanManageChange).toHaveBeenCalledWith(true)
-      expect(onProcessingDocumentCountChange).toHaveBeenCalledWith(0)
-    })
-  })
-
   it('refreshes data when the refresh token changes without remounting', async () => {
     const { rerender } = render(
       <ArtifactPanel

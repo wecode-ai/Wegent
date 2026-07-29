@@ -25,7 +25,6 @@ import {
   FolderInput,
   ArrowRightLeft,
   ChevronRight,
-  Plus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -77,9 +76,9 @@ import {
   deletedFolderAffectsActiveFolder,
   folderTreeContainsId,
 } from '../utils/resource-tree'
-import { findDocumentByName } from '../utils/document-lookup'
-import { findDocumentForDeepLink } from '../utils/document-lookup'
+import { findDocumentByName, findDocumentForDeepLink } from '../utils/document-lookup'
 import { createDocumentsFromAttachments } from '../utils/document-creation'
+import { DocumentSourceWorkspaceHeader } from './DocumentSourceWorkspaceHeader'
 
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
@@ -190,8 +189,6 @@ interface DocumentListProps {
   availableDocumentCount?: number | null
   /** Refresh the browser without remounting it. */
   refreshToken?: number
-  /** Continue polling while documents outside the visible page are processing. */
-  processingDocumentCount?: number
   /** Notify the workspace after document mutations. */
   onDocumentsChanged?: () => void
   /** Adapt document browsing controls for the workspace source panel. */
@@ -237,7 +234,6 @@ export function DocumentList({
   selectedDocumentIds: controlledSelectedDocumentIds,
   availableDocumentCount = null,
   refreshToken = 0,
-  processingDocumentCount = 0,
   onDocumentsChanged,
   sourceWorkspace = false,
   onRefreshKnowledgeBase,
@@ -497,7 +493,13 @@ export function DocumentList({
   }, [initialDocPath, initialDocumentId, knowledgeBase.id])
 
   useEffect(() => {
-    if (!initialDocPath || initialDocPathHandled || loading || documents.length === 0) return
+    if (
+      (!initialDocPath && initialDocumentId === undefined) ||
+      initialDocPathHandled ||
+      loading ||
+      documents.length === 0
+    )
+      return
     const targetDoc = documents.find(doc =>
       initialDocumentId !== undefined ? doc.id === initialDocumentId : doc.name === initialDocPath
     )
@@ -515,7 +517,7 @@ export function DocumentList({
         try {
           const found = await findDocumentForDeepLink(
             knowledgeBase.id,
-            initialDocPath,
+            initialDocPath ?? '',
             initialDocumentId,
             controller.signal
           )
@@ -598,12 +600,6 @@ export function DocumentList({
     void refresh()
     void fetchFolders()
   }, [fetchFolders, refresh, refreshToken])
-
-  useEffect(() => {
-    if (processingDocumentCount <= 0) return
-    const timer = window.setInterval(() => void refresh(), 5000)
-    return () => window.clearInterval(timer)
-  }, [processingDocumentCount, refresh])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
   const canManageDocumentArea = canManageAnyDocuments
@@ -1119,24 +1115,39 @@ export function DocumentList({
         <EditKnowledgeBaseSummaryDialog {...editorDialogProps} />
       )}
 
-      {canUpload && sourceWorkspace && (
-        <Button
-          variant="outline"
-          className="h-11 w-full"
-          onClick={handleOpenUpload}
-          data-testid="document-add-source-full-width"
-        >
-          <Plus className="mr-1.5 h-4 w-4" />
-          {t('artifact.addMaterials')}
-        </Button>
+      {sourceWorkspace && (
+        <DocumentSourceWorkspaceHeader
+          canUpload={canUpload}
+          canToggleExpandAll={canToggleExpandAll}
+          isExpandAllView={isExpandAllView}
+          currentFolderId={currentFolderId}
+          folderBreadcrumb={folderBreadcrumb}
+          searchQuery={searchQuery}
+          searchPlaceholder={searchPlaceholder}
+          selectionEnabled={Boolean(onSelectionChange)}
+          documentCount={documents.length}
+          isAllSelected={isAllSelected}
+          selectedSelectableDocumentCount={
+            selectableDocuments.filter(document => selectedDocumentIds.has(document.id)).length
+          }
+          selectableDocumentCount={selectableDocuments.length}
+          usesAllAvailableDocuments={usesAllAvailableDocuments}
+          availableDocumentCount={availableDocumentCount}
+          selectedDocumentCount={selectedDocumentIds.size}
+          onAddMaterials={handleOpenUpload}
+          onToggleExpandAll={handleToggleExpandAll}
+          onNavigateFolder={folderId => {
+            setCurrentFolderId(folderId)
+            resetSelectionForNavigation()
+          }}
+          onSearchQueryChange={setSearchQuery}
+          onSelectAll={handleSelectAll}
+        />
       )}
 
       {/* Folder breadcrumb navigation (layered nav only) */}
-      {(!isExpandAllView || sourceWorkspace) && (
-        <div
-          className="flex items-center justify-between gap-2"
-          data-testid={sourceWorkspace ? 'document-source-breadcrumb-row' : undefined}
-        >
+      {!sourceWorkspace && !isExpandAllView && (
+        <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm text-text-muted">
             <button
               onClick={() => {
@@ -1148,200 +1159,134 @@ export function DocumentList({
             >
               {t('document.breadcrumb.root')}
             </button>
-            {!isExpandAllView &&
-              folderBreadcrumb.map((folder, i) => (
-                <span key={folder.id} className="flex min-w-0 items-center gap-1">
-                  <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
-                  {i < folderBreadcrumb.length - 1 ? (
-                    <button
-                      onClick={() => {
-                        setCurrentFolderId(folder.id)
-                        resetSelectionForNavigation()
-                      }}
-                      className="truncate hover:text-text-primary transition-colors"
-                      data-testid={`breadcrumb-folder-${folder.id}`}
-                    >
-                      {folder.name}
-                    </button>
-                  ) : (
-                    <span className="truncate text-text-primary font-medium">{folder.name}</span>
-                  )}
-                </span>
-              ))}
+            {folderBreadcrumb.map((folder, i) => (
+              <span key={folder.id} className="flex min-w-0 items-center gap-1">
+                <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
+                {i < folderBreadcrumb.length - 1 ? (
+                  <button
+                    onClick={() => {
+                      setCurrentFolderId(folder.id)
+                      resetSelectionForNavigation()
+                    }}
+                    className="truncate hover:text-text-primary transition-colors"
+                    data-testid={`breadcrumb-folder-${folder.id}`}
+                  >
+                    {folder.name}
+                  </button>
+                ) : (
+                  <span className="truncate text-text-primary font-medium">{folder.name}</span>
+                )}
+              </span>
+            ))}
           </div>
-          {sourceWorkspace && canToggleExpandAll && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              onClick={handleToggleExpandAll}
-              data-testid="expand-all-toggle"
-            >
-              {isExpandAllView ? t('document.tree.layeredNav') : t('document.tree.expandAll')}
-            </Button>
-          )}
         </div>
       )}
 
       {/* Search bar and action buttons */}
-      <div className="flex items-center gap-3 flex-wrap">
-        {/* Search - always visible in the source workspace, inline for normal mode,
-            and in a popover for other compact layouts. */}
-        {sourceWorkspace ? (
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input
-              type="text"
-              className="h-11 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-              placeholder={searchPlaceholder}
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              data-testid="document-source-search-input"
-            />
-          </div>
-        ) : compact ? (
-          <div className="relative">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowSearchPopover(!showSearchPopover)}
-              className={searchQuery ? 'border-primary' : ''}
-            >
-              <Search className="w-4 h-4" />
-              {searchQuery && (
-                <span className="ml-1 max-w-[60px] truncate text-xs">{searchQuery}</span>
-              )}
-            </Button>
-            {showSearchPopover && (
-              <div className="absolute top-full left-0 mt-1 z-50 bg-base border border-border rounded-md shadow-lg p-2 min-w-[240px]">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-                  <input
-                    type="text"
-                    autoFocus
-                    className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                    placeholder={searchPlaceholder}
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Escape') {
-                        setSearchQuery('')
-                        setShowSearchPopover(false)
-                      }
-                    }}
-                    onBlur={() => {
-                      // Delay to allow click events to fire before closing popover
-                      setTimeout(() => setShowSearchPopover(false), 150)
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input
-              type="text"
-              className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-              placeholder={searchPlaceholder}
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
-          </div>
-        )}
-        {!sourceWorkspace && (
-          <>
-            {/* Spacer to push buttons to the right */}
-            <div className="flex-1" />
-
-            {/* Refresh list button */}
-            <TooltipProvider>
-              <Tooltip delayDuration={200}>
-                <TooltipTrigger asChild>
-                  <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
-                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t('common:actions.refresh')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            {/* Retrieval test button */}
-            <TooltipProvider>
-              <Tooltip delayDuration={200}>
-                <TooltipTrigger asChild>
-                  <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
-                    <Target className="w-4 h-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t('document.retrievalTest.button')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            {/* Create folder button */}
-            {canManageFolderStructure && (
+      {!sourceWorkspace && (
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search is inline in normal mode and shown in a popover in compact layouts. */}
+          {compact ? (
+            <div className="relative">
               <Button
                 variant="outline"
-                className="h-11 min-w-[44px]"
-                onClick={() => handleCreateFolder(currentFolderId)}
+                size="sm"
+                onClick={() => setShowSearchPopover(!showSearchPopover)}
+                className={searchQuery ? 'border-primary' : ''}
               >
-                <FolderPlus className="w-4 h-4 mr-1" />
-                {t('document.folder.create')}
+                <Search className="w-4 h-4" />
+                {searchQuery && (
+                  <span className="ml-1 max-w-[60px] truncate text-xs">{searchQuery}</span>
+                )}
               </Button>
-            )}
-
-            {/* Upload button */}
-            {canUpload && (
-              <Button variant="primary" size="sm" onClick={handleOpenUpload}>
-                <Upload className="w-4 h-4 mr-1" />
-                {t('document.document.upload')}
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-
-      {sourceWorkspace && onSelectionChange && (
-        <div
-          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 text-xs text-text-secondary"
-          data-testid="document-source-scope-summary"
-        >
-          {documents.length > 0 && (
-            <button
-              type="button"
-              onClick={() => handleSelectAll(!isAllSelected)}
-              className="flex min-h-11 shrink-0 items-center gap-1.5 text-text-muted transition-colors hover:text-text-primary md:min-h-0"
-              aria-pressed={isAllSelected}
-              data-testid="document-select-current-page"
-            >
-              {isAllSelected ? (
-                <CheckSquare className="h-3.5 w-3.5 text-primary" />
-              ) : (
-                <Square className="h-3.5 w-3.5" />
+              {showSearchPopover && (
+                <div className="absolute top-full left-0 mt-1 z-50 bg-base border border-border rounded-md shadow-lg p-2 min-w-[240px]">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                    <input
+                      type="text"
+                      autoFocus
+                      className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                      placeholder={searchPlaceholder}
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') {
+                          setSearchQuery('')
+                          setShowSearchPopover(false)
+                        }
+                      }}
+                      onBlur={() => {
+                        // Delay to allow click events to fire before closing popover
+                        setTimeout(() => setShowSearchPopover(false), 150)
+                      }}
+                    />
+                  </div>
+                </div>
               )}
-              <span>{t('document.document.batch.selectCurrentPage')}</span>
-              <span>
-                ({selectableDocuments.filter(doc => selectedDocumentIds.has(doc.id)).length}/
-                {selectableDocuments.length})
-              </span>
-            </button>
+            </div>
+          ) : (
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+              <input
+                type="text"
+                className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder={searchPlaceholder}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
           )}
-          <span>
-            {usesAllAvailableDocuments
-              ? availableDocumentCount === null
-                ? t('artifact.sourceDialog.all')
-                : t('artifact.sourceDialog.defaultAllHint', {
-                    count: availableDocumentCount,
-                  })
-              : t('artifact.sourceDialog.selectedHint', {
-                  count: selectedDocumentIds.size,
-                })}
-          </span>
+          {/* Spacer to push buttons to the right */}
+          <div className="flex-1" />
+
+          {/* Refresh list button */}
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('common:actions.refresh')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          {/* Retrieval test button */}
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
+                  <Target className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t('document.retrievalTest.button')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          {/* Create folder button */}
+          {canManageFolderStructure && (
+            <Button
+              variant="outline"
+              className="h-11 min-w-[44px]"
+              onClick={() => handleCreateFolder(currentFolderId)}
+            >
+              <FolderPlus className="w-4 h-4 mr-1" />
+              {t('document.folder.create')}
+            </Button>
+          )}
+
+          {/* Upload button */}
+          {canUpload && (
+            <Button variant="primary" size="sm" onClick={handleOpenUpload}>
+              <Upload className="w-4 h-4 mr-1" />
+              {t('document.document.upload')}
+            </Button>
+          )}
         </div>
       )}
 
