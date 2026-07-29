@@ -132,6 +132,25 @@ describe('MessageList Tauri virtualization', () => {
     expect(screen.getByText('streaming message 99')).toBeInTheDocument()
   })
 
+  test('deduplicates a streaming message that is also a forced navigation target', () => {
+    const messages = buildMessages(100, 'streaming-navigation')
+    messages[80] = {
+      ...messages[80],
+      role: 'assistant',
+      status: 'streaming',
+    }
+
+    render(
+      <MessageList
+        messages={messages}
+        scrollElementRef={{ current: createScrollElement(200) }}
+        forceVirtualMessageId="user-80"
+      />
+    )
+
+    expect(screen.getAllByText('streaming-navigation message 80')).toHaveLength(1)
+  })
+
   test('restores and persists the TanStack measurement snapshot', () => {
     const messages = buildMessages(20, 'measured')
     const props = {

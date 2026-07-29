@@ -311,9 +311,9 @@ export const MessageList = memo(function MessageList({
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
           ? Array.from({ length: range.count }, (_, index) => index)
           : defaultRangeExtractor(range)
-      const forcedIndexes = [forcedVirtualMessageIndex, streamingVirtualMessageIndex].filter(
-        index => index >= 0 && !indexes.includes(index)
-      )
+      const forcedIndexes = [
+        ...new Set([forcedVirtualMessageIndex, streamingVirtualMessageIndex]),
+      ].filter(index => index >= 0 && !indexes.includes(index))
       return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
     },
     initialMeasurementsCache,
