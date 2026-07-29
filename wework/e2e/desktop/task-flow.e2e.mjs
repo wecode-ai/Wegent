@@ -342,8 +342,12 @@ const DESKTOP_CHECKPOINTS = [
   'workspace-attachments',
   'rendering-extensions',
 ]
+const PLUGIN_SEGMENTS = ['plugin-lifecycle', 'skill-mention-rendering', 'sites-plugin-auto-install']
 const DESKTOP_SEGMENT = readCommandLineOption('--segment')
 const DESKTOP_FROM_SEGMENT = readCommandLineOption('--from-segment')
+const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
+const RUNS_PLUGIN_E2E =
+  PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -382,11 +386,14 @@ function validateDesktopSegmentOptions() {
   if (DESKTOP_SEGMENT && DESKTOP_FROM_SEGMENT) {
     throw new Error('--segment and --from-segment cannot be used together')
   }
-  const selectedSegment = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
-  if (selectedSegment && !DESKTOP_CHECKPOINTS.includes(selectedSegment)) {
+  const availableSegments = [...DESKTOP_CHECKPOINTS, ...PLUGIN_SEGMENTS]
+  if (SELECTED_DESKTOP_SEGMENT && !availableSegments.includes(SELECTED_DESKTOP_SEGMENT)) {
     throw new Error(
-      `Unknown desktop E2E checkpoint "${selectedSegment}". Available checkpoints: ${DESKTOP_CHECKPOINTS.join(', ')}`
+      `Unknown desktop E2E segment "${SELECTED_DESKTOP_SEGMENT}". Available segments: ${availableSegments.join(', ')}`
     )
+  }
+  if (PLUGINS_ONLY && DESKTOP_CHECKPOINTS.includes(SELECTED_DESKTOP_SEGMENT)) {
+    throw new Error('--plugins-only accepts only plugin E2E segments')
   }
 }
 
@@ -400,6 +407,15 @@ function shouldRunDesktopCheckpoint(checkpoint) {
 
 function shouldStopAfterDesktopCheckpoint(checkpoint) {
   return DESKTOP_SEGMENT === checkpoint
+}
+
+function shouldRunPluginSegment(segment) {
+  const segmentIndex = PLUGIN_SEGMENTS.indexOf(segment)
+  assert.notEqual(segmentIndex, -1, `Unknown plugin E2E segment: ${segment}`)
+  if (!RUNS_PLUGIN_E2E) return false
+  if (DESKTOP_SEGMENT) return segment === DESKTOP_SEGMENT
+  if (!DESKTOP_FROM_SEGMENT) return true
+  return segmentIndex >= PLUGIN_SEGMENTS.indexOf(DESKTOP_FROM_SEGMENT)
 }
 
 async function findFileBySuffix(root, suffix) {
@@ -2680,7 +2696,7 @@ async function verifyOfficialPluginSource(repositoryRoot) {
   )
 }
 
-async function verifyPluginLifecycle({
+async function installOfficialPluginFixture({
   codexHome,
   control,
   marketplacePath,
@@ -2760,19 +2776,6 @@ async function verifyPluginLifecycle({
   )
   await captureVerificationScreenshot(control, 'plugins-02-installed.png')
 
-  await control.command('click', installSelector)
-  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await waitForSnapshot(
-    control,
-    snapshot => snapshot.text.includes(OFFICIAL_PLUGIN_DISPLAY_NAME),
-    'Trying the installed official plugin did not place its reference in the composer',
-    DEFAULT_STEP_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
-  await captureVerificationScreenshot(control, 'plugins-03-used-in-chat.png')
-
   const skillPath = await findFileBySuffix(
     join(codexHome, 'plugins', 'cache', OFFICIAL_PLUGIN_MARKETPLACE_NAME),
     join('skills', OFFICIAL_PLUGIN_SKILL_NAME, 'SKILL.md')
@@ -2793,7 +2796,32 @@ async function verifyPluginLifecycle({
     'Installing the official plugin discarded the isolated E2E model provider'
   )
 
+  return { actionsSelector, installSelector, pluginId, skillPath }
+}
+
+async function openOfficialPluginChat(control, installSelector) {
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', installSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', installSelector)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.text.includes(OFFICIAL_PLUGIN_DISPLAY_NAME),
+    'Trying the installed official plugin did not place its reference in the composer',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
+async function createOfficialPluginTask({ control, installSelector, skillPath }) {
+  await openOfficialPluginChat(control, installSelector)
+  await captureVerificationScreenshot(control, 'plugins-03-used-in-chat.png')
   control.officialPluginSkillPath = skillPath
+  control.scenarioRequests.delete('official_plugin')
   control.setScenario('official_plugin')
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -2808,6 +2836,18 @@ async function verifyPluginLifecycle({
     errorLabel: 'The sent plugin reference degraded to its plain-text mention',
   })
   await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
+  const taskId = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    ?.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The official plugin conversation did not expose its task ID')
+  return taskId
+}
+
+async function verifyPluginLifecycle({ control, fixture }) {
+  await createOfficialPluginTask({
+    control,
+    installSelector: fixture.installSelector,
+    skillPath: fixture.skillPath,
+  })
   await sendPrompt(
     control,
     ACTIVE_COMPOSER_SELECTOR,
@@ -2823,18 +2863,21 @@ async function verifyPluginLifecycle({
     5,
     'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
   )
-  const officialPluginTaskId = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
-  ).workbench?.currentRuntimeTask?.taskId
-  assert.ok(officialPluginTaskId, 'The official plugin conversation did not expose its task ID')
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
+}
 
+async function verifySkillMentionRendering({ control, fixture }) {
+  const officialPluginTaskId = await createOfficialPluginTask({
+    control,
+    installSelector: fixture.installSelector,
+    skillPath: fixture.skillPath,
+  })
   const qualifiedSkillName = `${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`
   const qualifiedSkillTestId = qualifiedSkillName.replace(/[^a-zA-Z0-9_-]/g, '-')
   await control.command('click', '[data-testid="new-chat-button"]')
   control.setScenario('skill_mention_display')
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-    value: `[$${qualifiedSkillName}](${skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
+    value: `[$${qualifiedSkillName}](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
   })
   await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2860,7 +2903,7 @@ async function verifyPluginLifecycle({
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
+    text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await assertMentionRenderedAsToken(control, {
@@ -2881,18 +2924,35 @@ async function verifyPluginLifecycle({
     plainTextMention: `$${qualifiedSkillName}`,
     errorLabel: 'The reloaded qualified skill reference degraded to its plain-text mention',
   })
+  await captureVerificationScreenshot(control, 'skill-mention-01-reloaded.png')
+}
 
+async function uninstallOfficialPlugin(control, fixture) {
   await control.command('click', '[data-testid="plugins-button"]')
-  await control.command('waitFor', actionsSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
-  await control.command('click', actionsSelector)
-  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${pluginId}"]`)
+  const pluginsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (pluginsSnapshot.testIds.includes('plugin-detail-back-button')) {
+    await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  }
+  const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${OFFICIAL_PLUGIN_MARKETPLACE_NAME}"]`
+  await control.command('waitFor', marketplaceTabSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', marketplaceTabSelector)
+  await control.command('fill', '[data-testid="plugins-search-input"]', {
+    value: OFFICIAL_PLUGIN_DISPLAY_NAME,
+  })
+  await control.command('waitFor', fixture.actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', fixture.actionsSelector)
+  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${fixture.pluginId}"]`)
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${fixture.pluginId}`),
     'The plugin remained installed after the uninstall request'
   )
   assert.match(
-    await control.command('getText', installSelector),
+    await control.command('getText', fixture.installSelector),
     /Install|安装/,
     'The marketplace did not return to the install state after uninstall'
   )
@@ -8310,8 +8370,8 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: PLUGINS_ONLY ? 'true' : 'false',
-        VITE_WEWORK_E2E_SEED_LOCAL_MODELS: PLUGINS_ONLY || MEMORY_ONLY ? 'false' : 'true',
+        VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
+        VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -8898,7 +8958,7 @@ async function main() {
     join(workspacePath, IMAGE_ARTIFACT_NAME),
     Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
   )
-  if (PLUGINS_ONLY) {
+  if (RUNS_PLUGIN_E2E) {
     await createOfficialPluginMarketplaceFixture({
       marketplaceRoot: pluginMarketplacePath,
       repositoryRoot: officialPluginRepositoryPath,
@@ -8972,7 +9032,7 @@ async function main() {
     )
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
-    if (!PLUGINS_ONLY) {
+    if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)
     }
 
@@ -8993,7 +9053,7 @@ async function main() {
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
-      ...(PLUGINS_ONLY ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
+      ...(RUNS_PLUGIN_E2E ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
     }
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin') {
@@ -9014,7 +9074,7 @@ async function main() {
           'WEWORK_E2E_MODEL_API_KEY',
           'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
           'WEWORK_EXECUTOR_SIDECAR',
-          ...(PLUGINS_ONLY ? ['WEWORK_E2E_NATIVE_CODEX_HOME'] : []),
+          ...(RUNS_PLUGIN_E2E ? ['WEWORK_E2E_NATIVE_CODEX_HOME'] : []),
         ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
         const launcher = spawn(
           'open',
@@ -9083,7 +9143,7 @@ async function main() {
         'The desktop E2E application stole macOS foreground focus'
       )
     }
-    if (PLUGINS_ONLY) {
+    if (RUNS_PLUGIN_E2E) {
       phase = 'blank-codex-home-initialization'
       await initializeBlankCodexHome({
         codexHome,
@@ -9329,19 +9389,45 @@ async function main() {
       return
     }
 
-    if (PLUGINS_ONLY) {
-      phase = 'plugin-lifecycle'
-      await verifyPluginLifecycle({
-        codexHome,
-        control,
-        marketplacePath: pluginMarketplacePath,
-        modelServerUrl: control.url,
-        repositoryPath: officialPluginRepositoryPath,
-        workspacePath,
-      })
-      phase = 'sites-plugin-auto-install'
-      await verifySitesPluginAutoInstall(control)
-      console.log(`Wework desktop plugin E2E passed. Evidence: ${resultDir}`)
+    if (RUNS_PLUGIN_E2E) {
+      let officialPluginFixture = null
+      const ensureOfficialPluginFixture = async () => {
+        officialPluginFixture ??= await installOfficialPluginFixture({
+          codexHome,
+          control,
+          marketplacePath: pluginMarketplacePath,
+          modelServerUrl: control.url,
+          repositoryPath: officialPluginRepositoryPath,
+          workspacePath,
+        })
+        return officialPluginFixture
+      }
+
+      if (shouldRunPluginSegment('plugin-lifecycle')) {
+        phase = 'plugin-lifecycle'
+        await verifyPluginLifecycle({
+          control,
+          fixture: await ensureOfficialPluginFixture(),
+        })
+      }
+      if (shouldRunPluginSegment('skill-mention-rendering')) {
+        phase = 'skill-mention-rendering'
+        await verifySkillMentionRendering({
+          control,
+          fixture: await ensureOfficialPluginFixture(),
+        })
+      }
+      if (shouldRunPluginSegment('sites-plugin-auto-install')) {
+        phase = 'sites-plugin-auto-install'
+        await verifySitesPluginAutoInstall(control)
+      }
+      if (officialPluginFixture) {
+        phase = 'plugin-uninstall'
+        await uninstallOfficialPlugin(control, officialPluginFixture)
+      }
+      console.log(
+        `Wework desktop plugin E2E${SELECTED_DESKTOP_SEGMENT ? ` segment ${SELECTED_DESKTOP_SEGMENT}` : ''} passed. Evidence: ${resultDir}`
+      )
       return
     }
 
