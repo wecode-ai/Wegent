@@ -74,6 +74,7 @@ export interface HttpRequestOptions {
 
 export interface HttpClient {
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
+  getBlob(endpoint: string): Promise<Blob>
   post<T>(endpoint: string, data?: unknown): Promise<T>
   put<T>(endpoint: string, data?: unknown): Promise<T>
   patch<T>(endpoint: string, data?: unknown): Promise<T>
@@ -191,8 +192,18 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     return nextRequest
   }
 
+  async function getBlob(endpoint: string): Promise<Blob> {
+    const token = getToken()
+    const response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) throw await parseError(response)
+    return response.blob()
+  }
+
   return {
     get,
+    getBlob,
     post: (endpoint, data) =>
       request(endpoint, {
         method: 'POST',

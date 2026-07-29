@@ -20,6 +20,20 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    if !request.extra.contains_key("cloudProjectId")
+        && !request.extra.contains_key("cloud_project_id")
+    {
+        if let Some(project_id) = payload
+            .get("cloudProjectId")
+            .or_else(|| payload.get("cloud_project_id"))
+            .filter(|value| value.is_string() || value.is_number())
+            .cloned()
+        {
+            request
+                .extra
+                .insert("cloudProjectId".to_owned(), project_id);
+        }
+    }
     if request.runtime_project_key.is_none() {
         request.runtime_project_key = string_field(payload, "runtimeProjectKey")
             .or_else(|| string_field(payload, "runtime_project_key"));
@@ -105,6 +119,31 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     }
     if let Some(turn_id) = id_field(payload, "turn_id") {
         request.subtask_id = turn_id;
+    }
+}
+
+pub(crate) fn cloud_project_id(request: &ExecutionRequest) -> Option<Value> {
+    request
+        .extra
+        .get("cloudProjectId")
+        .or_else(|| request.extra.get("cloud_project_id"))
+        .filter(|value| value.is_string() || value.is_number())
+        .cloned()
+}
+
+pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_handle: &Value) {
+    if cloud_project_id(request).is_some() {
+        return;
+    }
+    if let Some(project_id) = runtime_handle
+        .get("cloudProjectId")
+        .or_else(|| runtime_handle.get("cloud_project_id"))
+        .filter(|value| value.is_string() || value.is_number())
+        .cloned()
+    {
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), project_id);
     }
 }
 
@@ -658,4 +697,29 @@ fn codex_worktree_fallback_root(path: &str) -> Option<String> {
         return Some(prefix.to_string_lossy().into_owned());
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn copies_cloud_project_id_from_runtime_payload() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(&mut request, &json!({"cloudProjectId": 9001}));
+
+        assert_eq!(cloud_project_id(&request), Some(json!(9001)));
+    }
+
+    #[test]
+    fn restores_cloud_project_id_for_a_follow_up_turn() {
+        let mut request = ExecutionRequest::default();
+
+        restore_cloud_project_id(&mut request, &json!({"cloudProjectId": "local-42"}));
+
+        assert_eq!(cloud_project_id(&request), Some(json!("local-42")));
+    }
 }

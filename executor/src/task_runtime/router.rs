@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    credentials::mask_provider_config, issue_provider::IssueProvider, store::task_provider,
-    BinaryInput, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, IssueComment,
-    LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate,
-    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
-    TaskRuntimeError, TaskUpdate,
+    aitable_provider::AITableProvider, credentials::mask_provider_config,
+    issue_provider::IssueProvider, store::task_provider, BinaryInput, Delivery, DeliveryAsset,
+    DeliveryCreate, DeliveryDetail, IssueComment, LocalTaskStore, LoopItem, ProjectCreate,
+    ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding,
+    TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -19,6 +19,7 @@ use super::{
 pub struct TaskRuntime {
     local_store: LocalTaskStore,
     issue_provider: IssueProvider,
+    aitable_provider: AITableProvider,
 }
 
 impl TaskRuntime {
@@ -28,9 +29,11 @@ impl TaskRuntime {
 
     pub fn new(local_store: LocalTaskStore) -> Result<Self, TaskRuntimeError> {
         let issue_provider = IssueProvider::new(local_store.path().to_owned())?;
+        let aitable_provider = AITableProvider::new(local_store.path().to_owned())?;
         Ok(Self {
             local_store,
             issue_provider,
+            aitable_provider,
         })
     }
 
@@ -77,7 +80,10 @@ impl TaskRuntime {
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
         let provider = project.task_provider;
         let project = self.local_store.external_project(project)?;
-        self.issue_provider.list(&project, provider).await
+        match provider {
+            TaskProviderKind::DingtalkAitable => self.aitable_provider.list_board(&project).await,
+            provider => self.issue_provider.list(&project, provider).await,
+        }
     }
 
     pub async fn get_external_task(
@@ -174,10 +180,131 @@ impl TaskRuntime {
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider.list(&project, provider).await
             }
+            TaskProviderKind::DingtalkAitable => self.aitable_provider.list_board(&project).await,
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
         }
+    }
+
+    // Native DingTalk AI Table operations (dynamic schema, records, fields).
+
+    pub async fn dws_auth_status(&self) -> Result<serde_json::Value, TaskRuntimeError> {
+        self.aitable_provider.auth_status().await
+    }
+
+    pub async fn dws_auth_login(&self) -> Result<serde_json::Value, TaskRuntimeError> {
+        self.aitable_provider.auth_login().await
+    }
+
+    pub async fn dws_auth_logout(&self) -> Result<(), TaskRuntimeError> {
+        self.aitable_provider.auth_logout().await
+    }
+
+    pub async fn aitable_describe(
+        &self,
+        project_id: &str,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.describe(&project).await
+    }
+
+    pub async fn aitable_list_records(
+        &self,
+        project_id: &str,
+        query: Option<&str>,
+        limit: i64,
+        cursor: Option<&str>,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .list_records(&project, query, limit, cursor)
+            .await
+    }
+
+    pub async fn aitable_get_record(
+        &self,
+        project_id: &str,
+        record_id: &str,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.get_record(&project, record_id).await
+    }
+
+    pub async fn aitable_create_record(
+        &self,
+        project_id: &str,
+        cells: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.create_record(&project, cells).await
+    }
+
+    pub async fn aitable_update_record(
+        &self,
+        project_id: &str,
+        record_id: &str,
+        cells: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .update_record(&project, record_id, cells)
+            .await
+    }
+
+    pub async fn aitable_delete_record(
+        &self,
+        project_id: &str,
+        record_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .delete_record(&project, record_id)
+            .await
+    }
+
+    pub async fn aitable_create_field(
+        &self,
+        project_id: &str,
+        name: &str,
+        field_type: &str,
+        property: serde_json::Value,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .create_field(&project, name, field_type, property)
+            .await
+    }
+
+    pub async fn aitable_update_field(
+        &self,
+        project_id: &str,
+        field_id: &str,
+        payload: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .update_field(&project, field_id, payload)
+            .await
+    }
+
+    pub async fn aitable_delete_field(
+        &self,
+        project_id: &str,
+        field_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.delete_field(&project, field_id).await
+    }
+
+    fn aitable_project(&self, project_id: &str) -> Result<LoopItem, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        if task_provider(&project)? != TaskProviderKind::DingtalkAitable {
+            return Err(TaskRuntimeError::UnsupportedProvider(
+                "project is not a DingTalk AI Table project".to_owned(),
+            ));
+        }
+        Ok(project)
     }
 
     pub async fn search_tasks(
@@ -266,6 +393,9 @@ impl TaskRuntime {
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider.get(&project, provider, task_id).await
             }
+            TaskProviderKind::DingtalkAitable => {
+                self.aitable_provider.get_board(&project, task_id).await
+            }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -282,6 +412,9 @@ impl TaskRuntime {
             TaskProviderKind::Local => self.local_store.create_task(project_id, input),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider.create(&project, provider, input).await
+            }
+            TaskProviderKind::DingtalkAitable => {
+                self.aitable_provider.create_board(&project, input).await
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
@@ -301,6 +434,11 @@ impl TaskRuntime {
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider
                     .update(&project, provider, task_id, input)
+                    .await
+            }
+            TaskProviderKind::DingtalkAitable => {
+                self.aitable_provider
+                    .update_board(&project, task_id, input)
                     .await
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -336,9 +474,9 @@ impl TaskRuntime {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.reorder_tasks(project_id, input),
-            TaskProviderKind::Github | TaskProviderKind::Gitlab => {
-                self.list_tasks(project_id).await
-            }
+            TaskProviderKind::Github
+            | TaskProviderKind::Gitlab
+            | TaskProviderKind::DingtalkAitable => self.list_tasks(project_id).await,
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -1319,5 +1457,76 @@ mod tests {
             .unwrap()
             .is_empty());
         server.abort();
+    }
+
+    fn aitable_project(store: &LocalTaskStore) -> LoopItem {
+        store
+            .create_project(ProjectCreate {
+                name: "AI Table".to_owned(),
+                project_key: Some("AIT".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::DingtalkAitable,
+                provider_config: json!({
+                    "base_id": "base-1",
+                    "table_id": "table-1",
+                    "board_mapping": {
+                        "title_field_id": "fld_title",
+                        "status_field_id": "fld_status"
+                    }
+                }),
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn routes_aitable_board_projection_without_task_rows() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = aitable_project(&store);
+        let runtime = TaskRuntime::new(store).unwrap();
+        assert!(matches!(
+            runtime.list_tasks(&project.id).await,
+            Err(TaskRuntimeError::ProviderRequest(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn aitable_native_describe_returns_dynamic_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = aitable_project(&store);
+        let runtime = TaskRuntime::new(store).unwrap();
+        assert!(matches!(
+            runtime.aitable_describe(&project.id).await,
+            Err(TaskRuntimeError::ProviderRequest(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn aitable_record_write_requires_dws_authentication() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = aitable_project(&store);
+        let runtime = TaskRuntime::new(store).unwrap();
+
+        let mut cells = serde_json::Map::new();
+        cells.insert("fld_title".to_owned(), json!("x"));
+        let result = runtime.aitable_create_record(&project.id, cells).await;
+
+        assert!(matches!(result, Err(TaskRuntimeError::ProviderRequest(_))));
+    }
+
+    #[test]
+    fn aitable_provider_combinations_are_valid() {
+        assert!(crate::task_runtime::store::validate_provider(
+            ProjectStoreKind::Local,
+            TaskProviderKind::DingtalkAitable
+        )
+        .is_ok());
+        assert!(crate::task_runtime::store::validate_provider(
+            ProjectStoreKind::Backend,
+            TaskProviderKind::DingtalkAitable
+        )
+        .is_ok());
     }
 }

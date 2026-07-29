@@ -142,6 +142,75 @@ def test_cloud_project_generates_key_when_omitted(
     assert 2 <= len(created.json()["project_key"]) <= 16
 
 
+def test_cloud_project_list_tolerates_unknown_task_provider(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    known = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "known", "name": "Known provider"},
+    ).json()
+    newer = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "newer", "name": "Newer provider"},
+    ).json()
+    stored = test_db.query(CloudProject).filter(CloudProject.id == newer["id"]).one()
+    stored.metadata_json = {
+        **stored.metadata_json,
+        "task_provider": "provider-from-newer-branch",
+    }
+    test_db.commit()
+
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(test_token))
+
+    assert listed.status_code == 200
+    projects = {item["id"]: item for item in listed.json()["items"]}
+    assert projects[known["id"]]["task_provider"] == "local"
+    assert projects[newer["id"]]["task_provider"] == "provider-from-newer-branch"
+
+
+def test_added_member_can_list_private_cloud_project(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    member = User(
+        user_name="cloud-project-member",
+        password_hash="unused",
+        email="cloud-project-member@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(member)
+    test_db.commit()
+    test_db.refresh(member)
+    member_token = create_access_token(data={"sub": member.user_name})
+
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "sharedprivate",
+            "name": "Shared private project",
+            "visibility": "private",
+        },
+    ).json()
+    added = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(test_token),
+        json={"user_id": member.id, "role": "Developer"},
+    )
+
+    assert added.status_code == 201
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(member_token))
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [project["id"]]
+    assert listed.json()["items"][0]["access_role"] == "Developer"
+
+
 def test_public_project_visitors_only_access_their_own_todo_details(
     test_client: TestClient,
     test_db: Session,

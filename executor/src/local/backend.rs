@@ -891,6 +891,15 @@ fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {
 
 fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBackendConfig) {
     if request
+        .backend_url
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+    {
+        request.backend_url = Some(config.backend_url.clone());
+    }
+    if request
         .auth_token
         .as_deref()
         .unwrap_or("")
@@ -985,5 +994,20 @@ mod tests {
 
         restore_env(APP_IPC_DEVICE_ID_ENV, previous);
         assert_eq!(device_id, "remote-device");
+    }
+
+    #[test]
+    fn normalizes_backend_context_for_local_task_mcp() {
+        let config = backend_config("local-device");
+        let mut request = ExecutionRequest::default();
+
+        normalize_local_task_request(&mut request, &config);
+
+        assert_eq!(
+            request.backend_url.as_deref(),
+            Some("https://backend.example.com")
+        );
+        assert_eq!(request.auth_token.as_deref(), Some("token"));
+        assert_eq!(request.device_id.as_deref(), Some("local-device"));
     }
 }

@@ -770,6 +770,9 @@ importers:
       autoprefixer:
         specifier: ^10.5.0
         version: 10.5.0(postcss@8.5.15)
+      dingtalk-workspace-cli:
+        specifier: 1.0.32
+        version: 1.0.32
       eslint:
         specifier: ^10.3.0
         version: 10.4.1(jiti@1.21.7)
@@ -5293,6 +5296,11 @@ packages:
 
   dingtalk-jsapi@3.2.9:
     resolution: {integrity: sha512-VLt8co92z29bdguxUvJLnhpQn7WFjb5rJTODDczieS7I0yyWj5+KwF04sWfMvyIKX0MQPVL++Fyo6z2JucFpgQ==}
+
+  dingtalk-workspace-cli@1.0.32:
+    resolution: {integrity: sha512-GaddHutdGn269vUmRt7TsHtycO526piUrq5IUqV6BLkimUoAjp2bqt1yI1/dZYr95ebwGCNwQJp30BkS9E39ug==}
+    engines: {node: '>=16'}
+    hasBin: true
 
   direction@2.0.1:
     resolution: {integrity: sha512-9S6m9Sukh1cZNknO1CWAr2QAWsbKLafQiyM5gZ7VgXHeuaoUwffKN4q6NC4A/Mf9iiPlOXQEKW/Mv/mh9/3YFA==}
@@ -14350,6 +14358,8 @@ snapshots:
   dingtalk-jsapi@3.2.9:
     dependencies:
       promise-polyfill: 7.1.2
+
+  dingtalk-workspace-cli@1.0.32: {}
 
   direction@2.0.1: {}
 

@@ -14,9 +14,11 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.config import settings
 from app.core.security import get_current_user
 from app.models.delivery import Delivery
 from app.models.user import User
@@ -48,6 +50,10 @@ from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.loop_items.provider_router import (
+    loop_item_attachment_provider_router,
+    loop_item_provider_router,
+)
 
 router = APIRouter()
 
@@ -242,14 +248,8 @@ def create_loop_item(
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
     project = cloud_project_service.get(db, project_id, current_user.id)
-    if project.task_provider in {"github", "gitlab"}:
-        return LoopItemResponse.model_validate(
-            external_loop_item_provider.create(
-                db, project_id, current_user.id, current_user.user_name, values
-            )
-        )
-    item = loop_item_service.create(db, project_id, current_user.id, values)
-    return _loop_item_response(db, item, current_user)
+    created = loop_item_provider_router.create(db, project, current_user, values)
+    return LoopItemResponse.model_validate(created.values)
 
 
 @router.post(
@@ -334,8 +334,9 @@ def list_loop_item_attachments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[LoopItemAttachmentResponse]:
-    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    attachments = loop_item_service.list_attachments(db, item_id, current_user.id)
+    attachments = loop_item_attachment_provider_router.list(
+        db, item_id, current_user.id
+    )
     return [LoopItemAttachmentResponse.model_validate(item) for item in attachments]
 
 
@@ -350,14 +351,14 @@ def add_loop_item_attachment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemAttachmentResponse:
-    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    attachment = loop_item_service.add_attachment(
+    attachment = loop_item_attachment_provider_router.add(
         db,
         item_id,
         current_user.id,
         file.filename or "attachment",
         file.content_type or "application/octet-stream",
         file.file,
+        settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024,
     )
     return LoopItemAttachmentResponse.model_validate(attachment)
 
@@ -371,9 +372,28 @@ def access_loop_item_attachment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemAttachmentAccessResponse:
+    loop_item_attachment_provider_router.require_access(
+        db, attachment_id, current_user.id
+    )
     return LoopItemAttachmentAccessResponse(
-        url=loop_item_service.attachment_access_url(db, attachment_id, current_user.id),
-        expires_in_seconds=900,
+        url=f"wegent://attachments/{attachment_id}",
+        expires_in_seconds=0,
+    )
+
+
+@router.get("/loop-item-attachments/{attachment_id}/content")
+def read_loop_item_attachment(
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    content, content_type, filename = loop_item_attachment_provider_router.content(
+        db, attachment_id, current_user.id
+    )
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 
@@ -385,7 +405,7 @@ def delete_loop_item_attachment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    loop_item_service.delete_attachment(db, attachment_id, current_user.id)
+    loop_item_attachment_provider_router.delete(db, attachment_id, current_user.id)
 
 
 @router.get(
