@@ -23,5 +23,5 @@ export { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog
 export { RetrievalTestDialog } from './RetrievalTestDialog'
 export { KnowledgeBaseSummaryCard } from './KnowledgeBaseSummaryCard'
 export { GuidedQuestions } from './GuidedQuestions'
-export { DocumentPanel } from './DocumentPanel'
+export { KnowledgeSourcePanel } from './KnowledgeSourcePanel'
 export { ChunksSection } from './ChunksSection'

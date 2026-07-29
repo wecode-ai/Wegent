@@ -7,6 +7,7 @@ import '@/lib/polyfills'
 
 import type { Metadata } from 'next'
 import './globals.css'
+import '@xyflow/react/dist/style.css'
 import '@/styles/markdown.css'
 import '@/features/common/scrollbar.css'
 import MockInit from '@/features/mock/MockInit'

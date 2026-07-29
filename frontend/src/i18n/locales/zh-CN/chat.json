@@ -297,6 +297,12 @@
     "overwrite_confirm_cancel": "保留当前输入",
     "overwrite_confirm_action": "覆盖"
   },
+  "knowledge_draft": {
+    "confirm_title": "开始新任务？",
+    "confirm_description": "创建 PPT 草稿前，将清除当前未发送的消息、附件和额外上下文。",
+    "confirm_cancel": "保留当前草稿",
+    "confirm_action": "开始新任务"
+  },
   "errors": {
     "request_failed": "请求大模型接口失败",
     "request_failed_retry": "请求大模型接口失败, 请点击重试",
