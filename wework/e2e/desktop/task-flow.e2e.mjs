@@ -51,6 +51,7 @@ const RUNNING_FORK_FOLLOW_UP_PROMPT =
 const RUNNING_FORK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RUNNING_FORK_COMPLETE'
 const FORK_FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP: continue only in the forked task.'
 const FORK_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP_COMPLETE'
+const FORK_ENCRYPTED_CONTENT = 'gAAAA-wework-desktop-e2e-fork-context'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -312,6 +313,7 @@ const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only
 const RETRY_ONLY = process.argv.includes('--retry-only')
 const RATE_LIMIT_ONLY = process.argv.includes('--rate-limit-only')
 const RUNNING_FORK_ONLY = process.argv.includes('--running-fork-only')
+const COMPLETED_FORK_ONLY = process.argv.includes('--completed-fork-only')
 const SIDE_CHAT_ONLY = process.argv.includes('--side-chat-only')
 const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
 const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
@@ -2099,6 +2101,11 @@ async function verifyCompletedTurnFork({
   assert.ok(
     JSON.stringify(forkFollowUpRequest.body).includes(FORK_FOLLOW_UP_PROMPT),
     'The forked task did not accept an independent follow-up'
+  )
+  assert.equal(
+    JSON.stringify(forkFollowUpRequest.body).includes(FORK_ENCRYPTED_CONTENT),
+    false,
+    'The forked request forwarded opaque encrypted reasoning history'
   )
   await captureVerificationScreenshot(control, 'completed-turn-fork-03-follow-up-complete.png')
 
@@ -4739,6 +4746,18 @@ function assistantMessage(text) {
   }
 }
 
+function encryptedReasoningItem(id, encryptedContent) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'reasoning',
+      id,
+      summary: [],
+      encrypted_content: encryptedContent,
+    },
+  }
+}
+
 function streamingMarkdownReport() {
   const section = index =>
     [
@@ -6530,11 +6549,13 @@ class DesktopE2EServer {
       // triggers a transcript refresh. Real providers have network latency here; an
       // immediate mock response can otherwise race the live image-view rendering.
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-      this.writeSse(response, [
+      const responseEvents = [
         responseCreated(responseId),
+        encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
         assistantMessage(COMPLETION_TEXT),
         responseCompleted(responseId),
-      ])
+      ]
+      this.writeSse(response, responseEvents)
       return
     }
 
@@ -6943,11 +6964,26 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(FORK_FOLLOW_UP_PROMPT),
         'The real Codex request did not contain the fork follow-up prompt'
       )
-      this.writeSse(response, [
+      const encryptedHistoryPresent = JSON.stringify(body).includes(FORK_ENCRYPTED_CONTENT)
+      if (encryptedHistoryPresent) {
+        const responseBody = {
+          error: {
+            message:
+              'The encrypted content gAAAA... could not be verified. Reason: Encrypted content could not be decrypted or parsed.',
+            type: 'invalid_request_error',
+            param: null,
+            code: 'invalid_encrypted_content',
+          },
+        }
+        json(response, 400, responseBody)
+        return
+      }
+      const responseEvents = [
         responseCreated(responseId),
         assistantMessage(FORK_FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
-      ])
+      ]
+      this.writeSse(response, responseEvents)
       return
     }
 
@@ -10422,21 +10458,23 @@ async function main() {
         return
       }
 
-      phase = 'running-follow-up-fork'
-      await verifyRunningFollowUpFork({
-        composerSelector,
-        control,
-        executorHome,
-        sourceTaskRowTestId: taskRowTestId,
-      })
-      if (RUNNING_FORK_ONLY) {
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
-        console.log(`Wework running-fork desktop E2E passed. Evidence: ${resultDir}`)
-        return
+      if (!COMPLETED_FORK_ONLY) {
+        phase = 'running-follow-up-fork'
+        await verifyRunningFollowUpFork({
+          composerSelector,
+          control,
+          executorHome,
+          sourceTaskRowTestId: taskRowTestId,
+        })
+        if (RUNNING_FORK_ONLY) {
+          await writeFile(
+            join(resultDir, 'model-requests.json'),
+            `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+            'utf8'
+          )
+          console.log(`Wework running-fork desktop E2E passed. Evidence: ${resultDir}`)
+          return
+        }
       }
 
       phase = 'completed-turn-fork'
@@ -10447,6 +10485,15 @@ async function main() {
         sourceTaskRowTestId: taskRowTestId,
         workspacePath,
       })
+      if (COMPLETED_FORK_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework completed-fork desktop E2E passed. Evidence: ${resultDir}`)
+        return
+      }
 
       phase = 'blank-task-draft-restoration'
       await control.command(
