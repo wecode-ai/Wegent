@@ -4979,6 +4979,9 @@ class DesktopE2EServer {
     this.taskPlanCompletionWritten = new Promise(resolvePromise => {
       this.resolveTaskPlanCompletionWritten = resolvePromise
     })
+    this.cancellationCompletionRelease = new Promise(resolvePromise => {
+      this.releaseCancellationCompletion = resolvePromise
+    })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
     })
@@ -5257,6 +5260,10 @@ class DesktopE2EServer {
   releaseTaskPlanResponse() {
     this.releaseTaskPlanCompletion()
     return this.guard(this.taskPlanCompletionWritten)
+  }
+
+  releaseCancellationResponse() {
+    this.releaseCancellationCompletion()
   }
 
   awaitReconnectResponseStarted() {
@@ -6465,6 +6472,11 @@ class DesktopE2EServer {
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
       response.write(createSse([responseCreated(responseId)]))
+      await this.cancellationCompletionRelease
+      if (response.destroyed || response.writableEnded) return
+      response.end(
+        createSse([assistantMessage(CANCELLATION_COMPLETION_TEXT), responseCompleted(responseId)])
+      )
       return
     }
 
@@ -9765,6 +9777,35 @@ async function main() {
         cancellationText.includes(CANCELLATION_COMPLETION_TEXT),
         false,
         'The cancelled task unexpectedly rendered a completion response'
+      )
+      control.releaseCancellationResponse()
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+      const cancellationTextAfterUpstreamCompletion = await control.command('getText', 'body')
+      assert.equal(
+        cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_COMPLETION_TEXT),
+        false,
+        'The cancelled task rendered content emitted after cancellation'
+      )
+      const cancellationSnapshotAfterUpstreamCompletion = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      assert.equal(
+        cancellationSnapshotAfterUpstreamCompletion.workbench?.lifecycleCurrentTaskRunning,
+        false,
+        'The cancelled task resumed after the upstream completion response'
+      )
+      assert.equal(
+        cancellationSnapshotAfterUpstreamCompletion.pane?.status?.isBusy,
+        false,
+        'The cancelled task made the composer busy after the upstream completion response'
+      )
+      const cancellationUiAfterUpstreamCompletion = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        cancellationUiAfterUpstreamCompletion.testIds.includes('pause-response-button'),
+        false,
+        'The cancelled task restored the stop control after the upstream completion response'
       )
 
       phase = 'retry'
