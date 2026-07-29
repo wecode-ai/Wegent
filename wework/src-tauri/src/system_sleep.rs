@@ -2,7 +2,12 @@ use std::collections::{HashSet, VecDeque};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 const MAX_SETTLED_TASK_IDS: usize = 256;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Default)]
 pub(crate) struct SystemSleepState {
@@ -213,6 +218,7 @@ fn sleep_inhibitor_command() -> Result<Command, String> {
         "-Command",
         "Add-Type -Namespace Wework -Name Sleep -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint flags);'; [Wework.Sleep]::SetThreadExecutionState(0x80000001); while ($true) { Start-Sleep -Seconds 3600 }",
     ]);
+    command.creation_flags(CREATE_NO_WINDOW);
     Ok(command)
 }
 

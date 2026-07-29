@@ -743,8 +743,8 @@ importers:
         specifier: ^10.5.0
         version: 10.5.0(postcss@8.5.15)
       dingtalk-workspace-cli:
-        specifier: 1.0.32
-        version: 1.0.32
+        specifier: 1.0.54
+        version: 1.0.54
       eslint:
         specifier: ^10.3.0
         version: 10.4.1(jiti@1.21.7)
@@ -5151,8 +5151,8 @@ packages:
   dingbat-to-unicode@1.0.1:
     resolution: {integrity: sha512-98l0sW87ZT58pU4i61wa2OHwxbiYSbuxsCBozaVnYX2iCnr3bLM3fIes1/ej7h1YdOKuKt/MLs706TVnALA65w==}
 
-  dingtalk-workspace-cli@1.0.32:
-    resolution: {integrity: sha512-GaddHutdGn269vUmRt7TsHtycO526piUrq5IUqV6BLkimUoAjp2bqt1yI1/dZYr95ebwGCNwQJp30BkS9E39ug==}
+  dingtalk-workspace-cli@1.0.54:
+    resolution: {integrity: sha512-R1gNPwc7yVgU5VKbyI7FaYNjh2L2+/yBo7cdqEdrBP35Xcnm0yOjJcRbk/EEq31Sk60feSBoQ3RtKVhxwduW+Q==}
     engines: {node: '>=16'}
     hasBin: true
 
@@ -13868,7 +13868,7 @@ snapshots:
 
   dingbat-to-unicode@1.0.1: {}
 
-  dingtalk-workspace-cli@1.0.32: {}
+  dingtalk-workspace-cli@1.0.54: {}
 
   direction@2.0.1: {}
 

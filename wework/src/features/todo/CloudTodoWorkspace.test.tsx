@@ -860,6 +860,15 @@ describe('CloudTodoWorkspace', () => {
       updateField: vi.fn(),
       deleteField: vi.fn(),
     }
+    workbenchServices.dwsApi = {
+      authStatus: vi.fn(async () => ({
+        authenticated: true,
+        token_valid: true,
+        corp_name: '测试组织',
+      })),
+      login: vi.fn(() => new Promise<void>(() => undefined)),
+      logout: vi.fn(async () => undefined),
+    }
 
     render(
       <CloudTodoWorkspace
@@ -894,6 +903,10 @@ describe('CloudTodoWorkspace', () => {
         },
       })
     )
+    await userEvent.click(screen.getByTestId('aitable-dws-login'))
+    expect(workbenchServices.dwsApi.login).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('aitable-dws-login')).toHaveTextContent('等待浏览器授权…')
+    expect(screen.getByTestId('aitable-dws-login')).toBeDisabled()
   })
 
   it('keeps the project header above the macOS drag region and opens new TODO', async () => {

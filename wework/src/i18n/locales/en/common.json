@@ -1894,6 +1894,7 @@
     "project_visibility_manage_description": "Private projects are visible to invited members only; public projects are visible to everyone connected to this Backend.",
     "project_visibility_private_manage_description": "Only invited members can view the project and its tasks",
     "project_visibility_public_manage_description": "Everyone can see the task list; visitors can only open and edit their own tasks",
-    "project_visibility_update_failed": "Failed to update project access"
+    "project_visibility_update_failed": "Failed to update project access",
+    "dws_waiting_for_authorization": "Waiting for browser authorization…"
   }
 }

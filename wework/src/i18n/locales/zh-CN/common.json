@@ -1893,6 +1893,7 @@
     "project_visibility_manage_description": "私有项目仅邀请成员可见；公开项目对所有连接当前 Backend 的用户可见。",
     "project_visibility_private_manage_description": "仅邀请成员可查看项目和任务",
     "project_visibility_public_manage_description": "所有用户可见任务列表，访客仅能打开和编辑自己的任务",
-    "project_visibility_update_failed": "更新项目权限失败"
+    "project_visibility_update_failed": "更新项目权限失败",
+    "dws_waiting_for_authorization": "等待浏览器授权…"
   }
 }

@@ -11,6 +11,7 @@
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use tokio::process::Command;
 
 use super::{LoopItem, TaskProviderKind, TaskRuntimeError};
@@ -46,8 +47,22 @@ impl AITableProvider {
     }
 
     pub(crate) async fn auth_login(&self) -> Result<Value, TaskRuntimeError> {
-        self.run(&["auth", "login"]).await?;
-        self.auth_status().await
+        let mut child = self
+            .command(&["auth", "login", "--force"])?
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                TaskRuntimeError::ProviderRequest(format!(
+                    "DWS login is unavailable at {}: {error}",
+                    self.dws_binary.display()
+                ))
+            })?;
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        Ok(json!({"started": true}))
     }
 
     pub(crate) async fn auth_logout(&self) -> Result<(), TaskRuntimeError> {
@@ -378,28 +393,12 @@ impl AITableProvider {
     }
 
     async fn run(&self, args: &[&str]) -> Result<Value, TaskRuntimeError> {
-        std::fs::create_dir_all(&self.dws_config_dir)
-            .map_err(|error| TaskRuntimeError::ProviderRequest(error.to_string()))?;
-        let output = Command::new(&self.dws_binary)
-            .args(args)
-            .args(["--format", "json"])
-            // DWS 1.0.32 keeps OAuth credentials below the user home even when
-            // DWS_CONFIG_DIR is set. Override both so Wework never consumes a
-            // developer's global DWS session.
-            .env("HOME", &self.dws_home)
-            .env("USERPROFILE", &self.dws_home)
-            .env("DWS_CONFIG_DIR", &self.dws_config_dir)
-            // Wework owns this isolated DWS home. File-backed DEKs avoid
-            // repeated macOS Keychain prompts when a stale `dek` item exists.
-            .env("DWS_DISABLE_KEYCHAIN", "1")
-            .output()
-            .await
-            .map_err(|error| {
-                TaskRuntimeError::ProviderRequest(format!(
-                    "DWS is unavailable at {}: {error}",
-                    self.dws_binary.display()
-                ))
-            })?;
+        let output = self.command(args)?.output().await.map_err(|error| {
+            TaskRuntimeError::ProviderRequest(format!(
+                "DWS is unavailable at {}: {error}",
+                self.dws_binary.display()
+            ))
+        })?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let value = serde_json::from_str::<Value>(stdout.trim())
@@ -416,6 +415,25 @@ impl AITableProvider {
             )));
         }
         Ok(value)
+    }
+
+    fn command(&self, args: &[&str]) -> Result<Command, TaskRuntimeError> {
+        std::fs::create_dir_all(&self.dws_config_dir)
+            .map_err(|error| TaskRuntimeError::ProviderRequest(error.to_string()))?;
+        let mut command = Command::new(&self.dws_binary);
+        command
+            .args(args)
+            .args(["--format", "json"])
+            // DWS 1.0.32 keeps OAuth credentials below the user home even when
+            // DWS_CONFIG_DIR is set. Override both so Wework never consumes a
+            // developer's global DWS session.
+            .env("HOME", &self.dws_home)
+            .env("USERPROFILE", &self.dws_home)
+            .env("DWS_CONFIG_DIR", &self.dws_config_dir)
+            // Wework owns this isolated DWS home. File-backed DEKs avoid
+            // repeated macOS Keychain prompts when a stale `dek` item exists.
+            .env("DWS_DISABLE_KEYCHAIN", "1");
+        Ok(command)
     }
 
     /// Project records onto LoopItems using the optional board mapping.
