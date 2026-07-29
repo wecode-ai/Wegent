@@ -14,7 +14,6 @@ from knowledge_engine.stat.collectors.collaboration import (
 )
 from knowledge_engine.stat.collectors.content_quality import (
     content_freshness,
-    doc_chunk_quality,
     duplicate_doc_suspect,
     kb_content_freshness,
     kb_thin_doc_rate,
@@ -41,7 +40,6 @@ from knowledge_engine.stat.collectors.doc_management import (
     doc_index_status,
     doc_size_distribution,
     doc_summary_status,
-    doc_topic_distribution,
     doc_update_frequency,
     doc_upload_trend,
     kb_avg_doc_length,
@@ -153,7 +151,6 @@ __all__ = [
     "doc_index_failure_rate",
     "doc_size_distribution",
     "doc_update_frequency",
-    "doc_topic_distribution",
     "doc_folder_depth",
     "doc_chunk_strategy",
     "doc_chunk_count_distribution",
@@ -167,7 +164,6 @@ __all__ = [
     "prom_active_conversions",
     "prom_callback_success_rate",
     "kb_thin_doc_rate",
-    "doc_chunk_quality",
     "content_freshness",
     "kb_content_freshness",
     "duplicate_doc_suspect",

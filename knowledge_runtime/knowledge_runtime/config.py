@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     # Advanced-metrics tier switch (mirrors backend's KB_STAT_ADVANCED_ENABLED
     # — same env var name, both services must agree). When false (default)
     # collect_all runs only the 14 basic collectors and /metrics/list returns
-    # only the basic 15 metrics; set true to enable all 73. MUST match
+    # only the basic 15 metrics; set true to enable all 71. MUST match
     # backend's setting or beat-injected runs diverge from the worker.
     kb_stat_advanced_enabled: bool = Field(
         default=False,

@@ -302,7 +302,7 @@ class Settings(BaseSettings):
     KB_STAT_PRUNE_ENABLED: bool = False
     # KB_STAT_ADVANCED_ENABLED controls the metric tier. When false (default)
     # only the 17 basic collectors run and /metrics/list returns only the 18
-    # basic metrics; set true to enable all 73. MUST match knowledge_runtime's
+    # basic metrics; set true to enable all 71. MUST match knowledge_runtime's
     # KB_STAT_ADVANCED_ENABLED (same env var name) so beat-injected runs and
     # the worker agree on which tier to collect.
     KB_STAT_ADVANCED_ENABLED: bool = False

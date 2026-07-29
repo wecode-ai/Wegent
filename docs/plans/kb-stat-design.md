@@ -7,7 +7,7 @@ title: 知识库统计功能设计文档
 
 ## 1. 功能概述
 
-知识库统计功能为平台管理员和知识库运营人员提供知识库使用的全方位数据洞察，包括检索效果、内容质量、用户行为、系统性能等 **73 个统计指标**（73 个采集器），覆盖 10 个领域。
+知识库统计功能为平台管理员和知识库运营人员提供知识库使用的全方位数据洞察，包括检索效果、内容质量、用户行为、系统性能等 **71 个统计指标**（71 个采集器），覆盖 10 个领域。
 
 ### 两个统计入口
 
@@ -139,7 +139,7 @@ title: 知识库统计功能设计文档
 - 按 10 个 domain 分组，每组带类型图标
 - 每个卡片含行动指引（阈值超限自动提示）
 - 指标列表由 `/metrics/list` 动态返回并直接平铺展示（无折叠/高级视图）；
-  `KB_STAT_ADVANCED_ENABLED=false` 时只返回 15 个基本 metric，`true` 时返回全部 73 个
+  `KB_STAT_ADVANCED_ENABLED=false` 时只返回 15 个基本 metric，`true` 时返回全部 71 个
 
 ### 2.5 KB 详情页核心指标（20 个精选）
 
@@ -156,7 +156,7 @@ title: 知识库统计功能设计文档
 
 | 任务 | Celery crontab (UTC) | 北京时间 | 说明 |
 | --- | --- | --- | --- |
-| `kb_stat.collect_all` | `crontab(hour=19, minute=7)` | **每天 03:07** | 采集所有 73 个采集器（产出 73 个指标）。beat 传 `lookback_days=1`（纯增量，只统计当天），手动触发时默认 `lookback_days=30`（回看 30 天窗口） |
+| `kb_stat.collect_all` | `crontab(hour=19, minute=7)` | **每天 03:07** | 采集所有 71 个采集器（产出 71 个指标）。beat 传 `lookback_days=1`（纯增量，只统计当天），手动触发时默认 `lookback_days=30`（回看 30 天窗口） |
 | `kb_stat.prune_old_runs` | `crontab(day_of_week=6, hour=20, minute=13)` | **每周一 04:13** | 清理 400 天前的旧数据。分块删除（每批 100 个 run_id），避免长事务锁表 |
 
 **时区说明**：Celery `timezone="UTC"`，所以 crontab 的 hour 是 UTC。北京时间 = UTC+8，反向换算：北京 03:07 → UTC 前一天 19:07，北京周一 04:13 → UTC 周日 20:13。
@@ -180,7 +180,7 @@ title: 知识库统计功能设计文档
 2. mark_kb_stat_orphaned_runs() — 清理同日期已失去锁的 running 状态
 3. mark_kb_stat_stale_runs() — 清理其他超时 running 状态
 4. _create_run() — 在 kb_stat_runs 表插入 running 记录
-5. 遍历 73 个 collector：
+5. 遍历 71 个 collector：
    ├─ _create_collector_run() — 插入 kb_stat_collector_runs running 记录
    ├─ collector.fn() — 执行采集（读业务库 → 写统计库）
    ├─ 成功 → commit + 标记 success
@@ -210,6 +210,23 @@ title: 知识库统计功能设计文档
 | `kb_retrieval_hit_rate` | subtask_contexts.rag_result.chunks_count | 命中率 |
 | `kb_config_sanity` | kinds.json 检索配置 | 配置异常检测 |
 
+#### 3.4.1 用户指标的时间边界口径
+
+两个用户域 collector 不使用每日 beat 的 `lookback_days=1` 增量窗口，而是各自有固定口径：
+
+- **`user_pattern_evolution`**：固定 6 个月趋势快照，范围为
+  `[effective_end_date - 6 months, effective_end_date)`（含开始、不含结束）。每个 run
+  生成完整 6 个月快照，`date_col=None`。排他结束边界确保历史回采不读取目标日之后的数据。
+- **`user_participation_summary`**：当前仍有效资源的「截至统计日累计参与快照」，四类身份
+  （`is_creator`/`is_uploader`/`is_retriever`/`is_member`）**只设置排他结束边界
+  `created_at < effective_end_date`**，不设开始边界（累计快照，否则历史参与者会错误丢失身份）。
+  成员只统计 `entity_type='user' AND status='approved'` 的直接用户成员（排除 group/department
+  实体成员）；四个来源均排除 `user_id IS NULL`。
+
+> **历史回采限制**：`user_participation_summary` 基于业务表当前状态（`is_active=1`、当前仍存在的
+> KB/文档/成员），只能排除目标日之后创建的记录，**不承诺还原目标日当时已删除或已移除的数据**。
+> 在不修改业务表、无业务变更历史表的前提下，这是可实现的最高精度。
+
 ### 3.5 业务库零侵入原则
 
 统计功能对业务库保持零侵入：只允许只读查询，不修改业务表，不增加字段、
@@ -229,9 +246,10 @@ title: 知识库统计功能设计文档
 
 ### 4.1 查询路径
 
-`_fetch_one` 根据指标的 `date_col` 类型走两条路径：
+`_fetch_one` 根据指标的 `date_col` 走两条路径：`date_col` 非 `None`（`target_date` 或
+`stat_date`）走跨 run 聚合，`date_col is None`（快照）走单最新 run。
 
-**Path A（target_date 类，跨 run 聚合）**：
+**Path A（target_date / stat_date 类，跨 run 聚合）**：
 ```sql
 SELECT t.* FROM {table} t
 INNER JOIN (
@@ -247,11 +265,14 @@ INNER JOIN (
 ORDER BY t.target_date LIMIT 60
 ```
 
-**Path B（stat_date / 快照类，单最新 run）**：
+> `stat_date` 指标走与 Path A 完全同构的跨 run 聚合（按 `stat_date`/`kb_id` 取每个日期的
+> 最新成功 `run_id`），区别仅是分组列名为 `stat_date`。beat 每日 `lookback_days=1` 只写当天
+> 1 行，查询时跨 N 个成功 run 拼出 N 天趋势。只有 `date_col is None` 的快照指标走 Path B。
+
+**Path B（快照类，`date_col is None`，单最新 run）**：
 ```sql
 SELECT * FROM {table}
 WHERE run_id = :run_id
-  [AND stat_date >= :start_date AND stat_date <= :end_date]
   [AND kb_id IN (:kb_ids)]
 ORDER BY {order_by} LIMIT {limit}
 ```
@@ -320,7 +341,7 @@ ORDER BY {order_by} LIMIT {limit}
 | `KB_STAT_PRUNE_ENABLED` | backend | `false` | 清理任务开关。false 时移除每周清理 beat，永久保留历史数据。需与 runtime 保持一致 |
 | `KB_STAT_PRUNE_ENABLED` | knowledge_runtime | `false` | /health 上报实际生效值（与 backend 同步） |
 | `KB_STAT_ADVANCED_ENABLED` | backend | `false` | 指标分级开关。false 时 beat 投递 collect 任务传 `advanced_enabled=false`，只采集 14 个基本 collector。需与 runtime 同名变量一致 |
-| `KB_STAT_ADVANCED_ENABLED` | knowledge_runtime | `false` | 采集 + 查询分级。false 时 collect_all 只跑基本 collector（采集耗时 ~20min→~3min）、`/metrics/list` 只返回 15 个基本 metric、dashboard 不返回平台命中率/采纳率/零分块率/健康度分布等高级聚合字段；true 开启全部 73 指标。需与 backend 一致 |
+| `KB_STAT_ADVANCED_ENABLED` | knowledge_runtime | `false` | 采集 + 查询分级。false 时 collect_all 只跑基本 collector（采集耗时 ~20min→~3min）、`/metrics/list` 只返回 15 个基本 metric、dashboard 不返回平台命中率/采纳率/零分块率/健康度分布等高级聚合字段；true 开启全部 71 指标。需与 backend 一致 |
 | `KB_STAT_WORKER_ENABLED` | knowledge_runtime | `false` | Celery worker 子进程开关（main.py 拉起内嵌 worker）。需显式置 true 才会消费 kb_stat 队列 |
 | `NEXT_PUBLIC_KB_STAT_ENABLED` | frontend | （未设置=关闭） | 前端功能开关。**构建时**内联替换，仅显式置 `true`/`1` 启用；未设置时 Tab 隐藏，与 backend/runtime 默认关闭一致 |
 | `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED` | frontend | （未设置=基本） | 前端分级开关（**构建时**）。false 时只渲染基本指标分组；`/metrics/list` 已服务端过滤，此开关主要控制高级分组容器是否渲染。与后端不一致也不报错（最多多/少几个空分组标题） |
@@ -367,7 +388,7 @@ ORDER BY {order_by} LIMIT {limit}
 
 > 注：`kb_daily_stats` 是 KB 详情页 dashboard 的内部表，由 dashboard 端点直接查询，**不经 `/metrics/list` 暴露**。故 `/metrics/list` 基本模式返回 14 个 metric（15 减去 `kb_daily_stats`）。
 
-**高级 = 其余**：73 个 collector 中的其余 59 个、73 个 queryable metric 中的其余 59 个，仅在 `KB_STAT_ADVANCED_ENABLED=true` 时采集与暴露。已从基本挪到高级的典型：`kb_health_score`（管理页健康评分/健康度分布趋势 + 详情页健康评分）、`doc_upload_trend`（管理页文档上传趋势）、`kb_config_sanity`（详情页配置合理性）。
+**高级 = 其余**：71 个 collector 中的其余 57 个、71 个 queryable metric 中的其余 57 个，仅在 `KB_STAT_ADVANCED_ENABLED=true` 时采集与暴露。已从基本挪到高级的典型：`kb_health_score`（管理页健康评分/健康度分布趋势 + 详情页健康评分）、`doc_upload_trend`（管理页文档上传趋势）、`kb_config_sanity`（详情页配置合理性）。
 
 ## 7. API 端点
 
@@ -546,11 +567,14 @@ set -a && . ../knowledge_runtime/.env && set +a
 | `$.adoption_result.cited_count` | 采纳率（per-day stat_date 时序） |
 | `$.kb_head_result` | RAG 验证率 |
 
-> **注意**：以下 7 个指标已从 `target_date`（截面快照）改为 `stat_date`（per-day 时序），每次采集写 30 天 daily 行：
+> **注意**：以下 7 个指标已从 `target_date`（截面快照）改为 `stat_date`（per-day 时序）：
 > - 检索类：零分块率、命中率、采纳率（3 个）
 > - 质量/生命周期类：瘦文档率、KB 规模分布、健康分、废弃率（4 个）
 >
-> 前端可从单次最新 run 获取完整 30 天趋势（走 Path B 查询）。两个测试脚本都已同步灌入完整的源数据（含 `chunks[].score`、分散的 `created_at` 等）。
+> 采集采用每日增量：beat 传 `lookback_days=1`，每个 run 只写当天 1 行；查询时走 Path A
+> 同构的跨 run 聚合（按 `stat_date` 取每个日期的最新成功 run）拼出 N 天趋势，而非从单个
+> run 读取 30 天。两个测试脚本已同步灌入完整的源数据（含 `chunks[].score`、分散的
+> `created_at` 等）。
 
 ### 8.4 数据库迁移
 
@@ -584,7 +608,7 @@ mysql -u <user> -p <stat_db> < docs/plans/kb-stat-schema.sql
 - run 汇总：`[kb_stat] run_id=<id> target_date=<date> status=<completed|partial|failed> metrics_count=<rows>`（INFO，由 `runner.collect_all` 结束时输出）
 - 任务包装：`[kb_stat] collect_all run_id=<id> date=<date> done`（`stat_tasks`）
 
-**样例**（一次 73 个 collector 的采集约输出 73 条 collector 结果 + 1 条 run 汇总）：
+**样例**（一次 71 个 collector 的采集约输出 73 条 collector 结果 + 1 条 run 汇总）：
 
 ```
 2026-07-28 03:07:15 INFO  [kb_stat] worker logging initialised -> ./logs/kb_stat_worker.log
@@ -603,7 +627,7 @@ mysql -u <user> -p <stat_db> < docs/plans/kb-stat-schema.sql
 | --- | --- |
 | 完全关闭 | `KB_STAT_ENABLED=false` + `KB_STAT_WORKER_ENABLED=false` |
 | 基本模式（只采 14 个基本指标） | `KB_STAT_ENABLED=true` + `KB_STAT_ADVANCED_ENABLED=false`（两端一致）+ `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED=false` |
-| 全量模式（全部 73 指标） | `KB_STAT_ADVANCED_ENABLED=true`（两端一致）+ `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED=true` |
+| 全量模式（全部 71 指标） | `KB_STAT_ADVANCED_ENABLED=true`（两端一致）+ `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED=true` |
 | 暂停采集但保留查询 | `KB_STAT_WORKER_ENABLED=false` |
 | 永久保留历史数据 | `KB_STAT_PRUNE_ENABLED=false` |
 | 隐藏前端入口 | `NEXT_PUBLIC_KB_STAT_ENABLED=false` |
@@ -626,5 +650,7 @@ mysql -u <user> -p <stat_db> < docs/plans/kb-stat-schema.sql
 | `scripts/kb_stat_seed_kb.py` | 指定知识库灌入完整检索数据（覆盖所有 JSON 路径，适合验证 KB 详情页） |
 | `scripts/kb_stat_backfill.py` | 历史数据回填（按日期范围逐日触发采集） |
 | `scripts/kb_stat_verify.py` | 端到端校验（灌数据→采集→对比期望值） |
-| `scripts/gen_metric_specs.py` | 从 query.py 生成 metric_spec.py（codegen） |
-| `scripts/verify_metric_specs.py` | 校验 metric_spec 与 query.py 等价性 |
+
+> 指标元数据以 `knowledge_engine/stat/metric_spec.py` 的 `_METRIC_SPECS` 为唯一事实源
+> （手写，无 codegen）。新增/修改指标直接编辑 `_METRIC_SPECS`，不再有 `gen_metric_specs.py`
+> / `verify_metric_specs.py` 及 query.py 的并行 legacy 字典。

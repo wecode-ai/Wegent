@@ -40,28 +40,6 @@ class KbThinDocRate(StatBase):
     )
 
 
-class DocChunkQuality(StatBase):
-    """Global chunk-size quality distribution (undersized/healthy/oversized)."""
-
-    __tablename__ = "kb_stat_doc_chunk_quality"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    run_id = Column(BigInteger, nullable=False)
-    target_date = Column(Date, nullable=False)
-    chunk_quality_bucket = Column(String(64), nullable=False)
-    doc_count = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-
-    __table_args__ = (
-        Index("idx_doc_chunk_quality_run", "run_id"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-        },
-    )
-
-
 class ContentFreshness(StatBase):
     """Global document freshness distribution by days since update."""
 

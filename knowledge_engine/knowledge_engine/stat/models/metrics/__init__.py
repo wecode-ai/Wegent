@@ -14,7 +14,6 @@ from knowledge_engine.stat.models.metrics.collaboration import (
 )
 from knowledge_engine.stat.models.metrics.content_quality import (
     ContentFreshness,
-    DocChunkQuality,
     DuplicateDocSuspect,
     KbContentFreshness,
     KbThinDocRate,
@@ -146,7 +145,6 @@ __all__ = [
     "PromCallbackSuccessRate",
     # content_quality
     "KbThinDocRate",
-    "DocChunkQuality",
     "ContentFreshness",
     "KbContentFreshness",
     "DuplicateDocSuspect",

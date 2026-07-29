@@ -5,7 +5,7 @@
 """User behavior domain collectors."""
 
 import logging
-from collections import defaultdict
+from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -16,13 +16,30 @@ from knowledge_engine.stat.registry import register_collector
 logger = logging.getLogger(__name__)
 
 
-def _fetch_user_names(source_session: Session) -> dict[int, str]:
+def _fetch_user_names(
+    source_session: Session, user_ids: Optional[set[int]] = None
+) -> dict[int, str]:
     """Fetch user_id -> user_name mapping.
 
-    The ``users`` table may not exist in the source database,
-    so we handle failures gracefully and fall back to str(user_id).
+    When ``user_ids`` is given, only those users are queried (batched via
+    ``build_kb_in_clause`` to avoid an over-long IN list); otherwise all
+    users are read. The ``users`` table may not exist in the source database,
+    so failures are handled gracefully and fall back to str(user_id).
     """
     try:
+        if user_ids is not None:
+            uid_list = list(user_ids)
+            names: dict[int, str] = {}
+            for start in range(0, len(uid_list), 500):
+                batch = uid_list[start : start + 500]
+                clause, params = build_kb_in_clause(batch, prefix="un")
+                rows = source_session.execute(
+                    text(f"SELECT id, user_name FROM users WHERE id {clause}"),
+                    params,
+                ).fetchall()
+                for r in rows:
+                    names[r.id] = r.user_name or ""
+            return names
         rows = source_session.execute(
             text("SELECT id, user_name FROM users")
         ).fetchall()
@@ -517,52 +534,85 @@ def user_participation_summary(
     source_session: Session,
     stat_session: Session,
 ) -> int:
-    # Gather per-user participation data from four sources
+    # Gather per-user participation data from four sources. Each is a
+    # cumulative "as-of target day" snapshot over currently-active resources:
+    # only an exclusive end bound (created_at < effective_end_date) is
+    # applied — no start bound, so historical participants keep their
+    # identity. This keeps future-day data out of historical backfills.
+    end_date = mfilter.effective_end_date
     creators: dict[int, int] = {}
     uploaders: dict[int, int] = {}
     retrievers: dict[int, int] = {}
     members: dict[int, int] = {}
 
-    creator_rows = source_session.execute(text("""
+    creator_rows = source_session.execute(
+        text("""
             SELECT user_id, COUNT(*) AS cnt
             FROM kinds
-            WHERE kind = 'KnowledgeBase' AND is_active = 1
+            WHERE kind = 'KnowledgeBase'
+              AND is_active = 1
+              AND user_id IS NOT NULL
+              AND created_at < :end_date
             GROUP BY user_id
-        """)).fetchall()
+        """),
+        {"end_date": end_date},
+    ).fetchall()
     for r in creator_rows:
         creators[r.user_id] = r.cnt
 
-    uploader_rows = source_session.execute(text("""
+    uploader_rows = source_session.execute(
+        text("""
             SELECT user_id, COUNT(*) AS cnt
             FROM knowledge_documents
             WHERE is_active = 1
+              AND user_id IS NOT NULL
+              AND created_at < :end_date
             GROUP BY user_id
-        """)).fetchall()
+        """),
+        {"end_date": end_date},
+    ).fetchall()
     for r in uploader_rows:
         uploaders[r.user_id] = r.cnt
 
-    retriever_rows = source_session.execute(text("""
+    retriever_rows = source_session.execute(
+        text("""
             SELECT user_id, COUNT(*) AS cnt
             FROM subtask_contexts
             WHERE context_type = 'knowledge_base'
+              AND user_id IS NOT NULL
+              AND created_at < :end_date
             GROUP BY user_id
-        """)).fetchall()
+        """),
+        {"end_date": end_date},
+    ).fetchall()
     for r in retriever_rows:
         retrievers[r.user_id] = r.cnt
 
-    member_rows = source_session.execute(text("""
+    # Direct user members only: entity_type='user' excludes group/department
+    # bindings (whose user_id=0 can't be attributed to a user). status=
+    # 'approved' matches MemberStatus.APPROVED.value (collaboration.py uses
+    # the same literal); knowledge_engine does not import backend models.
+    member_rows = source_session.execute(
+        text("""
             SELECT user_id, COUNT(*) AS cnt
             FROM resource_members
             WHERE resource_type = 'KnowledgeBase'
+              AND entity_type = 'user'
+              AND user_id IS NOT NULL
+              AND status = 'approved'
+              AND created_at < :end_date
             GROUP BY user_id
-        """)).fetchall()
+        """),
+        {"end_date": end_date},
+    ).fetchall()
     for r in member_rows:
         members[r.user_id] = r.cnt
 
     # Merge all user IDs
     all_user_ids = set(creators) | set(uploaders) | set(retrievers) | set(members)
 
-    user_names = _fetch_user_names(source_session)
+    # Resolve names only for users that actually participate (not every user).
+    user_names = _fetch_user_names(source_session, user_ids=all_user_ids)
 
     # Build participation records sorted by total activity descending
     participation_list = []
@@ -603,8 +653,9 @@ def user_participation_summary(
             )
         )
 
-    # Sort by total activity descending and limit to 500
-    participation_list.sort(key=lambda x: x[6], reverse=True)
+    # Sort by total descending, then user_id ascending for stable ordering
+    # when totals tie, and limit to 500.
+    participation_list.sort(key=lambda x: (-x[6], x[0]))
     participation_list = participation_list[:500]
 
     written = 0

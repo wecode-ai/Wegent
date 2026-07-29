@@ -407,8 +407,11 @@ def user_pattern_evolution(
     stat_session: Session,
 ) -> int:
     # Filter on the knowledge_id JSON field (same pattern as the
-    # rag_head_co_occurrence collector below). The 6-month window is
-    # intentionally left as-is per the fix scope.
+    # rag_head_co_occurrence collector below). Fixed 6-month trend snapshot:
+    # [effective_end_date - 6 months, effective_end_date). The exclusive end
+    # bound keeps future-day data out of historical backfills; the window is
+    # independent of the daily beat's lookback_days=1 because each run emits
+    # a full 6-month snapshot.
     kbf_clause, kbf_params = build_kb_in_clause(mfilter.kb_ids, prefix="kbf")
     kb_filter_sql = ""
     if kbf_clause:
@@ -424,6 +427,8 @@ def user_pattern_evolution(
             FROM subtask_contexts sc
             WHERE sc.context_type = 'knowledge_base'
               AND sc.created_at >= DATE_SUB(:end_date, INTERVAL 6 MONTH)
+              AND sc.created_at < :end_date
+              AND sc.user_id IS NOT NULL
               {kb_filter_sql}
             GROUP BY sc.user_id, stat_month
             ORDER BY sc.user_id, stat_month

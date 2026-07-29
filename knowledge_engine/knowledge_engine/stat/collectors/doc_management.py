@@ -4,7 +4,6 @@
 
 """Document management domain collectors (upload, index, chunk, summary stats)."""
 
-import json
 import logging
 from collections import defaultdict
 
@@ -347,73 +346,6 @@ def doc_update_frequency(
                 "file_extension": r.file_extension or "",
                 "index_generation": r.index_generation,
                 "doc_count": r.doc_count,
-            },
-        )
-        written += 1
-    return written
-
-
-# ---------------------------------------------------------------------------
-# 6. doc_topic_distribution
-# ---------------------------------------------------------------------------
-@register_collector(
-    domain="doc_management",
-    name="doc_topic_distribution",
-    description="Document topic distribution (from summary JSON)",
-    chart_hint="stacked_bar",
-)
-def doc_topic_distribution(
-    run_id: int,
-    mfilter: MetricFilter,
-    *,
-    source_session: Session,
-    stat_session: Session,
-) -> int:
-    kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
-    kb_where = f"AND kind_id {kb_clause}" if kb_clause else ""
-
-    rows = source_session.execute(
-        text(f"""
-            SELECT kind_id AS kb_id, summary
-            FROM knowledge_documents
-            WHERE is_active = 1
-              {kb_where}
-        """),
-        kb_params,
-    ).fetchall()
-
-    # Parse summary JSON and aggregate (kb_id, topic) -> count
-    topic_counts: dict[tuple[int, str], int] = defaultdict(int)
-    for r in rows:
-        if not r.summary:
-            continue
-        try:
-            summary_obj = (
-                json.loads(r.summary) if isinstance(r.summary, str) else r.summary
-            )
-        except (json.JSONDecodeError, TypeError):
-            continue
-        topics = summary_obj.get("topics") or []
-        if isinstance(topics, list):
-            for topic in topics:
-                topic_str = str(topic).strip()
-                if topic_str:
-                    topic_counts[(r.kb_id, topic_str)] += 1
-
-    written = 0
-    for (kb_id, topic), count in topic_counts.items():
-        stat_session.execute(
-            text("""
-                INSERT INTO kb_stat_doc_topic_distribution
-                    (run_id, target_date, kb_id, topic, doc_count)
-                VALUES (:run_id, :target_date, :kb_id, :topic, :doc_count)
-            """),
-            {
-                "run_id": run_id,
-                "target_date": mfilter.target_date,
-                "kb_id": kb_id,
-                "topic": topic,
-                "doc_count": count,
             },
         )
         written += 1

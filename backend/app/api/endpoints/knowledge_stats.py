@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -15,11 +14,12 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.kind import Kind
-from app.models.resource_member import MemberStatus, ResourceMember, ResourceType
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
 from app.services.kb_stat import get_kb_stat_gateway
 from app.services.kb_stat.dependencies import require_kb_stat_enabled
+from app.services.knowledge.knowledge_access_policy import (
+    get_user_knowledge_base_permission,
+)
 from app.services.runtime_client import RemoteRuntimeError
 from shared.models.kb_stat import (
     DashboardResponse,
@@ -131,28 +131,19 @@ def _ensure_can_view_kb_stat(db: Session, kb: Kind, user: User) -> None:
     """Anyone who can view the KB can view its (read-only) stats.
 
     Permission aligns with KB view access rather than management: stats are a
-    read-only view shown to every member who can see the KB. The previous
-    check hardcoded a ``"manager"`` role that does not exist in
-    :class:`BaseRole`, so shared-KB Maintainers/Developers were always 403.
+    read-only view shown to every member who can see the KB. Delegates to the
+    unified KB ACL resolver (:func:`get_user_knowledge_base_permission`) so
+    every access source is honored — creator, direct ``ResourceMember``,
+    organization, group/namespace and entity bindings — not just direct user
+    members. Admins bypass the ACL. The previous check hardcoded a
+    ``"manager"`` role that does not exist in :class:`BaseRole` and only
+    queried ``entity_type == "user"``, so namespace/group/entity members and
+    shared-KB Maintainers/Developers were always 403.
     """
     if user.role == "admin":
         return
-    if kb.user_id == user.id:
-        return
-    member = (
-        db.query(ResourceMember)
-        .filter(
-            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE,
-            ResourceMember.resource_id == kb.id,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user.id),
-            ResourceMember.status == MemberStatus.APPROVED,
-        )
-        .first()
-    )
-    # Reuse the unified role hierarchy: any approved member (Reporter and
-    # above) may view stats. Never hardcode role strings — use the enum.
-    if member and has_permission(member.role, BaseRole.Reporter):
+    permission = get_user_knowledge_base_permission(db, kb.id, user.id, kb=kb)
+    if permission.has_access:
         return
     raise HTTPException(403, "You do not have permission to view this KB's stats")
 

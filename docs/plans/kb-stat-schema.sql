@@ -204,21 +204,6 @@ CREATE TABLE kb_stat_doc_chunk_count_distribution (
 	PRIMARY KEY (id)
 )CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
 CREATE INDEX idx_doc_chunk_count_dist_run ON kb_stat_doc_chunk_count_distribution (run_id);
-
--- -----------------------------------------------------------------------------
--- Table: kb_stat_doc_chunk_quality  (6 cols, 1 idx)
--- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_doc_chunk_quality (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	run_id BIGINT NOT NULL, 
-	target_date DATE NOT NULL, 
-	chunk_quality_bucket VARCHAR(64) NOT NULL, 
-	doc_count INTEGER NOT NULL, 
-	created_at DATETIME NOT NULL, 
-	PRIMARY KEY (id)
-)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_doc_chunk_quality_run ON kb_stat_doc_chunk_quality (run_id);
-
 -- -----------------------------------------------------------------------------
 -- Table: kb_stat_doc_chunk_strategy  (7 cols, 1 idx)
 -- -----------------------------------------------------------------------------
@@ -381,22 +366,6 @@ CREATE TABLE kb_stat_doc_summary_status (
 	PRIMARY KEY (id)
 )CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
 CREATE INDEX idx_doc_summary_status_run ON kb_stat_doc_summary_status (run_id);
-
--- -----------------------------------------------------------------------------
--- Table: kb_stat_doc_topic_distribution  (7 cols, 1 idx)
--- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_doc_topic_distribution (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	run_id BIGINT NOT NULL, 
-	target_date DATE NOT NULL, 
-	kb_id BIGINT NOT NULL, 
-	topic VARCHAR(255) NOT NULL, 
-	doc_count INTEGER NOT NULL, 
-	created_at DATETIME NOT NULL, 
-	PRIMARY KEY (id)
-)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_doc_topic_distribution_run ON kb_stat_doc_topic_distribution (run_id);
-
 -- -----------------------------------------------------------------------------
 -- Table: kb_stat_doc_update_frequency  (8 cols, 1 idx)
 -- -----------------------------------------------------------------------------

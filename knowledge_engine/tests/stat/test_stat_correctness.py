@@ -22,7 +22,7 @@ def test_registry_imports_every_collector() -> None:
     collectors = all_collectors()
     names = [collector.name for collector in collectors]
 
-    assert len(names) == 73
+    assert len(names) == 71
     assert len(names) == len(set(names))
     assert "chunks_count_distribution" in names
     assert "storage_usage" in names

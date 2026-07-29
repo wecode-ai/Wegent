@@ -132,29 +132,6 @@ class KbDocUpdateFrequency(StatBase):
     )
 
 
-class KbDocTopicDistribution(StatBase):
-    """Document topic distribution grouped by KB and topic."""
-
-    __tablename__ = "kb_stat_doc_topic_distribution"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    run_id = Column(BigInteger, nullable=False)
-    target_date = Column(Date, nullable=False)
-    kb_id = Column(BigInteger, nullable=False)
-    topic = Column(String(255), nullable=False)
-    doc_count = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-
-    __table_args__ = (
-        Index("idx_doc_topic_distribution_run", "run_id"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-        },
-    )
-
-
 class KbDocFolderDepth(StatBase):
     """Document folder depth distribution grouped by KB and depth level."""
 

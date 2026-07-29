@@ -388,6 +388,10 @@ def cross_org_access(
     # Find users who are members of KBs in more than one namespace.
     # Since users lack a namespace column, we infer cross-org by checking
     # whether a single user_id appears in KBs belonging to different namespaces.
+    # The cross-org user set is filtered server-side (HAVING COUNT(DISTINCT
+    # namespace) > 1) so we only fetch the membership rows of cross-org users,
+    # not the entire KB membership table — keeping Python-side memory bounded
+    # by the cross-org slice rather than by total membership.
     kb_clause, kb_params = build_kb_in_clause(mfilter.kb_ids)
     kb_where = f"AND rm.resource_id {kb_clause}" if kb_clause else ""
 
@@ -404,48 +408,44 @@ def cross_org_access(
                 AND k.kind = 'KnowledgeBase'
                 AND k.is_active = 1
             WHERE rm.resource_type = 'KnowledgeBase'
+              AND rm.user_id IN (
+                  SELECT rm2.user_id
+                  FROM resource_members rm2
+                  JOIN kinds k2
+                      ON k2.id = rm2.resource_id
+                      AND k2.kind = 'KnowledgeBase'
+                      AND k2.is_active = 1
+                  WHERE rm2.resource_type = 'KnowledgeBase'
+                  GROUP BY rm2.user_id
+                  HAVING COUNT(DISTINCT k2.namespace) > 1
+              )
               {kb_where}
         """),
         kb_params,
     ).fetchall()
 
-    if not rows:
-        return 0
-
-    # Group by user_id, find those with multiple namespaces
-    user_namespaces: dict[int, set[str]] = defaultdict(set)
-    user_records: dict[int, list[tuple]] = defaultdict(list)
-    for r in rows:
-        ns = r.kb_namespace or ""
-        user_namespaces[r.user_id].add(ns)
-        user_records[r.user_id].append((r.kb_id, ns, r.kb_name, r.role))
-
-    # Only keep users accessing KBs in >1 namespace
-    cross_org_users = {uid for uid, nss in user_namespaces.items() if len(nss) > 1}
-
     written = 0
-    for uid in cross_org_users:
-        for kb_id, kb_ns, kb_name, role in user_records[uid]:
-            stat_session.execute(
-                text("""
-                    INSERT INTO kb_stat_cross_org_access
-                        (run_id, target_date, kb_id, kb_namespace, kb_name,
-                         user_id, user_namespace, role)
-                    VALUES (:run_id, :target_date, :kb_id, :kb_namespace, :kb_name,
-                            :user_id, :user_namespace, :role)
-                """),
-                {
-                    "run_id": run_id,
-                    "target_date": mfilter.target_date,
-                    "kb_id": kb_id,
-                    "kb_namespace": kb_ns,
-                    "kb_name": kb_name,
-                    "user_id": uid,
-                    "user_namespace": "",  # users table has no namespace
-                    "role": role,
-                },
-            )
-            written += 1
+    for r in rows:
+        stat_session.execute(
+            text("""
+                INSERT INTO kb_stat_cross_org_access
+                    (run_id, target_date, kb_id, kb_namespace, kb_name,
+                     user_id, user_namespace, role)
+                VALUES (:run_id, :target_date, :kb_id, :kb_namespace, :kb_name,
+                        :user_id, :user_namespace, :role)
+            """),
+            {
+                "run_id": run_id,
+                "target_date": mfilter.target_date,
+                "kb_id": r.kb_id,
+                "kb_namespace": r.kb_namespace or "",
+                "kb_name": r.kb_name,
+                "user_id": r.user_id,
+                "user_namespace": "",  # users table has no namespace
+                "role": r.role,
+            },
+        )
+        written += 1
     return written
 
 
