@@ -34,6 +34,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { KnowledgeView } from '@/types/knowledge'
 import type { KnowledgeTabType } from '@/features/knowledge/KnowledgeTabs'
 import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
+import { useKnowledgeTaskSidebar } from '@/features/knowledge/document/hooks/useKnowledgeTaskSidebar'
 
 const WikiProjectList = dynamic(() => import('@/features/knowledge/WikiProjectList'), {
   ssr: false,
@@ -113,9 +114,6 @@ function KnowledgePageContent() {
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-
-  // Collapsed sidebar state (task sidebar)
-  const [isCollapsed, setIsCollapsed] = useState(false)
 
   // Knowledge sidebar collapsed state (for document tab)
   // This is synced with KnowledgeDocumentPageDesktop via localStorage and custom events
@@ -212,6 +210,16 @@ function KnowledgePageContent() {
       </Tabs>
     ) : null
 
+  const isWorkspaceView =
+    activeTab === 'document' &&
+    knowledgeViewState.visible &&
+    knowledgeViewState.currentView === 'notebook'
+  const { isCollapsed: isTaskSidebarCollapsed, toggle: handleToggleCollapsed } =
+    useKnowledgeTaskSidebar({
+      isMobile,
+      isWorkspaceView,
+    })
+
   // Filter projects to show only those with user's generations
   // This ensures the knowledge page only shows projects created by the current user
   const userProjects = projects.filter(project => {
@@ -227,14 +235,6 @@ function KnowledgePageContent() {
     )
   })
 
-  // Load collapsed state from localStorage
-  useEffect(() => {
-    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
-    if (savedCollapsed === 'true') {
-      setIsCollapsed(true)
-    }
-  }, [])
-
   useEffect(() => {
     saveLastTab('wiki')
   }, [])
@@ -243,14 +243,6 @@ function KnowledgePageContent() {
     if (!user) return
     loadProjects()
   }, [user, loadProjects])
-
-  const handleToggleCollapsed = () => {
-    setIsCollapsed(prev => {
-      const newValue = !prev
-      localStorage.setItem('task-sidebar-collapsed', String(newValue))
-      return newValue
-    })
-  }
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
@@ -268,17 +260,20 @@ function KnowledgePageContent() {
       </Suspense>
 
       {/* Collapsed sidebar floating buttons */}
-      {isCollapsed && !isMobile && (
+      {isTaskSidebarCollapsed && !isMobile && (
         <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
       )}
 
       {/* Responsive resizable sidebar */}
-      <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
+      <ResizableSidebar
+        isCollapsed={isTaskSidebarCollapsed}
+        onToggleCollapsed={handleToggleCollapsed}
+      >
         <TaskSidebar
           isMobileSidebarOpen={isMobileSidebarOpen}
           setIsMobileSidebarOpen={setIsMobileSidebarOpen}
           pageType="knowledge"
-          isCollapsed={isCollapsed}
+          isCollapsed={isTaskSidebarCollapsed}
           onToggleCollapsed={handleToggleCollapsed}
         />
       </ResizableSidebar>
@@ -298,7 +293,7 @@ function KnowledgePageContent() {
             />
           }
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
-          isSidebarCollapsed={isCollapsed}
+          isSidebarCollapsed={isTaskSidebarCollapsed}
         >
           <GreyTestButton />
           {knowledgeViewSwitcher}

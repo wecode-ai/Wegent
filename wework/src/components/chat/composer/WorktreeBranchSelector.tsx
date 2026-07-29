@@ -164,7 +164,7 @@ export function WorktreeBranchSelector({
   }
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className="relative min-w-0 max-w-[18rem] shrink">
       {open && isMobile && <div className="fixed inset-0 z-modal bg-black/25" onClick={close} />}
       {open && (
         <div
@@ -173,7 +173,7 @@ export function WorktreeBranchSelector({
           className={cn(
             isMobile
               ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-              : 'absolute left-0 z-popover flex w-64 flex-col overflow-hidden rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              : 'absolute right-0 z-popover flex w-64 flex-col overflow-hidden rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
             !isMobile && (desktopMenuLayout.placement === 'below' ? 'top-11' : 'bottom-11')
           )}
           style={isMobile ? undefined : { maxHeight: desktopMenuLayout.maxHeight }}
@@ -273,10 +273,11 @@ export function WorktreeBranchSelector({
         data-testid="project-worktree-branch-button"
         onClick={() => setOpen(current => !current)}
         className={cn(
-          'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+          'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
           isMobile && 'font-medium',
           open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
         )}
+        title={branchLabel}
         aria-expanded={open}
         aria-label={t('workbench.project_worktree_branch_title', '启动分支')}
       >

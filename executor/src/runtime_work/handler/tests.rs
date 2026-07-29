@@ -104,7 +104,7 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
 }
 
 #[test]
-fn failed_codex_turn_persists_assistant_error_in_runtime_handle() {
+fn unlinked_failed_codex_turn_persists_assistant_error_in_runtime_handle() {
     let index_path = temp_runtime_work_index_path("persist-failed-assistant");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -131,6 +131,75 @@ fn failed_codex_turn_persists_assistant_error_in_runtime_handle() {
     assert_eq!(messages[0]["error"], "Codex failure");
     assert_eq!(messages[0]["errorType"], "response.failed");
     assert_eq!(messages[0]["subtaskId"], "turn-1");
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn recording_provider_thread_removes_cached_messages_but_keeps_presentations() {
+    let index_path = temp_runtime_work_index_path("provider-thread-clears-messages");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    set_runtime_handle_messages(
+        &mut link.runtime_handle,
+        vec![json!({"id": "cached-user", "role": "user", "content": "pending"})],
+    );
+    append_runtime_handle_user_message_presentation(
+        &mut link.runtime_handle,
+        json!({
+            "clientMessageId": "runtime-local-pane-1",
+            "references": [{
+                "token": "$plugin:skill",
+                "href": "/tmp/plugin/skill/SKILL.md"
+            }]
+        }),
+    );
+    handler.upsert_local_task(link);
+
+    handler.record_local_task_thread("task-1", "thread-1");
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
+    assert!(cached_messages(&task).is_empty());
+    assert!(task.runtime_handle.get("messages").is_none());
+    assert_eq!(user_message_presentations(&task).len(), 1);
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn linked_failed_codex_turn_does_not_create_cached_transcript() {
+    let index_path = temp_runtime_work_index_path("linked-failure-provider-source");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    handler.upsert_local_task(link);
+
+    handler.persist_failed_assistant_message(
+        "task-1",
+        &ExecutionRequest {
+            subtask_id: "turn-1".to_owned(),
+            ..ExecutionRequest::default()
+        },
+        "Codex failure",
+    );
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert!(cached_messages(&task).is_empty());
 
     let _ = fs::remove_file(index_path);
 }
@@ -431,72 +500,171 @@ fn cached_user_message_does_not_fallback_to_prompt() {
 }
 
 #[test]
-fn transcript_appends_cached_user_message_missing_from_failed_provider_turn() {
-    let mut provider_messages = vec![
-        json!({"id": "user-1", "role": "user", "content": "first"}),
-        json!({"id": "assistant-1", "role": "assistant", "content": "done"}),
-    ];
-    let cached_messages = vec![
-        json!({"id": "cached-user-1", "role": "user", "content": "first"}),
-        json!({"id": "cached-user-2", "role": "user", "content": "retry this"}),
-    ];
+fn user_message_presentation_stores_only_reference_descriptors() {
+    let presentation = user_message_presentation(&json!({
+        "clientMessageId": "runtime-local-pane-1",
+        "message": "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md) with [$OpenAI Developers](plugin://openai-developers@openai-curated)"
+    }))
+    .expect("rich references should produce presentation metadata");
 
-    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
-
-    assert_eq!(provider_messages.len(), 3);
-    assert_eq!(provider_messages[2]["id"], "cached-user-2");
-    assert_eq!(provider_messages[2]["content"], "retry this");
+    assert_eq!(presentation["clientMessageId"], "runtime-local-pane-1");
+    assert_eq!(
+        presentation["references"],
+        json!([
+            {
+                "token": "$plugin:skill",
+                "href": "/tmp/plugin/skill/SKILL.md"
+            },
+            {
+                "token": "@OpenAI Developers",
+                "href": "plugin://openai-developers@openai-curated"
+            }
+        ])
+    );
+    assert!(presentation.get("content").is_none());
 }
 
 #[test]
-fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
-    let mut provider_messages = vec![
-        json!({"id": "user-1", "role": "user", "content": "same"}),
-        json!({"id": "user-2", "role": "user", "content": "same"}),
-    ];
-    let cached_messages = vec![
-        json!({"id": "cached-user-1", "role": "user", "content": "same"}),
-        json!({"id": "cached-user-2", "role": "user", "content": "same"}),
-    ];
-
-    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
-
-    assert_eq!(provider_messages.len(), 2);
+fn user_message_presentation_requires_a_stable_client_message_id() {
+    assert!(user_message_presentation(&json!({
+        "message": "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md)"
+    }))
+    .is_none());
 }
 
 #[test]
-fn transcript_matches_cached_user_message_to_attachment_wrapped_provider_message() {
+fn transcript_combines_provider_content_with_local_presentations_by_client_message_id() {
     let mut provider_messages = vec![json!({
         "id": "provider-user",
+        "clientMessageId": "runtime-local-pane-1",
         "role": "user",
-        "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar",
-        "attachments": [{
-            "filename": "image.model-input.png",
-            "local_preview_url": "/tmp/image.model-input.png"
+        "content": "请用 $plugin:skill 和 @OpenAI Developers 制作教程"
+    })];
+    let presentations = vec![json!({
+        "clientMessageId": "runtime-local-pane-1",
+        "references": [
+            {
+                "token": "$plugin:skill",
+                "href": "/tmp/plugin/skill/SKILL.md"
+            },
+            {
+                "token": "@OpenAI Developers",
+                "href": "plugin://openai-developers@openai-curated"
+            }
+        ]
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(
+        provider_messages[0]["content"],
+        "请用 $plugin:skill 和 @OpenAI Developers 制作教程"
+    );
+    assert_eq!(
+        provider_messages[0]["presentationReferences"],
+        json!([
+            {
+                "start": 3,
+                "end": 16,
+                "href": "/tmp/plugin/skill/SKILL.md"
+            },
+            {
+                "start": 19,
+                "end": 37,
+                "href": "plugin://openai-developers@openai-curated"
+            }
+        ])
+    );
+}
+
+#[test]
+fn transcript_does_not_attach_presentation_to_an_unmatched_client_message_id() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientMessageId": "provider-client-id",
+        "role": "user",
+        "content": "$plugin:skill"
+    })];
+    let presentations = vec![json!({
+        "clientMessageId": "cached-client-id",
+        "references": [{
+            "token": "$plugin:skill",
+            "href": "/tmp/plugin/skill/SKILL.md"
         }]
     })];
-    let cached_messages = vec![json!({
-        "id": "cached-user",
-        "role": "user",
-        "content": "Fix the sidebar",
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert!(provider_messages[0].get("presentationReferences").is_none());
+}
+
+#[test]
+fn transcript_only_adds_presentations_missing_from_provider_content() {
+    let provider_content = "[$first](/tmp/first/SKILL.md) and $second";
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
         "clientMessageId": "runtime-local-pane-1",
-        "attachments": [{"filename": "image.png", "local_path": "/tmp/image.png"}]
+        "role": "user",
+        "content": provider_content
+    })];
+    let presentations = vec![json!({
+        "clientMessageId": "runtime-local-pane-1",
+        "references": [
+            {
+                "token": "$first",
+                "href": "/tmp/first/SKILL.md"
+            },
+            {
+                "token": "$second",
+                "href": "/tmp/second/SKILL.md"
+            }
+        ]
     })];
 
-    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+    attach_user_message_presentations(&mut provider_messages, presentations);
 
-    assert_eq!(provider_messages.len(), 1);
+    let second_start = provider_content
+        .find("$second")
+        .expect("second skill token");
     assert_eq!(
-        provider_messages[0]["clientMessageId"],
-        "runtime-local-pane-1"
+        provider_messages[0]["presentationReferences"],
+        json!([{
+            "start": second_start,
+            "end": second_start + "$second".len(),
+            "href": "/tmp/second/SKILL.md"
+        }])
     );
+}
+
+#[test]
+fn transcript_presentation_matches_a_complete_reference_token() {
+    let provider_content = "Use $skill-advanced before $skill.";
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": provider_content
+    })];
+    let presentations = vec![json!({
+        "clientMessageId": "runtime-local-pane-1",
+        "references": [{
+            "token": "$skill",
+            "href": "/tmp/skill/SKILL.md"
+        }]
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    let expected_start = provider_content
+        .rfind("$skill")
+        .expect("complete skill token");
     assert_eq!(
-        provider_messages[0]["attachments"][0]["filename"],
-        "image.png"
-    );
-    assert_eq!(
-        provider_messages[0]["attachments"][0]["local_path"],
-        "/tmp/image.png"
+        provider_messages[0]["presentationReferences"],
+        json!([{
+            "start": expected_start,
+            "end": expected_start + "$skill".len(),
+            "href": "/tmp/skill/SKILL.md"
+        }])
     );
 }
 
@@ -512,112 +680,6 @@ fn transcript_navigation_uses_client_message_id_for_live_message_matching() {
     assert_eq!(navigation.len(), 1);
     assert_eq!(navigation[0]["id"], "runtime-local-pane-1");
     assert_eq!(navigation[0]["promptPreview"], "Fix the sidebar");
-}
-
-#[test]
-fn transcript_appends_cached_failed_assistant_missing_from_provider() {
-    let mut provider_messages = vec![json!({
-        "id": "user-1",
-        "role": "user",
-        "content": "retry this",
-        "createdAt": 1_780_000_000
-    })];
-    let cached_messages = vec![json!({
-        "id": "failed-assistant-1",
-        "role": "assistant",
-        "content": "",
-        "status": "failed",
-        "error": "Codex failure",
-        "subtaskId": "turn-1",
-        "createdAt": 1_780_000_001
-    })];
-
-    append_missing_cached_failed_assistant_messages(&mut provider_messages, cached_messages);
-
-    assert_eq!(provider_messages.len(), 2);
-    assert_eq!(provider_messages[1]["id"], "failed-assistant-1");
-    assert_eq!(provider_messages[1]["status"], "failed");
-    assert_eq!(provider_messages[1]["error"], "Codex failure");
-}
-
-#[test]
-fn transcript_keeps_cached_failed_assistant_in_original_turn_order() {
-    let mut provider_messages = vec![
-        json!({
-            "id": "user-1",
-            "role": "user",
-            "content": "first request",
-            "createdAt": 1_780_000_000
-        }),
-        json!({
-            "id": "user-2",
-            "role": "user",
-            "content": "second request",
-            "createdAt": 1_780_000_010
-        }),
-        json!({
-            "id": "assistant-2",
-            "role": "assistant",
-            "content": "second response",
-            "status": "done",
-            "subtaskId": "turn-2",
-            "createdAt": 1_780_000_011
-        }),
-    ];
-    let cached_messages = vec![json!({
-        "id": "failed-assistant-1",
-        "role": "assistant",
-        "content": "",
-        "status": "failed",
-        "error": "Codex failure",
-        "subtaskId": "turn-1",
-        "createdAt": 1_780_000_005
-    })];
-
-    append_missing_cached_failed_assistant_messages(&mut provider_messages, cached_messages);
-
-    assert_eq!(
-        provider_messages
-            .iter()
-            .map(|message| message["id"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        vec!["user-1", "failed-assistant-1", "user-2", "assistant-2"]
-    );
-}
-
-#[test]
-fn transcript_drops_stale_cached_failure_when_provider_has_same_assistant_turn() {
-    let mut provider_messages = vec![
-        json!({
-            "id": "user-1",
-            "role": "user",
-            "content": "request",
-            "createdAt": 1_780_000_000
-        }),
-        json!({
-            "id": "provider-assistant-1",
-            "role": "assistant",
-            "content": "completed response",
-            "status": "done",
-            "subtask_id": "turn-1",
-            "createdAt": 1_780_000_001
-        }),
-    ];
-    let cached_messages = vec![json!({
-        "id": "failed-assistant-1",
-        "role": "assistant",
-        "content": "",
-        "status": "failed",
-        "error": "codex app-server notification stream lagged",
-        "subtaskId": "turn-1",
-        "createdAt": 1_780_000_002
-    })];
-
-    append_missing_cached_failed_assistant_messages(&mut provider_messages, cached_messages);
-
-    assert_eq!(provider_messages.len(), 2);
-    assert_eq!(provider_messages[1]["id"], "provider-assistant-1");
-    assert_eq!(provider_messages[1]["status"], "done");
 }
 
 #[tokio::test]

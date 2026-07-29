@@ -342,6 +342,18 @@ function canShowReEdit(
   return isCompleted && isNotRunning
 }
 
+function canSaveToKnowledge(
+  msg: Message,
+  onSaveToKnowledge: ((content: string) => void) | undefined,
+  content: string
+): boolean {
+  const isComplete =
+    msg.status === 'completed' ||
+    msg.subtaskStatus === 'COMPLETED' ||
+    msg.subtaskStatus === 'CANCELLED'
+  return Boolean(onSaveToKnowledge) && !msg.isIncomplete && isComplete && content.trim().length > 0
+}
+
 /**
  * Extract copyable text content from message blocks.
  * When a message uses the blocks-based rendering (MixedContentView),
@@ -841,12 +853,7 @@ const MessageBubble = memo(
             <BubbleTools
               contentToCopy={saveableMarkdown}
               onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
-              showSaveToKnowledge={
-                Boolean(onSaveToKnowledge) &&
-                !msg.isIncomplete &&
-                (msg.status === 'completed' || msg.subtaskStatus === 'COMPLETED') &&
-                saveableMarkdown.trim().length > 0
-              }
+              showSaveToKnowledge={canSaveToKnowledge(msg, onSaveToKnowledge, saveableMarkdown)}
               onSaveToKnowledge={onSaveToKnowledge}
               tools={[
                 {
@@ -1586,12 +1593,11 @@ const MessageBubble = memo(
                         <BubbleTools
                           contentToCopy={blockSaveableMarkdown}
                           onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
-                          showSaveToKnowledge={
-                            Boolean(onSaveToKnowledge) &&
-                            !msg.isIncomplete &&
-                            (msg.status === 'completed' || msg.subtaskStatus === 'COMPLETED') &&
-                            blockSaveableMarkdown.length > 0
-                          }
+                          showSaveToKnowledge={canSaveToKnowledge(
+                            msg,
+                            onSaveToKnowledge,
+                            blockSaveableMarkdown
+                          )}
                           onSaveToKnowledge={onSaveToKnowledge}
                           tools={[
                             {

@@ -249,6 +249,24 @@ class SqlAlchemySubtaskStore:
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.first()
 
+    def list_by_ids_and_role(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        role: SubtaskRole,
+    ) -> list[Subtask]:
+        if not subtask_ids:
+            return []
+        return (
+            db.query(Subtask)
+            .filter(
+                Subtask.id.in_(subtask_ids),
+                Subtask.role == role,
+            )
+            .all()
+        )
+
     def get_accessible_by_id(
         self,
         db: Session,

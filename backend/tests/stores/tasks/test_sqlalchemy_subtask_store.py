@@ -117,6 +117,42 @@ def test_get_basic_by_id_returns_subtask(test_db: Session) -> None:
     assert subtask.id == 11
 
 
+def test_list_by_ids_and_role_filters_ids_and_role(test_db: Session) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(2, owner_id=10))
+    assistant = _subtask(
+        subtask_id=21,
+        task_id=2,
+        user_id=10,
+        message_id=1,
+        role=SubtaskRole.ASSISTANT,
+    )
+    user = _subtask(
+        subtask_id=22,
+        task_id=2,
+        user_id=10,
+        message_id=2,
+        role=SubtaskRole.USER,
+    )
+    skipped = _subtask(
+        subtask_id=23,
+        task_id=2,
+        user_id=10,
+        message_id=3,
+        role=SubtaskRole.ASSISTANT,
+    )
+    test_db.add_all([assistant, user, skipped])
+    test_db.commit()
+
+    subtasks = store.list_by_ids_and_role(
+        test_db,
+        subtask_ids=[assistant.id, user.id],
+        role=SubtaskRole.ASSISTANT,
+    )
+
+    assert subtasks == [assistant]
+
+
 def test_get_cleanup_cursor_recent_start_reference_prefers_recent_created_at(
     test_db: Session,
 ) -> None:

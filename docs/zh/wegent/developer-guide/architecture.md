@@ -374,7 +374,7 @@ Codex 运行时在 `executor/src/agents/codex/` 下按职责拆分：`home` 管�
 
 Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Tauri 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。
 
-Codex 使用共享 app-server 线程时，取消活动轮次必须先等待 `turn/interrupt` 的确认，再向调用方报告已取消。这样重试会在前一轮真正停止后创建，避免上一轮的中断和新轮请求交错，从而恢复已取消的输入或丢失重试消息。
+Codex 使用共享 app-server 线程时，取消活动轮次必须先等待 `turn/interrupt` 的确认，再向调用方报告已取消。`turn/start` 返回后到首个轮次进度事件到达前，app-server 的活动轮次索引可能尚未完成注册；executor 在这个启动窗口必须发送空 `turnId` 的线程级启动中断，收到首个进度事件后再使用具体 turn ID。这样停止操作不会遗漏刚启动的轮次，重试也只会在前一轮真正停止后创建，避免上一轮的中断和新轮请求交错，从而恢复已取消的输入或丢失重试消息。
 
 Codex 失败轮次不保证在线程 transcript 中生成 assistant item。executor 因此会在轮次失败时，将带稳定消息 ID、错误类型和原始错误文本的 failed assistant message 写入本地 runtime handle；读取失败任务时，如果 Codex transcript 缺少该消息，再按稳定 ID 合并本地记录。Wework 重开或切回任务后仍能恢复错误卡片及重试入口，同时避免重复展示 Codex 已经持久化的失败消息。
 

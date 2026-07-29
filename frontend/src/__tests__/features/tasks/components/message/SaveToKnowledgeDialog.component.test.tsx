@@ -261,4 +261,49 @@ describe('SaveToKnowledgeDialog', () => {
     expect(screen.getByTestId('save-to-knowledge-title-input')).toHaveValue('Edited title')
     expect(screen.getByTestId('mock-markdown-editor')).toHaveValue('# Edited')
   })
+
+  it('preserves edits and the selected target after invalid content is rejected', async () => {
+    const writable = knowledgeBase(7, 'Developer')
+    ;(knowledgeBaseApi.getAllGrouped as jest.Mock).mockResolvedValue(
+      groupedKnowledgeBases([writable])
+    )
+    ;(createTextKnowledgeDocument as jest.Mock).mockRejectedValue(
+      new ApiError('Invalid content', 422)
+    )
+
+    render(
+      <SaveToKnowledgeDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        initialTitle="Original title"
+        initialContent="# Original"
+        defaultKnowledgeBaseId={writable.id}
+        onCreated={jest.fn()}
+      />
+    )
+
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'knowledge-base-target' })).toHaveValue('7')
+    )
+    fireEvent.change(screen.getByTestId('save-to-knowledge-title-input'), {
+      target: { value: 'Edited title' },
+    })
+    fireEvent.change(screen.getByTestId('mock-markdown-editor'), {
+      target: { value: '# Edited' },
+    })
+    fireEvent.click(screen.getByTestId('save-to-knowledge-submit-button'))
+
+    await waitFor(() =>
+      expect(screen.getByText('saveToKnowledge.errors.invalidContent')).toBeInTheDocument()
+    )
+    expect(createTextKnowledgeDocument).toHaveBeenCalledWith({
+      knowledge_base_id: 7,
+      name: 'Edited title',
+      content: '# Edited',
+    })
+    expect(knowledgeBaseApi.getAllGrouped).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('combobox', { name: 'knowledge-base-target' })).toHaveValue('7')
+    expect(screen.getByTestId('save-to-knowledge-title-input')).toHaveValue('Edited title')
+    expect(screen.getByTestId('mock-markdown-editor')).toHaveValue('# Edited')
+  })
 })

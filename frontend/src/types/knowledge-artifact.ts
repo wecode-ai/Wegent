@@ -1,0 +1,68 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+export type KnowledgeArtifactType = 'briefing' | 'mind_map'
+export type KnowledgeArtifactStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type KnowledgeArtifactExecutionHealth = 'healthy' | 'stalled'
+
+export interface MindMapNode {
+  id: string
+  parent_id: string | null
+  title: string
+  summary?: string | null
+}
+
+export interface MindMapContent {
+  schema_version: 1
+  root_id: string
+  nodes: MindMapNode[]
+}
+
+export interface ArtifactNodeContext {
+  artifact_id: string
+  node_id: string
+}
+
+export interface ArtifactPromptRequest {
+  requestId: string
+  message: string
+  artifactContext: ArtifactNodeContext
+}
+
+export interface KnowledgeArtifact {
+  attempt: number
+  artifact_id: string
+  knowledge_base_id: number
+  artifact_type: KnowledgeArtifactType
+  title: string
+  status: KnowledgeArtifactStatus
+  task_id: number | null
+  assistant_subtask_id: number | null
+  content: string | null
+  source_document_ids: number[]
+  generation_config: {
+    instruction?: string | null
+  }
+  error_message: string | null
+  execution_health: KnowledgeArtifactExecutionHealth
+  can_retry: boolean
+  can_delete: boolean
+  user_id: number
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeArtifactListResponse {
+  items: KnowledgeArtifact[]
+  can_manage: boolean
+  available_document_count: number
+  processing_document_count: number
+}
+
+export interface KnowledgeArtifactCreate {
+  artifact_type: KnowledgeArtifactType
+  title?: string
+  document_ids: number[]
+  instruction?: string
+}

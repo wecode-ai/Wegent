@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { getPlatform } from '@/lib/platform'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 
 export const DESKTOP_TOP_BAR_BUTTON_CLASS =
@@ -26,6 +27,9 @@ export function DesktopTopBar({
   testId = 'desktop-topbar',
   style,
 }: DesktopTopBarProps) {
+  const platform = getPlatform()
+  const dragRegionHidden = platform === 'win'
+
   return (
     <header
       data-testid={testId}
@@ -42,7 +46,11 @@ export function DesktopTopBar({
       )}
       <div
         data-testid={`${testId}-drag-region`}
-        className={cn('min-w-4 flex-1 self-stretch', dragRegionClassName)}
+        className={cn(
+          'min-w-4 flex-1 self-stretch',
+          dragRegionHidden && 'hidden',
+          dragRegionClassName
+        )}
       >
         <MacOSTitleBarDragRegion className="h-full w-full" />
       </div>

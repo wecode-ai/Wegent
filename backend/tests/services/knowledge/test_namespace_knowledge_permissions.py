@@ -12,6 +12,7 @@ from app.core.exceptions import CustomHTTPException
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
+from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.task import TaskResource
@@ -1910,8 +1911,8 @@ def test_get_resource_checks_all_entity_records(
 
 
 @pytest.mark.unit
-def test_delete_knowledge_base_removes_orphaned_folders(test_db: Session) -> None:
-    """Deleting a knowledge base must also delete all its folders to prevent orphaned records."""
+def test_delete_knowledge_base_removes_owned_records(test_db: Session) -> None:
+    """Deleting a knowledge base must also delete its folders and Artifacts."""
     owner = _create_user(test_db, "owner-kb-folder-cleanup")
 
     knowledge_base_id = KnowledgeService.create_knowledge_base(
@@ -1942,6 +1943,20 @@ def test_delete_knowledge_base_removes_orphaned_folders(test_db: Session) -> Non
     )
     assert folder_count_before == 2
 
+    test_db.add(
+        KnowledgeArtifactRecord(
+            artifact_id="artifact-kb-cleanup",
+            knowledge_base_id=knowledge_base_id,
+            artifact_type="briefing",
+            title="待清理成果",
+            status="succeeded",
+            source_document_ids=[],
+            generation_config={},
+            user_id=owner.id,
+        )
+    )
+    test_db.commit()
+
     # Delete the knowledge base (no documents, so deletion is allowed).
     deleted = KnowledgeService.delete_knowledge_base(
         test_db, knowledge_base_id, owner.id
@@ -1957,6 +1972,12 @@ def test_delete_knowledge_base_removes_orphaned_folders(test_db: Session) -> Non
     assert (
         folder_count_after == 0
     ), f"Expected 0 folders after KB deletion, but found {folder_count_after} orphaned folder(s)"
+    assert (
+        test_db.query(KnowledgeArtifactRecord)
+        .filter(KnowledgeArtifactRecord.knowledge_base_id == knowledge_base_id)
+        .count()
+        == 0
+    )
 
 
 @pytest.mark.unit
