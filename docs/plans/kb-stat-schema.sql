@@ -743,25 +743,6 @@ CREATE INDEX idx_health_score_kb ON kb_stat_kb_health_score (kb_id);
 CREATE INDEX idx_health_score_run ON kb_stat_kb_health_score (run_id);
 
 -- -----------------------------------------------------------------------------
--- Table: kb_stat_kb_low_score_rate  (10 cols, 2 idx)
--- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_kb_low_score_rate (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	run_id BIGINT NOT NULL, 
-	target_date DATE NOT NULL, 
-	stat_date DATE NOT NULL, 
-	kb_id BIGINT NOT NULL, 
-	total_queries INTEGER NOT NULL, 
-	low_score_queries INTEGER NOT NULL, 
-	low_score_rate FLOAT, 
-	low_confidence INTEGER NOT NULL, 
-	created_at DATETIME NOT NULL, 
-	PRIMARY KEY (id)
-)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_kb_low_score_kb ON kb_stat_kb_low_score_rate (kb_id);
-CREATE INDEX idx_kb_low_score_run ON kb_stat_kb_low_score_rate (run_id);
-
--- -----------------------------------------------------------------------------
 -- Table: kb_stat_kb_member_scale  (6 cols, 1 idx)
 -- -----------------------------------------------------------------------------
 CREATE TABLE kb_stat_kb_member_scale (
@@ -889,25 +870,6 @@ CREATE INDEX idx_size_dist_kb ON kb_stat_kb_size_distribution (kb_id);
 CREATE INDEX idx_size_dist_run ON kb_stat_kb_size_distribution (run_id);
 
 -- -----------------------------------------------------------------------------
--- Table: kb_stat_kb_slow_query_rate  (10 cols, 2 idx)
--- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_kb_slow_query_rate (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	run_id BIGINT NOT NULL, 
-	target_date DATE NOT NULL, 
-	kb_id BIGINT NOT NULL, 
-	total_queries INTEGER NOT NULL, 
-	slow_queries INTEGER NOT NULL, 
-	p95_latency_ms FLOAT, 
-	slow_rate FLOAT, 
-	low_confidence INTEGER NOT NULL DEFAULT 0, 
-	created_at DATETIME NOT NULL, 
-	PRIMARY KEY (id)
-)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_kb_slow_query_kb ON kb_stat_kb_slow_query_rate (kb_id);
-CREATE INDEX idx_kb_slow_query_run ON kb_stat_kb_slow_query_rate (run_id);
-
--- -----------------------------------------------------------------------------
 -- Table: kb_stat_kb_topic_distribution  (6 cols, 1 idx)
 -- -----------------------------------------------------------------------------
 CREATE TABLE kb_stat_kb_topic_distribution (
@@ -939,23 +901,6 @@ CREATE TABLE kb_stat_kb_zero_chunk_rate (
 )CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
 CREATE INDEX idx_kb_zero_chunk_kb ON kb_stat_kb_zero_chunk_rate (kb_id);
 CREATE INDEX idx_kb_zero_chunk_run ON kb_stat_kb_zero_chunk_rate (run_id);
-
--- -----------------------------------------------------------------------------
--- Table: kb_stat_knowledge_coverage  (9 cols, 1 idx)
--- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_knowledge_coverage (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	run_id BIGINT NOT NULL, 
-	target_date DATE NOT NULL, 
-	kb_id BIGINT, 
-	kb_name VARCHAR(255), 
-	topic VARCHAR(512), 
-	query_text VARCHAR(512), 
-	match_type VARCHAR(32), 
-	created_at DATETIME, 
-	PRIMARY KEY (id)
-)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_coverage_run ON kb_stat_knowledge_coverage (run_id);
 
 -- -----------------------------------------------------------------------------
 -- Table: kb_stat_period_totals  (12 cols, 1 idx)
@@ -1054,25 +999,6 @@ CREATE TABLE kb_stat_prom_conversion_success_rate (
 	PRIMARY KEY (id)
 )CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
 CREATE INDEX idx_prom_conv_rate_run ON kb_stat_prom_conversion_success_rate (run_id);
-
--- -----------------------------------------------------------------------------
--- Table: kb_stat_query_dedup_rate  (10 cols, 2 idx)
--- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_query_dedup_rate (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	run_id BIGINT NOT NULL, 
-	target_date DATE NOT NULL, 
-	stat_date DATE NOT NULL, 
-	kb_id BIGINT NOT NULL, 
-	total_queries INTEGER NOT NULL, 
-	unique_queries INTEGER NOT NULL, 
-	dedup_rate FLOAT, 
-	low_confidence INTEGER NOT NULL, 
-	created_at DATETIME NOT NULL, 
-	PRIMARY KEY (id)
-)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_query_dedup_kb ON kb_stat_query_dedup_rate (kb_id);
-CREATE INDEX idx_query_dedup_run ON kb_stat_query_dedup_rate (run_id);
 
 -- -----------------------------------------------------------------------------
 -- Table: kb_stat_rag_call_frequency  (8 cols, 2 idx)
@@ -1205,27 +1131,6 @@ CREATE TABLE kb_stat_retrieval_mode_distribution (
 	PRIMARY KEY (id)
 )CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
 CREATE INDEX idx_retrieval_mode_run ON kb_stat_retrieval_mode_distribution (run_id);
-
--- -----------------------------------------------------------------------------
--- Table: kb_stat_retrieval_score_distribution  (12 cols, 2 idx)
--- -----------------------------------------------------------------------------
-CREATE TABLE kb_stat_retrieval_score_distribution (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	run_id BIGINT NOT NULL, 
-	target_date DATE NOT NULL, 
-	stat_date DATE NOT NULL, 
-	kb_id BIGINT NOT NULL, 
-	total_samples INTEGER NOT NULL, 
-	avg_score FLOAT, 
-	p50_score FLOAT, 
-	p90_score FLOAT, 
-	score_threshold FLOAT, 
-	low_score_rate FLOAT, 
-	created_at DATETIME NOT NULL, 
-	PRIMARY KEY (id)
-)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci;
-CREATE INDEX idx_retr_score_dist_kb ON kb_stat_retrieval_score_distribution (kb_id);
-CREATE INDEX idx_retr_score_dist_run ON kb_stat_retrieval_score_distribution (run_id);
 
 -- -----------------------------------------------------------------------------
 -- Table: kb_stat_selected_documents_usage  (7 cols, 1 idx)
@@ -1422,7 +1327,6 @@ CREATE INDEX `ix_doc_value_rank` ON `kb_stat_doc_value_ranking` (`run_id`, `valu
 CREATE INDEX `ix_zero_chunk_alert` ON `kb_stat_kb_zero_chunk_rate` (`run_id`, `zero_chunk_rate`);
 CREATE INDEX `ix_kb_thin_doc_rate` ON `kb_stat_kb_thin_doc_rate` (`run_id`, `thin_doc_rate`);
 CREATE INDEX `ix_daily_dashboard_date_run` ON `kb_stat_daily_dashboard` (`stat_date`, `run_id`);
-CREATE INDEX `ix_low_score_alert` ON `kb_stat_kb_low_score_rate` (`run_id`, `low_score_rate`);
 CREATE INDEX `ix_abandon_rate_rank` ON `kb_stat_kb_abandon_rate` (`run_id`, `abandon_rate`);
 CREATE INDEX `ix_storage_usage_rank` ON `kb_stat_storage_usage` (`run_id`, `total_file_size`);
 CREATE INDEX `ix_doc_ref_rank` ON `kb_stat_doc_reference_count` (`run_id`, `total_ref_count`);
@@ -1431,7 +1335,6 @@ CREATE INDEX `ix_health_score_target_run` ON `kb_stat_kb_health_score` (`target_
 CREATE INDEX `ix_zero_chunk_target_run` ON `kb_stat_kb_zero_chunk_rate` (`target_date`, `run_id`);
 CREATE INDEX `ix_hit_rate_target_run` ON `kb_stat_kb_retrieval_hit_rate` (`target_date`, `run_id`);
 CREATE INDEX `ix_adoption_target_run` ON `kb_stat_answer_adoption_rate` (`target_date`, `run_id`);
-CREATE INDEX `ix_dedup_target_run` ON `kb_stat_query_dedup_rate` (`target_date`, `run_id`);
 CREATE INDEX `ix_runs_status` ON `kb_stat_runs` (`status`);
 
 SET FOREIGN_KEY_CHECKS = 1;

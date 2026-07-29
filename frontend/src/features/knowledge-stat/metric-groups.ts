@@ -73,13 +73,10 @@ export const CORE_METRICS: ReadonlySet<string> = new Set<string>([
   'kb_retrieval_hit_rate',
   'answer_adoption_rate',
   'kb_zero_chunk_rate',
-  'query_dedup_rate',
   'rag_call_frequency',
   'kb_head_frequency',
   'kb_rag_head_ratio',
   'rag_vs_head_ratio',
-  'retrieval_score_distribution',
-  'kb_low_score_rate',
   // lifecycle / ops
   'kb_abandon_rate',
   'kb_config_sanity',

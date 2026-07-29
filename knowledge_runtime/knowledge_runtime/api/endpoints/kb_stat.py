@@ -67,7 +67,6 @@ def _to_metric_filter(payload: KbStatFilter) -> MetricFilter:
     return MetricFilter(
         target_date=target_date,
         kb_ids=list(payload.kb_ids) if payload.kb_ids else None,
-        namespaces=list(payload.namespaces) if payload.namespaces else None,
         period_start_date=payload.start_date,
         end_date=payload.end_date,
         run_id=payload.run_id,
@@ -164,6 +163,7 @@ async def get_run(run_id: int):
 @_gated_router.post("/runs/trigger", response_model=TriggerRunResponse)
 async def trigger_run(payload: TriggerRunRequest):
     from fastapi.responses import JSONResponse
+
     from knowledge_runtime.config import get_settings
     from knowledge_runtime.tasks.stat_tasks import (
         _find_running_run,

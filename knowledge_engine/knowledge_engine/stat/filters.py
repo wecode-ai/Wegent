@@ -17,7 +17,6 @@ class MetricFilter:
 
     target_date: date
     kb_ids: Optional[Sequence[int]] = None  # None = all KBs
-    namespaces: Optional[Sequence[str]] = None
     lookback_days: int = 30
     end_date: Optional[date] = None  # defaults to target_date
     period_start_date: Optional[date] = None  # dashboard period start
@@ -66,19 +65,5 @@ def build_kb_in_clause(
     for i, kid in enumerate(kb_ids):
         key = f"{prefix}_{i}"
         params[key] = kid
-        placeholders.append(f":{key}")
-    return f"IN ({', '.join(placeholders)})", params
-
-
-def build_namespace_in_clause(
-    namespaces: Optional[Sequence[str]], prefix: str = "ns"
-) -> tuple[str, dict]:
-    """Return (sql_fragment, params) for a namespace IN clause."""
-    if not namespaces:
-        return "", {}
-    placeholders, params = [], {}
-    for i, ns in enumerate(namespaces):
-        key = f"{prefix}_{i}"
-        params[key] = ns
         placeholders.append(f":{key}")
     return f"IN ({', '.join(placeholders)})", params

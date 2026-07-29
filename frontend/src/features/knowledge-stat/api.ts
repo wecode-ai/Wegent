@@ -8,7 +8,6 @@ import { apiClient } from '@/apis/client'
 export interface MetricFilter {
   start_date?: string
   end_date?: string
-  namespaces?: string[]
   kb_ids?: number[]
   run_id?: number
 }
@@ -100,7 +99,6 @@ export interface DashboardResponse {
   platform_retrieval_quality?: PlatformQualityRow[]
   platform_hit_rate?: PlatformRateRow[]
   platform_adoption_rate?: PlatformRateRow[]
-  platform_dedup_rate?: PlatformRateRow[]
 }
 
 export interface MetricListResponse {
@@ -195,7 +193,7 @@ export async function fetchDashboard(
   filter: MetricFilter,
   signal?: AbortSignal
 ): Promise<DashboardResponse> {
-  return apiClient.post(`/${getBaseUrl(scope)}/dashboard`, filter, signal)
+  return apiClient.post(`${getBaseUrl(scope)}/dashboard`, filter, signal)
 }
 
 export async function fetchMetric(
@@ -204,7 +202,7 @@ export async function fetchMetric(
   filter: MetricFilter,
   signal?: AbortSignal
 ): Promise<MetricResponse> {
-  return apiClient.post(`/${getBaseUrl(scope)}/metrics/${name}`, filter, signal)
+  return apiClient.post(`${getBaseUrl(scope)}/metrics/${name}`, filter, signal)
 }
 
 export async function fetchMetricsBatch(
@@ -213,14 +211,14 @@ export async function fetchMetricsBatch(
   filter: MetricFilter,
   signal?: AbortSignal
 ): Promise<MetricsBatchResponse> {
-  return apiClient.post(`/${getBaseUrl(scope)}/metrics/batch`, { ...filter, names }, signal)
+  return apiClient.post(`${getBaseUrl(scope)}/metrics/batch`, { ...filter, names }, signal)
 }
 
 export async function fetchMetricList(
   scope: StatScope,
   signal?: AbortSignal
 ): Promise<MetricListResponse> {
-  return apiClient.get(`/${getBaseUrl(scope)}/metrics/list`, undefined, signal)
+  return apiClient.get(`${getBaseUrl(scope)}/metrics/list`, undefined, signal)
 }
 
 export async function fetchRuns(params?: {

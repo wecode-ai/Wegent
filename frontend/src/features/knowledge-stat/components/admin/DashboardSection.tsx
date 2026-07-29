@@ -346,17 +346,10 @@ function PlatformKpiBar({ data }: { data: DashboardResponse }) {
       ),
       color: '#EF4444',
     },
-    {
-      key: 'dedup',
-      label: t('platform_dedup_rate', '平台去重率'),
-      tooltipKey: 'tooltip.platform_dedup_rate',
-      ...pickLatestRate(data.platform_dedup_rate, 'rate'),
-      color: '#8B5CF6',
-    },
   ]
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="platform-kpi-bar">
+    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3" data-testid="platform-kpi-bar">
       {cards.map(card => {
         const hasData = card.latest !== null
         return (

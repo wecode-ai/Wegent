@@ -122,6 +122,7 @@ def collect_all(
 
     total_rows = 0
     collector_results: list[str] = []  # track success/failed per collector
+    abort_exc: Optional[BaseException] = None
 
     try:
         for collector in collectors:
@@ -220,7 +221,18 @@ def collect_all(
             c.name for c, r in zip(collectors, collector_results) if r == "failed"
         ]
         error_msg = ", ".join(failed_names) if failed_names else None
+    except SoftTimeLimitExceeded as exc:
+        # Task-level soft timeout: persist the run as failed, then re-raise so
+        # Celery sees the failure (retry/alert machinery, acks_late requeue).
+        # The generic Exception branch below must not swallow this — without
+        # the re-raise, collect_all returns normally and Celery marks a
+        # timed-out task as SUCCESS, defeating the soft_time_limit contract.
+        abort_exc = exc
+        run_status = "failed"
+        error_msg = "soft time limit exceeded"
+        logger.error(f"[kb_stat] run_id={run_id} soft time limit exceeded")
     except Exception as exc:
+        abort_exc = exc
         run_status = "failed"
         error_msg = _sanitize_error(exc)
         logger.error(f"[kb_stat] run_id={run_id} aborted: {exc}")
@@ -239,6 +251,11 @@ def collect_all(
         f"[kb_stat] run_id={run_id} target_date={target_date} "
         f"status={run_status} metrics_count={total_rows}"
     )
+    # Re-raise only the soft timeout (task-level signal). Other collector
+    # exceptions are already persisted above; collect_all's contract is
+    # best-effort and returns run_id so partial/completed runs are visible.
+    if isinstance(abort_exc, SoftTimeLimitExceeded):
+        raise abort_exc
     return run_id
 
 

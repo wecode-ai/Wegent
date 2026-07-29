@@ -182,31 +182,6 @@ class RagHeadVerifyRate(StatBase):
     )
 
 
-class KnowledgeCoverage(StatBase):
-    """Knowledge coverage gap analysis — topics and queries per KB (cross-section)."""
-
-    __tablename__ = "kb_stat_knowledge_coverage"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    run_id = Column(BigInteger, nullable=False)
-    target_date = Column(Date, nullable=False)
-    kb_id = Column(BigInteger, nullable=True)
-    kb_name = Column(String(255), nullable=True)
-    topic = Column(String(512), nullable=True)
-    query_text = Column(String(512), nullable=True)
-    match_type = Column(String(32), nullable=True)
-    created_at = Column(DateTime, default=func.now())
-
-    __table_args__ = (
-        Index("idx_coverage_run", "run_id"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-        },
-    )
-
-
 class UserSegmentation(StatBase):
     """User segmentation by activity level (cross-section)."""
 

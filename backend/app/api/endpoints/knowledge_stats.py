@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Single KB stat endpoints (KB manager + admin access)."""
+"""Single KB stat endpoints (KB viewers + admin access)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from app.core.security import get_current_user
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceType
 from app.models.user import User
+from app.schemas.base_role import BaseRole, has_permission
 from app.services.kb_stat import get_kb_stat_gateway
 from app.services.kb_stat.dependencies import require_kb_stat_enabled
 from app.services.runtime_client import RemoteRuntimeError
@@ -127,12 +128,17 @@ def _load_kb_or_404(db: Session, kb_id: int) -> Kind:
 
 
 def _ensure_can_view_kb_stat(db: Session, kb: Kind, user: User) -> None:
-    """Only KB owner, manager, or admin can view stats."""
+    """Anyone who can view the KB can view its (read-only) stats.
+
+    Permission aligns with KB view access rather than management: stats are a
+    read-only view shown to every member who can see the KB. The previous
+    check hardcoded a ``"manager"`` role that does not exist in
+    :class:`BaseRole`, so shared-KB Maintainers/Developers were always 403.
+    """
     if user.role == "admin":
         return
     if kb.user_id == user.id:
         return
-    # Check ResourceMember for manager role
     member = (
         db.query(ResourceMember)
         .filter(
@@ -144,9 +150,11 @@ def _ensure_can_view_kb_stat(db: Session, kb: Kind, user: User) -> None:
         )
         .first()
     )
-    if member and member.role == "manager":
+    # Reuse the unified role hierarchy: any approved member (Reporter and
+    # above) may view stats. Never hardcode role strings — use the enum.
+    if member and has_permission(member.role, BaseRole.Reporter):
         return
-    raise HTTPException(403, "Only KB manager or admin can view stats")
+    raise HTTPException(403, "You do not have permission to view this KB's stats")
 
 
 def _handle_remote_error(e: RemoteRuntimeError) -> None:

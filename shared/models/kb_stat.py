@@ -15,10 +15,9 @@ class KbStatFilter(BaseModel):
 
     start_date: Optional[date] = None
     end_date: Optional[date] = None
-    # Cap list sizes: each kb_id/namespace becomes a bind param or JSON_CONTAINS
+    # Cap list sizes: each kb_id becomes a bind param or JSON_CONTAINS
     # argument, so an unbounded list can produce a huge SQL statement and pin
     # a DB connection while it parses. 500 comfortably covers any real tenant.
-    namespaces: Optional[list[str]] = Field(default=None, max_length=500)
     kb_ids: Optional[list[int]] = Field(default=None, max_length=500)
     run_id: Optional[int] = None
 
@@ -52,7 +51,7 @@ class MetricBatchRequest(KbStatFilter):
     """Batch query body: a metric filter plus the metric names to fetch.
 
     Extends ``KbStatFilter`` so callers reuse the existing filter shape
-    (start_date/end_date/namespaces/kb_ids/run_id) and just add ``names``.
+    (start_date/end_date/kb_ids/run_id) and just add ``names``.
     """
 
     # Cap the batch size: each name triggers an independent stat-DB SELECT,
@@ -150,7 +149,6 @@ class DashboardResponse(BaseModel):
     platform_retrieval_quality: Optional[list[PlatformQualityRow]] = None
     platform_hit_rate: Optional[list[PlatformRateRow]] = None
     platform_adoption_rate: Optional[list[PlatformRateRow]] = None
-    platform_dedup_rate: Optional[list[PlatformRateRow]] = None
 
 
 class TriggerRunRequest(BaseModel):

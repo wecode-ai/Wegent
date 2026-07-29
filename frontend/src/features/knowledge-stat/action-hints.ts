@@ -21,9 +21,8 @@ export interface ActionHint {
 }
 
 // i18n key mapping per metric (thresholds come from thresholds.ts).
-// Note: kb_low_score_rate and query_dedup_rate are intentionally excluded
-// from action hints — their thresholds are too context-dependent to give
-// universal advice ("change embedding model" / "add FAQ" may not apply).
+// Only metrics whose thresholds yield universally useful advice get a hint;
+// context-dependent metrics are omitted rather than guessing.
 const HINT_TEXT_KEYS: Record<string, string> = {
   kb_zero_chunk_rate: 'action_hints.kb_zero_chunk_rate',
   kb_retrieval_hit_rate: 'action_hints.kb_retrieval_hit_rate',

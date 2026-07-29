@@ -260,7 +260,7 @@ def seed_kb(
                 {
                     "uid": uid,
                     "name": name,
-                    # extracted_text（覆盖 retrieval_score_distribution）
+                    # extracted_text（rag_retrieval 源数据，供诊断）
                     "extracted": (
                         json.dumps(
                             {

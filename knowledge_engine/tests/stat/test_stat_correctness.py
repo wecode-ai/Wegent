@@ -22,7 +22,7 @@ def test_registry_imports_every_collector() -> None:
     collectors = all_collectors()
     names = [collector.name for collector in collectors]
 
-    assert len(names) == 77
+    assert len(names) == 73
     assert len(names) == len(set(names))
     assert "chunks_count_distribution" in names
     assert "storage_usage" in names
@@ -30,6 +30,12 @@ def test_registry_imports_every_collector() -> None:
     assert "kb_thin_doc_rate" in names
     assert "thin_doc_alert" not in names
     assert "orphan_doc_alert" not in names
+    # Removed collectors (P1-5 memory-peak + P2-2 knowledge_coverage) must
+    # not reappear in the registry.
+    assert "retrieval_score_distribution" not in names
+    assert "query_dedup_rate" not in names
+    assert "kb_slow_query_rate" not in names
+    assert "knowledge_coverage" not in names
 
 
 def test_exact_collector_selection_rejects_unknown_names() -> None:
@@ -179,3 +185,118 @@ def test_explicit_run_requires_successful_collector_and_matching_scope() -> None
     assert "c.collector_name = :collector_name" in sql
     assert "c.status = 'success'" in sql
     assert "r.status IN ('completed', 'partial')" in sql
+
+
+def _make_spec(*, date_col, kb_col="kb_id", order_by="stat_date", limit=60):
+    return SimpleNamespace(
+        table="kb_stat_kb_health_score",
+        schema=[],
+        date_col=date_col,
+        kb_col=kb_col,
+        query_options=SimpleNamespace(order_by=order_by, limit=limit),
+    )
+
+
+def test_stat_date_metric_aggregates_across_runs() -> None:
+    """A stat_date metric must span successful runs, not pin one run_id.
+
+    The daily beat writes only the current day per run (lookback_days=1), so a
+    30-day trend is assembled by taking the latest run per stat_date across
+    all completed runs. Pinning a single run_id would yield one point.
+    """
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+    service = KbStatQueryService(stat_session_factory=MagicMock())
+    spec = _make_spec(date_col="stat_date", kb_col="kb_id")
+    metric_filter = MetricFilter(
+        target_date=date(2026, 7, 20),
+        kb_ids=[7],
+        lookback_days=30,
+    )
+
+    service._fetch_one(
+        session,
+        "kb_health_score",
+        spec,
+        metric_filter,
+        run_id=10,
+        run_completed_at=None,
+    )
+
+    sql = str(session.execute.call_args.args[0])
+    # Cross-run dedup: latest run_id per (stat_date, kb_id)
+    assert "MAX(run_id) AS max_run" in sql
+    assert "GROUP BY stat_date, kb_id" in sql
+    assert "t.stat_date = latest.stat_date" in sql
+    assert "t.kb_id = latest.kb_id" in sql
+    # Must NOT collapse to a single run
+    assert "run_id = :run_id" not in sql
+
+
+def test_stat_date_metric_excludes_failed_runs() -> None:
+    """Failed/timed-out runs must not pollute the trend."""
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+    service = KbStatQueryService(stat_session_factory=MagicMock())
+    spec = _make_spec(date_col="stat_date", kb_col=None)
+    metric_filter = MetricFilter(target_date=date(2026, 7, 20), lookback_days=30)
+
+    service._fetch_one(
+        session,
+        "rag_call_frequency",
+        spec,
+        metric_filter,
+        run_id=10,
+        run_completed_at=None,
+    )
+
+    sql = str(session.execute.call_args.args[0])
+    assert "r.status IN ('completed', 'partial')" in sql
+    assert "c.status = 'success'" in sql
+
+
+def test_snapshot_metric_still_uses_single_latest_run() -> None:
+    """Snapshot metrics (date_col is None) have no time axis: keep single run."""
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+    service = KbStatQueryService(stat_session_factory=MagicMock())
+    spec = _make_spec(date_col=None, kb_col=None, order_by=None, limit=10)
+    metric_filter = MetricFilter(target_date=date(2026, 7, 20), lookback_days=30)
+
+    service._fetch_one(
+        session, "some_snapshot", spec, metric_filter, run_id=10, run_completed_at=None
+    )
+
+    sql = str(session.execute.call_args.args[0])
+    params = session.execute.call_args.args[1]
+    assert "run_id = :run_id" in sql
+    assert params["run_id"] == 10
+    assert "MAX(run_id)" not in sql
+
+
+def test_collect_all_re_raises_soft_time_limit(monkeypatch) -> None:
+    """A soft timeout must propagate to Celery, not be swallowed as a normal
+    return (P1-4). Without the re-raise, collect_all returns run_id and Celery
+    marks a timed-out task SUCCESS — defeating soft_time_limit retry/alerts."""
+    from knowledge_engine.stat import runner
+    from knowledge_engine.stat.runner import SoftTimeLimitExceeded
+
+    def boom(*args, **kwargs):
+        raise SoftTimeLimitExceeded()
+
+    fake_collector = SimpleNamespace(domain="retrieval", name="fake", fn=boom)
+    monkeypatch.setattr(runner, "all_collectors", lambda: [fake_collector])
+
+    stat_session = MagicMock()
+    stat_session.execute.return_value.lastrowid = 1
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        collect_all(
+            target_date=date(2026, 7, 20),
+            source_session_factory=MagicMock(),
+            stat_session_factory=MagicMock(return_value=stat_session),
+        )
+
+    # The run was still finalized as failed before re-raising.
+    finalize_calls = [str(c.args[0]) for c in stat_session.execute.call_args_list]
+    assert any("UPDATE kb_stat_runs" in s for s in finalize_calls)

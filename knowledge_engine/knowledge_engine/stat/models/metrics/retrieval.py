@@ -355,62 +355,6 @@ class KbRetrievalModeDist(StatBase):
     )
 
 
-class RetrievalScoreDistribution(StatBase):
-    """Per-KB daily chunk-relevance score distribution."""
-
-    __tablename__ = "kb_stat_retrieval_score_distribution"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    run_id = Column(BigInteger, nullable=False)
-    target_date = Column(Date, nullable=False)
-    stat_date = Column(Date, nullable=False)
-    kb_id = Column(BigInteger, nullable=False)
-    total_samples = Column(Integer, nullable=False, default=0)
-    avg_score = Column(Float, nullable=True)
-    p50_score = Column(Float, nullable=True)
-    p90_score = Column(Float, nullable=True)
-    score_threshold = Column(Float, nullable=True)
-    low_score_rate = Column(Float, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-
-    __table_args__ = (
-        Index("idx_retr_score_dist_run", "run_id"),
-        Index("idx_retr_score_dist_kb", "kb_id"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-        },
-    )
-
-
-class KbLowScoreRate(StatBase):
-    """Per-KB daily low-relevance retrieval query rate."""
-
-    __tablename__ = "kb_stat_kb_low_score_rate"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    run_id = Column(BigInteger, nullable=False)
-    target_date = Column(Date, nullable=False)
-    stat_date = Column(Date, nullable=False)
-    kb_id = Column(BigInteger, nullable=False)
-    total_queries = Column(Integer, nullable=False, default=0)
-    low_score_queries = Column(Integer, nullable=False, default=0)
-    low_score_rate = Column(Float, nullable=True)
-    low_confidence = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-
-    __table_args__ = (
-        Index("idx_kb_low_score_run", "run_id"),
-        Index("idx_kb_low_score_kb", "kb_id"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-        },
-    )
-
-
 class AnswerAdoptionRate(StatBase):
     """Per-KB daily answer adoption rate."""
 
@@ -457,60 +401,6 @@ class KbRetrievalHitRate(StatBase):
     __table_args__ = (
         Index("idx_kb_hit_rate_run", "run_id"),
         Index("idx_kb_hit_rate_kb", "kb_id"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-        },
-    )
-
-
-class QueryDedupRate(StatBase):
-    """Per-KB daily query deduplication rate."""
-
-    __tablename__ = "kb_stat_query_dedup_rate"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    run_id = Column(BigInteger, nullable=False)
-    target_date = Column(Date, nullable=False)
-    stat_date = Column(Date, nullable=False)
-    kb_id = Column(BigInteger, nullable=False)
-    total_queries = Column(Integer, nullable=False, default=0)
-    unique_queries = Column(Integer, nullable=False, default=0)
-    dedup_rate = Column(Float, nullable=True)  # 0-100 percentage
-    low_confidence = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-
-    __table_args__ = (
-        Index("idx_query_dedup_run", "run_id"),
-        Index("idx_query_dedup_kb", "kb_id"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-        },
-    )
-
-
-class KbSlowQueryRate(StatBase):
-    """Per-KB slow-query rate (share of RAG calls above a fixed 2s cutoff)."""
-
-    __tablename__ = "kb_stat_kb_slow_query_rate"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    run_id = Column(BigInteger, nullable=False)
-    target_date = Column(Date, nullable=False)
-    kb_id = Column(BigInteger, nullable=False)
-    total_queries = Column(Integer, nullable=False, default=0)
-    slow_queries = Column(Integer, nullable=False, default=0)
-    p95_latency_ms = Column(Float, nullable=True)
-    slow_rate = Column(Float, nullable=True)  # 0-100 percentage
-    low_confidence = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-
-    __table_args__ = (
-        Index("idx_kb_slow_query_run", "run_id"),
-        Index("idx_kb_slow_query_kb", "kb_id"),
         {
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",

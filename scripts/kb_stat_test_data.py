@@ -526,7 +526,7 @@ def _seed_subtask_contexts(
                     }
                 )
                 # Build extracted_text with chunk scores for rag_retrieval
-                # rows so retrieval_score_distribution has data.
+                # rows (source data retained for diagnostics).
                 extracted = ""
                 if injection_mode == "rag_retrieval" and chunks_count > 0:
                     extracted = json.dumps(

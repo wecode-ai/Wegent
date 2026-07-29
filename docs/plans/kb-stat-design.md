@@ -7,13 +7,13 @@ title: 知识库统计功能设计文档
 
 ## 1. 功能概述
 
-知识库统计功能为平台管理员和知识库运营人员提供知识库使用的全方位数据洞察，包括检索效果、内容质量、用户行为、系统性能等 **78 个统计指标**（77 个采集器，因 `period_and_daily` 是合并采集器产出两个指标），覆盖 10 个领域。
+知识库统计功能为平台管理员和知识库运营人员提供知识库使用的全方位数据洞察，包括检索效果、内容质量、用户行为、系统性能等 **73 个统计指标**（73 个采集器），覆盖 10 个领域。
 
 ### 两个统计入口
 
 | 入口 | 路径 | 数据范围 | 指标数 |
 | --- | --- | --- | --- |
-| **管理统计页** | Admin → 知识库统计 Tab | 全平台所有 KB | 78 |
+| **管理统计页** | Admin → 知识库统计 Tab | 全平台所有 KB | 73 |
 | **KB 详情统计页** | 知识库详情 → statistics 子 Tab | 单个 KB 内部 | 41 |
 
 ### 技术架构
@@ -41,7 +41,7 @@ title: 知识库统计功能设计文档
 │  ┌──────────────┐     │  │knowledge_   │ │     ┌──────────┐ │
 │  │ 业务库(只读)  │◀────│  │engine stat  │─┼────▶│ 统计库   │ │
 │  │ kinds        │ 读取 │  │ collectors  │ │写入 │ kb_stat_*│ │
-│  │ documents    │     │  │ (77个)      │ │     │ (82张表) │ │
+│  │ documents    │     │  │ (73个)      │ │     │ (76张表) │ │
 │  │ subtask_ctx  │     │  └─────────────┘ │     └──────────┘ │
 │  │ members      │     └──────────────────┘                  │
 │  │ share_links  │                                           │
@@ -78,7 +78,7 @@ title: 知识库统计功能设计文档
 │                                          ┌────────▼────────┐ │
 │                                          │   统计库(只读)   │ │
 │                                          │   kb_stat_*     │ │
-│                                          │   (82张表)      │ │
+│                                          │   (76张表)      │ │
 │                                          └─────────────────┘ │
 │                                                              │
 │  特性: 批量查询(1个domain=1次HTTP) / 121个索引覆盖           │
@@ -97,10 +97,10 @@ title: 知识库统计功能设计文档
 | dashboard | 全局总览（KB数/文档数/查询量/活跃度） | 3 | 🔵 业务 |
 | kb_lifecycle | KB 生命周期（创建/规模/废弃/配置） | 6 | 🔵 业务 + 🟠 运营 |
 | doc_management | 文档管理（上传/索引/分块/摘要） | 11 | 🟠 运营 |
-| retrieval | 检索使用（调用频率/模式/质量） | 20 | 🟣 技术 |
+| retrieval | 检索使用（调用频率/模式/质量） | 16 | 🟣 技术 |
 | user_behavior | 用户行为（排行/偏好/参与度） | 10 | 🔵 业务 |
 | collaboration | 协作权限（成员/邀请/分享/审批） | 7 | 🟠 运营 |
-| deep_analysis | 深度分析（健康分/价值排行/生命周期） | 9 | 🟠 运营 |
+| deep_analysis | 深度分析（健康分/价值排行/生命周期） | 8 | 🟠 运营 |
 | sys_ops | 系统运维（存储/附件） | 3 | 🟣 技术 |
 | prometheus | 转换监控（成功率/耗时/回调） | 4 | 🟣 技术 |
 | content_quality | 内容质量（瘦文档/新鲜度/重复） | 5 | 🟠 运营 |
@@ -123,11 +123,10 @@ title: 知识库统计功能设计文档
 
 管理统计页按"点-线-榜"布局展示：
 
-**KPI 顶栏（4 个加权聚合卡）**：
+**KPI 顶栏（3 个加权聚合卡）**：
 - 平台命中率 — `SUM(hit_queries)/SUM(total_queries)×100%`
 - 平台采纳率 — `SUM(cited_count>0)/SUM(total_queries)×100%`
 - 平台零分块率 — `SUM(zero_chunk_queries)/SUM(total_queries)×100%`
-- 平台去重率 — `SUM(unique_queries)/SUM(total_queries)×100%`
 
 **趋势图区**：
 - 知识库健康度分布（堆叠面积图，百分比/绝对可切换）
@@ -156,7 +155,7 @@ title: 知识库统计功能设计文档
 
 | 任务 | Celery crontab (UTC) | 北京时间 | 说明 |
 | --- | --- | --- | --- |
-| `kb_stat.collect_all` | `crontab(hour=19, minute=7)` | **每天 03:07** | 采集所有 77 个采集器（产出 78 个指标）。beat 传 `lookback_days=1`（纯增量，只统计当天），手动触发时默认 `lookback_days=30`（回看 30 天窗口） |
+| `kb_stat.collect_all` | `crontab(hour=19, minute=7)` | **每天 03:07** | 采集所有 73 个采集器（产出 73 个指标）。beat 传 `lookback_days=1`（纯增量，只统计当天），手动触发时默认 `lookback_days=30`（回看 30 天窗口） |
 | `kb_stat.prune_old_runs` | `crontab(day_of_week=6, hour=20, minute=13)` | **每周一 04:13** | 清理 400 天前的旧数据。分块删除（每批 100 个 run_id），避免长事务锁表 |
 
 **时区说明**：Celery `timezone="UTC"`，所以 crontab 的 hour 是 UTC。北京时间 = UTC+8，反向换算：北京 03:07 → UTC 前一天 19:07，北京周一 04:13 → UTC 周日 20:13。
@@ -180,7 +179,7 @@ title: 知识库统计功能设计文档
 2. mark_kb_stat_orphaned_runs() — 清理同日期已失去锁的 running 状态
 3. mark_kb_stat_stale_runs() — 清理其他超时 running 状态
 4. _create_run() — 在 kb_stat_runs 表插入 running 记录
-5. 遍历 77 个 collector：
+5. 遍历 73 个 collector：
    ├─ _create_collector_run() — 插入 kb_stat_collector_runs running 记录
    ├─ collector.fn() — 执行采集（读业务库 → 写统计库）
    ├─ 成功 → commit + 标记 success
@@ -521,16 +520,13 @@ set -a && . ../knowledge_runtime/.env && set +a
 | JSON 路径 | 覆盖的指标 |
 | --- | --- |
 | `$.knowledge_id` | 所有 per-KB 指标 |
-| `$.rag_result.query` | 查询去重率（per-day stat_date 时序） |
 | `$.rag_result.chunks_count` | 零分块率、命中率（per-day stat_date 时序） |
-| `$.rag_result.latency_ms` | 慢查询率 |
 | `$.rag_result.injection_mode` | 检索模式分布、RAG/Head 比 |
 | `$.adoption_result.cited_count` | 采纳率（per-day stat_date 时序） |
 | `$.kb_head_result` | RAG 验证率 |
-| `extracted_text.chunks[].score` | 检索相关性分数分布、低分率（per-day stat_date 时序） |
 
-> **注意**：以下 10 个指标已从 `target_date`（截面快照）改为 `stat_date`（per-day 时序），每次采集写 30 天 daily 行：
-> - 检索类：零分块率、命中率、采纳率、去重率、低分率、相关性分数分布（6 个）
+> **注意**：以下 7 个指标已从 `target_date`（截面快照）改为 `stat_date`（per-day 时序），每次采集写 30 天 daily 行：
+> - 检索类：零分块率、命中率、采纳率（3 个）
 > - 质量/生命周期类：瘦文档率、KB 规模分布、健康分、废弃率（4 个）
 >
 > 前端可从单次最新 run 获取完整 30 天趋势（走 Path B 查询）。两个测试脚本都已同步灌入完整的源数据（含 `chunks[].score`、分散的 `created_at` 等）。
@@ -552,10 +548,12 @@ uv run alembic -c alembic.ini upgrade head
 uv run alembic -c alembic.ini downgrade 018
 ```
 
-迁移链 019-021 的内容：
+迁移链 019-023 的内容：
 - **019**：`kb_stat_thin_doc_alert` 重命名为 `kb_stat_kb_thin_doc_rate`（与 ORM/collector 对齐）
 - **020**：`kb_stat_kb_health_score` 增加 `formula_version` 列（固化权重版本）
-- **021**：`kb_stat_kb_slow_query_rate` 增加 `low_confidence` 列（小样本标记）
+- **021**：`kb_stat_kb_slow_query_rate` 增加 `low_confidence` 列（小样本标记；该表后于 023 整体删除）
+- **022**：`kb_stat_collector_runs` 增加 `duration_ms`、`kb_stat_kb_daily_stats` 增加 `total_queries`（补建 ORM 已用但迁移缺失的列）
+- **023**：删除 5 个已下线指标的统计表（`retrieval_score_distribution`/`kb_low_score_rate`/`query_dedup_rate`/`kb_slow_query_rate`/`knowledge_coverage`）及随表索引
 
 这些命令只能指向独立统计库。`backend/alembic` 属于业务库迁移，禁止放入
 任何 KB-stat 统计表。`KB_STAT_AUTO_MIGRATE` 在独立统计库迁移链路
@@ -576,7 +574,7 @@ uv run alembic -c alembic.ini downgrade 018
 - run 汇总：`[kb_stat] run_id=<id> target_date=<date> status=<completed|partial|failed> metrics_count=<rows>`（INFO，由 `runner.collect_all` 结束时输出）
 - 任务包装：`[kb_stat] collect_all run_id=<id> date=<date> done`（`stat_tasks`）
 
-**样例**（一次 77 个 collector 的采集约输出 77 条 collector 结果 + 1 条 run 汇总）：
+**样例**（一次 73 个 collector 的采集约输出 73 条 collector 结果 + 1 条 run 汇总）：
 
 ```
 2026-07-28 03:07:15 INFO  [kb_stat] worker logging initialised -> ./logs/kb_stat_worker.log

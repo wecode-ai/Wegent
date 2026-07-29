@@ -66,20 +66,6 @@ export const ALERT_THRESHOLDS: MetricThreshold[] = [
     lowerIsWorse: true,
   },
   {
-    metric: 'query_dedup_rate',
-    fields: ['dedup_rate'],
-    warn: 30,
-    critical: 15,
-    lowerIsWorse: true,
-  },
-  {
-    metric: 'kb_low_score_rate',
-    fields: ['low_score_rate'],
-    warn: 20,
-    critical: 40,
-    lowerIsWorse: false,
-  },
-  {
     metric: 'kb_abandon_rate',
     fields: ['abandon_rate'],
     warn: 20,

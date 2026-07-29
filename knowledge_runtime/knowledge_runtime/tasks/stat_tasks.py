@@ -12,7 +12,6 @@ from typing import Optional, Sequence
 
 import redis
 from celery.exceptions import SoftTimeLimitExceeded
-from knowledge_runtime.tasks.celery_app import celery_app
 from sqlalchemy import text
 
 from knowledge_engine.stat import (
@@ -21,6 +20,7 @@ from knowledge_engine.stat import (
     mark_kb_stat_stale_runs,
     prune_old_runs,
 )
+from knowledge_runtime.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -264,19 +264,33 @@ def collect_all_metrics_task(
     # prevents silent data-retention drift after a crash.
     acks_late=True,
 )
-def prune_old_runs_task(retention_days: int = 400):
+def prune_old_runs_task(retention_days: Optional[int] = None):
+    """Prune runs older than the configured retention window.
+
+    ``retention_days`` is optional so the weekly beat can call the task with no
+    kwargs: the value is then read from ``KNOWLEDGE_STAT_RETENTION_DAYS`` via
+    settings. A manual ``celery call`` may override it explicitly. This makes
+    operator changes to the env var actually take effect — previously the beat
+    never passed the value and the task fell back to its hardcoded default.
+    """
+    from knowledge_runtime.config import get_settings
+
+    settings = get_settings()
+    days = (
+        retention_days
+        if retention_days is not None
+        else settings.knowledge_stat_retention_days
+    )
+
     # Defense-in-depth: prune_old_runs also checks <=0 internally, but we
     # short-circuit here too so no DB session is opened when the operator
     # has set KNOWLEDGE_STAT_RETENTION_DAYS<=0 (retain-forever mode).
-    if retention_days <= 0:
-        logger.info(
-            "[kb_stat] prune task skipped (retention_days=%s<=0)",
-            retention_days,
-        )
+    if days <= 0:
+        logger.info("[kb_stat] prune task skipped (retention_days=%s<=0)", days)
         return 0
     from shared.db.stat_session import get_stat_session_factory
 
     return prune_old_runs(
-        retention_days=retention_days,
+        retention_days=days,
         stat_session_factory=get_stat_session_factory(),
     )

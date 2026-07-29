@@ -16,7 +16,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import type { FieldSchema } from '../../api'
-import { CHART_COLORS } from './Charts'
+import { CHART_COLORS } from './chart-shared'
 
 interface ChartProps {
   rows: Record<string, unknown>[]
