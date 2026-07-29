@@ -13,6 +13,7 @@ from uuid import uuid4
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.core.config import settings
 from app.db.timezone import database_datetime_timezone
 from app.models.kind import Kind
@@ -35,7 +36,7 @@ from app.services.knowledge.knowledge_service import (
     KnowledgeDocumentScopeValidationError,
     KnowledgeService,
 )
-from app.stores.tasks import SubtaskStore, TaskStore, subtask_store, task_store
+from app.stores.tasks import SubtaskStore, TaskStore
 
 _JSON_BLOCK = re.compile(r"```json\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 _ACTIVE_STATUSES = {
@@ -72,15 +73,23 @@ class ArtifactService:
         repository: KnowledgeArtifactRepository,
         *,
         launcher: ArtifactTaskLauncher | None = None,
-        task_resource_store: TaskStore = task_store,
-        subtask_resource_store: SubtaskStore = subtask_store,
+        task_resource_store: TaskStore | None = None,
+        subtask_resource_store: SubtaskStore | None = None,
     ) -> None:
         self.db = db
         self.user = user
         self.repository = repository
         self.launcher = launcher or ArtifactTaskLauncher(db, user)
-        self.task_store = task_resource_store
-        self.subtask_store = subtask_resource_store
+        self.task_store = (
+            task_resource_store
+            if task_resource_store is not None
+            else task_stores.task_store
+        )
+        self.subtask_store = (
+            subtask_resource_store
+            if subtask_resource_store is not None
+            else task_stores.subtask_store
+        )
 
     async def create(
         self,

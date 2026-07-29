@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import app.stores.tasks as task_stores
 from app.models.subtask import SubtaskStatus
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
@@ -54,6 +55,23 @@ def mysql_naive_now() -> datetime:
     """Return the current time in the configured MySQL session timezone."""
     mysql_timezone = timezone(timedelta(hours=8))
     return datetime.now(timezone.utc).astimezone(mysql_timezone).replace(tzinfo=None)
+
+
+def test_constructor_resolves_registered_stores_at_instantiation(monkeypatch):
+    registered_task_store = MagicMock()
+    registered_subtask_store = MagicMock()
+    monkeypatch.setattr(task_stores, "task_store", registered_task_store)
+    monkeypatch.setattr(task_stores, "subtask_store", registered_subtask_store)
+
+    service = ArtifactService(
+        MagicMock(),
+        SimpleNamespace(id=7),
+        MagicMock(),
+        launcher=AsyncMock(),
+    )
+
+    assert service.task_store is registered_task_store
+    assert service.subtask_store is registered_subtask_store
 
 
 def build_artifact(
