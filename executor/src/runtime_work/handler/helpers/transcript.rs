@@ -192,7 +192,9 @@ fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_message
                 .find_map(|(index, provider_message)| {
                     (!matched_provider_indexes.contains(&index)
                         && cached_user_message_signature(provider_message).as_ref()
-                            == Some(&signature))
+                            == Some(&signature)
+                        && (client_message_id.is_none()
+                            || user_message_client_id(provider_message).is_none()))
                     .then_some(index)
                 })
         });
@@ -219,7 +221,10 @@ fn attach_cached_user_message_presentation(target: &mut Value, source: &Value) {
     let Some(local_content) = string_field(source, "content") else {
         return;
     };
-    let references = local_skill_presentation_references(&local_content, &provider_content);
+    if provider_content == local_content {
+        return;
+    }
+    let references = local_presentation_references(&local_content, &provider_content);
     if references.is_empty() {
         return;
     }
@@ -231,7 +236,7 @@ fn attach_cached_user_message_presentation(target: &mut Value, source: &Value) {
     }
 }
 
-fn local_skill_presentation_references(local_content: &str, provider_content: &str) -> Vec<Value> {
+fn local_presentation_references(local_content: &str, provider_content: &str) -> Vec<Value> {
     let mut references = Vec::new();
     let mut local_offset = 0;
     let mut provider_offset = 0;
@@ -252,12 +257,20 @@ fn local_skill_presentation_references(local_content: &str, provider_content: &s
 
         let name = &local_content[name_start..name_end];
         let href = &local_content[href_start..href_end];
-        if name.is_empty() || !is_local_skill_reference(href) {
+        let Some(token) = local_presentation_reference_token(name, href) else {
             continue;
-        }
+        };
 
-        let token = format!("${name}");
-        let Some(relative_provider_start) = provider_content[provider_offset..].find(&token) else {
+        let provider_tail = &provider_content[provider_offset..];
+        let token_start = provider_tail.find(&token);
+        let reference = &local_content[reference_start..local_offset];
+        if let Some(existing_reference_start) = provider_tail.find(reference) {
+            if token_start.is_none_or(|start| existing_reference_start <= start) {
+                provider_offset += existing_reference_start + reference.len();
+                continue;
+            }
+        }
+        let Some(relative_provider_start) = token_start else {
             continue;
         };
         let provider_start = provider_offset + relative_provider_start;
@@ -276,6 +289,16 @@ fn local_skill_presentation_references(local_content: &str, provider_content: &s
 fn is_local_skill_reference(href: &str) -> bool {
     let path = href.strip_prefix("skill://").unwrap_or(href);
     path.starts_with('/') && path.ends_with("/SKILL.md")
+}
+
+fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> {
+    if name.is_empty() {
+        return None;
+    }
+    if is_local_skill_reference(href) {
+        return Some(format!("${name}"));
+    }
+    href.starts_with("plugin://").then(|| format!("@{name}"))
 }
 
 fn append_missing_cached_failed_assistant_messages(

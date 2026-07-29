@@ -2602,6 +2602,9 @@ async function verifyPluginLifecycle({
   const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
   await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
 
+  await control.command('waitFor', installSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', installSelector)
   await waitForSnapshot(
     control,
@@ -2723,6 +2726,17 @@ async function verifyPluginLifecycle({
     text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="sent-plugin-token-OpenAI-Developers"]', {
+    text: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    (
+      await control.command('getText', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`)
+    ).includes(`@${OFFICIAL_PLUGIN_NAME}`),
+    false,
+    'The reopened plugin reference degraded to its plain-text mention'
+  )
   await control.command('clickWhenEnabled', qualifiedSkillTaskRow, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

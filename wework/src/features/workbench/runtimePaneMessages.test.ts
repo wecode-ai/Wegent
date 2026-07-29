@@ -767,6 +767,32 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     })
   })
 
+  test('combines provider content with a Wework plugin presentation reference', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'codex-user-item-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: '@OpenAI Developers Create an API key',
+        presentationReferences: [
+          {
+            start: 0,
+            end: 18,
+            href: 'plugin://openai-developers@openai-curated',
+          },
+        ],
+        status: 'done',
+        createdAt: '2026-07-17T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toMatchObject({
+      id: 'runtime-local-pane-1',
+      role: 'user',
+      content: '[@OpenAI Developers](plugin://openai-developers@openai-curated) Create an API key',
+    })
+  })
+
   test('replaces a failed attempt when the same user message is retried successfully', () => {
     const messages = runtimeMessagesToWorkbenchMessages([
       {

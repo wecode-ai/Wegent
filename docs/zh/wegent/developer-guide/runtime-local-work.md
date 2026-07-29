@@ -199,7 +199,7 @@ executor 从原生 Codex session 发现用户消息时，会把 `local_images`�
 
 Codex transcript 中同一轮用户输入可能同时包含附件包装、应用上下文和用户消息事件。executor 必须先提取用户可见请求文本，再用该文本合并同轮重复消息，同时保留 `clientMessageId` 和附件元数据。发言导航的 id 优先使用 `clientMessageId`；已加载回合的预览必须从同一份用户可见文本生成，不能展示 `# Files mentioned by the user` 或 `<application_context>` 等运行时注入内容。
 
-Wework 发送的富文本引用（例如技能或插件标签）可能在 Codex provider transcript 中被规范化为纯文本。Wework 产品侧的原始用户消息保存在 LocalTask 的 `runtimeHandle.messages` 中；executor 合并 provider transcript 时必须优先按稳定的 `clientMessageId` 匹配，以 provider 的 `content` 作为唯一正文，只从产品侧消息中提取 transcript 无法表达的技能引用位置与目标，作为不含重复正文的 `presentationReferences` 返回。只有缺少稳定客户端消息 id 时，才使用规范化文本签名匹配。该组合适用于运行中、成功和失败的任务；Wework 在渲染边界组合正文与展示引用，使任务完成后重新打开仍能把技能引用渲染为标签，而不会退化成裸 `$plugin:skill` 文本。
+Wework 发送的富文本引用（例如技能或插件标签）可能在 Codex provider transcript 中被规范化为纯文本。Wework 产品侧的原始用户消息保存在 LocalTask 的 `runtimeHandle.messages` 中；executor 合并 provider transcript 时必须优先按稳定的 `clientMessageId` 匹配，以 provider 的 `content` 作为唯一正文，只从产品侧消息中提取 transcript 无法表达的引用位置与目标，作为不含重复正文的 `presentationReferences` 返回。只有缺少稳定客户端消息 id 时，才使用规范化文本签名匹配。该组合适用于运行中、成功和失败的任务；Wework 在渲染边界组合正文与展示引用，使任务完成后重新打开仍能把技能和插件引用渲染为标签，而不会退化成裸 `$plugin:skill` 或 `@Plugin` 文本。
 
 runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。Rust executor 的 Codex app-server 路径以 app-server 通知流作为本轮事件来源；如果后续接入 diff 通知，`runtime.tasks.create`、`runtime.tasks.send` 和 `runtime.tasks.transcript` 必须把它规范化为消息上的 `fileChanges`。这样前端无需等待下一次列表刷新，就能在当前 assistant 消息下显示本轮文件变更卡片。
 

@@ -465,6 +465,31 @@ fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
 }
 
 #[test]
+fn transcript_does_not_signature_match_a_cached_message_with_an_unmatched_client_id() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientMessageId": "provider-client-id",
+        "role": "user",
+        "content": "same"
+    })];
+    let cached_messages = vec![json!({
+        "id": "cached-user",
+        "clientMessageId": "cached-client-id",
+        "role": "user",
+        "content": "same"
+    })];
+
+    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(provider_messages.len(), 2);
+    assert_eq!(
+        provider_messages[0]["clientMessageId"],
+        "provider-client-id"
+    );
+    assert_eq!(provider_messages[1]["clientMessageId"], "cached-client-id");
+}
+
+#[test]
 fn transcript_combines_provider_content_with_local_skill_presentation_by_client_message_id() {
     let mut provider_messages = vec![json!({
         "id": "provider-user",
@@ -495,6 +520,90 @@ fn transcript_combines_provider_content_with_local_skill_presentation_by_client_
         }])
     );
     assert!(provider_messages[0].get("displayContent").is_none());
+}
+
+#[test]
+fn transcript_combines_provider_content_with_local_plugin_presentation_by_client_message_id() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "@OpenAI Developers Create an API key"
+    })];
+    let cached_messages = vec![json!({
+        "id": "cached-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "[$OpenAI Developers](plugin://openai-developers@openai-curated) Create an API key"
+    })];
+
+    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+    assert_eq!(provider_messages.len(), 1);
+    assert_eq!(
+        provider_messages[0]["content"],
+        "@OpenAI Developers Create an API key"
+    );
+    assert_eq!(
+        provider_messages[0]["presentationReferences"],
+        json!([{
+            "start": 0,
+            "end": 18,
+            "href": "plugin://openai-developers@openai-curated"
+        }])
+    );
+}
+
+#[test]
+fn transcript_only_adds_presentation_for_references_missing_from_provider_content() {
+    let provider_content = "[$first](/tmp/first/SKILL.md) and $second";
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": provider_content
+    })];
+    let cached_messages = vec![json!({
+        "id": "cached-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "[$first](/tmp/first/SKILL.md) and [$second](/tmp/second/SKILL.md)"
+    })];
+
+    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+    let second_start = provider_content
+        .find("$second")
+        .expect("second skill token");
+    assert_eq!(
+        provider_messages[0]["presentationReferences"],
+        json!([{
+            "start": second_start,
+            "end": second_start + "$second".len(),
+            "href": "/tmp/second/SKILL.md"
+        }])
+    );
+}
+
+#[test]
+fn transcript_does_not_add_presentation_when_provider_content_is_already_rich() {
+    let content = "Use [$first](/tmp/first/SKILL.md)";
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": content
+    })];
+    let cached_messages = vec![json!({
+        "id": "cached-user",
+        "clientMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": content
+    })];
+
+    append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+    assert!(provider_messages[0].get("presentationReferences").is_none());
 }
 
 #[test]
