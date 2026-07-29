@@ -153,6 +153,10 @@ turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal �
 
 未读只在当前 Wework renderer 生命周期内观察到 `running: true -> false` 边沿时产生，不根据 `status` 文本或持久化记录猜测运行历史；本地持久化只保存已经产生的未读结果，不保存运行态。持久化 Goal 仍为 `active` 但 executor 已不再运行的任务属于待恢复状态，不得因应用或 executor 重启产生完成未读。当前任务和所有运行中任务都必须从可见未读集合排除；打开任务会清除其未读状态。
 
+executor 的 `RuntimeTaskLink.running` 只存在于当前进程内存和 runtime API
+响应中。`runtime-work/index.json` 不得序列化该字段，读取旧索引时也必须忽略其中
+残留的 `running` 值；任务是否正在执行只能由当前 executor 的活动任务集合决定。
+
 ## Composer 模式提示
 
 当 composer 处于计划模式或目标草稿模式时，底部模式胶囊必须在标签左侧显示对应的语义图标：计划模式使用清单图标，目标草稿使用靶心图标。桌面和紧凑布局必须复用同一个模式胶囊实现，确保表达一致。

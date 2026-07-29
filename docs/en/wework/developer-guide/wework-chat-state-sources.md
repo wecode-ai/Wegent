@@ -177,6 +177,12 @@ A terminal task event must immediately mark the local task as `running: false` a
 
 Unread is created only when the current Wework renderer observes a `running: true -> false` edge. It must not infer execution history from free-form `status` text or persisted records; local persistence stores only unread results that were already created, never running state. A task whose persisted Goal remains `active` while the executor is no longer running is waiting for recovery and must not become completion-unread because the application or executor restarted. The current task and every running task must be excluded from visible unread state. Opening a task clears its unread state.
 
+The executor's `RuntimeTaskLink.running` field exists only in current-process
+memory and runtime API responses. `runtime-work/index.json` must not serialize
+the field, and readers must ignore any legacy `running` value left in an older
+index. Whether a task is executing is determined only by the current
+executor's active-task set.
+
 ## Composer Mode Indicators
 
 When the composer is in plan mode or goal-draft mode, its bottom mode pill must show a semantic icon to the left of its label: a checklist for plan mode and a target for goal draft. Desktop and compact layouts must reuse the same mode-pill implementation so the state is expressed consistently.
