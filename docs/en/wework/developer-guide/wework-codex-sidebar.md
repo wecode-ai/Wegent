@@ -50,7 +50,7 @@ An unavailable remote device and an explicitly disconnected cloud session are di
 
 ## Interaction boundary
 
-- When the Cloud Work entry reports `Available`, clicking the row opens the Connections settings, matching its trailing settings action.
+- When the Cloud Work entry reports `Available`, clicking the row opens the dedicated Cloud work page. Its trailing settings action still opens Connections settings.
 - Clicking a project only expands or collapses its tasks and does not change the center pane.
 - Clicking a task or creating a project task changes the main content.
 - Projects, pinned projects, pinned tasks, and tasks within one project support semantic drag ordering.
