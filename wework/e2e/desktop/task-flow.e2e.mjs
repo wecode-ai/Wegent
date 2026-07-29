@@ -3688,6 +3688,8 @@ async function verifyBackgroundTaskWindowLifecycle({
   setPhase,
 }) {
   const lifecycleScreenshotName = name => `window-lifecycle-${name}`
+  setPhase('popout-window-lifecycle')
+  await verifyPopoutWindowLifecycle(control, composerSelector)
   setPhase('background-streaming-task')
   control.setScenario('window_lifecycle')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -4103,6 +4105,54 @@ async function verifyBackgroundTaskWindowLifecycle({
   return taskRowTestId
 }
 
+async function verifyPopoutWindowLifecycle(control, composerSelector) {
+  await control.command('showPopoutWindow', 'body')
+  try {
+    if (process.platform === 'darwin') {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
+      const dataUrl = await control.command('capturePopoutWindow', 'body', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      const prefix = 'data:image/png;base64,'
+      assert.ok(dataUrl.startsWith(prefix), 'Popout Window capture did not return PNG data')
+      const png = Buffer.from(dataUrl.slice(prefix.length), 'base64')
+      assert.ok(png.length > 10_000, 'Popout Window capture did not contain rendered controls')
+      await writeFile(join(resultDir, 'window-lifecycle-00-popout-window.png'), png)
+    }
+  } finally {
+    await control.command('dismissPopoutWindow', 'body')
+  }
+  const reopenStartedAt = Date.now()
+  await control.command('showPopoutWindow', 'body')
+  const reopenDurationMs = Date.now() - reopenStartedAt
+  try {
+    assert.ok(
+      reopenDurationMs < 2_000,
+      `Warm Popout Window reopen took ${reopenDurationMs}ms instead of reusing the hidden WebView`
+    )
+    if (process.platform === 'darwin') {
+      const dataUrl = await control.command('capturePopoutWindow', 'body', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      const prefix = 'data:image/png;base64,'
+      assert.ok(
+        dataUrl.startsWith(prefix),
+        'Reopened Popout Window capture did not return PNG data'
+      )
+      const png = Buffer.from(dataUrl.slice(prefix.length), 'base64')
+      assert.ok(png.length > 10_000, 'Reopened Popout Window was not immediately rendered')
+      await writeFile(join(resultDir, 'window-lifecycle-01-popout-window-reopened.png'), png)
+    }
+  } finally {
+    await control.command('dismissPopoutWindow', 'body')
+  }
+  await control.command('waitFor', composerSelector, {
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
 async function attachAndSendOnlyFile(control, composerSelector) {
   await control.command('dropFile', composerSelector, {
     filename: ATTACHMENT_ONLY_FILENAME,
@@ -4324,6 +4374,39 @@ async function verifySystemDragPanelLayout(control) {
   await control.command('waitFor', '[data-testid="new-chat-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const focusSnapshot = JSON.parse(
+    await control.command('completeSystemDragDrop', 'body', {
+      value: JSON.stringify({
+        action: 'new-chat',
+        text: 'System drag Popout Window verification',
+        paths: [],
+      }),
+    })
+  )
+  try {
+    assert.equal(
+      focusSnapshot.mainFocused,
+      false,
+      'Completing a system drag incorrectly focused the main window'
+    )
+    assert.equal(
+      focusSnapshot.popoutExists && focusSnapshot.popoutVisible,
+      true,
+      'Completing a system drag did not reveal the Popout Window'
+    )
+    if (process.platform === 'darwin') {
+      const dataUrl = await control.command('capturePopoutWindow', 'body', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      const prefix = 'data:image/png;base64,'
+      assert.ok(dataUrl.startsWith(prefix), 'System drag did not reveal a capturable Popout Window')
+      const png = Buffer.from(dataUrl.slice(prefix.length), 'base64')
+      assert.ok(png.length > 10_000, 'System drag revealed an empty Popout Window')
+      await writeFile(join(resultDir, 'system-drag-popout-window.png'), png)
+    }
+  } finally {
+    await control.command('dismissPopoutWindow', 'body')
+  }
 }
 
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {

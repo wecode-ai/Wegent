@@ -7,6 +7,7 @@ import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
 import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { TodoBindingPicker } from '@/features/todo/TodoBindingPicker'
@@ -309,6 +310,7 @@ interface DesktopWorkbenchMainProps {
   visible?: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
+  showComposerProjectMenuAction?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
 }
 
@@ -426,6 +428,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
+          showComposerProjectMenuAction={props.showComposerProjectMenuAction ?? false}
           workspaceSessionApi={services?.workspaceSessionApi}
           environmentInfoPinned={environmentInfoPinned}
           environmentInfoOverlayOpen={environmentInfoOverlayOpen}
@@ -467,6 +470,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
+  showComposerProjectMenuAction,
   workspaceSessionApi,
   environmentInfoPinned,
   environmentInfoOverlayOpen,
@@ -481,6 +485,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
+  showComposerProjectMenuAction: boolean
   workspaceSessionApi?: WorkspaceSessionApi
   environmentInfoPinned: boolean
   environmentInfoOverlayOpen: boolean
@@ -1486,6 +1491,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const emptyProjectWork = useMemo(
     () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
     [paneProjectWork, projectMenuAnchorElement, projectMenuOpenSignal]
+  )
+  const popoutComposerPlaceholder = getPopoutComposerPlaceholder(
+    currentProject?.name,
+    paneProjectWork.executionMode
   )
   const selectTaskSuggestion = useCallback(
     (prompt: string) => {
@@ -2664,10 +2673,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       submitDisabled={paneSession.status.isSubmitting}
                       error={paneSession.error}
                       disabledReason={inlineComposerDisabledReason}
-                      placeholder={t('workbench.input_placeholder', '随心输入')}
+                      placeholder={
+                        showComposerProjectMenuAction
+                          ? 'values' in popoutComposerPlaceholder
+                            ? t(popoutComposerPlaceholder.key, popoutComposerPlaceholder.values)
+                            : t(popoutComposerPlaceholder.key)
+                          : t('workbench.input_placeholder', '随心输入')
+                      }
                       variant="desktop"
                       projectChat={projectChatWithModelSelectorSignal}
                       projectWork={emptyProjectWork}
+                      showWorkspaceMenu={showComposerProjectMenuAction}
                       queuedMessages={paneQueuedMessages}
                       guidanceMessages={paneGuidanceMessages}
                       codeComments={paneSession.codeCommentContexts}
