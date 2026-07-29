@@ -1974,14 +1974,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
-    expect(getRuntimeConversationMessages(address)).toMatchObject([
-      {
-        id: 'client-guidance-1',
-        role: 'user',
-        content: '继续检查后台任务',
-        runtimeGuidance: true,
-      },
-    ])
+    expect(getRuntimeConversationMessages(address)).toEqual([])
   })
 
   test('starts a fresh blank chat with a requested loaded skill selected', async () => {

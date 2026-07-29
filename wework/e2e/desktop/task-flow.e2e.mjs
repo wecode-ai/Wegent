@@ -326,6 +326,7 @@ const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
+const MESSAGE_RESTORATION_ONLY = process.argv.includes('--message-restoration-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
@@ -660,6 +661,107 @@ async function sendPromptWithButton(
   await waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs)
 }
 
+async function assertConversationMessageState(control, { assistantText, userText }) {
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: userText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const transcriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  assert.equal(
+    countTextOccurrences(transcriptText, userText),
+    1,
+    `The restored conversation rendered "${userText}" more than once`
+  )
+  if (!assistantText) return
+
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: assistantText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const completedTranscriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  const userIndex = completedTranscriptText.indexOf(userText)
+  const assistantIndex = completedTranscriptText.indexOf(assistantText)
+  assert.ok(userIndex >= 0, `The completed conversation lost "${userText}"`)
+  assert.ok(assistantIndex >= 0, `The completed conversation lost "${assistantText}"`)
+  assert.ok(
+    userIndex < assistantIndex,
+    `The assistant response "${assistantText}" appeared above its user message "${userText}"`
+  )
+}
+
+async function verifyUserMessageNavigation({
+  assistantText,
+  control,
+  projectRowSelector,
+  screenshotPrefix,
+  taskRowTestId,
+  userText,
+}) {
+  await assertConversationMessageState(control, { assistantText, userText })
+  await captureVerificationScreenshot(control, `${screenshotPrefix}-01-before-switch.png`)
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await ensureTaskRowVisible(control, taskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await assertConversationMessageState(control, { assistantText, userText })
+  await captureVerificationScreenshot(control, `${screenshotPrefix}-02-after-restore.png`)
+}
+
+async function verifyFollowUpMessageRestoration({
+  composerSelector,
+  control,
+  projectRowSelector,
+  taskRowTestId,
+}) {
+  control.setScenario('follow_up')
+  const followUpRequest = await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    FOLLOW_UP_PROMPT,
+    'follow_up'
+  )
+  await verifyUserMessageNavigation({
+    control,
+    projectRowSelector,
+    screenshotPrefix: 'follow-up-message-pending',
+    taskRowTestId,
+    userText: FOLLOW_UP_PROMPT,
+  })
+  control.releaseFollowUpResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await verifyUserMessageNavigation({
+    assistantText: FOLLOW_UP_COMPLETION_TEXT,
+    control,
+    projectRowSelector,
+    screenshotPrefix: 'follow-up-message-completed',
+    taskRowTestId,
+    userText: FOLLOW_UP_PROMPT,
+  })
+  assert.ok(
+    JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
+    'The follow-up request did not preserve the user prompt'
+  )
+}
+
 async function verifyQueuedFollowUpNavigation({ composerSelector, control, projectRowSelector }) {
   await control.command('fill', composerSelector, { value: QUEUED_FOLLOW_UP })
   await control.command('press', composerSelector, { key: 'Enter' })
@@ -949,6 +1051,22 @@ async function verifyBackgroundGuidanceNavigation({
     Number(await control.command('getElementCount', '[data-testid="message-user"]')),
     appliedUserMessageCount,
     'Reopening the source conversation duplicated the applied user message'
+  )
+  const restoredUserMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  const restoredAssistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const restoredGuidance = restoredUserMessages.at(-1)
+  const assistantAfterGuidance = restoredAssistantMessages.at(-1)
+  assert.ok(restoredGuidance, 'The restored guidance message was not rendered')
+  assert.ok(assistantAfterGuidance, 'The assistant continuation after guidance was not rendered')
+  assert.ok(
+    restoredGuidance.top < assistantAfterGuidance.top,
+    'The restored guidance message was appended after the assistant continuation'
   )
   await captureVerificationScreenshot(control, 'guidance-background-07-restored.png')
 
@@ -4957,6 +5075,9 @@ class DesktopE2EServer {
     this.initialToolRelease = new Promise(resolvePromise => {
       this.releaseInitialTool = resolvePromise
     })
+    this.followUpRelease = new Promise(resolvePromise => {
+      this.releaseFollowUp = resolvePromise
+    })
     this.guidanceScrollStage = 'setup'
     this.guidanceScrollToolRelease = new Promise(resolvePromise => {
       this.releaseGuidanceScrollTool = resolvePromise
@@ -5235,6 +5356,10 @@ class DesktopE2EServer {
 
   releaseInitialToolExecution() {
     this.releaseInitialTool()
+  }
+
+  releaseFollowUpResponse() {
+    this.releaseFollowUp()
   }
 
   releaseGuidanceScrollToolExecution() {
@@ -5924,11 +6049,17 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(FOLLOW_UP_PROMPT),
         'The real Codex request did not contain the follow-up prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.followUpRelease
+      response.end(
+        createSse([assistantMessage(FOLLOW_UP_COMPLETION_TEXT), responseCompleted(responseId)])
+      )
       return
     }
 
@@ -9180,8 +9311,24 @@ async function main() {
         DEFAULT_STEP_TIMEOUT_MS,
         'The model service did not receive the initial task request'
       )
+      const runningTaskSnapshot = await waitForSnapshot(
+        control,
+        snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+        'The initial task row was not available before its response completed'
+      )
+      taskRowTestId = runningTaskSnapshot.testIds.find(testId =>
+        testId.startsWith('runtime-local-task-row-')
+      )
+      assert.ok(taskRowTestId, 'The initial task row identity was not found')
+      await verifyUserMessageNavigation({
+        control,
+        projectRowSelector,
+        screenshotPrefix: 'initial-message-pending',
+        taskRowTestId,
+        userText: TASK_PROMPT,
+      })
 
-      if (VIEW_IMAGE_ONLY) {
+      if (VIEW_IMAGE_ONLY || MESSAGE_RESTORATION_ONLY) {
         control.releaseInitialToolExecution()
       } else {
         phase = 'send-mode-menu'
@@ -9258,6 +9405,29 @@ async function main() {
         text: COMPLETION_TEXT,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      await verifyUserMessageNavigation({
+        assistantText: COMPLETION_TEXT,
+        control,
+        projectRowSelector,
+        screenshotPrefix: 'initial-message-completed',
+        taskRowTestId,
+        userText: TASK_PROMPT,
+      })
+      if (MESSAGE_RESTORATION_ONLY) {
+        await verifyFollowUpMessageRestoration({
+          composerSelector,
+          control,
+          projectRowSelector,
+          taskRowTestId,
+        })
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework message restoration desktop E2E passed. Evidence: ${resultDir}`)
+        return
+      }
       await control.command('click', '[data-testid="final-processing-toggle"]')
       await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -9457,21 +9627,12 @@ async function main() {
         })
 
         phase = 'follow-up'
-        control.setScenario('follow_up')
-        const followUpRequest = await sendPromptUntilScenarioRequest(
-          control,
+        await verifyFollowUpMessageRestoration({
           composerSelector,
-          FOLLOW_UP_PROMPT,
-          'follow_up'
-        )
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: FOLLOW_UP_COMPLETION_TEXT,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          control,
+          projectRowSelector,
+          taskRowTestId,
         })
-        assert.ok(
-          JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
-          'The follow-up request did not preserve the user prompt'
-        )
 
         for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
           phase = `local-model-switch-${switchCase.id}`

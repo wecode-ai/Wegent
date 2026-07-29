@@ -376,6 +376,9 @@ impl RuntimeWorkRpcHandler {
             "completedAt": timestamp,
         });
         self.store.update_task(local_task_id, |link| {
+            if link.thread_id.is_some() {
+                return;
+            }
             append_runtime_handle_message(&mut link.runtime_handle, message.clone());
             link.updated_at = timestamp;
         });
