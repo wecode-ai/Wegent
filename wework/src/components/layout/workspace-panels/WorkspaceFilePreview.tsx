@@ -11,6 +11,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
+import { isMarkdownFile } from './workspaceFileTypes'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -196,10 +197,6 @@ interface WorkspaceFilePreviewContentProps {
 
 function isHtmlFile(file: WorkspaceTextFileResponse) {
   return /\.(?:html?|xhtml)$/i.test(file.name)
-}
-
-function isMarkdownFile(file: WorkspaceTextFileResponse) {
-  return /\.(?:md|markdown)$/i.test(file.name)
 }
 
 function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
@@ -531,7 +528,7 @@ export function WorkspaceFilePreview({
     return <WorkspaceHtmlPreview file={file} />
   }
 
-  if (isMarkdownFile(file) && markdownMode === 'preview') {
+  if (isMarkdownFile(file.name) && markdownMode === 'preview') {
     return <WorkspaceMarkdownPreview file={file} />
   }
 

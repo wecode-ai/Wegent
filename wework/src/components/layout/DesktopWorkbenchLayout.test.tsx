@@ -5201,6 +5201,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(
       '/workspace/project/README.md'
     )
+    expect(screen.getByTestId('workspace-file-markdown-mode-button')).toHaveClass(
+      'h-11',
+      'min-w-11',
+      'md:h-8',
+      'md:min-w-0'
+    )
   })
 
   test('switches folders in the file tab for a multi-root project', async () => {

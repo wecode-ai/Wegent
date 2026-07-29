@@ -39,6 +39,7 @@ import type {
 } from '@/types/workspace-files'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
+import { isMarkdownFile } from './workspaceFileTypes'
 
 interface FileWorkspacePanelProps {
   target: WorkspaceTarget | null
@@ -83,10 +84,6 @@ const TEXT_FILE_PATTERN =
 
 function isTextFile(path: string) {
   return TEXT_FILE_PATTERN.test(path)
-}
-
-function isMarkdownFile(path: string) {
-  return /\.(?:md|markdown)$/i.test(path)
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -784,7 +781,7 @@ export function FileWorkspacePanel({
               type="button"
               data-testid="workspace-file-markdown-mode-button"
               onClick={() => setMarkdownMode(mode => (mode === 'preview' ? 'source' : 'preview'))}
-              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+              className="flex h-11 min-w-11 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:min-w-0"
               aria-label={
                 markdownMode === 'preview'
                   ? t('workbench.workspace_file_show_source')
