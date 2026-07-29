@@ -2639,6 +2639,32 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
   return screenshotPath
 }
 
+async function verifyCloudWorkPage(control) {
+  await control.command('navigate', 'body', { value: '/cloud-work' })
+  await control.command('waitFor', '[data-testid="cloud-work-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    snapshot.testIds.includes('cloud-work-devices-section'),
+    'The cloud work page did not render its device status section'
+  )
+  assert.ok(
+    snapshot.testIds.includes('cloud-work-projects-section'),
+    'The cloud work page did not render its cloud projects section'
+  )
+  assert.equal(
+    snapshot.testIds.includes('general-settings-page'),
+    false,
+    'The cloud work route unexpectedly opened general settings'
+  )
+  await captureVerificationScreenshot(control, '00-cloud-work-page.png')
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
 async function initializeBlankCodexHome({ codexHome, control }) {
   const configPath = join(codexHome, 'config.toml')
   assert.equal(
@@ -5194,7 +5220,7 @@ class RealCloudEnvironment {
       WEGENT_AUTH_TOKEN: this.authToken,
       DEVICE_ID: CLOUD_DEVICE_ID,
       DEVICE_NAME: 'Wework E2E Cloud Device',
-      DEVICE_TYPE: 'remote',
+      DEVICE_TYPE: 'cloud',
       BIND_SHELL: 'claudecode',
       LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
@@ -8551,6 +8577,52 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'The cloud flow did not expose exactly one remote project'
   )
   await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
+  await control.command('navigate', 'body', { value: '/plugins' })
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
+    text: '云端工作',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-work-01-plugin-entry.png')
+  await control.command('click', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('waitFor', '[data-testid="cloud-work-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `[data-testid="connection-device-${CLOUD_DEVICE_ID}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const cloudWorkSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('cloud-work-project-')),
+    'The cloud work page did not show the created cloud project'
+  )
+  const cloudWorkProjectTestId = cloudWorkSnapshot.testIds.find(testId =>
+    testId.startsWith('cloud-work-project-')
+  )
+  assert.ok(cloudWorkProjectTestId, 'The cloud work page did not expose a project row')
+  assert.equal(
+    cloudWorkSnapshot.testIds.includes('general-settings-page'),
+    false,
+    'Clicking Cloud work from Plugins unexpectedly opened general settings'
+  )
+  await control.command('waitFor', `[data-testid="connection-device-metrics-${CLOUD_DEVICE_ID}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="connection-more-button-${CLOUD_DEVICE_ID}"]`)
+  await control.command('waitFor', `[data-testid="connection-more-menu-${CLOUD_DEVICE_ID}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-work-02-device-and-project.png')
+  await control.command('click', `[data-testid="connection-more-button-${CLOUD_DEVICE_ID}"]`)
+  await control.command('click', `[data-testid="${cloudWorkProjectTestId}"]`)
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'workspace',
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-work-03-project-opened.png')
   await control.command(
     'clickWhenEnabled',
     '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]'
@@ -9445,6 +9517,9 @@ async function main() {
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       if (!GUIDANCE_SCROLL_ONLY) {
+        phase = 'cloud-work-page'
+        await verifyCloudWorkPage(control)
+
         phase = 'system-drag-panel-layout'
         await verifySystemDragPanelLayout(control)
       }
