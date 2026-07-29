@@ -12,7 +12,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Query, Session
 
 from app.models.knowledge_artifact import (
-    KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH,
     KNOWLEDGE_ARTIFACT_ERROR_MESSAGE_MAX_LENGTH,
     KNOWLEDGE_ARTIFACT_UNSET_DATETIME,
     KNOWLEDGE_ARTIFACT_UNSET_ID,
@@ -309,12 +308,7 @@ class KnowledgeArtifactRepository:
 
     @staticmethod
     def _content_to_storage(value: str | None) -> str:
-        content = value or ""
-        if len(content) > KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH:
-            raise ArtifactStorageError(
-                "Artifact content exceeds the database length limit"
-            )
-        return content
+        return value or ""
 
     @staticmethod
     def _error_message_to_storage(value: str | None) -> str:

@@ -7,14 +7,13 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Index, Integer, String
+from sqlalchemy import JSON, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from app.db.base import Base
 from shared.models.db.types import big_integer_id_type
 
-KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH = 12_000
 KNOWLEDGE_ARTIFACT_ERROR_MESSAGE_MAX_LENGTH = 2_000
 KNOWLEDGE_ARTIFACT_UNSET_ID = 0
 KNOWLEDGE_ARTIFACT_UNSET_DATETIME = datetime(1970, 1, 1)
@@ -73,10 +72,9 @@ class KnowledgeArtifactRecord(Base):
         comment="Related assistant subtask ID; 0 means unset",
     )
     content: Mapped[str] = mapped_column(
-        String(KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH),
+        Text,
         nullable=False,
         default="",
-        server_default="",
         comment="Generated content; empty means unavailable",
     )
     source_document_ids: Mapped[list[int]] = mapped_column(

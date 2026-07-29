@@ -148,7 +148,7 @@ class KnowledgeArtifact(BaseModel):
     version: int = 1
     attempt: int = 1
     artifact_id: str
-    knowledge_base_id: int
+    knowledge_base_id: int = Field(gt=0)
     artifact_type: KnowledgeArtifactType
     title: str
     status: KnowledgeArtifactStatus
@@ -164,7 +164,7 @@ class KnowledgeArtifact(BaseModel):
     )
     can_retry: bool = False
     can_delete: bool = False
-    user_id: int
+    user_id: int = Field(gt=0)
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None

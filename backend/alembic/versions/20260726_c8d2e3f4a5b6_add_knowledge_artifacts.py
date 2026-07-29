@@ -70,9 +70,8 @@ def upgrade() -> None:
         ),
         sa.Column(
             "content",
-            sa.String(length=12000),
+            sa.Text(),
             nullable=False,
-            server_default="",
             comment="Generated content; empty means unavailable",
         ),
         sa.Column(

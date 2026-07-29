@@ -7,11 +7,11 @@
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
+from pydantic import ValidationError
+from sqlalchemy import Text, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.knowledge_artifact import (
-    KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH,
     KNOWLEDGE_ARTIFACT_UNSET_DATETIME,
     KNOWLEDGE_ARTIFACT_UNSET_ID,
     KnowledgeArtifactRecord,
@@ -21,10 +21,7 @@ from app.schemas.knowledge_artifact import (
     KnowledgeArtifactStatus,
     KnowledgeArtifactType,
 )
-from app.services.knowledge.artifact_repository import (
-    ArtifactStorageError,
-    KnowledgeArtifactRepository,
-)
+from app.services.knowledge.artifact_repository import KnowledgeArtifactRepository
 
 
 @pytest.fixture
@@ -110,22 +107,37 @@ def test_repository_maps_optional_values_to_non_null_storage(db: Session):
     assert record.completed_at == KNOWLEDGE_ARTIFACT_UNSET_DATETIME
 
 
-def test_repository_rejects_content_over_storage_limit(db: Session):
+def test_repository_persists_content_beyond_previous_varchar_limit(db: Session):
     repository = KnowledgeArtifactRepository(db)
     artifact = build_artifact()
-    artifact.content = "x" * (KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH + 1)
+    artifact.content = "x" * 12_001
 
-    with pytest.raises(
-        ArtifactStorageError,
-        match="Artifact content exceeds the database length limit",
-    ):
-        repository.create(artifact)
+    persisted = repository.create(artifact)
+
+    assert persisted.content == artifact.content
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [("knowledge_base_id", 0), ("user_id", 0)],
+)
+def test_artifact_rejects_invalid_ownership_ids(
+    field_name: str,
+    invalid_value: int,
+):
+    values = build_artifact().model_dump()
+    values[field_name] = invalid_value
+
+    with pytest.raises(ValidationError, match="greater than 0"):
+        KnowledgeArtifact.model_validate(values)
 
 
 def test_model_uses_minimal_production_indexes():
     index_names = {index.name for index in KnowledgeArtifactRecord.__table__.indexes}
 
     assert index_names == {"idx_knowledge_artifacts_kb_created"}
+    assert isinstance(KnowledgeArtifactRecord.__table__.c.content.type, Text)
+    assert KnowledgeArtifactRecord.__table__.c.content.server_default is None
 
 
 def test_execution_update_preserves_concurrent_rename(db: Session):

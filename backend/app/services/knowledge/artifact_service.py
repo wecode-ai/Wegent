@@ -17,7 +17,6 @@ from app.core.config import settings
 from app.db.timezone import database_datetime_timezone
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
-from app.models.knowledge_artifact import KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.knowledge_artifact import (
@@ -512,7 +511,7 @@ class ArtifactService:
         if not content:
             raise ArtifactValidationError("Generated result is empty")
         if artifact_type == KnowledgeArtifactType.BRIEFING:
-            return ArtifactService._validate_content_length(content)
+            return content
         matches = _JSON_BLOCK.findall(content)
         if matches:
             if len(matches) != 1 or not matches[0].strip():
@@ -531,15 +530,7 @@ class ArtifactService:
             raise ArtifactValidationError(
                 "Generated mind map must be a valid interactive tree"
             ) from exc
-        return ArtifactService._validate_content_length(mind_map.model_dump_json())
-
-    @staticmethod
-    def _validate_content_length(content: str) -> str:
-        if len(content) > KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH:
-            raise ArtifactValidationError(
-                "Generated result exceeds the supported content length"
-            )
-        return content
+        return mind_map.model_dump_json()
 
     def _repair_execution_ids(self, artifact: KnowledgeArtifact) -> None:
         task = self.task_store.get_owned_task_by_name(
