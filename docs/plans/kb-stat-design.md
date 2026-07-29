@@ -139,7 +139,8 @@ title: 知识库统计功能设计文档
 - 按 10 个 domain 分组，每组带类型图标
 - 每个卡片含行动指引（阈值超限自动提示）
 - 指标列表由 `/metrics/list` 动态返回并直接平铺展示（无折叠/高级视图）；
-  `KB_STAT_ADVANCED_ENABLED=false` 时只返回 15 个基本 metric，`true` 时返回全部 71 个
+  `KB_STAT_ADVANCED_ENABLED=false` 时内部保留 15 个基本 metric（`/metrics/list` 暴露 14 个），
+  `true` 时返回全部 71 个
 
 ### 2.5 KB 详情页核心指标（20 个精选）
 
@@ -156,7 +157,7 @@ title: 知识库统计功能设计文档
 
 | 任务 | Celery crontab (UTC) | 北京时间 | 说明 |
 | --- | --- | --- | --- |
-| `kb_stat.collect_all` | `crontab(hour=19, minute=7)` | **每天 03:07** | 采集所有 71 个采集器（产出 71 个指标）。beat 传 `lookback_days=1`（纯增量，只统计当天），手动触发时默认 `lookback_days=30`（回看 30 天窗口） |
+| `kb_stat.collect_all` | `crontab(hour=19, minute=7)` | **每天 03:07** | 高级模式采集全部 71 个 collector；默认基本模式仅采集 14 个 collector。beat 传 `lookback_days=1`（纯增量，只统计当天），手动触发时默认 `lookback_days=30`（回看 30 天窗口） |
 | `kb_stat.prune_old_runs` | `crontab(day_of_week=6, hour=20, minute=13)` | **每周一 04:13** | 清理 400 天前的旧数据。分块删除（每批 100 个 run_id），避免长事务锁表 |
 
 **时区说明**：Celery `timezone="UTC"`，所以 crontab 的 hour 是 UTC。北京时间 = UTC+8，反向换算：北京 03:07 → UTC 前一天 19:07，北京周一 04:13 → UTC 周日 20:13。
@@ -341,7 +342,7 @@ ORDER BY {order_by} LIMIT {limit}
 | `KB_STAT_PRUNE_ENABLED` | backend | `false` | 清理任务开关。false 时移除每周清理 beat，永久保留历史数据。需与 runtime 保持一致 |
 | `KB_STAT_PRUNE_ENABLED` | knowledge_runtime | `false` | /health 上报实际生效值（与 backend 同步） |
 | `KB_STAT_ADVANCED_ENABLED` | backend | `false` | 指标分级开关。false 时 beat 投递 collect 任务传 `advanced_enabled=false`，只采集 14 个基本 collector。需与 runtime 同名变量一致 |
-| `KB_STAT_ADVANCED_ENABLED` | knowledge_runtime | `false` | 采集 + 查询分级。false 时 collect_all 只跑基本 collector（采集耗时 ~20min→~3min）、`/metrics/list` 只返回 15 个基本 metric、dashboard 不返回平台命中率/采纳率/零分块率/健康度分布等高级聚合字段；true 开启全部 71 指标。需与 backend 一致 |
+| `KB_STAT_ADVANCED_ENABLED` | knowledge_runtime | `false` | 采集 + 查询分级。false 时 collect_all 只跑 14 个基本 collector、`/metrics/list` 返回 14 个基本 metric（内部另有 `kb_daily_stats`）、dashboard 不返回平台命中率/采纳率/零分块率/健康度分布等高级聚合字段；true 开启全部 71 指标。需与 backend 一致 |
 | `KB_STAT_WORKER_ENABLED` | knowledge_runtime | `false` | Celery worker 子进程开关（main.py 拉起内嵌 worker）。需显式置 true 才会消费 kb_stat 队列 |
 | `NEXT_PUBLIC_KB_STAT_ENABLED` | frontend | （未设置=关闭） | 前端功能开关。**构建时**内联替换，仅显式置 `true`/`1` 启用；未设置时 Tab 隐藏，与 backend/runtime 默认关闭一致 |
 | `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED` | frontend | （未设置=基本） | 前端分级开关（**构建时**）。false 时只渲染基本指标分组；`/metrics/list` 已服务端过滤，此开关主要控制高级分组容器是否渲染。与后端不一致也不报错（最多多/少几个空分组标题） |
@@ -483,12 +484,12 @@ set -a && . ../knowledge_runtime/.env && set +a
 | `--days` | 30 | 时间跨度（天） |
 | `--target-date` | 今天 | 目标采集日期 |
 | `--domain` | all | 限制灌入的域（retrieval/content/collaboration/dashboard/sys_ops/lifecycle/deep_analysis/user_behavior/prometheus） |
-| `--trigger-collect` | 关 | 灌入后自动触发采集（同步执行，约 2-5 分钟） |
+| `--trigger-collect` | 关 | 灌入后以高级模式自动触发全部 collector（同步执行，耗时取决于业务数据规模） |
 
 灌入的数据特征：
 - **零分块率趋势**：从 30% 逐渐降到 10%（模拟内容持续优化效果）
 - **注入模式混合**：RAG 检索 60% / 直接注入 20% / KB Head 20%
-- **延迟分布**：100ms~3000ms 随机（模拟 P50/P90 分布）
+- **延迟字段**：100ms~3000ms 随机（保留真实上下文形态；当前无独立延迟分位数指标）
 - **文件类型多样**：pdf/docx/md/xlsx/pptx 混合，80% 索引成功 / 15% 失败 / 5% 等待
 - **配置多样化**：score_threshold 0/0.3/0.5/0.8，top_k 1/3/5/10（覆盖 kb_config_sanity 检测）
 
@@ -517,14 +518,14 @@ set -a && . ../knowledge_runtime/.env && set +a
 | `--kb-id` | （必填） | 目标知识库 ID |
 | `--days` | 30 | 时间跨度（天），同时作为 `--trigger-collect` 的采集回看窗口 |
 | `--queries` | 15 | 每天灌入的检索记录数 |
-| `--trigger-collect` | 关 | 灌入后立即触发一次该 KB 限定的 `collect_all`（`kb_ids=[kb_id]`、`lookback_days=--days`、`triggered_by=__test__seed_kb`），使最新 run 包含该 KB，详情页无需再等下次 beat |
+| `--trigger-collect` | 关 | 灌入后立即以高级模式触发一次该 KB 限定的 `collect_all`（`kb_ids=[kb_id]`、`lookback_days=--days`、`triggered_by=__test__seed_kb`）；快照指标立即可查，日期指标由查询层跨 run 拼接 |
 
 `seed` 灌入内容：
 - **subtask_contexts**：每天 N 条检索记录（30 天 ≈ 450 条），含完整的 type_data JSON：
   - `rag_result`（query/chunks_count/latency_ms/restricted_mode）
   - `adoption_result`（cited_count — 覆盖采纳率）
   - `kb_head_result`（document_ids — 覆盖 RAG 验证率）
-  - `extracted_text`（chunks[].score — 覆盖检索相关性分数分布）
+  - `extracted_text`（保留生产上下文形态；当前不持久化原始查询文本或分数明细）
   - `rag_result.selected_documents`（覆盖部分指定文档使用路径）
 - **selected_documents 上下文**：`context_type='selected_documents'`、`type_data={knowledge_base_id, document_ids}`，分散到周期内多天（覆盖 `selected_documents_usage` 采集器，与生产 notebook 模式直接注入的上下文结构一致）
 - **resource_members**：4 种角色（Owner/Maintainer/Developer/Reporter）+ 1 个 RestrictedAnalyst
@@ -541,21 +542,21 @@ set -a && . ../knowledge_runtime/.env && set +a
 - `users`：`__test__*` 的测试用户
 - 统计库：所有 `__test__` 前缀触发的 run（含 `--trigger-collect` 产生的 `__test__seed_kb` run）及其关联数据
 
-灌入完成后需触发采集，详情页才能读到该 KB 的数据（详情页只读最新 run）。两种方式：
+灌入完成后需触发采集，详情页才能读到该 KB 的数据。快照指标读取最新成功 run，
+`target_date/stat_date` 日期指标按日期跨成功 run 取最新结果。两种方式：
 - **推荐**：灌入时直接带 `--trigger-collect`，一步完成 seed + 该 KB 限定采集。
 - **手动**：灌入后再跑 `kb_stat_backfill.py`（可带 `--kb-id` 限定单 KB，更快）：
 ```bash
-.venv/bin/python ../scripts/kb_stat_backfill.py --date 2026-07-23 --kb-id 148 --via direct
+.venv/bin/python ../scripts/kb_stat_backfill.py --date 2026-07-23 --kb-id 148 --via direct --advanced
 ```
 
 #### 8.3.3 数据覆盖情况
 
-灌入后采集的数据覆盖情况（以 KB 148 为例）：
-
-| 表状态 | 数量 | 说明 |
-| --- | --- | --- |
-| 有数据 | 75 张表 | 覆盖全部核心检索/内容/用户/协作指标 |
-| 无数据（语义正确） | 3 张表 | kb_config_sanity（配置正常）/ cross_org_access（同 namespace）/ doc_folder_depth（无文件夹） |
+灌入后的覆盖情况不再维护容易过期的固定“有数据表”数量。当前权威规模为
+**71 个 MetricSpec / 74 张统计表（含运行管理和内部表）**；覆盖结果以
+`scripts/kb_stat_verify.py` 动态遍历 `_METRIC_SPECS` 的输出为准。某些指标为 0 行是合法结果，
+例如配置正常时的 `kb_config_sanity`、不存在跨组织访问时的 `cross_org_access`、没有文件夹时的
+`doc_folder_depth`。
 
 覆盖的 JSON 路径：
 
@@ -573,7 +574,7 @@ set -a && . ../knowledge_runtime/.env && set +a
 >
 > 采集采用每日增量：beat 传 `lookback_days=1`，每个 run 只写当天 1 行；查询时走 Path A
 > 同构的跨 run 聚合（按 `stat_date` 取每个日期的最新成功 run）拼出 N 天趋势，而非从单个
-> run 读取 30 天。两个测试脚本已同步灌入完整的源数据（含 `chunks[].score`、分散的
+> run 读取 30 天。两个测试脚本已同步灌入完整的源数据（含检索 JSON、分散的
 > `created_at` 等）。
 
 ### 8.4 数据库迁移
@@ -626,7 +627,7 @@ mysql -u <user> -p <stat_db> < docs/plans/kb-stat-schema.sql
 | 场景 | 配置 |
 | --- | --- |
 | 完全关闭 | `KB_STAT_ENABLED=false` + `KB_STAT_WORKER_ENABLED=false` |
-| 基本模式（只采 14 个基本指标） | `KB_STAT_ENABLED=true` + `KB_STAT_ADVANCED_ENABLED=false`（两端一致）+ `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED=false` |
+| 基本模式（14 个 collector / 15 个内部 metric，其中 `/metrics/list` 暴露 14 个） | `KB_STAT_ENABLED=true` + `KB_STAT_ADVANCED_ENABLED=false`（两端一致）+ `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED=false` |
 | 全量模式（全部 71 指标） | `KB_STAT_ADVANCED_ENABLED=true`（两端一致）+ `NEXT_PUBLIC_KB_STAT_ADVANCED_ENABLED=true` |
 | 暂停采集但保留查询 | `KB_STAT_WORKER_ENABLED=false` |
 | 永久保留历史数据 | `KB_STAT_PRUNE_ENABLED=false` |

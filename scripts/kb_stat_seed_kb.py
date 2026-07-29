@@ -438,10 +438,9 @@ def seed_kb(
 def _trigger_collection(kb_id: int, target: date, days: int) -> int:
     """Run a KB-scoped collect_all so the latest run includes this KB.
 
-    Mirrors kb_stat_test_data._trigger_collection but scopes to a single KB
-    and matches the seed's lookback window, so one run writes the full N-day
-    series. The KB-detail page reads only the latest run, so without this
-    re-collection a freshly seeded KB shows no data until the next beat.
+    Mirrors kb_stat_test_data._trigger_collection but scopes to a single KB.
+    Snapshot metrics are immediately queryable from this run; dated metrics
+    are assembled across successful runs by the query layer.
     """
     from knowledge_engine.stat import collect_all, mark_kb_stat_stale_runs
     from shared.db.readonly_session import (
@@ -475,6 +474,7 @@ def _trigger_collection(kb_id: int, target: date, days: int) -> int:
         target_date=target,
         kb_ids=[kb_id],
         lookback_days=days,
+        advanced_enabled=True,
         triggered_by=TRIGGERED_BY,
         source_session_factory=get_readonly_session_factory(),
         stat_session_factory=stat_factory,

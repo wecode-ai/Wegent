@@ -35,7 +35,6 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="KB id filter (repeatable)",
     )
-    p.add_argument("--namespace", type=str, default=None)
     p.add_argument(
         "--domain",
         type=str,
@@ -49,6 +48,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--via", choices=("celery", "direct"), default="celery", help="Execution mode"
     )
+    p.add_argument(
+        "--advanced",
+        action="store_true",
+        help="Run all collectors instead of the default basic tier",
+    )
     return p.parse_args()
 
 
@@ -59,7 +63,7 @@ def date_range(start: date, end: date):
         cur += timedelta(days=1)
 
 
-def trigger_via_celery(target: date, kb_ids, domains):
+def trigger_via_celery(target: date, kb_ids, domains, advanced: bool):
     from knowledge_runtime.tasks.celery_app import celery_app
 
     return celery_app.send_task(
@@ -69,12 +73,14 @@ def trigger_via_celery(target: date, kb_ids, domains):
             kb_ids=kb_ids or None,
             domains=domains or None,
             triggered_by="manual_cli",
+            lookback_days=1,
+            advanced_enabled=advanced,
         ),
         queue="kb_stat",
     ).id
 
 
-def trigger_direct(target: date, kb_ids, domains):
+def trigger_direct(target: date, kb_ids, domains, advanced: bool):
     from knowledge_engine.stat import collect_all
     from shared.db.readonly_session import get_readonly_session_factory
     from shared.db.stat_session import get_stat_session_factory
@@ -85,6 +91,8 @@ def trigger_direct(target: date, kb_ids, domains):
         kb_ids=kb_ids or None,
         domains=domains or None,
         triggered_by="manual_cli",
+        lookback_days=1,
+        advanced_enabled=advanced,
         source_session_factory=get_readonly_session_factory(),
         stat_session_factory=get_stat_session_factory(),
     )
@@ -92,10 +100,6 @@ def trigger_direct(target: date, kb_ids, domains):
 
 def main() -> int:
     args = parse_args()
-    targets = (
-        [args.date] if args.date else list(date_range(args.start_date, args.end_date))
-    )
-
     if args.start_date and not args.end_date:
         print("ERROR: --start-date requires --end-date")
         return 1
@@ -106,6 +110,10 @@ def main() -> int:
         print("ERROR: --start-date cannot be after --end-date")
         return 1
 
+    targets = (
+        [args.date] if args.date else list(date_range(args.start_date, args.end_date))
+    )
+
     print(f"Will trigger {len(targets)} run(s) via {args.via}")
     if args.dry_run:
         for d in targets:
@@ -114,10 +122,10 @@ def main() -> int:
 
     for d in targets:
         if args.via == "celery":
-            tid = trigger_via_celery(d, args.kb_id, args.domain)
+            tid = trigger_via_celery(d, args.kb_id, args.domain, args.advanced)
             print(f"  + {d} -> celery task {tid}")
         else:
-            run_id = trigger_direct(d, args.kb_id, args.domain)
+            run_id = trigger_direct(d, args.kb_id, args.domain, args.advanced)
             print(f"  + {d} -> run_id {run_id}")
     return 0
 

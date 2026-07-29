@@ -312,7 +312,7 @@ def seed(
 
     if trigger_collect:
         print("▶ triggering collection (--trigger-collect)...")
-        run_id = _trigger_collection(target)
+        run_id = _trigger_collection(target, domain)
         print(f"✅ triggered collection, run_id={run_id}")
 
 
@@ -801,7 +801,7 @@ def _seed_tasks(
     print(f"  [seed] tasks:        {task_count} rows")
 
 
-def _trigger_collection(target: date) -> int:
+def _trigger_collection(target: date, domain: Optional[str] = None) -> int:
     from knowledge_engine.stat import collect_all, mark_kb_stat_stale_runs
     from shared.db.readonly_session import (
         get_readonly_session_factory,
@@ -839,6 +839,8 @@ def _trigger_collection(target: date) -> int:
     run_id = collect_all(
         target_date=target,
         triggered_by=TRIGGERED_BY_SEED,
+        domains=[domain] if domain and domain != "all" else None,
+        advanced_enabled=True,
         source_session_factory=get_readonly_session_factory(),
         stat_session_factory=stat_factory,
     )

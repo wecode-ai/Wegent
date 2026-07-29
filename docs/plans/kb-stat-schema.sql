@@ -1,10 +1,10 @@
 -- =============================================================================
--- KB-Stat Schema (Full DDL) - Auto-generated from SQLAlchemy ORM metadata
+-- KB-Stat Schema (Full DDL) - synchronized with SQLAlchemy ORM metadata
 -- Engine: MySQL 8.0+ / InnoDB / utf8mb4
 -- Table/column/index counts are validated from ORM metadata during release.
 -- Source: knowledge_engine/knowledge_engine/stat/models/
--- Equivalent to: alembic -c alembic.ini upgrade head (001..018)
--- Generated: 2026-07-23
+-- Installed directly; intentionally outside the business Alembic chain.
+-- Synchronized: 2026-07-29
 --
 -- Usage:
 --   mysql -u <user> -p <db> < docs/plans/kb-stat-schema.sql
@@ -1307,4 +1307,3 @@ CREATE INDEX `ix_adoption_target_run` ON `kb_stat_answer_adoption_rate` (`target
 CREATE INDEX `ix_runs_status` ON `kb_stat_runs` (`status`);
 
 SET FOREIGN_KEY_CHECKS = 1;
-

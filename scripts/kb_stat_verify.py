@@ -41,7 +41,7 @@ _STAT_DSN = os.environ["KNOWLEDGE_STAT_DATABASE_URL"]
 TEST_PREFIX = "__kbstat_test__"
 TARGET_DATE = date(2026, 5, 15)
 PERIOD_START = TARGET_DATE - timedelta(days=29)
-PERIOD_END = TARGET_DATE
+PERIOD_END = TARGET_DATE + timedelta(days=1)  # exclusive DATETIME upper bound
 
 NUM_KBS = 5
 NUM_DOCS_PER_KB = 4
@@ -342,6 +342,7 @@ def trigger_collection() -> int:
     run_id = collect_all(
         target_date=TARGET_DATE,
         triggered_by=f"{TEST_PREFIX}verify",
+        advanced_enabled=True,
         source_session_factory=get_readonly_session_factory(),
         stat_session_factory=get_stat_session_factory(),
     )
@@ -371,7 +372,7 @@ class Verifier:
     def pass_info(self, name: str, detail: str = "") -> None:
         """Record a passing check with an informational detail string.
 
-        Used for the 81-metric coverage sweep where every metric is queried
+        Used for the MetricSpec coverage sweep where every metric is queried
         and its row count reported — a PASS with rows=N is more useful than
         a bare PASS.
         """
@@ -428,7 +429,7 @@ def compute_expected(session: Session) -> dict:
         text(
             "SELECT COUNT(*) FROM subtask_contexts "
             "WHERE context_type='knowledge_base' AND name LIKE :p "
-            "AND created_at >= :s AND created_at <= :e"
+            "AND created_at >= :s AND created_at < :e"
         ),
         {"p": f"{TEST_PREFIX}%", "s": PERIOD_START, "e": PERIOD_END},
     ).scalar()
@@ -438,7 +439,7 @@ def compute_expected(session: Session) -> dict:
         text(
             "SELECT COUNT(*) FROM subtask_contexts sc "
             "WHERE sc.context_type='knowledge_base' AND sc.name LIKE :p "
-            "AND sc.created_at >= :s AND sc.created_at <= :e "
+            "AND sc.created_at >= :s AND sc.created_at < :e "
             "AND (JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.rag_result.injection_mode')) = 'rag_retrieval' "
             "     OR (JSON_EXTRACT(sc.type_data, '$.rag_result') IS NULL "
             "         AND JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.injection_mode')) = 'rag_retrieval'))"
@@ -451,7 +452,7 @@ def compute_expected(session: Session) -> dict:
         text(
             "SELECT COUNT(*) FROM subtask_contexts sc "
             "WHERE sc.context_type='knowledge_base' AND sc.name LIKE :p "
-            "AND sc.created_at >= :s AND sc.created_at <= :e "
+            "AND sc.created_at >= :s AND sc.created_at < :e "
             "AND (JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.rag_result.injection_mode')) = 'direct_injection' "
             "     OR (JSON_EXTRACT(sc.type_data, '$.rag_result') IS NULL "
             "         AND JSON_UNQUOTE(JSON_EXTRACT(sc.type_data, '$.injection_mode')) = 'direct_injection'))"
@@ -464,7 +465,7 @@ def compute_expected(session: Session) -> dict:
         text(
             "SELECT COUNT(*) FROM subtask_contexts sc "
             "WHERE sc.context_type='knowledge_base' AND sc.name LIKE :p "
-            "AND sc.created_at >= :s AND sc.created_at <= :e "
+            "AND sc.created_at >= :s AND sc.created_at < :e "
             "AND (JSON_EXTRACT(sc.type_data, '$.kb_head_result.usage_count') > 0 "
             "     OR JSON_EXTRACT(sc.type_data, '$.kb_head_count') > 0)"
         ),
@@ -476,7 +477,7 @@ def compute_expected(session: Session) -> dict:
         text(
             "SELECT COUNT(*) FROM kinds "
             "WHERE kind='KnowledgeBase' AND is_active=1 AND name LIKE :p "
-            "AND created_at >= :s AND created_at <= :e"
+            "AND created_at >= :s AND created_at < :e"
         ),
         {"p": f"{TEST_PREFIX}%", "s": PERIOD_START, "e": PERIOD_END},
     ).scalar()
@@ -485,7 +486,7 @@ def compute_expected(session: Session) -> dict:
     new_docs = session.execute(
         text(
             "SELECT COUNT(*) FROM knowledge_documents "
-            "WHERE name LIKE :p AND created_at >= :s AND created_at <= :e"
+            "WHERE name LIKE :p AND created_at >= :s AND created_at < :e"
         ),
         {"p": f"{TEST_PREFIX}%", "s": PERIOD_START, "e": PERIOD_END},
     ).scalar()
