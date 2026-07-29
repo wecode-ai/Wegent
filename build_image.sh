@@ -77,6 +77,12 @@ else
     echo "Building images with version $VERSION (use --push or -p to also push images)..."
 fi
 
+# Stage externally maintained optional plugins when their source is available.
+if ! pnpm prepare:builtin-plugins; then
+    echo "Error: failed to stage configured built-in plugins"
+    exit 1
+fi
+
 # Build backend image
 docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-backend:${VERSION} -f docker/backend/Dockerfile .
 

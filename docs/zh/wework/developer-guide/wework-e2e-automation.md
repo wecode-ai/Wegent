@@ -120,6 +120,16 @@ pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 ```
 
+插件桌面套件也复用同一套分段参数，但保持独立的 Codex Home 初始化环境。插件
+segment 依次为 `plugin-lifecycle`、`skill-mention-rendering` 和
+`sites-plugin-auto-install`。每个 segment 都会建立自身所需的最小插件 fixture，
+可以单独运行，也可以从指定功能继续执行后续插件功能：
+
+```bash
+pnpm --filter wework e2e:desktop:plugins -- --segment skill-mention-rendering
+pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-rendering
+```
+
 桌面 runner 的普通 UI 步骤默认在 10 秒后超时，避免单个失败步骤统一等待
 120 秒。控制命令和等待 helper 都可以通过 `timeoutMs` 为确实较慢的特殊步骤设置
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速

@@ -124,6 +124,7 @@ impl RuntimeWorkRpcHandler {
             if link.thread_id.as_deref() != Some(thread_id) {
                 link.thread_id = Some(thread_id.to_owned());
             }
+            clear_runtime_handle_messages(&mut link.runtime_handle);
         });
         let pending_id = pending_thread_event_route_id(&local_task_id);
         let mut routes = self
@@ -188,6 +189,7 @@ impl RuntimeWorkRpcHandler {
         }
         self.store.update_task(local_task_id, |link| {
             link.thread_id = Some(thread_id.to_owned());
+            clear_runtime_handle_messages(&mut link.runtime_handle);
             link.updated_at = now_ms();
         });
     }
@@ -252,6 +254,7 @@ impl RuntimeWorkRpcHandler {
 
         self.store.update_task(&local_task_id, |link| {
             link.thread_id = Some(thread_id.to_owned());
+            clear_runtime_handle_messages(&mut link.runtime_handle);
             link.updated_at = now_ms();
         });
         true

@@ -24,4 +24,19 @@ describe('DesktopTopBar', () => {
       )
     ).toHaveAttribute('data-tauri-drag-region')
   })
+
+  test('hides the drag region on Windows to avoid conflicting with the custom titlebar', () => {
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+    })
+    render(
+      <DesktopTopBar
+        left={<button type="button">Left</button>}
+        right={<button type="button">Right</button>}
+      />
+    )
+
+    expect(screen.getByTestId('desktop-topbar-drag-region')).toHaveClass('hidden')
+  })
 })

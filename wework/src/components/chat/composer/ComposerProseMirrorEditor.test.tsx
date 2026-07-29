@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { describe, expect, test, vi } from 'vitest'
+import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerProseMirrorEditor, type ComposerEditorHandle } from './ComposerProseMirrorEditor'
 import {
   composerSchema,
@@ -13,7 +14,8 @@ const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
 
 function renderEditor(
   value = GMAIL_REFERENCE,
-  onBeforeInput: (event: InputEvent) => boolean = () => false
+  onBeforeInput: (event: InputEvent) => boolean = () => false,
+  onOpenMentionPlugin: (reference: PluginReference) => void = vi.fn()
 ) {
   const editorRef = createRef<ComposerEditorHandle>()
   const textareaRef = createRef<HTMLElement>()
@@ -32,6 +34,7 @@ function renderEditor(
       onCompositionEnd={vi.fn()}
       onPaste={() => false}
       onDrop={() => false}
+      onOpenMentionPlugin={onOpenMentionPlugin}
       onClick={vi.fn()}
       onFocus={vi.fn()}
       placeholder="Message"
@@ -62,6 +65,34 @@ describe('ComposerProseMirrorEditor', () => {
     const chip = screen.getByTestId('composer-path-chip-backend')
     expect(chip).toHaveTextContent('backend')
     expect(chip).toHaveAttribute('data-composer-skill-label', 'backend')
+  })
+
+  test.each([
+    ['mouse', () => fireEvent.click(screen.getByTestId('composer-plugin-chip-wegent-sites'))],
+    [
+      'keyboard',
+      () =>
+        fireEvent.keyDown(screen.getByTestId('composer-plugin-chip-wegent-sites'), {
+          key: 'Enter',
+        }),
+    ],
+  ])('opens plugin details with the %s interaction', (_interaction, openPlugin) => {
+    const onOpenMentionPlugin = vi.fn()
+    renderEditor('[$站点](plugin://wegent-sites@wegent-bundled) ', () => false, onOpenMentionPlugin)
+
+    const chip = screen.getByTestId('composer-plugin-chip-wegent-sites')
+    expect(chip).toHaveAttribute('role', 'link')
+    expect(chip).toHaveAttribute('tabindex', '0')
+    expect(chip).toHaveAttribute('data-composer-plugin-name', 'wegent-sites')
+    expect(chip).toHaveAttribute('data-composer-plugin-marketplace', 'wegent-bundled')
+
+    openPlugin()
+
+    expect(onOpenMentionPlugin).toHaveBeenCalledOnce()
+    expect(onOpenMentionPlugin).toHaveBeenCalledWith({
+      pluginName: 'wegent-sites',
+      marketplaceName: 'wegent-bundled',
+    })
   })
 
   test('serializes copied skill selections back to their markdown references', () => {

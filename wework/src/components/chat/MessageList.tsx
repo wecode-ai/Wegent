@@ -1737,6 +1737,8 @@ function renderUserContent(
               pathReference.directory ? { isDirectory: true } : undefined
             )
           }
+          const pluginReference = parsePluginUri(href)
+          if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
         }}
       >
         {mentionKind === 'folder' ? (
@@ -2375,3 +2377,5 @@ function AssistantErrorCard({
     </div>
   )
 }
+import { buildPluginDetailRoute, parsePluginUri } from '@/features/plugins/pluginNavigation'
+import { navigateTo } from '@/lib/navigation'

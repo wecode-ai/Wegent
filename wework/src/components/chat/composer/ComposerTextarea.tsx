@@ -2,7 +2,9 @@ import { ClipboardList, Cpu, Package, Plug, Target } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
+import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
+import { navigateTo } from '@/lib/navigation'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
@@ -1101,6 +1103,7 @@ export function ComposerTextarea({
         onPaste={handlePaste}
         onDrop={handleDrop}
         onOpenMentionFile={onOpenSkillFile}
+        onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
         onClick={() => updateAutocompleteTrigger()}
         onFocus={() => updateAutocompleteTrigger()}
         disabled={disabled}
