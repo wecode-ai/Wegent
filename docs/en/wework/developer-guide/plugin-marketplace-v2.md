@@ -10,18 +10,19 @@ For plugin development, open-source migration, and local integration, start with
 
 Marketplace V2 uses a Wework cloud control plane with a local Codex runtime. MySQL stores catalog metadata, immutable releases, selected upstreams, submissions, account install intent, and per-device materialization. Private S3-compatible storage holds packages. Codex App Server remains the source of truth for the current device.
 
-The regular user sees only the Wework cloud catalog. Codex plugins are mirrored only after an administrator selects them. Local creations live in the `wegent-personal` marketplace and are uploaded only after an explicit publish action. A Skill is represented as a Codex plugin containing exactly one Skill.
+The regular user sees only the Wework cloud catalog. Codex plugins are mirrored only after an administrator selects them. Local creations live in the `wegent-personal` marketplace and are uploaded only after an explicit publish or owner-initiated restricted share. A Skill is represented as a Codex plugin containing exactly one Skill.
 
 ## Storage model
 
-| Data | Location |
-| --- | --- |
-| Catalog, releases, upstreams, submissions | MySQL |
-| ZIP packages and media | Private MinIO/S3 bucket |
-| Account desired state | Existing `kinds/InstalledPlugin` |
-| Device actual state | `plugin_device_installations` |
-| Local creations and registry | Wework Codex Home / Codex App Server |
-| Tokens and MCP secrets | Local secure storage |
+| Data                                      | Location                                                          |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| Catalog, releases, upstreams, submissions | MySQL                                                             |
+| ZIP packages and media                    | Private MinIO/S3 bucket                                           |
+| Account desired state                     | Existing `kinds/InstalledPlugin`                                  |
+| Device actual state                       | `plugin_device_installations`                                     |
+| Local creations and registry              | Wework Codex Home / Codex App Server                              |
+| Personal-copy provenance                  | Local `wegent-personal/.wegent/plugin-copy-sources.json` registry |
+| Tokens and MCP secrets                    | Local secure storage                                              |
 
 New tables are `plugins`, `plugin_releases`, `plugin_upstreams`, `plugin_submissions`, and `plugin_device_installations`. `skill_binaries` is retained only for legacy Skills and migration history. Published Release package fields and manifests are immutable.
 
@@ -33,11 +34,17 @@ Wework sends the local Executor's stable `device_id` to catalog and mutation API
 
 Publishing a local creation does not require a manually selected ZIP. Tauri locates the plugin in the local marketplace, packages it natively, and validates the Codex manifest, symlinks, path containment, the 50 MB archive limit, and the 200 MB expanded-size limit. A single-Skill plugin is submitted with `listing_type=skill` automatically.
 
+## Restricted sharing and personal copies
+
+The first restricted share uploads the local package with `purpose=restricted_share` through the same object-storage and security-scanning pipeline. A successful scan creates a `visibility=personal` cloud Plugin and Release without public-market review. User and Namespace grants atomically replace existing `resource_members`; selecting owner-only access clears all grants and disables copying.
+
+Only the owner and matching recipients can discover, inspect, and install a personal plugin. Revoking a recipient removes the original account install intent immediately, uninstalls online devices, and leaves offline devices pending reconciliation. When `allowCopy` is enabled, the copy endpoint returns short-lived download metadata. Tauri verifies SHA256, ZIP paths, duplicate entries, symlinks, and the manifest, then atomically imports a uniquely named `0.1.0` copy into `wegent-personal`. Provenance stays in the local registry and is never embedded in the uploaded package; revoking the original does not remove an independent copy.
+
 The Executor owns managed package caching, integrity checks, sync events, and device-result reporting. Codex App Server remains the installation and uninstallation authority. Device results are exposed through `InstalledPlugin.status.devices`; an API request must never report the current device as installed when App Server rejected the operation. Server-side scanning rejects path traversal, duplicate paths, symlinks, encrypted members, sensitive files, oversized expansion, checksum mismatches, and missing manifests.
 
 Administrative APIs include `GET/POST /admin/plugins/upstreams`, `PATCH /admin/plugins/upstreams/{id}` for synchronization policy changes, `POST /admin/plugins/upstreams/{id}/sync`, `GET /admin/plugins/submissions`, and `POST /admin/plugins/submissions/{id}/review`.
 
-`GET /plugins/capabilities` exposes whether the current user may publish. The server grants this only to administrators, the global `PLUGIN_PUBLISH_ENABLED` flag, or IDs in `PLUGIN_PUBLISH_USER_IDS`; submission endpoints repeat the authorization check. Upstream synchronization never replaces `latest_release_id` with an older SemVer and preserves the current Release after scan failures or upstream removal.
+`GET /plugins/capabilities` exposes publishing and personal-sharing capabilities separately. The server grants publishing only to administrators, the global `PLUGIN_PUBLISH_ENABLED` flag, or IDs in `PLUGIN_PUBLISH_USER_IDS`; submission endpoints repeat the authorization check. Restricted sharing is not controlled by the public publishing allowlist but still requires the same security scan. Owners manage grants through `GET/PUT /plugins/marketplace/{id}/access`; authorized recipients use `POST /plugins/marketplace/{id}/copy` only when `allowCopy` is enabled. Upstream synchronization never replaces `latest_release_id` with an older SemVer and preserves the current Release after scan failures or upstream removal.
 
 Use `uv run python scripts/migrate_plugin_marketplace_v2.py` for a restartable legacy migration. After validating counts, checksums, downloads, and install references, rerun it with `--retire-legacy` to deactivate legacy marketplace Kinds and remove copied marketplace blobs.
 
@@ -69,28 +76,29 @@ Inject CI credentials only through protected secrets. The publisher needs MySQL 
 
 Rollback never mutates an old Release. Fix the source, increment SemVer, and publish a new package. An emergency unlist may change catalog status or the `latest_release_id` pointer while retaining the old package and audit history; restore only to a scanned `ready` Release. S3 upload failure rolls back database state, while database commit failure triggers best-effort deletion of the newly created object.
 
-## Implementation status and verification (2026-07-25)
+Migration `d9e0f1a2b3c4` adds `plugins.allow_copy` and `plugin_submissions.purpose`. Deployment must verify upgrade, one-revision downgrade, and re-upgrade, and release Backend before a Wework client that exposes sharing.
+
+## Implementation status and verification (2026-07-29)
 
 ### Shipped in this pass
 
-- **Backend**: migration FK alignment; shared ZIP scanner and upstream fetch with SSRF guards; submission staging to content-addressed keys; review monotonicity for `latest_release_id`; per-plugin device materialization with failed-update retention; 120s reconnect sync timeout; admin upstream fields and plugin visibility grant API.
-- **Executor**: SHA verification, ZIP safety limits aligned with the server scanner, staged install with store rollback when Codex `plugin/install` fails.
-- **Wework**: management page merges cloud intent with local App Server state; marketplace update confirmation and error surfaces; presigned PUT via Tauri HTTP; E2E covers the cloud default marketplace tab.
+- **Backend**: restricted-share submissions, owner access replacement, recipient visibility, copy authorization, and revocation-driven uninstall synchronization reuse the shared scanner.
+- **Tauri**: safe personal-copy import with SHA256, duplicate/path/symlink/manifest checks, unique naming, atomic rollback, and local provenance mapping.
+- **Wework**: distribution filters, a single installed-plugin management list, unified capability details, real share/copy flows, and plugin-aware slash and rich-mention interactions.
 
 ### Automated checks (local)
 
-| Suite | Result |
-| --- | --- |
-| `backend/tests/services/test_plugin_marketplace_v2.py` | 21 passed |
-| `wework` Vitest (including `App.plugins.test.tsx`) | 1972 passed |
-| `executor` `cargo check` | OK |
-| `executor` `local_capability_sync_contract` (ZIP / rollback cases) | OK |
+| Suite                                                  | Result                                                                                     |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `backend/tests/services/test_plugin_marketplace_v2.py` | 40 passed                                                                                  |
+| `wework` Vitest                                        | 224 files / 2217 passed                                                                    |
+| Tauri `plugin_copy`                                    | 5 passed                                                                                   |
+| Alembic upgrade → downgrade → upgrade                  | Passed on an isolated database                                                             |
+| Isolated Tauri `ai:verify`                             | Marketplace, details, management, slash picker, prompt prefill, and branded mention passed |
 
 ### Blocked on environment
 
-- Full `wework ai:verify` needs a live Backend, MySQL, object storage, and a real Tauri desktop; not run in the sandbox-only CI loop here.
-- Plugin icon/screenshot media remains a follow-up; not on the publish critical path.
-- Plugin visibility currently exposes a grant API only; member list/revoke UI is out of scope for this pass.
+- The complete two-account desktop E2E for share → install → copy → revoke still requires deployed test accounts and object storage.
 
 ### Defect-first review
 

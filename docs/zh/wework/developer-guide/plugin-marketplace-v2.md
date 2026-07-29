@@ -15,22 +15,23 @@ sidebar_position: 20
 - 普通用户只能浏览 Wework 云端市场，不能直接添加任意 GitHub 或 Codex Marketplace。
 - Codex 官方插件按管理员白名单选择性镜像，不做全量同步。
 - 市场展示最新已发布版本，历史 Release 保留；已安装插件默认手动更新。
-- 本地创建内容位于 `wegent-personal`，不自动上传；只有“发布到市场”会上传并进入扫描和审核。
+- 本地创建内容位于 `wegent-personal`，不自动上传；只有“发布到市场”或所有者主动定向分享时才会上传并进入相同安全扫描。
 - Skill 是展示类型，安装单位始终是 Codex Plugin；单 Skill 插件包含一个 `SKILL.md`。
 - `kinds/InstalledPlugin` 是账号安装意图，`plugin_device_installations` 是设备执行结果，本机 Codex App Server 是运行事实源。
 
 ## 2. 数据归属
 
-| 数据 | 位置 | 事实语义 |
-| --- | --- | --- |
-| Plugin、Release、上游、投稿 | MySQL | 云端控制面 |
-| ZIP、图标、截图 | MinIO/S3 私有 Bucket | 不可变发布物 |
-| 账号安装意图 | `kinds/InstalledPlugin` | 期望状态 |
-| 人员/部门可见范围 | `resource_members` + `ResourceType.PLUGIN` | 授权状态 |
-| 设备安装结果 | `plugin_device_installations` | 每设备物化状态 |
-| 本地创建插件 | Wework Codex Home / `wegent-personal` | 当前设备私有内容 |
-| 本地安装注册表 | Codex App Server | 当前设备运行事实 |
-| Token、MCP 密钥 | 系统安全存储 | 永不进入插件包和日志 |
+| 数据                        | 位置                                               | 事实语义                            |
+| --------------------------- | -------------------------------------------------- | ----------------------------------- |
+| Plugin、Release、上游、投稿 | MySQL                                              | 云端控制面                          |
+| ZIP、图标、截图             | MinIO/S3 私有 Bucket                               | 不可变发布物                        |
+| 账号安装意图                | `kinds/InstalledPlugin`                            | 期望状态                            |
+| 人员/部门可见范围           | `resource_members` + `ResourceType.PLUGIN`         | 授权状态                            |
+| 设备安装结果                | `plugin_device_installations`                      | 每设备物化状态                      |
+| 本地创建插件                | Wework Codex Home / `wegent-personal`              | 当前设备私有内容                    |
+| 本地安装注册表              | Codex App Server                                   | 当前设备运行事实                    |
+| 个人副本来源映射            | `wegent-personal/.wegent/plugin-copy-sources.json` | 仅本机保存的来源与云端 Release 映射 |
+| Token、MCP 密钥             | 系统安全存储                                       | 永不进入插件包和日志                |
 
 `skill_binaries` 不再接收 V2 Release。迁移工具把旧 Marketplace ZIP 搬到对象存储，并把旧安装记录改成 `pluginId/releaseId` 引用。
 
@@ -53,6 +54,7 @@ erDiagram
     varchar source_provider
     varchar visibility
     varchar status
+    boolean allow_copy
     bigint latest_release_id
   }
   PLUGIN_RELEASES {
@@ -76,6 +78,7 @@ erDiagram
     bigint plugin_id FK
     bigint release_id FK
     bigint submitter_user_id
+    varchar purpose
     varchar status
     bigint reviewer_user_id
   }
@@ -90,25 +93,25 @@ erDiagram
 
 ### 表职责
 
-| 表 | 新增/复用 | 关键约束 |
-| --- | --- | --- |
-| `plugins` | 新增 | `slug` 唯一；稳定产品身份 |
-| `plugin_releases` | 新增 | `(plugin_id, version)` 唯一；进入 `ready` 后包、版本、Manifest 不可修改 |
-| `plugin_upstreams` | 新增 | 每个 Plugin 最多一个选定上游；每 6 小时同步 |
-| `plugin_submissions` | 新增 | 一个 Release 只有一个投稿；拒绝后创建新版本 |
-| `plugin_device_installations` | 新增 | `(installed_kind_id, device_id)` 唯一 |
-| `kinds/InstalledPlugin` | 复用 | 保存账号期望版本，不保存 ZIP |
-| `resource_members` | 复用 | 新增 Plugin 资源类型 |
-| `PluginMarketplaceItem` Kind | 退役 | 迁移完成后不再读写 |
+| 表                            | 新增/复用 | 关键约束                                                                |
+| ----------------------------- | --------- | ----------------------------------------------------------------------- |
+| `plugins`                     | 新增      | `slug` 唯一；稳定产品身份                                               |
+| `plugin_releases`             | 新增      | `(plugin_id, version)` 唯一；进入 `ready` 后包、版本、Manifest 不可修改 |
+| `plugin_upstreams`            | 新增      | 每个 Plugin 最多一个选定上游；每 6 小时同步                             |
+| `plugin_submissions`          | 新增      | 一个 Release 只有一个投稿；拒绝后创建新版本                             |
+| `plugin_device_installations` | 新增      | `(installed_kind_id, device_id)` 唯一                                   |
+| `kinds/InstalledPlugin`       | 复用      | 保存账号期望版本，不保存 ZIP                                            |
+| `resource_members`            | 复用      | 新增 Plugin 资源类型                                                    |
+| `PluginMarketplaceItem` Kind  | 退役      | 迁移完成后不再读写                                                      |
 
 ## 4. 来源与身份
 
-| 场景 | `origin` | `sourceProvider` | UI 标记 |
-| --- | --- | --- | --- |
-| 本机创建 | `created` | 本地 | 我创建的 |
-| Wegent 自研 | `market` | `wegent` | Wegent 官方 |
-| 精选 Codex 镜像 | `market` | `codex` | Codex 官方 · Wework 镜像 |
-| 用户投稿审核通过 | `market` | `user` | 社区插件/作者 |
+| 场景             | `origin`  | `sourceProvider` | UI 标记                  |
+| ---------------- | --------- | ---------------- | ------------------------ |
+| 本机创建         | `created` | 本地             | 我创建的                 |
+| Wegent 自研      | `market`  | `wegent`         | Wegent 官方              |
+| 精选 Codex 镜像  | `market`  | `codex`          | Codex 官方 · Wework 镜像 |
+| 用户投稿审核通过 | `market`  | `user`           | 社区插件/作者            |
 
 “我的已安装”以 `pluginId/releaseId` 合并云端意图和设备状态；本地创建项以 `localId` 标识。禁止用展示名关联，因为同名插件和改名都会造成误合并。
 
@@ -160,6 +163,12 @@ flowchart LR
 
 Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本地 Marketplace 和插件键定位目录，原生打包并校验 `.codex-plugin/plugin.json`、符号链接、越界路径、50 MB 压缩包上限和 200 MB 展开上限；单 Skill Plugin 自动以 `listing_type=skill` 投稿。
 
+### 定向分享与个人副本
+
+所有者首次分享本地插件时，以 `purpose=restricted_share` 复用投稿上传、对象存储和安全扫描。扫描通过后自动生成 `visibility=personal` 的云端 Plugin/Release，不进入公共市场人工审核；授权保存失败时保持仅所有者可见。人员与部门授权原子替换 `resource_members`，切回“仅自己”会清空授权并关闭复制。
+
+接收者只能发现、查看和安装获授权的个人插件。所有者撤权后，服务立即删除接收者对原插件的账号安装意图，在线设备卸载，离线设备等待重连同步。允许复制时，接收者通过短期下载地址取得包；Tauri 校验 SHA256、ZIP 路径和 Manifest 后，以唯一 slug、`0.1.0` 和“我的副本”名称原子导入 `wegent-personal`。副本的来源映射只写本地注册表，不写入插件包，撤销原件权限不会删除已经复制的独立副本。
+
 ### 精选 Codex 镜像
 
 管理员录入 `marketplace_name + remote_plugin_id + upstream_url + license_info`。定时任务只检查 `sync_enabled=true` 的记录；发现 SemVer 新版本后下载、扫描并写入对象存储。开源镜像默认使用 `auto_after_scan`，扫描通过后单调提升 `latest_release_id`；高风险上游可改为 `review_required`，只生成待审核 Release，管理员批准后才提升 latest。上游返回旧版本时只更新检查信息，不回退 `latest_release_id`；扫描失败或上游删除时保留旧 Release，不影响现有用户。
@@ -192,24 +201,27 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 
 ## 6. API
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| GET | `/plugins/capabilities` | 返回当前用户是否可发布 |
-| GET | `/plugins/marketplace` | 最新目录、来源、安装和更新状态 |
-| GET | `/plugins/marketplace/{id}` | 插件详情 |
-| GET | `/plugins/marketplace/{id}/releases` | 历史 Release |
-| POST | `/plugins/marketplace/{id}/install` | 安装最新或指定 Release |
-| PUT | `/plugins/installed/{id}` | 启停组件或升级 Release |
-| DELETE | `/plugins/installed/{id}` | 账号级卸载并同步设备 |
-| POST | `/plugins/submissions/init` | 创建投稿并取得签名上传 URL |
-| POST | `/plugins/submissions/{id}/complete` | 完成上传并触发扫描 |
-| GET | `/plugins/submissions/{id}` | 查询投稿状态 |
-| GET | `/admin/plugins/upstreams` | 管理端查看精选镜像源和同步状态 |
-| POST | `/admin/plugins/upstreams` | 录入精选 Codex 插件 |
-| PATCH | `/admin/plugins/upstreams/{id}` | 切换扫描后自动发布或人工审核策略 |
-| POST | `/admin/plugins/upstreams/{id}/sync` | 立即镜像 |
-| GET | `/admin/plugins/submissions` | 管理端查看待审和历史投稿 |
-| POST | `/admin/plugins/submissions/{id}/review` | 审核投稿 |
+| 方法   | 路径                                     | 用途                                           |
+| ------ | ---------------------------------------- | ---------------------------------------------- |
+| GET    | `/plugins/capabilities`                  | 分别返回当前用户是否可发布、是否可分享个人插件 |
+| GET    | `/plugins/marketplace`                   | 最新目录、来源、安装和更新状态                 |
+| GET    | `/plugins/marketplace/{id}`              | 插件详情                                       |
+| GET    | `/plugins/marketplace/{id}/releases`     | 历史 Release                                   |
+| POST   | `/plugins/marketplace/{id}/install`      | 安装最新或指定 Release                         |
+| PUT    | `/plugins/installed/{id}`                | 启停组件或升级 Release                         |
+| DELETE | `/plugins/installed/{id}`                | 账号级卸载并同步设备                           |
+| GET    | `/plugins/marketplace/{id}/access`       | 所有者读取个人插件授权                         |
+| PUT    | `/plugins/marketplace/{id}/access`       | 原子替换人员/部门授权和 `allowCopy`            |
+| POST   | `/plugins/marketplace/{id}/copy`         | 校验访问权和复制许可并返回短期下载信息         |
+| POST   | `/plugins/submissions/init`              | 创建投稿并取得签名上传 URL                     |
+| POST   | `/plugins/submissions/{id}/complete`     | 完成上传并触发扫描                             |
+| GET    | `/plugins/submissions/{id}`              | 查询投稿状态                                   |
+| GET    | `/admin/plugins/upstreams`               | 管理端查看精选镜像源和同步状态                 |
+| POST   | `/admin/plugins/upstreams`               | 录入精选 Codex 插件                            |
+| PATCH  | `/admin/plugins/upstreams/{id}`          | 切换扫描后自动发布或人工审核策略               |
+| POST   | `/admin/plugins/upstreams/{id}/sync`     | 立即镜像                                       |
+| GET    | `/admin/plugins/submissions`             | 管理端查看待审和历史投稿                       |
+| POST   | `/admin/plugins/submissions/{id}/review` | 审核投稿                                       |
 
 旧 `/plugins/upload` 默认返回 `410`，只可通过显式迁移开关为管理员临时启用。
 
@@ -223,44 +235,47 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 6. 发布 Backend/Executor，再发布 Wework UI，避免新 UI 遇到旧 API。
 7. 发布入口保持 Feature Flag 和内部白名单，稳定后再扩大。
 
+迁移 `d9e0f1a2b3c4` 为 `plugins` 增加 `allow_copy`，为 `plugin_submissions` 增加 `purpose`。上线前必须验证升级、回滚一个版本和再次升级；Backend 应先于包含分享入口的 Wework 客户端发布。
+
 发布能力由 `PLUGIN_PUBLISH_ENABLED`、`PLUGIN_PUBLISH_USER_IDS` 和管理员角色共同决定。Wework 先读取 `/plugins/capabilities`，无权限时不渲染发布入口；后端投稿接口仍独立执行相同校验，不能依赖前端隐藏。
 
 ## 8. 首批精选插件
 
-| 优先级 | 插件 | 价值 | 导入前检查 |
-| --- | --- | --- | --- |
-| P0 | GitLab Engineering | MR 审查、Issue、Pipeline/CI 诊断 | GitLab API/CLI 授权、许可证、企业域名配置 |
-| P0 | GitHub | PR/Issue/CI 工作流 | 官方来源、OAuth/CLI 授权 |
-| P0 | Gitee | 国内代码托管协作 | 官方 MCP、Token 最小权限 |
-| P0 | Chrome DevTools | 浏览器调试与性能分析 | 本机权限、命令执行风险 |
-| P1 | 企业微信 | 消息、会议、日程、文档 | 自研包优先，敏感权限分级 |
-| P1 | 腾讯文档 | 文档与表格协作 | 官方授权和数据范围 |
-| P1 | 飞书、钉钉 | 中国企业协作场景 | 不重复搬运同能力，先做真实用户验证 |
+| 优先级 | 插件               | 价值                             | 导入前检查                                |
+| ------ | ------------------ | -------------------------------- | ----------------------------------------- |
+| P0     | GitLab Engineering | MR 审查、Issue、Pipeline/CI 诊断 | GitLab API/CLI 授权、许可证、企业域名配置 |
+| P0     | GitHub             | PR/Issue/CI 工作流               | 官方来源、OAuth/CLI 授权                  |
+| P0     | Gitee              | 国内代码托管协作                 | 官方 MCP、Token 最小权限                  |
+| P0     | Chrome DevTools    | 浏览器调试与性能分析             | 本机权限、命令执行风险                    |
+| P1     | 企业微信           | 消息、会议、日程、文档           | 自研包优先，敏感权限分级                  |
+| P1     | 腾讯文档           | 文档与表格协作                   | 官方授权和数据范围                        |
+| P1     | 飞书、钉钉         | 中国企业协作场景                 | 不重复搬运同能力，先做真实用户验证        |
 
 插件不是“从 Codex 全量搬运”。每个候选都必须先确认产品价值、许可证、维护责任、鉴权方式和安全扫描结果，再由管理员录入上游。
 
-## 10. 实现完成度与验证记录
+## 10. 实现完成度与验证记录（2026-07-29）
 
 ### 本轮收口范围
 
-- **后端控制面**：Alembic 修正 `installed_kind_id` 外键类型；统一 `plugin_package_scanner` 与 `plugin_upstream_fetch`（HTTPS/公网/重定向 SSRF 防护）；投稿 staging→内容寻址固化；审核与 `latest_release_id` 单调提升；设备安装物化优先逐插件结果、失败保留 `actual_release_id`；重连同步超时 120s；管理端 upstream 字段与 Plugin 可见性 grant API。
-- **Executor**：受管包 SHA 校验、解压前 ZIP 条目数/展开体积/重复路径/穿越路径/符号链接校验；`plugin/install` 失败回滚 store 备份。
-- **Wework**：管理页合并云端安装意图与本机状态；市场/详情更新确认与错误展示；签名 PUT 走 Tauri HTTP；E2E 支持云端默认市场 Tab。
+- **后端控制面**：新增受限分享投稿目的、所有者授权读写、接收者可见性、复制许可和撤权卸载同步，并继续复用统一包扫描流程。
+- **Tauri**：新增个人副本 SHA256、重复路径、ZIP 穿越、符号链接和 Manifest 校验；唯一命名、原子导入、App Server 安装失败回滚和本地来源映射。
+- **Wework**：市场按国内公开、企业内部、个人分享和 Codex 官方筛选；管理页使用单一已安装列表；详情统一展示最佳实践、授权和包含能力；创建、分享、复制及对话 Mention 复用真实插件状态。
 
 ### 自动化验证（本地，2026-07-25）
 
-| 套件 | 结果 |
-| --- | --- |
-| `backend/tests/services/test_plugin_marketplace_v2.py` | 21 passed |
-| `wework` Vitest（含 `App.plugins.test.tsx`） | 1972 passed |
-| `executor` `cargo check` | 通过 |
-| `executor` `local_capability_sync_contract`（含 ZIP 与回滚相关用例） | 通过 |
+| 套件                                                   | 结果                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------- |
+| `backend/tests/services/test_plugin_marketplace_v2.py` | 40 passed                                               |
+| `wework` Vitest                                        | 224 files / 2217 passed                                 |
+| Tauri `plugin_copy`                                    | 5 passed                                                |
+| Alembic upgrade → downgrade → upgrade                  | 通过（隔离数据库）                                      |
+| 隔离 `ai:verify` Tauri 会话                            | 市场、详情、管理、斜杠菜单、模板预填和品牌 Mention 通过 |
 
 ### 环境阻塞项
 
 - 完整 `wework ai:verify`（云端目录、安装、失败重试、更新失败保留旧版、卸载重连、白名单发布）依赖在线 Backend、MySQL、S3/MinIO 与真实 Tauri 桌面，未在纯 CI 沙箱中执行。
 - 插件图标/截图媒体链路（上传 API、UI、验收交互）按首期范围保留后续迭代。
-- Plugin 人员/部门可见性当前提供 grant 接口；成员列表与撤销 UI 未纳入本期。
+- 双真实账号的完整“分享 → 安装 → 复制 → 撤权”桌面 E2E 仍需要部署环境中的测试账号和对象存储。
 
 ### Code Review（缺陷优先）
 
@@ -274,6 +289,8 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 - `InstalledPlugin.status.devices` 与 App Server 当前设备结果一致，接口成功不得掩盖本机失败。
 - ZIP 穿越、重复路径、符号链接、加密成员、敏感文件、超大展开体积、SHA 错误和缺失 Manifest 均被拒绝。
 - 本地创建不触发云端上传；只有显式发布才产生 Submission。
+- 定向分享只有所有者可管理；无授权不可见、不可下载，撤权卸载原件但保留独立副本。
+- 个人副本导入失败不保留半成品，来源映射不写入上传包。
 - 审核前不可搜索，审核后可安装；Release 发布后不可修改。
 - 普通用户界面没有添加任意 Marketplace 的入口。
 - “我创建的”、Wegent 官方、Codex 镜像和社区来源稳定区分。
