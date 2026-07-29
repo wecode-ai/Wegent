@@ -53,12 +53,7 @@ function extractArchive(archive, destination) {
   const isZip = archive.endsWith('.zip')
   if (process.platform === 'win32') {
     if (isZip) {
-      const escapedPath = archive.replace(/'/g, "''")
-      const escapedDest = destination.replace(/'/g, "''")
-      const command = `Expand-Archive -LiteralPath '${escapedPath}' -DestinationPath '${escapedDest}' -Force`
-      const result = spawnSync('powershell', ['-NoProfile', '-Command', command], {
-        stdio: 'inherit',
-      })
+      const result = spawnSync('tar', ['-xf', archive, '-C', destination], { stdio: 'inherit' })
       if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
       return
     }
