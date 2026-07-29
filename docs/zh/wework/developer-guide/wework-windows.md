@@ -56,7 +56,61 @@ npm install -g pnpm
 pnpm install
 ```
 
-### 2. 构建本地 Executor sidecar
+### 2. 一键启动开发模式
+
+完成前置依赖后，在项目根目录直接执行：
+
+```powershell
+pnpm --filter wework dev:windows
+```
+
+该命令会自动完成以下事情：
+
+- 自动选择可用端口（默认 `1420`；若被占用则递增）。
+- 构建 Windows 本地 Executor sidecar（默认使用 `dev-reload` 模式，修改 `executor` 源码后会自动重新编译）。
+- 准备 Windows 版 Codex 二进制。
+- 生成临时 Tauri dev 配置并启动 `tauri dev --target x86_64-pc-windows-msvc`。
+
+如果不需要 executor 热重载，可在执行前设置环境变量：
+
+```powershell
+$env:WEWORK_DISABLE_EXECUTOR_DEV_RELOAD = "1"
+pnpm --filter wework dev:windows
+```
+
+### 3. 加速开发编译（可选）
+
+`pnpm --filter wework dev:windows` 会自动使用共享的 Cargo target 目录，让不同工作树或不同次启动之间复用已编译的依赖。同时它会自动检测 `sccache` 并在可用时启用。
+
+缓存目录结构如下：
+
+```text
+%USERPROFILE%\.cache\wegent\cargo-target\
+  executor-dev\      # dev-reload 模式下的 executor 构建
+  executor\          # 非 dev-reload 模式下的 executor 构建
+  wework-src-tauri\  # Tauri/Cargo 构建
+```
+
+你可以通过以下环境变量自定义或关闭缓存行为：
+
+| 变量                                   | 说明                                                     |
+| -------------------------------------- | -------------------------------------------------------- |
+| `WEGENT_CARGO_TARGET_ROOT`             | 覆盖共享缓存根目录。                                     |
+| `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` | 禁用共享缓存，Cargo 产物保留在项目内的 `target/` 目录。  |
+| `CARGO_TARGET_DIR`                     | 若显式设置，则 `dev:windows` 会将其用于所有 Cargo 构建。 |
+| `WEGENT_DISABLE_SCCACHE=1`             | 禁止自动检测和使用 `sccache`。                           |
+
+如需最快的重建速度，可安装 [sccache](https://github.com/mozilla/sccache) 并确保它在 `PATH` 中：
+
+```powershell
+cargo install sccache
+```
+
+### 4. 手动步骤（可选）
+
+如果你想单独执行某一步，或想了解 `dev:windows` 脚本内部做了什么，可以参考以下手动命令。
+
+#### 4.1 构建本地 Executor sidecar
 
 ```powershell
 cd executor
@@ -77,7 +131,7 @@ cd wework
 pnpm run build:windows:sidecar
 ```
 
-### 3. 准备 Codex 二进制
+#### 4.2 准备 Codex 二进制
 
 ```powershell
 cd wework
@@ -85,7 +139,7 @@ $env:WEWORK_CODEX_TARGET = "x86_64-pc-windows-msvc"
 pnpm run prepare:codex
 ```
 
-### 4. 启动开发模式
+#### 4.3 启动开发模式
 
 ```powershell
 pnpm exec tauri dev --target x86_64-pc-windows-msvc

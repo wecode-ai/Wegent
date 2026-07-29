@@ -54,6 +54,7 @@ tokio-tungstenite = "0.21"
 toml_edit = "0.22"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

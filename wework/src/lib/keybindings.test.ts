@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
@@ -21,6 +21,13 @@ import {
 } from './keybindings'
 
 describe('keybindings', () => {
+  beforeEach(() => {
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
+  })
+
   it('normalizes equivalent modifier names', () => {
     expect(normalizeKeybinding('cmd+shift+j')).toBe('Shift+Command+J')
     expect(normalizeKeybinding('Ctrl+Option+`')).toBe('Control+Alt+`')

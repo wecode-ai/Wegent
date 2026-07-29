@@ -781,6 +781,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
+      element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return element.textContent?.trim() ?? ''
     }
     case 'expandProcessingSummaries':

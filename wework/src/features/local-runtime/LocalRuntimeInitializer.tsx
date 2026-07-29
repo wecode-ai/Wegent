@@ -19,6 +19,7 @@ import {
   type LocalExecutorCloudConnection,
 } from '@/features/cloud-connection/localExecutorCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getPlatform } from '@/lib/platform'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   copyLocalExecutorDebugInfo,
@@ -28,7 +29,11 @@ import {
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
 
-const LOCAL_EXECUTOR_LOG_PATH = '~/.wegent-executor/logs/executor.log'
+function getLocalExecutorLogDisplayPath(): string {
+  return getPlatform() === 'win'
+    ? '%USERPROFILE%\\.wegent-executor\\logs\\executor.log'
+    : '~/.wegent-executor/logs/executor.log'
+}
 const LOCAL_RUNTIME_SLOW_STARTUP_MS = 10000
 
 type LocalRuntimePhase = 'starting' | 'ready' | 'failed'
@@ -103,7 +108,7 @@ async function resolveLocalRuntimeState(
 }
 
 function formatLocalRuntimeDebugInfo(info: LocalRuntimeDebugInfo): string {
-  const logPath = info.log?.path ?? LOCAL_EXECUTOR_LOG_PATH
+  const logPath = info.log?.path ?? getLocalExecutorLogDisplayPath()
   const logContent = info.logError
     ? `Failed to read executor log: ${info.logError}`
     : info.log?.content || '(executor log is empty)'
@@ -421,7 +426,7 @@ export function LocalRuntimeInitializer({
                 <div className="mt-3 text-xs leading-5 text-text-secondary">
                   <span className="font-medium">{t('log_label')}: </span>
                   <code className="break-all rounded bg-base px-1.5 py-0.5 text-text-primary">
-                    {LOCAL_EXECUTOR_LOG_PATH}
+                    {getLocalExecutorLogDisplayPath()}
                   </code>
                 </div>
               </div>

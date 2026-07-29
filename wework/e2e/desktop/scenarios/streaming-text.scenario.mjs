@@ -654,7 +654,7 @@ export function createDesktopScenario({
         `The streaming conversation jumped from ${userScrollPosition.scrollTop}px to ${stableUserScrollPosition.scrollTop}px after the user scrolled upward`
       )
 
-      await control.command('scrollIntoView', VIEWPORT_ANCHOR_SELECTOR)
+      await control.command('scrollIntoViewAsUser', VIEWPORT_ANCHOR_SELECTOR)
       await new Promise(resolve => setTimeout(resolve, 250))
       const scrollerBeforeAppend = await getSingleElementMetrics(
         control,

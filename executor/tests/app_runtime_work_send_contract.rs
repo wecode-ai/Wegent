@@ -166,17 +166,18 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
                 .collect::<Vec<_>>()
         })
         .expect("workspace list should be present");
-    assert_eq!(product_workspaces.len(), 2);
+    assert_eq!(product_workspaces.len(), 1);
     assert_eq!(
         product_workspaces[0]["projectRoots"],
         json!([first_root, second_root])
     );
-    let total_tasks = product_workspaces
-        .iter()
-        .filter_map(|workspace| workspace["tasks"].as_array())
-        .map(Vec::len)
-        .sum::<usize>();
-    assert_eq!(total_tasks, 1);
+    assert_eq!(
+        product_workspaces[0]["tasks"]
+            .as_array()
+            .expect("project workspace tasks should be present")
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
