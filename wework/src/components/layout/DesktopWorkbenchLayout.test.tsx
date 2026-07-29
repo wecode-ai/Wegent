@@ -1253,7 +1253,8 @@ describe('DesktopWorkbenchLayout', () => {
   function renderWorkspacePanelLayout({
     mainWidth,
     withAppearance = false,
-  }: { mainWidth?: number; withAppearance?: boolean } = {}) {
+    messages,
+  }: { mainWidth?: number; withAppearance?: boolean; messages?: WorkbenchMessage[] } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
     }
@@ -1262,6 +1263,7 @@ describe('DesktopWorkbenchLayout', () => {
     const layout = (
       <DesktopWorkbenchLayout
         {...baseProps}
+        messages={messages}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -4264,6 +4266,104 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
+  test('expands the right workspace panel without the composer and restores chat', async () => {
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Ready',
+          status: 'done',
+          createdAt: '2026-07-25T00:00:00.000Z',
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    const content = screen.getByTestId('desktop-workbench-content')
+    const panelShell = screen.getByTestId('right-workspace-panel-shell')
+    const expandButton = screen.getByTestId('toggle-right-workspace-panel-expanded-button')
+
+    expect(expandButton).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(expandButton)
+
+    expect(content).toHaveStyle({ width: '100%' })
+    expect(panelShell).toHaveStyle({ width: '100%' })
+    expect(panelShell).toHaveClass('absolute', 'inset-y-0', 'right-0')
+    expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-chat-scroll-sticky-footer')).toHaveClass('z-critical')
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass('z-critical')
+    expect(screen.queryByTestId('project-chat-composer')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('restore-conversation-from-expanded-workspace-button')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-expanded-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '0px' })
+    expect(panelShell).toHaveStyle({ width: '100%' })
+
+    await userEvent.click(screen.getByTestId('restore-conversation-from-expanded-workspace-button'))
+
+    await waitFor(() => {
+      expect(content).toHaveStyle({ width: '420px' })
+      expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    })
+    expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
+    expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
+  })
+
+  test('uses the temporary chat composer as the only composer while expanded', async () => {
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Ready',
+          status: 'done',
+          createdAt: '2026-07-26T00:00:00.000Z',
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-expanded-button'))
+
+    const temporaryChat = screen.getByTestId('right-workspace-chat-panel')
+    const composerShell = within(temporaryChat).getByTestId('right-workspace-chat-composer-shell')
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(1)
+    expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
+    expect(composerShell).toHaveClass(
+      'z-critical',
+      'mx-auto',
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'max-w-[calc(100%_-_2rem)]'
+    )
+    expect(
+      within(temporaryChat).getByTestId('restore-conversation-from-expanded-workspace-button')
+    ).toBeInTheDocument()
+
+    await userEvent.click(
+      within(temporaryChat).getByTestId('restore-conversation-from-expanded-workspace-button')
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
+    })
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
+    expect(screen.getByTestId('desktop-floating-composer-card')).toBeInTheDocument()
+  })
+
   test('shows the workbench background through the right and bottom panels', async () => {
     localStorage.setItem(
       'wework.appearance',
@@ -4283,6 +4383,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-tabbar')).toHaveClass('bg-transparent')
     expect(screen.getByTestId('bottom-workspace-panel')).toHaveClass('bg-background/20')
     expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-transparent')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-expanded-button'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background')
+    expect(screen.getByTestId('right-workspace-panel-shell')).not.toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-background')
+    expect(screen.getByTestId('right-workspace-panel')).not.toHaveClass('bg-transparent')
   })
 
   test('opens the browser from the right workspace launcher row', async () => {
@@ -4779,6 +4886,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
+    expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
   })
 
   test('moves right workspace tabs into the titlebar in Tauri', async () => {

@@ -1022,7 +1022,9 @@ describe('ConnectionsSettingsPage', () => {
     expect(restartCodexButton).toHaveTextContent('重启 Codex')
     await userEvent.click(restartCodexButton)
     await waitFor(() =>
-      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart')
+      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+        proxyUrl: 'http://127.0.0.1:7890',
+      })
     )
     expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('Codex 已重启')
     expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(

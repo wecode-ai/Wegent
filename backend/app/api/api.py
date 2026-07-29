@@ -23,6 +23,7 @@ from app.api.endpoints import (
     installed_mcps,
     installed_plugins,
     knowledge,
+    knowledge_artifacts,
     knowledge_open,
     knowledge_transfer,
     knowledge_video_upload,
@@ -204,6 +205,11 @@ api_router.include_router(
 api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_artifacts.router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-artifacts"],
 )
 api_router.include_router(
     knowledge_transfer.router, prefix="/knowledge-bases", tags=["knowledge-transfer"]

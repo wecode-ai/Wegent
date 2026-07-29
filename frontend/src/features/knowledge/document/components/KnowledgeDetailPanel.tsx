@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Library, FileText, Shield } from 'lucide-react'
+import { Files, Library, FileText, MessageSquare, Shield, WandSparkles } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -22,8 +22,10 @@ import { useTeamContext } from '@/contexts/TeamContext'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
-import { DocumentPanel } from './DocumentPanel'
+import { KnowledgeSourcePanel } from './KnowledgeSourcePanel'
 import { KnowledgeBaseSummaryCard } from './KnowledgeBaseSummaryCard'
+import { ArtifactWorkspacePanel } from '@/features/knowledge/artifact/components/ArtifactWorkspacePanel'
+import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
 import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
 import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
@@ -35,6 +37,9 @@ import {
 import { getKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeBase, KnowledgeView } from '@/types/knowledge'
 import type { Team } from '@/types/api'
+import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
+import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
+import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
 
 interface KnowledgeDetailPanelProps {
   /** Currently selected knowledge base */
@@ -82,9 +87,18 @@ export function KnowledgeDetailPanel({
 
   // State for selected document IDs (for notebook mode context injection)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([])
-
-  // Document panel collapsed state (for notebook mode)
-  const [_isDocumentPanelCollapsed, setIsDocumentPanelCollapsed] = useState(false)
+  const [availableDocumentCount, setAvailableDocumentCount] = useState<number | null>(null)
+  const [sourceRefreshToken, setSourceRefreshToken] = useState(0)
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
+  const sourceApplyContinuationRef = useRef<(() => void) | null>(null)
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<'sources' | 'chat' | 'generation'>(
+    'chat'
+  )
+  const [artifactPromptRequest, setArtifactPromptRequest] = useState<ArtifactPromptRequest | null>(
+    null
+  )
+  const [capabilityDraftRequest, setCapabilityDraftRequest] =
+    useState<KnowledgeCapabilityDraftRequest | null>(null)
 
   const namespaceRoleMap = useNamespaceRoleMap()
 
@@ -119,6 +133,11 @@ export function KnowledgeDetailPanel({
     const nextKb = await getKnowledgeBase(selectedKb.id)
     onSyncKnowledgeBase(nextKb)
   }, [selectedKb, onSyncKnowledgeBase])
+
+  const openSourceDialog = useCallback((onApplied?: () => void) => {
+    sourceApplyContinuationRef.current = onApplied ?? null
+    setSourceDialogOpen(true)
+  }, [])
 
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
@@ -156,17 +175,21 @@ export function KnowledgeDetailPanel({
   // Support multiple parameter formats for compatibility
   const searchParams = useSearchParams()
   const taskIdFromUrl = useMemo(() => {
-    const fromSearchParams =
-      searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+    const fromSearchParams = getTaskQueryParam(searchParams)
     if (fromSearchParams) return fromSearchParams
     // Fallback for replaceState scenarios where useSearchParams hasn't synced yet
     if (typeof window !== 'undefined') {
       const browserParams = new URLSearchParams(window.location.search)
-      return (
-        browserParams.get('taskId') || browserParams.get('task_id') || browserParams.get('taskid')
-      )
+      return getTaskQueryParam(browserParams)
     }
     return null
+  }, [searchParams])
+  const initialDocumentId = useMemo(() => {
+    const rawId = searchParams.get('documentId')
+    if (!rawId) return undefined
+
+    const documentId = Number(rawId)
+    return Number.isInteger(documentId) && documentId > 0 ? documentId : undefined
   }, [searchParams])
 
   // Use ref for taskIdFromUrl to avoid resetting panel state when taskId changes
@@ -182,16 +205,25 @@ export function KnowledgeDetailPanel({
   // - On initial mount: preserve task if taskId is in URL (user navigating from history)
   // - On KB switch: always clear task (the old taskId belongs to a different KB)
   useEffect(() => {
-    setActiveTab('documents')
-    setSelectedDocumentIds([])
-    setIsDocumentPanelCollapsed(false)
+    const isKbSwitch = prevKbIdRef.current !== null && prevKbIdRef.current !== selectedKb?.id
+    const isInitialKnowledgeBase = prevKbIdRef.current === null && selectedKb?.id != null
+
+    if (isInitialKnowledgeBase || isKbSwitch) {
+      setActiveTab('documents')
+      setSelectedDocumentIds([])
+      setAvailableDocumentCount(null)
+      setSourceDialogOpen(false)
+      sourceApplyContinuationRef.current = null
+      setMobileWorkspaceTab('chat')
+      setArtifactPromptRequest(null)
+      setCapabilityDraftRequest(null)
+    }
 
     if (currentView === 'documents') {
       selectTask(null)
     }
 
     if (currentView === 'notebook') {
-      const isKbSwitch = prevKbIdRef.current !== null && prevKbIdRef.current !== selectedKb?.id
       if (isKbSwitch || !taskIdFromUrlRef.current) {
         selectTask(null)
       }
@@ -202,13 +234,65 @@ export function KnowledgeDetailPanel({
     }
   }, [selectedKb?.id, currentView, selectTask])
 
-  // In Notebook view, show chat interface with document panel.
-  // Simplified layout: direct left-right split without extra header bars
+  // In Notebook view, organize the workflow as sources -> conversation -> generation.
   if (selectedKb && currentView === 'notebook') {
     return (
-      <div className="flex-1 flex bg-base overflow-hidden" data-testid="knowledge-detail-notebook">
-        {/* Chat area - left side */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      <div
+        className="flex flex-1 flex-col overflow-hidden border-t border-border bg-base lg:flex-row"
+        data-testid="knowledge-detail-notebook"
+      >
+        <Tabs
+          value={mobileWorkspaceTab}
+          onValueChange={value => setMobileWorkspaceTab(value as 'sources' | 'chat' | 'generation')}
+          className="border-b border-border p-2 lg:hidden"
+        >
+          <TabsList className="grid h-11 w-full grid-cols-3">
+            <TabsTrigger
+              value="sources"
+              className="h-11"
+              data-testid="knowledge-mobile-sources-tab"
+            >
+              <Files className="mr-1.5 h-4 w-4" />
+              {t('artifact.mobile.sources')}
+            </TabsTrigger>
+            <TabsTrigger value="chat" className="h-11" data-testid="knowledge-mobile-chat-tab">
+              <MessageSquare className="mr-1.5 h-4 w-4" />
+              {t('artifact.mobile.chat')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="generation"
+              className="h-11"
+              data-testid="knowledge-mobile-generation-tab"
+            >
+              <WandSparkles className="mr-1.5 h-4 w-4" />
+              {t('artifact.mobile.generation')}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <KnowledgeSourcePanel
+          key={`sources-${selectedKb.id}`}
+          knowledgeBase={selectedKb}
+          selectedDocumentIds={selectedDocumentIds}
+          availableDocumentCount={availableDocumentCount}
+          canUploadDocuments={canUploadDocuments}
+          canManageAllDocuments={canManageKb}
+          mobileVisible={mobileWorkspaceTab === 'sources'}
+          refreshToken={sourceRefreshToken}
+          groupInfo={groupInfo}
+          onGroupClick={onGroupClick}
+          isOrganization={groupInfo?.groupType === 'organization'}
+          initialDocPath={initialDocPath}
+          initialDocumentId={initialDocumentId}
+          onDocumentSelectionChange={setSelectedDocumentIds}
+          onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
+          onSourcesChanged={() => setSourceRefreshToken(current => current + 1)}
+        />
+
+        <div
+          className={`${mobileWorkspaceTab === 'chat' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col lg:flex`}
+          data-testid="knowledge-workspace-chat"
+        >
           <ChatArea
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
@@ -225,6 +309,18 @@ export function KnowledgeDetailPanel({
             selectedDocumentIds={selectedDocumentIds}
             guidedQuestions={selectedKb.guided_questions}
             inputAlwaysAtBottom={true}
+            externalPromptRequest={artifactPromptRequest}
+            onExternalPromptConsumed={requestId => {
+              setArtifactPromptRequest(current =>
+                current?.requestId === requestId ? null : current
+              )
+            }}
+            externalDraftRequest={capabilityDraftRequest}
+            onExternalDraftConsumed={requestId => {
+              setCapabilityDraftRequest(current =>
+                current?.requestId === requestId ? null : current
+              )
+            }}
             emptyStateContent={
               <KnowledgeBaseSummaryCard
                 knowledgeBase={selectedKb}
@@ -237,18 +333,39 @@ export function KnowledgeDetailPanel({
           />
         </div>
 
-        {/* Right panel - Document context selection */}
-        <DocumentPanel
-          knowledgeBase={selectedKb}
-          canUpload={canUploadDocuments}
-          canManageAllDocuments={canManageKb}
-          canManagePermissions={canManagePermissions}
-          onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
-          onDocumentSelectionChange={setSelectedDocumentIds}
-          onCollapsedChange={setIsDocumentPanelCollapsed}
-          groupInfo={groupInfo}
-          onGroupClick={onGroupClick}
-          initialDocPath={initialDocPath}
+        <ArtifactWorkspacePanel
+          key={`generation-${selectedKb.id}`}
+          knowledgeBaseId={selectedKb.id}
+          selectedDocumentIds={selectedDocumentIds}
+          refreshToken={sourceRefreshToken}
+          mobileVisible={mobileWorkspaceTab === 'generation'}
+          onAdjustSources={openSourceDialog}
+          onAvailableDocumentCountChange={setAvailableDocumentCount}
+          onAskNode={request => {
+            setArtifactPromptRequest(request)
+            setMobileWorkspaceTab('chat')
+          }}
+          onCreatePptDraft={() => {
+            setCapabilityDraftRequest({
+              requestId: `presentation-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              message: t('artifact.presentationPrompt'),
+            })
+            setMobileWorkspaceTab('chat')
+          }}
+        />
+
+        <ArtifactSourceDialog
+          knowledgeBaseId={selectedKb.id}
+          open={sourceDialogOpen}
+          selectedDocumentIds={selectedDocumentIds}
+          availableDocumentCount={availableDocumentCount}
+          onOpenChange={setSourceDialogOpen}
+          onApply={documentIds => {
+            const continuation = sourceApplyContinuationRef.current
+            setSelectedDocumentIds(documentIds)
+            sourceApplyContinuationRef.current = null
+            continuation?.()
+          }}
         />
       </div>
     )
@@ -294,6 +411,7 @@ export function KnowledgeDetailPanel({
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
               initialDocPath={initialDocPath}
+              initialDocumentId={initialDocumentId}
             />
           ) : (
             <>

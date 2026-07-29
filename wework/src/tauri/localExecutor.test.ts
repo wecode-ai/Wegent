@@ -80,6 +80,13 @@ describe('localExecutor', () => {
       [
         LOCAL_EXECUTOR_COMMANDS.request,
         {
+          method: 'runtime.codex.runtime_config.update',
+          params: { proxyUrl: null },
+        },
+      ],
+      [
+        LOCAL_EXECUTOR_COMMANDS.request,
+        {
           method: 'codex.app_server_request',
           params: {
             method: 'plugin/list',
@@ -132,7 +139,7 @@ describe('localExecutor', () => {
 
     await ensureLocalExecutorStarted()
 
-    expect(invokeMock).toHaveBeenCalledTimes(4)
+    expect(invokeMock).toHaveBeenCalledTimes(5)
   })
 
   test('defers bundled marketplace registration until Codex home initialization finishes', async () => {
@@ -168,7 +175,14 @@ describe('localExecutor', () => {
 
     await ensureLocalExecutorStarted()
 
-    expect(invokeMock).not.toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, expect.anything())
+    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'runtime.codex.runtime_config.update',
+      params: { proxyUrl: null },
+    })
+    expect(invokeMock).not.toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: expect.anything(),
+    })
 
     shouldPromptMigration = false
     await ensureLocalExecutorStarted()
