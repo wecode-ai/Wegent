@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 
 export const LOCAL_EXECUTOR_COMMANDS = {
   codexHomeMigrationStatus: 'local_executor_codex_home_migration_status',
@@ -66,6 +67,18 @@ interface CodexHomeMigrationStatus {
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
 let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
 let reconciledBundledPluginMarketplaceKey = ''
+let synchronizedCodexRuntimeConfigKey = ''
+
+async function synchronizeCodexRuntimeConfig(runtimeInstanceId?: string): Promise<void> {
+  const proxyUrl = getLocalProxyUrl().trim()
+  const synchronizationKey = `${runtimeInstanceId ?? 'current-runtime'}:${proxyUrl}`
+  if (synchronizedCodexRuntimeConfigKey === synchronizationKey) return
+  await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+    method: 'runtime.codex.runtime_config.update',
+    params: { proxyUrl: proxyUrl || null },
+  })
+  synchronizedCodexRuntimeConfigKey = synchronizationKey
+}
 
 function normalizedMarketplacePath(path: string | null | undefined): string {
   return (path ?? '').trim().replace(/\\/g, '/').replace(/\/+$/, '')
@@ -141,6 +154,9 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
         LOCAL_EXECUTOR_COMMANDS.codexHomeMigrationStatus
       )
       const status = await invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure)
+      if (status.running && status.ready !== false && !status.error) {
+        await synchronizeCodexRuntimeConfig(status.runtimeInstanceId)
+      }
       if (
         !migrationStatus.shouldPromptMigration &&
         status.running &&

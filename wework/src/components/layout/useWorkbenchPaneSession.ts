@@ -64,13 +64,12 @@ import {
   cacheRuntimeConversationMessages,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
-  discardRuntimeConversationGuidance,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
   reduceRuntimeConversationQueue,
   runtimeConversationKey,
-  settleRuntimeConversationGuidance,
+  takeAppliedRuntimeConversationGuidance,
 } from '@/features/workbench/runtimeConversationCache'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { getRuntimeMessageIndex, mergeRuntimeTranscriptMessages } from './runtimeTranscriptMessages'
@@ -827,7 +826,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         setTaskPlan(payload.plan.length > 0 ? payload : null)
       },
       onGuidanceApplied: payload => {
-        const guidanceMessage = settleRuntimeConversationGuidance(address, payload)
+        const guidanceMessage = takeAppliedRuntimeConversationGuidance(address, payload)
         const pendingEntry = [...pendingAppliedGuidancesRef.current.entries()].find(
           ([, message]) => !payload.message || message.content === payload.message
         )
@@ -839,7 +838,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           setQueuedMessages(messages =>
             messages.filter(message => message.id !== guidanceMessage.id)
           )
-          discardRuntimeConversationGuidance(address, guidanceMessage.id)
           return
         }
         appendGuidanceLocalUserMessage(guidanceMessage.content, guidanceMessage.attachments, {

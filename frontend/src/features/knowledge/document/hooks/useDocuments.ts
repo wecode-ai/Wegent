@@ -121,6 +121,10 @@ interface UseDocumentsOptions {
   autoLoad?: boolean
   /** Whether server-side pagination is enabled */
   paginationEnabled?: boolean
+  /** Skip the local metadata snapshot and request only the current server page. */
+  serverPaginationOnly?: boolean
+  /** Initial page size used by paginated views. */
+  initialPageSize?: number
   /** When true, load all documents from the local snapshot without page slicing */
   loadAll?: boolean
   folderId?: number
@@ -137,6 +141,8 @@ export function useDocuments(options: UseDocumentsOptions) {
     knowledgeBaseId,
     autoLoad = true,
     paginationEnabled = true,
+    serverPaginationOnly = false,
+    initialPageSize = DEFAULT_PAGE_SIZE,
     loadAll = false,
     folderId,
     includeSubfolders = false,
@@ -154,7 +160,7 @@ export function useDocuments(options: UseDocumentsOptions) {
 
   // Pagination state (only meaningful when paginationEnabled=true)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [pageSize, setPageSize] = useState(initialPageSize)
   const [totalCount, setTotalCount] = useState(0)
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
@@ -164,6 +170,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   const pageRef = useRef(page)
   const pageSizeRef = useRef(pageSize)
   const paginationEnabledRef = useRef(paginationEnabled)
+  const serverPaginationOnlyRef = useRef(serverPaginationOnly)
   const loadAllRef = useRef(loadAll)
   const knowledgeBaseIdRef = useRef(knowledgeBaseId)
   const requestSeqRef = useRef(0)
@@ -189,6 +196,9 @@ export function useDocuments(options: UseDocumentsOptions) {
   useEffect(() => {
     paginationEnabledRef.current = paginationEnabled
   }, [paginationEnabled])
+  useEffect(() => {
+    serverPaginationOnlyRef.current = serverPaginationOnly
+  }, [serverPaginationOnly])
   useEffect(() => {
     loadAllRef.current = loadAll
   }, [loadAll])
@@ -310,32 +320,8 @@ export function useDocuments(options: UseDocumentsOptions) {
         let nextTotalCount: number
 
         if (paginationEnabledRef.current || loadAllRef.current) {
-          if (localSnapshotKbIdRef.current !== currentKbId) {
-            localSnapshotModeRef.current = 'unknown'
-          }
-
-          let snapshot = localSnapshotRef.current
-          if (localSnapshotModeRef.current === 'unknown') {
-            snapshot = (await loadLocalSnapshot(currentKbId, requestSeq)) ?? []
-          }
-
-          if (requestSeq !== requestSeqRef.current) {
-            return
-          }
-
-          if (localSnapshotModeRef.current === 'local') {
-            const filteredDocuments = applyLocalQuery(snapshot, query)
-            nextTotalCount = filteredDocuments.length
-            if (loadAllRef.current) {
-              // Expand-all mode: return all filtered documents without slicing
-              nextDocuments = filteredDocuments
-            } else {
-              nextDocuments = filteredDocuments.slice(
-                (effectivePage - 1) * effectivePageSize,
-                effectivePage * effectivePageSize
-              )
-            }
-          } else {
+          // Server-only pagination takes precedence; loadAll is ignored in this mode.
+          if (serverPaginationOnlyRef.current) {
             const response = await fetchServerPage(
               currentKbId,
               query,
@@ -344,6 +330,42 @@ export function useDocuments(options: UseDocumentsOptions) {
             )
             nextDocuments = response.items
             nextTotalCount = response.total
+          } else {
+            if (localSnapshotKbIdRef.current !== currentKbId) {
+              localSnapshotModeRef.current = 'unknown'
+            }
+
+            let snapshot = localSnapshotRef.current
+            if (localSnapshotModeRef.current === 'unknown') {
+              snapshot = (await loadLocalSnapshot(currentKbId, requestSeq)) ?? []
+            }
+
+            if (requestSeq !== requestSeqRef.current) {
+              return
+            }
+
+            if (localSnapshotModeRef.current === 'local') {
+              const filteredDocuments = applyLocalQuery(snapshot, query)
+              nextTotalCount = filteredDocuments.length
+              if (loadAllRef.current) {
+                // Expand-all mode: return all filtered documents without slicing
+                nextDocuments = filteredDocuments
+              } else {
+                nextDocuments = filteredDocuments.slice(
+                  (effectivePage - 1) * effectivePageSize,
+                  effectivePage * effectivePageSize
+                )
+              }
+            } else {
+              const response = await fetchServerPage(
+                currentKbId,
+                query,
+                effectivePage,
+                effectivePageSize
+              )
+              nextDocuments = response.items
+              nextTotalCount = response.total
+            }
           }
         } else {
           // Compatibility mode: load documents without explicit pagination

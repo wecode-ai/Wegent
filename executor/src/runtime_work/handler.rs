@@ -72,14 +72,12 @@ use super::{
         workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, cached_messages, retain_runtime_handle_user_messages,
-        set_runtime_handle_messages,
+        append_runtime_handle_message, append_runtime_handle_user_message_presentation,
+        cached_messages, clear_runtime_handle_messages, set_runtime_handle_messages,
+        user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{
-        full_transcript_messages, merge_missing_user_message_metadata,
-        normalized_user_request_content, transcript_messages,
-    },
+    transcript::{full_transcript_messages, normalized_user_request_content, transcript_messages},
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
@@ -416,6 +414,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.runtime_config.update" => {
+                self.update_codex_runtime_config(payload).await
+            }
             "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,

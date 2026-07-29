@@ -607,6 +607,10 @@ async function main() {
 
   log(`Sidecar source: ${sidecarSource}`)
 
+  log('Preparing DWS sidecar...')
+  process.env.WEWORK_DWS_TARGET = target
+  await run('pnpm', ['run', 'prepare:dws'], { cwd: WEWORK_DIR })
+
   if (useDevReload) {
     process.env.WEGENT_EXECUTOR_TARGET_DIR = executorTargetDir
   }

@@ -52,6 +52,25 @@ async function findBinary(directory) {
   return null
 }
 
+function extractArchive(archive, destination) {
+  const isZip = archive.endsWith('.zip')
+  if (process.platform === 'win32') {
+    if (isZip) {
+      const result = spawnSync('tar', ['-xf', archive, '-C', destination], { stdio: 'inherit' })
+      if (result.status !== 0) throw new Error(`Failed to extract ${archive}`)
+      return
+    }
+    const result = spawnSync('tar', ['-xzf', archive, '-C', destination], { stdio: 'inherit' })
+    if (result.status !== 0) throw new Error(`Failed to extract ${archive}`)
+    return
+  }
+
+  const command = isZip ? 'unzip' : 'tar'
+  const args = isZip ? ['-q', archive, '-d', destination] : ['-xzf', archive, '-C', destination]
+  const result = spawnSync(command, args, { stdio: 'inherit' })
+  if (result.status !== 0) throw new Error(`Failed to extract ${archive}`)
+}
+
 try {
   const sources = []
   for (const sourceTarget of sourceTargets) {
@@ -59,12 +78,7 @@ try {
     const archive = join(packageRoot, 'assets', archiveName)
     const extractDirectory = join(temporaryDirectory, sourceTarget)
     await mkdir(extractDirectory, { recursive: true })
-    const command = archiveName.endsWith('.zip') ? 'unzip' : 'tar'
-    const args = archiveName.endsWith('.zip')
-      ? ['-q', archive, '-d', extractDirectory]
-      : ['-xzf', archive, '-C', extractDirectory]
-    const result = spawnSync(command, args, { stdio: 'inherit' })
-    if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
+    extractArchive(archive, extractDirectory)
     const source = await findBinary(extractDirectory)
     if (!source) throw new Error(`DWS binary is missing from ${archiveName}`)
     sources.push(source)

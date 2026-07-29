@@ -56,8 +56,10 @@ const baseProps = {
   onCreateEnvironmentBranch: vi.fn(),
   onOpenEnvironmentChangesReview: vi.fn(),
   rightPanelOpen: false,
+  rightPanelExpanded: false,
   bottomPanelOpen: false,
   onToggleRightPanel: vi.fn(),
+  onToggleRightPanelExpanded: vi.fn(),
   onToggleBottomPanel: vi.fn(),
   workspaceSessionApi,
 }
@@ -94,8 +96,47 @@ describe('WorkspacePanelActions', () => {
     render(<WorkspacePanelActions {...baseProps} environmentInfoVisible={false} />)
 
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('toggle-right-workspace-panel-expanded-button')
+    ).not.toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+  })
+
+  test('expands and restores an open right workspace panel', async () => {
+    const onToggleRightPanelExpanded = vi.fn()
+    const { rerender } = render(
+      <WorkspacePanelActions
+        {...baseProps}
+        rightPanelOpen
+        onToggleRightPanelExpanded={onToggleRightPanelExpanded}
+      />
+    )
+
+    const expandButton = screen.getByTestId('toggle-right-workspace-panel-expanded-button')
+    expect(expandButton).toHaveAttribute('aria-label', 'workbench.expand_right_workspace_panel')
+    expect(expandButton).toHaveAttribute('aria-pressed', 'false')
+
+    await userEvent.click(expandButton)
+    expect(onToggleRightPanelExpanded).toHaveBeenCalledOnce()
+
+    rerender(
+      <WorkspacePanelActions
+        {...baseProps}
+        rightPanelOpen
+        rightPanelExpanded
+        onToggleRightPanelExpanded={onToggleRightPanelExpanded}
+      />
+    )
+
+    expect(screen.getByTestId('toggle-right-workspace-panel-expanded-button')).toHaveAttribute(
+      'aria-label',
+      'workbench.restore_right_workspace_panel'
+    )
+    expect(screen.getByTestId('toggle-right-workspace-panel-expanded-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('keeps environment info action visible after environment refresh resolves empty context', () => {

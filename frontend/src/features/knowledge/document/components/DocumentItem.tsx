@@ -49,6 +49,10 @@ interface DocumentItemProps {
   onReanalyze?: (doc: KnowledgeDocument) => void
   canManage?: boolean
   canSelect?: boolean
+  /** Keep the selection control visible but disabled. */
+  selectionDisabled?: boolean
+  /** Explanation shown when selection is disabled. */
+  selectionDisabledHint?: string
   showBorder?: boolean
   selected?: boolean
   includedInFolderScope?: boolean
@@ -90,6 +94,8 @@ export function DocumentItem({
   onMove,
   canManage = true,
   canSelect = canManage,
+  selectionDisabled = false,
+  selectionDisabledHint,
   showBorder = true,
   selected = false,
   includedInFolderScope = false,
@@ -128,7 +134,7 @@ export function DocumentItem({
   const isUnmodified = document.updated_at === document.created_at
 
   const checkboxChecked = selected || includedInFolderScope
-  const checkboxDisabled = includedInFolderScope
+  const checkboxDisabled = includedInFolderScope || selectionDisabled
 
   const handleCheckboxChange = (checked: boolean | 'indeterminate') => {
     if (checkboxDisabled) return
@@ -265,6 +271,17 @@ export function DocumentItem({
 
   // Compact mode: Card layout for sidebar (notebook mode)
   if (compact) {
+    const selectionControl = (
+      <div className="flex-shrink-0" onClick={handleCheckboxClick}>
+        <Checkbox
+          checked={checkboxChecked}
+          disabled={checkboxDisabled}
+          onCheckedChange={handleCheckboxChange}
+          className="data-[state=checked]:bg-primary data-[state=checked]:border-primary h-3.5 w-3.5 disabled:opacity-60"
+        />
+      </div>
+    )
+
     return (
       <div
         className={`flex items-center gap-2 px-2 py-2 bg-base hover:bg-surface transition-colors rounded-lg border border-border group ${onViewDetail ? 'cursor-pointer' : ''}`}
@@ -272,14 +289,20 @@ export function DocumentItem({
       >
         {/* Checkbox for batch selection */}
         {(canSelect || includedInFolderScope) && (
-          <div className="flex-shrink-0" onClick={handleCheckboxClick}>
-            <Checkbox
-              checked={checkboxChecked}
-              disabled={checkboxDisabled}
-              onCheckedChange={handleCheckboxChange}
-              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary h-3.5 w-3.5 disabled:opacity-60"
-            />
-          </div>
+          <>
+            {selectionDisabled && selectionDisabledHint ? (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>{selectionControl}</TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">{selectionDisabledHint}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              selectionControl
+            )}
+          </>
         )}
 
         {/* File name and info */}
@@ -486,7 +509,10 @@ export function DocumentItem({
     >
       {/* Checkbox for batch selection */}
       {showSelectionColumn && (
-        <div onClick={handleCheckboxClick}>
+        <div
+          onClick={handleCheckboxClick}
+          title={selectionDisabled ? selectionDisabledHint : undefined}
+        >
           {(canSelect || includedInFolderScope) && (
             <Checkbox
               checked={checkboxChecked}

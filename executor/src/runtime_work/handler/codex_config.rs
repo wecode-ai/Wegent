@@ -5,6 +5,19 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn update_codex_runtime_config(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let proxy_url = optional_proxy_url(&payload)?;
+        let changed = self
+            .codex_app_server
+            .configure_runtime_proxy(proxy_url.as_deref())
+            .await
+            .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
+        Ok(json!({"updated": changed}))
+    }
+
     pub(super) async fn list_codex_models(&self, payload: Value) -> Result<Value, AppIpcError> {
         let include_hidden = bool_field(&payload, "includeHidden")
             .or_else(|| bool_field(&payload, "include_hidden"));
@@ -208,4 +221,32 @@ impl RuntimeWorkRpcHandler {
             .await
             .map_err(|error| AppIpcError::new("codex_rate_limits_unavailable", error))
     }
+}
+
+pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppIpcError> {
+    let Some(value) = payload.get("proxyUrl").or_else(|| payload.get("proxy_url")) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let proxy_url = value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppIpcError::new("invalid_proxy_url", "proxyUrl must be a string or null")
+        })?;
+    let parsed = url::Url::parse(proxy_url)
+        .map_err(|_| AppIpcError::new("invalid_proxy_url", "proxyUrl must be a valid URL"))?;
+    if !matches!(parsed.scheme(), "http" | "https" | "socks5")
+        || parsed.host_str().is_none()
+        || parsed.port().is_none()
+    {
+        return Err(AppIpcError::new(
+            "invalid_proxy_url",
+            "proxyUrl must use http, https, or socks5 and include host and port",
+        ));
+    }
+    Ok(Some(proxy_url.to_owned()))
 }
