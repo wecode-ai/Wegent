@@ -8,7 +8,10 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
-import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
+import {
+  insertPluginReference,
+  notifyLocalPluginSkillsChanged,
+} from '@/features/plugins/pluginTrial'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { ComposerTextarea } from './ComposerTextarea'
 
@@ -88,6 +91,36 @@ describe('ComposerTextarea', () => {
   beforeEach(() => {
     nativeWorkspacePickerMocks.open.mockReset()
     nativeWorkspacePickerMocks.open.mockResolvedValue([])
+  })
+
+  test('inserts plugin picker references without replacing the current draft', async () => {
+    const textareaRef = createRef<HTMLElement>()
+
+    function Harness() {
+      const [value, setValue] = useState('keep this draft')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.focus()
+      insertPluginReference('[$GitHub](/tmp/github/SKILL.md)')
+    })
+
+    await waitFor(() => expect(editor.value).toContain('[$GitHub](/tmp/github/SKILL.md)'))
+    expect(editor.value).toContain('keep this draft')
   })
 
   test('places the caret at the end when returning to a restored new-chat draft', async () => {
@@ -256,6 +289,8 @@ describe('ComposerTextarea', () => {
     expect(pluginOption).toHaveTextContent(
       '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。'
     )
+    expect(pluginOption).not.toHaveTextContent('添加')
+    expect(pluginOption.querySelectorAll('svg')).toHaveLength(1)
 
     fireEvent.click(pluginOption)
     await waitFor(() => expect(editor.value).toBe('[$GitHub](/tmp/github/SKILL.md) '))

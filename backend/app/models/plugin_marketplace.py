@@ -44,6 +44,7 @@ class Plugin(Base):
     keywords_json = Column(JSON, nullable=False, default=list)
     interface_json = Column(JSON, nullable=False, default=dict)
     visibility = Column(String(20), nullable=False, default="workspace")
+    allow_copy = Column(Boolean, nullable=False, default=False, server_default="0")
     status = Column(String(30), nullable=False, default="draft")
     latest_release_id = Column(big_integer_id_type(), nullable=True)
     featured_rank = Column(Integer, nullable=True)
@@ -154,6 +155,12 @@ class PluginSubmission(Base):
         nullable=False,
     )
     submitter_user_id = Column(big_integer_id_type(), nullable=False)
+    purpose = Column(
+        String(30),
+        nullable=False,
+        default="marketplace_publish",
+        server_default="marketplace_publish",
+    )
     status = Column(String(20), nullable=False, default="uploading")
     reviewer_user_id = Column(big_integer_id_type(), nullable=True)
     review_note = Column(Text, nullable=False, default="")

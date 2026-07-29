@@ -512,6 +512,8 @@ function mockSystemSkillsFetch(
     version: '1.0.0',
     author: 'OpenAI',
     visibility: 'public',
+    sourceProvider: 'codex',
+    sourceLabel: 'Codex 官方',
     featured: false,
     installed:
       overrides.marketplaceInstalled &&
@@ -594,6 +596,9 @@ function mockSystemSkillsFetch(
             ? 'not_installed'
             : 'installed',
       origin: 'market',
+      sourceProvider: 'codex',
+      sourceLabel: 'Codex 官方',
+      visibility: 'public',
       pluginId: 101,
       releaseId: 1001,
       componentStates: {},
@@ -843,12 +848,19 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByText('发现并接入开发工具、企业数据和专业方法。')).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-search-input')).toHaveAttribute(
       'placeholder',
-      '搜索插件'
+      '搜索插件、品牌或能力'
     )
-    expect(screen.getByTestId('plugins-search-input')).toHaveClass('h-9', 'rounded-lg')
+    expect(screen.getByTestId('plugins-search-input')).toHaveClass('h-11', 'md:h-9', 'rounded-lg')
     expect(screen.getByTestId('plugins-marketplace-source-switcher')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-marketplace-selector')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-refresh-button')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-distribution-tab-all')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('plugins-distribution-tab-official')).toHaveTextContent('Codex 官方')
+    expect(screen.getByTestId('plugins-distribution-tab-workspace')).toHaveTextContent('企业内部')
+    expect(screen.getByTestId('plugins-distribution-tab-personal')).toHaveTextContent('个人分享')
     expect(screen.getByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
       'Wework 云端市场'
     )
@@ -859,6 +871,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByRole('tab', { name: 'MCP' })).not.toBeInTheDocument()
     expect(screen.queryByText('帮我整理本周的项目进度并生成可视化报告')).not.toBeInTheDocument()
     expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
     expect(convertFileSrc).toHaveBeenCalledWith('/Users/test/plugins/documents/assets/logo.png')
     expect(screen.getAllByText('Productivity').length).toBeGreaterThan(0)
   })
@@ -870,12 +883,27 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.type(screen.getByTestId('plugins-search-input'), 'missing')
 
-    expect(await screen.findByText('找不到匹配的插件')).toBeInTheDocument()
+    expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
     expect(screen.queryByText('Documents')).not.toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/plugins/marketplace?q=missing',
       expect.objectContaining({ method: 'GET' })
     )
+  })
+
+  test('filters marketplace plugins by the prototype distribution tabs', async () => {
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-workspace'))
+
+    expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
+    expect(screen.queryByText('Documents')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
   })
 
   test('refreshes the selected marketplace from the top bar', async () => {
@@ -932,10 +960,8 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('在对话中试用')
-    )
-    expect(screen.getByTestId('plugin-marketplace-install-101')).not.toBeDisabled()
+    expect(await screen.findByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-marketplace-install-101')).not.toBeInTheDocument()
     expect(document.querySelector('img')).toHaveAttribute('src', marketplaceLogo)
     expect(fetch).toHaveBeenCalledWith(
       '/api/plugins/marketplace/101/install?device_id=current-device',
@@ -998,13 +1024,23 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-detail-toggle-101')).toBeDisabled()
   })
 
-  test('shows publishing only when the cloud capability enables it', async () => {
+  test('clears search and distribution from the empty marketplace state', async () => {
     mockSystemSkillsFetch({ canPublish: true })
     render(<PluginsWorkspace />)
 
+    await userEvent.click(await screen.findByTestId('plugins-distribution-tab-workspace'))
     await userEvent.type(await screen.findByTestId('plugins-search-input'), 'missing')
 
-    expect(await screen.findByTestId('plugins-publish-empty-button')).toHaveTextContent('发布插件')
+    expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
+    expect(screen.getByText('可以清除搜索和分类后重新浏览。')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-clear-marketplace-filters'))
+
+    expect(screen.getByTestId('plugins-search-input')).toHaveValue('')
+    expect(screen.getByTestId('plugins-distribution-tab-all')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
   })
 
   test('opens installed marketplace plugin actions and uninstalls from the row menu', async () => {
@@ -1028,14 +1064,13 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('在对话中试用')
-    )
-    expect(screen.getByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugin-marketplace-actions-101'))
 
     expect(screen.getByTestId('plugin-marketplace-actions-menu-101')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-marketplace-try-101')).toHaveTextContent('立即试用')
+    expect(screen.getByTestId('plugin-marketplace-manage-101')).toHaveTextContent('管理')
     expect(screen.getByTestId('plugin-marketplace-uninstall-101')).toHaveTextContent('卸载')
 
     await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
@@ -1095,7 +1130,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByRole('button', { name: '安装' })).toBeInTheDocument()
     expect(screen.getByText('Create and edit documents')).toBeInTheDocument()
     expect(screen.getByText('Draft a document outline from this chat')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /其他组件/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /包含能力/ })).toBeInTheDocument()
     expect(screen.getByText('Documents App')).toBeInTheDocument()
     expect(screen.getByText('documents-app')).toBeInTheDocument()
   })

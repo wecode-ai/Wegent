@@ -20,6 +20,9 @@ from app.schemas.installed_plugin import (
     InstalledPlugin,
     InstalledPluginListResponse,
     InstalledPluginUpdateRequest,
+    PluginAccessResponse,
+    PluginAccessUpdateRequest,
+    PluginCopyResponse,
     PluginMarketplaceCapabilities,
     PluginMarketplaceInstallResponse,
     PluginMarketplaceItem,
@@ -67,6 +70,7 @@ def get_plugin_marketplace_capabilities(
 ) -> PluginMarketplaceCapabilities:
     return PluginMarketplaceCapabilities(
         canPublish=_can_publish(current_user),
+        canSharePersonalPlugins=True,
     )
 
 
@@ -156,6 +160,94 @@ def list_marketplace_plugin_releases(
     return plugin_marketplace_service.list_releases(
         db, plugin_id=plugin_id, user_id=current_user.id
     )
+
+
+@router.get(
+    "/marketplace/{plugin_id}/access",
+    response_model=PluginAccessResponse,
+)
+def get_marketplace_plugin_access(
+    plugin_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginAccessResponse:
+    return plugin_marketplace_service.get_plugin_access(
+        db,
+        plugin_id=plugin_id,
+        user_id=current_user.id,
+    )
+
+
+@router.put(
+    "/marketplace/{plugin_id}/access",
+    response_model=PluginAccessResponse,
+)
+async def update_marketplace_plugin_access(
+    plugin_id: int,
+    request: PluginAccessUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginAccessResponse:
+    access, revoked_installs = plugin_marketplace_service.update_plugin_access(
+        db,
+        plugin_id=plugin_id,
+        user_id=current_user.id,
+        request=request,
+    )
+    for recipient_user_id, installed_id in revoked_installs:
+        plugin_device_installation_service.mark_uninstalling(
+            db,
+            user_id=recipient_user_id,
+            installed_kind_id=installed_id,
+        )
+        installed_plugin_service.uninstall_installed_plugin(
+            db=db,
+            user_id=recipient_user_id,
+            installed_id=installed_id,
+        )
+        try:
+            result = await _sync_global_capabilities(
+                db,
+                recipient_user_id,
+                required_installed_kind_id=installed_id,
+                expect_installed=False,
+            )
+            plugin_device_installation_service.record_uninstall_response(
+                db,
+                user_id=recipient_user_id,
+                installed_kind_id=installed_id,
+                response=result,
+            )
+        except Exception:
+            logger.exception(
+                "Plugin share revocation sync failed: plugin_id=%s user_id=%s",
+                plugin_id,
+                recipient_user_id,
+            )
+    access.revocationPendingCount = len(revoked_installs)
+    return access
+
+
+@router.post(
+    "/marketplace/{plugin_id}/copy",
+    response_model=PluginCopyResponse,
+)
+def copy_marketplace_plugin(
+    plugin_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginCopyResponse:
+    try:
+        return plugin_marketplace_service.plugin_copy_descriptor(
+            db,
+            plugin_id=plugin_id,
+            user_id=current_user.id,
+        )
+    except PluginPackageStorageError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Plugin package storage unavailable",
+        ) from exc
 
 
 @router.post(
@@ -400,7 +492,8 @@ def init_plugin_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginSubmissionInitResponse:
-    _ensure_publish_allowed(current_user)
+    if request.purpose == "marketplace_publish":
+        _ensure_publish_allowed(current_user)
     try:
         return plugin_marketplace_service.init_submission(
             db, user_id=current_user.id, request=request
@@ -420,7 +513,13 @@ def complete_plugin_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginSubmissionCompleteResponse:
-    _ensure_publish_allowed(current_user)
+    existing = plugin_marketplace_service.get_submission(
+        db,
+        user_id=current_user.id,
+        submission_id=submission_id,
+    )
+    if existing.purpose == "marketplace_publish":
+        _ensure_publish_allowed(current_user)
     try:
         item = plugin_marketplace_service.complete_submission(
             db, user_id=current_user.id, submission_id=submission_id
@@ -429,7 +528,16 @@ def complete_plugin_submission(
         raise HTTPException(
             status_code=503, detail="Plugin package storage unavailable"
         ) from exc
-    return PluginSubmissionCompleteResponse(submission=item)
+    plugin = (
+        plugin_marketplace_service.get_plugin(
+            db,
+            plugin_id=item.pluginId,
+            user_id=current_user.id,
+        )
+        if item.purpose == "restricted_share" and item.status == "approved"
+        else None
+    )
+    return PluginSubmissionCompleteResponse(submission=item, plugin=plugin)
 
 
 @router.get("/submissions/{submission_id}", response_model=PluginSubmissionItem)

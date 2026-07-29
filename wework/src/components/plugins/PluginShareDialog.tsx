@@ -1,0 +1,275 @@
+import { Search, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { PluginAccessResponse, PluginAccessTarget } from '@/types/api'
+
+interface PluginShareDialogProps {
+  pluginName: string
+  access: PluginAccessResponse
+  saving: boolean
+  error?: string | null
+  onClose: () => void
+  onSave: (access: {
+    scope: 'private' | 'restricted'
+    targets: PluginAccessTarget[]
+    allowCopy: boolean
+  }) => void
+  searchUsers: (query: string) => Promise<PluginShareUserSearchItem[]>
+  searchGroups: (query: string) => Promise<PluginShareGroupSearchItem[]>
+}
+
+export function PluginShareDialog({
+  pluginName,
+  access,
+  saving,
+  error,
+  onClose,
+  onSave,
+  searchUsers,
+  searchGroups,
+}: PluginShareDialogProps) {
+  const { t } = useTranslation('common')
+  const [scope, setScope] = useState(access.scope)
+  const [targets, setTargets] = useState(access.targets)
+  const [allowCopy, setAllowCopy] = useState(access.allowCopy)
+  const [query, setQuery] = useState('')
+  const [users, setUsers] = useState<PluginShareUserSearchItem[]>([])
+  const [groups, setGroups] = useState<PluginShareGroupSearchItem[]>([])
+  const [searching, setSearching] = useState(false)
+
+  useEffect(() => {
+    const normalized = query.trim()
+    if (!normalized || scope !== 'restricted') {
+      return
+    }
+    let current = true
+    queueMicrotask(() => {
+      if (current) setSearching(true)
+    })
+    Promise.all([searchUsers(normalized), searchGroups(normalized)])
+      .then(([nextUsers, nextGroups]) => {
+        if (!current) return
+        setUsers(nextUsers)
+        setGroups(nextGroups)
+      })
+      .finally(() => {
+        if (current) setSearching(false)
+      })
+    return () => {
+      current = false
+    }
+  }, [query, scope, searchGroups, searchUsers])
+
+  const addTarget = (target: PluginAccessTarget) => {
+    setTargets(current =>
+      current.some(
+        item => item.entityType === target.entityType && item.entityId === target.entityId
+      )
+        ? current
+        : [...current, target]
+    )
+    setQuery('')
+  }
+
+  return (
+    <div className="fixed inset-0 z-modal flex items-end justify-center bg-black/35 p-0 sm:items-center sm:p-4">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="plugin-share-title"
+        data-testid="plugin-share-dialog"
+        className="w-full max-w-lg rounded-t-2xl border border-border bg-background p-5 shadow-xl sm:rounded-2xl"
+      >
+        <header className="flex items-start justify-between gap-4">
+          <div>
+            <h2 id="plugin-share-title" className="heading-small text-text-primary">
+              {t('workbench.plugins_share_title', '定向分享插件')}
+            </h2>
+            <p className="mt-1 text-sm text-text-secondary">{pluginName}</p>
+          </div>
+          <button
+            type="button"
+            data-testid="plugin-share-close"
+            aria-label={t('common.close', '关闭')}
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface sm:h-8 sm:w-8"
+            onClick={onClose}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
+          <button
+            type="button"
+            data-testid="plugin-share-scope-private"
+            className={`h-10 rounded-lg text-sm ${
+              scope === 'private' ? 'bg-background font-medium shadow-sm' : 'text-text-secondary'
+            }`}
+            onClick={() => {
+              setScope('private')
+              setAllowCopy(false)
+              setQuery('')
+            }}
+          >
+            {t('workbench.plugins_share_private', '仅自己')}
+          </button>
+          <button
+            type="button"
+            data-testid="plugin-share-scope-restricted"
+            className={`h-10 rounded-lg text-sm ${
+              scope === 'restricted' ? 'bg-background font-medium shadow-sm' : 'text-text-secondary'
+            }`}
+            onClick={() => setScope('restricted')}
+          >
+            {t('workbench.plugins_share_restricted', '指定成员')}
+          </button>
+        </div>
+
+        {scope === 'restricted' && (
+          <div className="mt-4">
+            <label className="relative block">
+              <span className="sr-only">
+                {t('workbench.plugins_share_search', '搜索成员或部门')}
+              </span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+              <input
+                value={query}
+                data-testid="plugin-share-search"
+                className="h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                placeholder={t('workbench.plugins_share_search', '搜索成员或部门')}
+                onChange={event => setQuery(event.target.value)}
+              />
+            </label>
+            {query.trim() && (
+              <div
+                data-testid="plugin-share-search-results"
+                className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-border p-1"
+              >
+                {searching && (
+                  <p className="px-3 py-2 text-sm text-text-muted">
+                    {t('workbench.plugins_share_searching', '正在搜索…')}
+                  </p>
+                )}
+                {users.map(user => (
+                  <button
+                    key={`user-${user.id}`}
+                    type="button"
+                    data-testid={`plugin-share-user-${user.id}`}
+                    className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-surface"
+                    onClick={() =>
+                      addTarget({
+                        entityType: 'user',
+                        entityId: String(user.id),
+                        displayName: user.user_name,
+                      })
+                    }
+                  >
+                    <span className="text-sm font-medium">{user.user_name}</span>
+                    <span className="text-xs text-text-muted">
+                      {t('workbench.plugins_share_member', '成员')}
+                    </span>
+                  </button>
+                ))}
+                {groups.map(group => (
+                  <button
+                    key={`namespace-${group.id}`}
+                    type="button"
+                    data-testid={`plugin-share-namespace-${group.id}`}
+                    className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-surface"
+                    onClick={() =>
+                      addTarget({
+                        entityType: 'namespace',
+                        entityId: String(group.id),
+                        displayName: group.display_name || group.name,
+                      })
+                    }
+                  >
+                    <span className="text-sm font-medium">{group.display_name || group.name}</span>
+                    <span className="text-xs text-text-muted">
+                      {t('workbench.plugins_share_department', '部门')}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-3 flex flex-wrap gap-2" data-testid="plugin-share-targets">
+              {targets.map(target => (
+                <span
+                  key={`${target.entityType}-${target.entityId}`}
+                  className="inline-flex h-8 items-center gap-1 rounded-lg bg-surface pl-2.5 pr-1 text-sm"
+                >
+                  {target.displayName}
+                  <button
+                    type="button"
+                    aria-label={`${t('common.remove', '移除')} ${target.displayName}`}
+                    className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
+                    onClick={() =>
+                      setTargets(current =>
+                        current.filter(
+                          item =>
+                            item.entityType !== target.entityType ||
+                            item.entityId !== target.entityId
+                        )
+                      )
+                    }
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+
+            <label className="mt-4 flex min-h-11 items-center justify-between gap-4 rounded-xl border border-border px-3">
+              <span>
+                <strong className="block text-sm font-medium">
+                  {t('workbench.plugins_share_allow_copy', '允许复制')}
+                </strong>
+                <small className="block text-xs text-text-muted">
+                  {t('workbench.plugins_share_allow_copy_hint', '接收者可创建独立的本地副本')}
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                checked={allowCopy}
+                data-testid="plugin-share-allow-copy"
+                className="h-4 w-4 accent-neutral-900"
+                onChange={event => setAllowCopy(event.target.checked)}
+              />
+            </label>
+          </div>
+        )}
+
+        <p className="mt-4 text-xs text-text-muted">
+          {t('workbench.plugins_share_all_disabled', '全员可用暂未开放')}
+        </p>
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-red-600">
+            {error}
+          </p>
+        )}
+        <footer className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            className="h-10 rounded-lg px-4 text-sm hover:bg-surface"
+            onClick={onClose}
+          >
+            {t('common.cancel', '取消')}
+          </button>
+          <button
+            type="button"
+            data-testid="plugin-share-save"
+            disabled={saving || (scope === 'restricted' && targets.length === 0)}
+            className="h-10 rounded-lg bg-text-primary px-4 text-sm font-medium text-background disabled:opacity-40"
+            onClick={() =>
+              onSave({ scope, targets: scope === 'private' ? [] : targets, allowCopy })
+            }
+          >
+            {saving ? t('workbench.plugins_share_saving', '保存中…') : t('common.save', '保存')}
+          </button>
+        </footer>
+      </section>
+    </div>
+  )
+}

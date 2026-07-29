@@ -43,6 +43,7 @@ function createPlugin(logo?: string): InstalledPluginItem {
     version: '0.1.6+wegent.2',
     origin: 'market',
     sourceLabel: 'Wegent',
+    distribution: 'workspace',
     updateAvailable: false,
     componentCounts: {},
     raw,
@@ -63,6 +64,7 @@ describe('InstalledPluginRow', () => {
       'src',
       'data:image/png;base64,cG5n'
     )
+    expect(screen.getByTestId('installed-plugin-origin-59')).toHaveTextContent('企业内部')
   })
 
   test('keeps the generic icon when the plugin has no logo', () => {
@@ -74,7 +76,7 @@ describe('InstalledPluginRow', () => {
     expect(container.querySelector('svg')).toBeInTheDocument()
   })
 
-  test('uses the switch only for enablement and keeps uninstall on the trash action', () => {
+  test('uses the switch only for enablement and keeps uninstall in the more menu', () => {
     const onToggle = vi.fn()
     const onUninstall = vi.fn()
     render(
@@ -85,8 +87,9 @@ describe('InstalledPluginRow', () => {
 
     expect(onToggle).toHaveBeenCalledTimes(1)
     expect(onUninstall).not.toHaveBeenCalled()
-    expect(screen.getByTestId('installed-plugin-toggle-59')).toHaveAccessibleName('禁用 GitHub')
+    expect(screen.getByTestId('installed-plugin-toggle-59')).toHaveAccessibleName('停用插件 GitHub')
 
+    fireEvent.click(screen.getByTestId('installed-plugin-actions-59'))
     fireEvent.click(screen.getByTestId('installed-plugin-uninstall-59'))
 
     expect(onUninstall).toHaveBeenCalledTimes(1)

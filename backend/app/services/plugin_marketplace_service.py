@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 from fastapi import HTTPException
 from packaging.version import Version
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -32,9 +32,14 @@ from app.models.plugin_marketplace import (
 )
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.user import User
 from app.schemas.installed_plugin import (
     InstalledPlugin,
     InstalledPluginListResponse,
+    PluginAccessResponse,
+    PluginAccessTarget,
+    PluginAccessUpdateRequest,
+    PluginCopyResponse,
     PluginDeviceInstallationItem,
     PluginMarketplaceItem,
     PluginMarketplaceListResponse,
@@ -165,7 +170,7 @@ class PluginMarketplaceService:
             .filter(
                 Plugin.status == "published",
                 Plugin.latest_release_id.isnot(None),
-                Plugin.visibility.in_(["workspace", "public"]),
+                Plugin.visibility.in_(["personal", "workspace", "public"]),
             )
             .order_by(
                 Plugin.featured_rank.is_(None), Plugin.featured_rank, Plugin.id.desc()
@@ -444,11 +449,20 @@ class PluginMarketplaceService:
                 owner_user_id=user_id,
                 keywords_json=[],
                 interface_json={},
-                visibility="workspace",
+                visibility=(
+                    "personal" if request.purpose == "restricted_share" else "workspace"
+                ),
                 status="draft",
             )
             db.add(plugin)
             db.flush()
+        elif request.purpose == "restricted_share":
+            if plugin.status == "published" and plugin.visibility != "personal":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Published marketplace plugins cannot become personal shares",
+                )
+            plugin.visibility = "personal"
         duplicate = (
             db.query(PluginRelease)
             .filter(
@@ -479,6 +493,7 @@ class PluginMarketplaceService:
             plugin_id=plugin.id,
             release_id=release.id,
             submitter_user_id=user_id,
+            purpose=request.purpose,
             status="uploading",
         )
         db.add(submission)
@@ -547,14 +562,20 @@ class PluginMarketplaceService:
                 parsed,
                 security_report,
                 provenance={
-                    "kind": "submission",
+                    "kind": submission.purpose,
                     "submitterUserId": user_id,
                     "submissionId": submission.id,
                 },
             )
-            if plugin.status != "published":
-                plugin.status = "pending_review"
-            submission.status = "pending"
+            if submission.purpose == "restricted_share":
+                plugin.visibility = "personal"
+                self._finalize_release(db, plugin=plugin, release=release)
+                submission.status = "approved"
+                submission.reviewed_at = datetime.now()
+            else:
+                if plugin.status != "published":
+                    plugin.status = "pending_review"
+                submission.status = "pending"
             db.commit()
             if staging_key != final_key:
                 try:
@@ -1261,10 +1282,14 @@ class PluginMarketplaceService:
         plugin,
         release,
         *,
-        user_id: int,
+        user_id: int | None,
         device_id: str | None = None,
     ):
-        installed = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
+        installed = (
+            self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
+            if user_id is not None
+            else None
+        )
         installed_spec = installed.json.get("spec", {}) if installed else {}
         device_row = (
             self._device_installation(db, installed.id, device_id)
@@ -1284,6 +1309,13 @@ class PluginMarketplaceService:
         )
         source_provider = self._source_provider(plugin)
         scan_report = release.scan_report_json or {}
+        grants = self._plugin_grants(db, plugin.id)
+        owner = db.get(User, plugin.owner_user_id) if plugin.owner_user_id else None
+        access_role = (
+            "owner"
+            if user_id is not None and plugin.owner_user_id == user_id
+            else "recipient" if plugin.visibility == "personal" else "catalog"
+        )
         return PluginMarketplaceItem(
             id=plugin.id,
             remotePluginId=f"wegent~Plugin_{plugin.id}",
@@ -1305,6 +1337,13 @@ class PluginMarketplaceService:
             components=scan_report.get("components") or {},
             manifest=release.manifest_json or {},
             ownerUserId=plugin.owner_user_id or 0,
+            ownerDisplayName=owner.user_name if owner else "",
+            accessRole=access_role,
+            allowCopy=bool(plugin.allow_copy),
+            grantUserCount=sum(grant.entity_type == "user" for grant in grants),
+            grantNamespaceCount=sum(
+                grant.entity_type == "namespace" for grant in grants
+            ),
             latestReleaseId=release.id,
             listingType=plugin.listing_type,
             sourceProvider=source_provider,
@@ -1415,6 +1454,7 @@ class PluginMarketplaceService:
                 "updatePolicy": "manual",
                 "sourceProvider": self._source_provider(plugin),
                 "sourceLabel": self._source_label(plugin),
+                "visibility": plugin.visibility,
                 "displayName": plugin.display_name,
                 "description": plugin.summary or plugin.description_md,
                 "version": release.version,
@@ -1459,7 +1499,7 @@ class PluginMarketplaceService:
         if (
             not plugin
             or plugin.status != "published"
-            or plugin.visibility not in {"workspace", "public"}
+            or plugin.visibility not in {"personal", "workspace", "public"}
         ):
             raise HTTPException(status_code=404, detail="Marketplace plugin not found")
         if user_id is not None and not self._can_access_plugin(
@@ -1509,7 +1549,7 @@ class PluginMarketplaceService:
             .all()
         )
         if not grants:
-            return True
+            return plugin.visibility == "workspace"
         if any(
             grant.entity_type == "user" and grant.entity_id == str(user_id)
             for grant in grants
@@ -1540,29 +1580,271 @@ class PluginMarketplaceService:
         direct_ids = {str(row.id) for row in user_namespaces}
         if direct_ids & granted_namespace_ids:
             return True
-        parent_names = [row.name for row in user_namespaces]
-        if not parent_names:
+        user_namespace_names = [row.name for row in user_namespaces]
+        if not user_namespace_names:
             return False
-        child_filters = [
-            Namespace.name.like(
-                f"{self._escape_sql_like(name)}/%",
-                escape="\\",
-            )
-            for name in parent_names
-        ]
-        child_ids = {
-            str(row.id)
-            for row in db.query(Namespace.id)
+        granted_names = [
+            row.name
+            for row in db.query(Namespace.name)
             .filter(
+                Namespace.id.in_(
+                    int(namespace_id)
+                    for namespace_id in granted_namespace_ids
+                    if namespace_id.isdigit()
+                ),
                 Namespace.is_active.is_(True),
-                or_(*child_filters),
             )
             .all()
-        }
-        return bool(child_ids & granted_namespace_ids)
+        ]
+        return any(
+            member_name == granted_name or member_name.startswith(f"{granted_name}/")
+            for member_name in user_namespace_names
+            for granted_name in granted_names
+        )
 
-    def _escape_sql_like(self, value: str) -> str:
-        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    def get_plugin_access(
+        self, db: Session, *, plugin_id: int, user_id: int
+    ) -> PluginAccessResponse:
+        plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        targets = [
+            PluginAccessTarget(
+                entityType=grant.entity_type,
+                entityId=grant.entity_id,
+                displayName=grant.entity_display_name,
+            )
+            for grant in self._plugin_grants(db, plugin.id)
+        ]
+        return PluginAccessResponse(
+            pluginId=plugin.id,
+            scope="restricted" if targets else "private",
+            targets=targets,
+            allowCopy=bool(plugin.allow_copy and targets),
+        )
+
+    def update_plugin_access(
+        self,
+        db: Session,
+        *,
+        plugin_id: int,
+        user_id: int,
+        request: PluginAccessUpdateRequest,
+    ) -> tuple[PluginAccessResponse, list[tuple[int, int]]]:
+        plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        requested_targets = request.targets if request.scope == "restricted" else []
+        targets = self._validated_access_targets(
+            db,
+            owner_user_id=user_id,
+            targets=requested_targets,
+        )
+        if request.scope == "restricted" and not targets:
+            raise HTTPException(
+                status_code=422,
+                detail="Restricted sharing requires at least one member or department",
+            )
+
+        recipient_installs = self._recipient_installations(
+            db,
+            plugin_id=plugin.id,
+            owner_user_id=user_id,
+        )
+        (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(
+                    (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
+                ),
+                ResourceMember.resource_id == plugin.id,
+            )
+            .delete(synchronize_session=False)
+        )
+        for target in targets:
+            db.add(
+                ResourceMember.create(
+                    resource_type=ResourceType.PLUGIN.value,
+                    resource_id=plugin.id,
+                    entity_type=target.entityType,
+                    entity_id=target.entityId,
+                    entity_display_name=target.displayName,
+                    status=MemberStatus.APPROVED.value,
+                    invited_by_user_id=user_id,
+                    reviewed_by_user_id=user_id,
+                    reviewed_at=datetime.now(),
+                )
+            )
+        plugin.visibility = "personal"
+        plugin.allow_copy = bool(request.allowCopy and targets)
+        db.flush()
+        revoked = [
+            (recipient_user_id, installed_id)
+            for recipient_user_id, installed_id in recipient_installs
+            if not self._can_access_plugin(
+                db,
+                plugin=plugin,
+                user_id=recipient_user_id,
+            )
+        ]
+        db.commit()
+        return (
+            self.get_plugin_access(db, plugin_id=plugin.id, user_id=user_id),
+            revoked,
+        )
+
+    def plugin_copy_descriptor(
+        self, db: Session, *, plugin_id: int, user_id: int
+    ) -> PluginCopyResponse:
+        plugin = self._published_plugin(db, plugin_id, user_id=user_id)
+        if plugin.owner_user_id == user_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Owners already have the source plugin",
+            )
+        if not plugin.allow_copy:
+            raise HTTPException(status_code=403, detail="Plugin copying is not allowed")
+        release = self._latest_release(db, plugin)
+        if not release:
+            raise HTTPException(status_code=404, detail="Plugin release not found")
+        download_url, expires_at = plugin_package_storage.presign_download(
+            release.storage_key
+        )
+        return PluginCopyResponse(
+            sourcePluginId=plugin.id,
+            sourceReleaseId=release.id,
+            sourcePluginName=plugin.name,
+            sourceDisplayName=plugin.display_name,
+            version=release.version,
+            sha256=release.sha256,
+            downloadUrl=download_url,
+            expiresAt=expires_at,
+        )
+
+    def _owned_plugin(self, db: Session, *, plugin_id: int, user_id: int) -> Plugin:
+        plugin = db.get(Plugin, plugin_id)
+        if not plugin or plugin.owner_user_id != user_id:
+            raise HTTPException(status_code=404, detail="Owned plugin not found")
+        if plugin.status != "published" or plugin.visibility != "personal":
+            raise HTTPException(status_code=409, detail="Plugin is not shareable")
+        return plugin
+
+    def _plugin_grants(self, db: Session, plugin_id: int) -> list[ResourceMember]:
+        return (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(
+                    (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
+                ),
+                ResourceMember.resource_id == plugin_id,
+                ResourceMember.status.in_(
+                    (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
+                ),
+            )
+            .order_by(ResourceMember.entity_type, ResourceMember.entity_display_name)
+            .all()
+        )
+
+    def _validated_access_targets(
+        self,
+        db: Session,
+        *,
+        owner_user_id: int,
+        targets: list[PluginAccessTarget],
+    ) -> list[PluginAccessTarget]:
+        normalized: list[PluginAccessTarget] = []
+        seen: set[tuple[str, str]] = set()
+        for target in targets:
+            key = (target.entityType, target.entityId)
+            if key in seen:
+                continue
+            seen.add(key)
+            if target.entityType == "user":
+                if target.entityId == str(owner_user_id):
+                    continue
+                user = (
+                    db.get(User, int(target.entityId))
+                    if target.entityId.isdigit()
+                    else None
+                )
+                if not user or not user.is_active:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Invalid plugin share user",
+                    )
+                normalized.append(
+                    PluginAccessTarget(
+                        entityType="user",
+                        entityId=str(user.id),
+                        displayName=user.user_name,
+                    )
+                )
+                continue
+            namespace = (
+                db.get(Namespace, int(target.entityId))
+                if target.entityId.isdigit()
+                else None
+            )
+            if not namespace or not namespace.is_active:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid plugin share department",
+                )
+            if not self._can_select_namespace(
+                db,
+                namespace=namespace,
+                user_id=owner_user_id,
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Department is not accessible",
+                )
+            normalized.append(
+                PluginAccessTarget(
+                    entityType="namespace",
+                    entityId=str(namespace.id),
+                    displayName=namespace.display_name or namespace.name,
+                )
+            )
+        return normalized
+
+    def _can_select_namespace(
+        self, db: Session, *, namespace: Namespace, user_id: int
+    ) -> bool:
+        if namespace.owner_user_id == user_id:
+            return True
+        return (
+            db.query(ResourceMember.id)
+            .filter(
+                ResourceMember.resource_type.in_(("Namespace", "NAMESPACE")),
+                ResourceMember.resource_id == namespace.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status.in_(
+                    (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
+                ),
+            )
+            .first()
+            is not None
+        )
+
+    def _recipient_installations(
+        self, db: Session, *, plugin_id: int, owner_user_id: int
+    ) -> list[tuple[int, int]]:
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "InstalledPlugin",
+                Kind.namespace == "default",
+                Kind.user_id != owner_user_id,
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        return [
+            (row.user_id, row.id)
+            for row in rows
+            if (row.json.get("spec", {}) if isinstance(row.json, dict) else {}).get(
+                "pluginId"
+            )
+            == plugin_id
+        ]
 
     def grant_plugin_visibility(
         self,
@@ -1699,6 +1981,7 @@ class PluginMarketplaceService:
             id=submission.id,
             pluginId=submission.plugin_id,
             releaseId=submission.release_id,
+            purpose=submission.purpose,
             status=submission.status,
             reviewNote=submission.review_note,
             submittedAt=submission.submitted_at,
@@ -1732,6 +2015,8 @@ class PluginMarketplaceService:
     def _source_label(self, plugin):
         if plugin.source_provider == "codex":
             return "Codex 官方 · Wework 镜像"
+        if plugin.visibility == "personal":
+            return "个人插件"
         if plugin.source_type == "submission":
             return "社区插件"
         return "Wegent 官方"

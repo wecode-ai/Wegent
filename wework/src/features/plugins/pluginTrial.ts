@@ -1,9 +1,20 @@
 import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
+import { resolvePluginAssetUrl } from '@/components/plugins/plugin-assets'
+import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
 export const PLUGIN_TRIAL_QUEUED_EVENT = 'wework:plugin-trial-queued'
 export const LOCAL_PLUGIN_SKILLS_CHANGED_EVENT = 'wework:local-plugin-skills-changed'
 export const FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT = 'wework:focus-plugin-trial-composer'
+export const INSERT_PLUGIN_REFERENCE_EVENT = 'wework:insert-plugin-reference'
+
+export function insertPluginReference(reference: string) {
+  window.dispatchEvent(
+    new CustomEvent(INSERT_PLUGIN_REFERENCE_EVENT, {
+      detail: { reference },
+    })
+  )
+}
 
 interface PendingPluginTrial {
   input: string
@@ -47,6 +58,13 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
   return `plugin://${pluginName}@${marketplaceName}`
 }
 
+function registerPluginMentionIcon(plugin: InstalledPlugin, reference: string): void {
+  registerComposerMentionIcon(
+    reference,
+    resolvePluginAssetUrl(plugin.spec.interface?.composerIcon || plugin.spec.interface?.logo)
+  )
+}
+
 function skillFilePath(path: string): string {
   return path.endsWith('/SKILL.md') ? path : `${path.replace(/\/+$/, '')}/SKILL.md`
 }
@@ -78,6 +96,7 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
         ? `[$${skill.name}](${skillFilePath(skill.path)})`
         : null
   if (!reference) return null
+  registerPluginMentionIcon(plugin, reference)
   const defaultPrompt = firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
   if (!defaultPrompt) return `${reference} `
 
@@ -95,6 +114,20 @@ export function queuePluginTrial(plugin: InstalledPlugin): boolean {
   return queuePendingPluginTrial({
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
+    templates: plugin.spec.components.templates ?? plugin.spec.components.commands ?? [],
+  })
+}
+
+export function queuePluginPromptTrial(plugin: InstalledPlugin, prompt: string): boolean {
+  const pluginPath = pluginMentionPath(plugin)
+  const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const normalizedPrompt = prompt.trim()
+  if (!pluginPath || !pluginName || !normalizedPrompt) return false
+  const reference = `[$${pluginName}](${pluginPath})`
+  registerPluginMentionIcon(plugin, reference)
+  return queuePendingPluginTrial({
+    input: `${reference} ${normalizedPrompt}`,
+    pluginName,
     templates: plugin.spec.components.templates ?? plugin.spec.components.commands ?? [],
   })
 }

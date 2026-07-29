@@ -1033,7 +1033,7 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
@@ -1054,7 +1054,8 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
       'Wework 云端市场'
     )
-    expect(screen.getByTestId('plugins-create-button')).toHaveClass('h-11', 'w-11')
+    expect(screen.getByTestId('plugins-create-button')).toHaveClass('h-11')
+    expect(screen.getByTestId('plugins-create-button')).toHaveTextContent('创建')
     expect(screen.getByTestId('plugins-marketplace-selector')).toBeInTheDocument()
   })
 
@@ -1082,7 +1083,7 @@ describe('App plugins route', () => {
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
   })
 
   test('navigates to plugin management from the manage button', async () => {
@@ -1094,11 +1095,10 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins/manage'))
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
-    expect(screen.getByText('管理')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '插件 0' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: 'MCP 1' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '市场 1' })).toBeInTheDocument()
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '管理插件' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-management-browse-marketplace-button')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
   })
 
@@ -1110,7 +1110,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
     await waitFor(() =>
       expect(
         vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/plugins/installed'))
@@ -1118,33 +1118,15 @@ describe('App plugins route', () => {
     )
   })
 
-  test('keeps installed plugin switch knobs anchored inside the track', async () => {
+  test('keeps standalone MCP and Skill management out of the plugin page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
     renderApp()
 
-    await userEvent.click(await screen.findByRole('tab', { name: 'MCP 1' }))
-    const switchKnob = (await screen.findByTestId('installed-mcp-toggle-7')).querySelector('span')
-
-    expect(switchKnob).toHaveClass('left-1')
-  })
-
-  test('toggles installed MCPs from management page', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    renderApp()
-
-    await userEvent.click(await screen.findByRole('tab', { name: 'MCP 1' }))
-    expect(await screen.findByText('Custom Docs MCP')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('installed-mcp-toggle-7'))
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/mcps/installed/7',
-      expect.objectContaining({
-        method: 'PUT',
-        body: JSON.stringify({ enabled: false }),
-      })
-    )
+    expect(await screen.findByRole('heading', { name: '管理插件' })).toBeInTheDocument()
+    expect(screen.queryByText('Custom Docs MCP')).not.toBeInTheDocument()
+    expect(screen.queryByText('wehot')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
   })
 
   test('refreshes composer plugin candidates after toggling an installed plugin', async () => {
@@ -1185,132 +1167,5 @@ describe('App plugins route', () => {
       })
     )
     window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, pluginStateChanged)
-  })
-
-  test('opens the unified plugin creator from management', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    renderApp()
-
-    await userEvent.click(screen.getByTestId('plugin-management-create-button'))
-    await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
-
-    expect(await screen.findByTestId('plugin-create-workspace')).toBeInTheDocument()
-    expect(window.location.pathname).toBe('/plugins/create')
-  })
-
-  test('configures provider token and installs provider MCPs', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    renderApp()
-
-    await userEvent.click(await screen.findByRole('tab', { name: '市场 1' }))
-    expect(screen.getByText('MCP Router')).toBeInTheDocument()
-    fireEvent.change(screen.getByTestId('mcp-provider-token-mcp_router'), {
-      target: { value: 'token' },
-    })
-    await userEvent.click(screen.getByTestId('mcp-provider-save-token-mcp_router'))
-
-    expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('mcp-provider-install--weibo-hot-search'))
-
-    await userEvent.click(await screen.findByRole('tab', { name: 'MCP 2' }))
-    expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/mcp-providers/keys',
-      expect.objectContaining({
-        method: 'PUT',
-        body: JSON.stringify({ mcp_router: 'token' }),
-      })
-    )
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/mcps/install',
-      expect.objectContaining({
-        method: 'POST',
-        body: expect.stringContaining('"providerKey":"mcp_router"'),
-      })
-    )
-  })
-
-  test('toggles installed system skills from management page', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    renderApp()
-
-    await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
-
-    expect(await screen.findByText('wehot')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('installed-skill-toggle-42'))
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/system-skills/installed/42',
-      expect.objectContaining({
-        method: 'PUT',
-        body: JSON.stringify({ enabled: false }),
-      })
-    )
-  })
-
-  test('uninstalls system skills from management page', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    renderApp()
-
-    await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
-    expect(await screen.findByText('wehot')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('installed-skill-uninstall-42'))
-
-    await waitFor(() => expect(screen.queryByText('wehot')).not.toBeInTheDocument())
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/system-skills/installed/42',
-      expect.objectContaining({ method: 'DELETE' })
-    )
-  })
-
-  test('shows and uninstalls personal skills from management page', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    renderApp()
-
-    await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
-    expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
-    expect(screen.getByText('Analyze Excel workbooks')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('installed-skill-toggle-88'))
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/system-skills/installed/88',
-      expect.objectContaining({
-        method: 'PUT',
-        body: JSON.stringify({ enabled: false }),
-      })
-    )
-
-    await userEvent.click(screen.getByTestId('installed-skill-uninstall-88'))
-
-    await waitFor(() => expect(screen.queryByText('Excel Helper')).not.toBeInTheDocument())
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/system-skills/installed/88',
-      expect.objectContaining({ method: 'DELETE' })
-    )
-  })
-
-  test('does not expose legacy MCP and Skill creation shortcuts', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    renderApp()
-
-    await userEvent.click(screen.getByTestId('plugin-management-create-button'))
-    expect(screen.queryByTestId('plugins-create-skill-option')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('plugins-create-mcp-option')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
-
-    expect(await screen.findByTestId('plugin-create-workspace')).toBeInTheDocument()
-    expect(screen.getByText('我们应该在 Wegent 中构建什么？')).toBeInTheDocument()
-    expect(screen.getByTestId('plugin-create-prompt-input')).toHaveAttribute(
-      'placeholder',
-      'Plugin Creator'
-    )
-    expect(fetch).not.toHaveBeenCalledWith('/api/v1/kinds/skills/upload', expect.anything())
   })
 })

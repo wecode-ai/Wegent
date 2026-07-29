@@ -314,6 +314,11 @@ button:disabled {
     pointer-events: none;
   }
 
+  .composer-mention-brand-icon {
+    border-radius: 0.2em;
+    object-fit: cover;
+  }
+
   .composer-mention-icon-slot::selection,
   .composer-mention-icon::selection {
     color: inherit;

@@ -1,8 +1,18 @@
-import { ClipboardList, Cpu, ExternalLink, Package, Plug, Store, Target } from 'lucide-react'
+import {
+  ClipboardList,
+  CornerDownLeft,
+  Cpu,
+  ExternalLink,
+  Package,
+  Plug,
+  Store,
+  Target,
+} from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
+  INSERT_PLUGIN_REFERENCE_EVENT,
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
 } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
@@ -36,6 +46,7 @@ import {
 import {
   createComposerPathReference,
   findComposerMentionDeletionRange,
+  registerComposerMentionIcon,
   replaceComposerMentionTrigger,
   resolveComposerWorkspacePath,
 } from './composerMentions'
@@ -47,6 +58,7 @@ import { ComposerMentionMenu, type MentionMenuRow } from './ComposerMentionMenu'
 import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
 import type { ComposerTextareaProps } from './composerTextareaTypes'
+import { OPEN_COMPOSER_SLASH_MENU_EVENT } from './composerEvents'
 
 export type { ComposerSubmitOptions } from './composerTextareaTypes'
 
@@ -264,11 +276,11 @@ export function ComposerTextarea({
       id: candidate.key,
       title: candidate.title,
       description: candidate.description,
-      metaLabel: t('workbench.composer_plugin_add', '添加'),
       group: pluginGroup,
       searchAliases: candidate.searchAliases,
       Icon: Plug,
       iconUrl: resolvePluginAssetUrl(candidate.app.logoUrl),
+      trailingIcon: CornerDownLeft,
       enabled: candidate.enabled,
       testId: slashAppTestId(candidate.app.id),
       app: candidate.app,
@@ -616,6 +628,45 @@ export function ComposerTextarea({
     [onChange, updateAutocompleteTrigger]
   )
 
+  useEffect(() => {
+    const openSlashMenu = () => {
+      const editor = editorRef.current
+      if (!editor) return
+      const snapshot = editor.getSnapshot()
+      const before = snapshot.value.slice(0, snapshot.selectionStart)
+      const after = snapshot.value.slice(snapshot.selectionEnd)
+      const spacer = before && !/\s$/.test(before) ? ' ' : ''
+      const inserted = `${spacer}/`
+      commitEditorValue(`${before}${inserted}${after}`, before.length + inserted.length)
+      editor.focus()
+      textareaRef.current?.focus()
+    }
+    window.addEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
+    return () => window.removeEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
+  }, [commitEditorValue, textareaRef])
+
+  useEffect(() => {
+    const insertReference = (event: Event) => {
+      const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference?.trim()
+      const editor = editorRef.current
+      if (!reference || !editor) return
+      const snapshot = editor.getSnapshot()
+      const before = snapshot.value.slice(0, snapshot.selectionStart)
+      const after = snapshot.value.slice(snapshot.selectionEnd)
+      const leadingSpace = before && !/\s$/.test(before) ? ' ' : ''
+      const trailingSpace = after && !/^\s/.test(after) ? ' ' : ' '
+      const inserted = `${leadingSpace}${reference}${trailingSpace}`
+      const nextValue = `${before}${inserted}${after}`
+      const nextCursor = before.length + inserted.length
+      commitEditorValue(nextValue, nextCursor)
+      closeAutocompleteMenu()
+      editor.focus()
+      textareaRef.current?.focus()
+    }
+    window.addEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
+    return () => window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
+  }, [closeAutocompleteMenu, commitEditorValue, textareaRef])
+
   const selectMentionCandidate = useCallback(
     (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
       const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
@@ -623,6 +674,12 @@ export function ComposerTextarea({
       if (!trigger || !editor) return false
 
       const snapshot = editor.getSnapshot()
+      if (candidate.kind === 'app') {
+        registerComposerMentionIcon(
+          candidate.reference,
+          resolvePluginAssetUrl(candidate.app.logoUrl)
+        )
+      }
       const replacement = replaceComposerMentionTrigger(
         snapshot.value,
         candidate.reference,

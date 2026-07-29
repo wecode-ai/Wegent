@@ -1,9 +1,17 @@
-import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
+import {
+  ArrowUp,
+  ChevronDown,
+  ClipboardList,
+  Clock3,
+  CornerDownRight,
+  Slash,
+  Zap,
+} from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -11,6 +19,7 @@ import { ModelSelector } from './ModelSelector'
 import { PluginPickerMenu } from './PluginPickerMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { openComposerSlashMenu } from './composerEvents'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -29,9 +38,7 @@ interface ComposerToolbarProps {
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
   planModeActive?: boolean
-  onSetPlanMode?: () => void
   onClearPlanMode?: () => void
-  onSetGoal?: () => void
   onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
@@ -40,6 +47,7 @@ interface ComposerToolbarProps {
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   leadingContext?: ReactNode
+  onListLocalApps?: () => Promise<LocalDeviceApp[]>
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -62,9 +70,7 @@ export function ComposerToolbar({
   onBlockedModelSelect,
   onFileSelect,
   planModeActive = false,
-  onSetPlanMode,
   onClearPlanMode,
-  onSetGoal,
   onCompactContext,
   goalDraftActive = false,
   onCancelGoalDraft,
@@ -73,6 +79,7 @@ export function ComposerToolbar({
   onQuickPhraseSelect,
   onSubmit,
   leadingContext,
+  onListLocalApps,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -108,14 +115,24 @@ export function ComposerToolbar({
       className="mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1"
     >
       <div className="flex min-w-0 items-center gap-2">
-        <AddContextMenu
+        <AddContextMenu disabled={disabled} onFileSelect={onFileSelect} />
+        <button
+          type="button"
+          data-testid="composer-slash-button"
           disabled={disabled}
-          onFileSelect={onFileSelect}
-          onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
-          onSetGoal={onSetGoal}
-        />
+          aria-label={t('workbench.composer_open_slash_menu', '打开斜杠菜单')}
+          title={t('workbench.composer_open_slash_menu', '打开斜杠菜单')}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40"
+          onClick={openComposerSlashMenu}
+        >
+          <Slash className="h-4 w-4" />
+        </button>
         <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
-        <PluginPickerMenu disabled={disabled} iconOnly={compact} />
+        <PluginPickerMenu
+          disabled={disabled}
+          iconOnly={compact}
+          onListLocalApps={onListLocalApps}
+        />
         {leadingContext}
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />

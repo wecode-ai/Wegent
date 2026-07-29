@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import {
   composerSkillFilePath,
+  createComposerMentionElement,
   findComposerMentionDeletionRange,
   parseComposerMentions,
+  registerComposerMentionIcon,
   replaceComposerMentionTrigger,
 } from './composerMentions'
 
@@ -86,5 +88,20 @@ describe('cloud references', () => {
     expect(
       findComposerMentionDeletionRange(reference, reference.length, reference.length, 'Backspace')
     ).toEqual({ start: 0, end: reference.length, cursor: 0 })
+  })
+})
+
+describe('composer mention icons', () => {
+  test('uses a registered plugin brand icon', () => {
+    const reference = '[$GitHub](plugin://github@openai-bundled)'
+    registerComposerMentionIcon(reference, 'https://example.com/github.png')
+
+    const element = createComposerMentionElement({
+      name: 'GitHub',
+      label: 'GitHub',
+      reference,
+    })
+
+    expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
   })
 })

@@ -288,6 +288,7 @@ export function ProjectChatComposer({
           isModelSelectionReady={isModelSelectionReady}
         />
         <ComposerToolbar
+          onListLocalApps={onListLocalApps}
           canSend={canSend}
           disabled={disabled}
           models={models}
@@ -304,9 +305,7 @@ export function ProjectChatComposer({
           contextUsage={contextUsage}
           onFileSelect={onFileSelect}
           planModeActive={planModeActive}
-          onSetPlanMode={onSetPlanMode}
           onClearPlanMode={onClearPlanMode}
-          onSetGoal={onSetGoal}
           onCompactContext={onCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}

@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from app.api.endpoints.installed_plugins import _can_publish, _sync_global_capabilities
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.plugin_marketplace import (
     Plugin,
     PluginDeviceInstallation,
@@ -24,12 +25,15 @@ from app.models.plugin_marketplace import (
 )
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.skill_binary import SkillBinary
+from app.models.user import User
 from app.schemas.device import (
     DeviceCapabilityItemResult,
     DeviceCapabilitySyncResponse,
     DeviceCapabilitySyncResult,
 )
 from app.schemas.installed_plugin import (
+    PluginAccessTarget,
+    PluginAccessUpdateRequest,
     PluginSubmissionInitRequest,
     PluginUpstreamCreateRequest,
 )
@@ -314,6 +318,7 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
     assert installed.spec.origin == "market"
     assert installed.spec.pluginId == initialized.pluginId
     assert installed.spec.releaseId == initialized.releaseId
+    assert installed.spec.visibility == "workspace"
     assert installed.spec.packageRef is not None
     assert (
         test_db.query(SkillBinary).filter(SkillBinary.kind_id == installed_id).first()
@@ -764,6 +769,244 @@ def test_plugin_visibility_requires_an_approved_grant(test_db, test_user):
     test_db.commit()
     assert [
         item.id for item in service.list_plugins(test_db, user_id=test_user.id).items
+    ] == [plugin.id]
+
+
+def test_restricted_submission_is_owner_only_until_access_is_granted(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    digest = hashlib.sha256(package).hexdigest()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    recipient = User(
+        user_name="plugin-recipient",
+        password_hash=test_user.password_hash,
+        email="plugin-recipient@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(recipient)
+    test_db.commit()
+
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="gitlab-engineering",
+            displayName="GitLab Engineering",
+            version="1.0.0",
+            filename="gitlab.zip",
+            sha256=digest,
+            sizeBytes=len(package),
+            purpose="restricted_share",
+        ),
+    )
+    completed = service.complete_submission(
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+    )
+
+    plugin = test_db.get(Plugin, initialized.pluginId)
+    release = test_db.get(PluginRelease, initialized.releaseId)
+    assert completed.status == "approved"
+    assert completed.purpose == "restricted_share"
+    assert plugin.visibility == "personal"
+    assert plugin.status == "published"
+    assert release.status == "ready"
+    assert [
+        item.id for item in service.list_plugins(test_db, user_id=test_user.id).items
+    ] == [plugin.id]
+    assert service.list_plugins(test_db, user_id=recipient.id).items == []
+
+    access, revoked = service.update_plugin_access(
+        test_db,
+        plugin_id=plugin.id,
+        user_id=test_user.id,
+        request=PluginAccessUpdateRequest(
+            scope="restricted",
+            targets=[
+                PluginAccessTarget(
+                    entityType="user",
+                    entityId=str(recipient.id),
+                    displayName="forged display name",
+                )
+            ],
+            allowCopy=True,
+        ),
+    )
+
+    assert revoked == []
+    assert access.scope == "restricted"
+    assert access.allowCopy is True
+    assert access.targets[0].displayName == recipient.user_name
+    shared = service.list_plugins(test_db, user_id=recipient.id).items
+    assert [item.id for item in shared] == [plugin.id]
+    assert shared[0].accessRole == "recipient"
+    assert shared[0].allowCopy is True
+
+
+def test_restricted_access_replacement_revokes_original_install_and_copy(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    digest = hashlib.sha256(package).hexdigest()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    recipient = User(
+        user_name="copy-recipient",
+        password_hash=test_user.password_hash,
+        email="copy-recipient@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(recipient)
+    test_db.commit()
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="gitlab-engineering",
+            displayName="GitLab Engineering",
+            version="1.0.0",
+            filename="gitlab.zip",
+            sha256=digest,
+            sizeBytes=len(package),
+            purpose="restricted_share",
+        ),
+    )
+    service.complete_submission(
+        test_db, user_id=test_user.id, submission_id=initialized.submissionId
+    )
+    service.update_plugin_access(
+        test_db,
+        plugin_id=initialized.pluginId,
+        user_id=test_user.id,
+        request=PluginAccessUpdateRequest(
+            scope="restricted",
+            targets=[
+                PluginAccessTarget(
+                    entityType="user",
+                    entityId=str(recipient.id),
+                )
+            ],
+            allowCopy=True,
+        ),
+    )
+    installed = service.install(
+        test_db, user_id=recipient.id, plugin_id=initialized.pluginId
+    )
+    monkeypatch.setattr(
+        plugin_package_storage,
+        "presign_download",
+        lambda key: (f"https://objects.example/{key}", datetime.now(timezone.utc)),
+    )
+
+    copy = service.plugin_copy_descriptor(
+        test_db, plugin_id=initialized.pluginId, user_id=recipient.id
+    )
+    assert copy.sourcePluginId == initialized.pluginId
+    assert copy.sha256 == digest
+
+    access, revoked = service.update_plugin_access(
+        test_db,
+        plugin_id=initialized.pluginId,
+        user_id=test_user.id,
+        request=PluginAccessUpdateRequest(
+            scope="private",
+            targets=[],
+            allowCopy=True,
+        ),
+    )
+    installed_id = int(installed.metadata["labels"]["id"])
+    assert access.scope == "private"
+    assert access.allowCopy is False
+    assert revoked == [(recipient.id, installed_id)]
+    assert service.list_plugins(test_db, user_id=recipient.id).items == []
+    with pytest.raises(HTTPException) as exc_info:
+        service.plugin_copy_descriptor(
+            test_db, plugin_id=initialized.pluginId, user_id=recipient.id
+        )
+    assert exc_info.value.status_code == 404
+
+
+def test_namespace_grant_includes_members_of_child_departments(test_db, test_user):
+    service = PluginMarketplaceService()
+    recipient = User(
+        user_name="department-recipient",
+        password_hash=test_user.password_hash,
+        email="department-recipient@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(recipient)
+    test_db.flush()
+    parent = Namespace(
+        name="product",
+        display_name="Product",
+        owner_user_id=test_user.id,
+        is_active=True,
+    )
+    child = Namespace(
+        name="product/design",
+        display_name="Design",
+        owner_user_id=test_user.id,
+        is_active=True,
+    )
+    test_db.add_all([parent, child])
+    test_db.flush()
+    test_db.add(
+        ResourceMember.create(
+            resource_type="Namespace",
+            resource_id=child.id,
+            entity_type="user",
+            entity_id=str(recipient.id),
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    plugin = Plugin(
+        slug="department-plugin",
+        name="department-plugin",
+        display_name="Department Plugin",
+        owner_user_id=test_user.id,
+        keywords_json=[],
+        interface_json={},
+        visibility="personal",
+        status="published",
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    release = PluginRelease(
+        plugin_id=plugin.id,
+        version="1.0.0",
+        manifest_json={"name": plugin.name, "version": "1.0.0"},
+        interface_json={},
+        storage_key="plugins/department.zip",
+        sha256="f" * 64,
+        size_bytes=10,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={},
+    )
+    test_db.add(release)
+    test_db.flush()
+    plugin.latest_release_id = release.id
+    test_db.add(
+        ResourceMember.create(
+            resource_type="Plugin",
+            resource_id=plugin.id,
+            entity_type="namespace",
+            entity_id=str(parent.id),
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+
+    assert [
+        item.id for item in service.list_plugins(test_db, user_id=recipient.id).items
     ] == [plugin.id]
 
 

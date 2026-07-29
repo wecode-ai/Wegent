@@ -30,6 +30,12 @@ interface PluginDetailViewProps {
   secondaryActionLabel?: string
   secondaryActionDisabled?: boolean
   onSecondaryAction?: () => void
+  tertiaryActionLabel?: string
+  tertiaryActionDisabled?: boolean
+  onTertiaryAction?: () => void
+  onPromptSelect?: (prompt: string) => void
+  editActionLabel?: string
+  onEditAction?: () => void
   onManageConnector?: (slug: string) => void
 }
 
@@ -57,12 +63,6 @@ function formatManifestValue(value: unknown): string {
     if (typeof record.url === 'string') return record.url
   }
   return ''
-}
-
-function formatBytes(value?: number | null): string {
-  if (!value || value <= 0) return ''
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
-  return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
 function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
@@ -215,10 +215,14 @@ function pluginCapabilitySummary(plugin: InstalledPluginItem): string {
     return capabilities.join(', ')
   }
   const counts = plugin.componentCounts
-  return Object.entries(counts)
+  const countSummary = Object.entries(counts)
     .filter(([, count]) => count > 0)
     .map(([key]) => key)
     .join(', ')
+  if (countSummary) return countSummary
+
+  const componentTypes = [...new Set(buildComponentItems(plugin.raw).map(item => item.type))]
+  return componentTypes.join(', ') || 'Plugin'
 }
 
 function pluginDeviceSummary(plugin: InstalledPluginItem): string {
@@ -279,7 +283,10 @@ function detailRows(plugin: InstalledPlugin): Array<{
 }> {
   const manifest = plugin.spec.manifest ?? {}
   const homepage = plugin.spec.interface?.websiteUrl || formatManifestValue(manifest.homepage)
-  const repository = formatManifestValue(manifest.repository)
+  const privacyPolicy =
+    plugin.spec.interface?.privacyPolicyUrl || formatManifestValue(manifest.privacyPolicy)
+  const termsOfService =
+    plugin.spec.interface?.termsOfServiceUrl || formatManifestValue(manifest.termsOfService)
   return [
     {
       label: '开发者',
@@ -290,8 +297,8 @@ function detailRows(plugin: InstalledPlugin): Array<{
         '',
     },
     {
-      label: '类别',
-      value: plugin.spec.interface?.category || plugin.spec.source.type,
+      label: '版本',
+      value: plugin.spec.version || formatManifestValue(manifest.version),
     },
     {
       label: '网站',
@@ -299,17 +306,14 @@ function detailRows(plugin: InstalledPlugin): Array<{
       href: homepage.startsWith('http') ? homepage : undefined,
     },
     {
-      label: '仓库',
-      value: repository,
-      href: repository.startsWith('http') ? repository : undefined,
+      label: '隐私政策',
+      value: privacyPolicy,
+      href: privacyPolicy.startsWith('http') ? privacyPolicy : undefined,
     },
     {
-      label: '版本',
-      value: plugin.spec.version || formatManifestValue(manifest.version),
-    },
-    {
-      label: '包大小',
-      value: formatBytes(plugin.spec.packageRef?.sizeBytes),
+      label: '服务条款',
+      value: termsOfService,
+      href: termsOfService.startsWith('http') ? termsOfService : undefined,
     },
   ].filter(row => row.value)
 }
@@ -327,29 +331,88 @@ export function PluginDetailView({
   secondaryActionLabel,
   secondaryActionDisabled = false,
   onSecondaryAction,
+  tertiaryActionLabel,
+  tertiaryActionDisabled = false,
+  onTertiaryAction,
+  onPromptSelect,
+  editActionLabel,
+  onEditAction,
   onManageConnector,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
   const raw = plugin.raw
+  const isInstalled = raw.spec.installState === 'installed'
+  const distributionLabel =
+    plugin.distribution === 'official'
+      ? t('workbench.plugins_distribution_official', 'Codex 官方')
+      : plugin.distribution === 'workspace'
+        ? t('workbench.plugins_distribution_workspace', '企业内部')
+        : plugin.distribution === 'personal'
+          ? t('workbench.plugins_distribution_personal', '个人分享')
+          : t('workbench.plugins_distribution_public', '国内公开')
   const componentItems = buildComponentItems(raw)
   const componentStates = raw.spec.componentStates || {}
   const rows = [
-    { label: '来源', value: plugin.sourceLabel },
-    { label: '设备', value: pluginDeviceSummary(plugin) },
+    {
+      label: '来源',
+      value:
+        plugin.sourceLabel && plugin.sourceLabel.includes(distributionLabel)
+          ? plugin.sourceLabel
+          : plugin.sourceLabel
+            ? `${distributionLabel} · ${plugin.sourceLabel}`
+            : distributionLabel,
+    },
     { label: '功能', value: pluginCapabilitySummary(plugin) },
     ...detailRows(raw),
   ].filter(row => row.value)
   const logo = installedPluginLogo(plugin)
   const prompts = pluginPromptExamples(plugin)
   const description = pluginDisplayDescription(plugin)
+  const deviceSummary = pluginDeviceSummary(plugin)
 
-  // 按照 trae 布局分组组件
   const connectorItems = componentItems.filter(item => item.type === 'connector')
-  const skillItems = componentItems.filter(item => item.type === 'skill')
-  const mcpItems = componentItems.filter(item => item.type === 'mcp')
-  const otherItems = componentItems.filter(
-    item => !['connector', 'skill', 'mcp'].includes(item.type)
+  const guideTemplateSection = prompts.length > 0 && (
+    <section className="mt-7 space-y-3">
+      <div>
+        <h2 className="text-base font-medium leading-6 text-text-primary">
+          {t('workbench.plugin_detail_get_started', '开始使用')}
+        </h2>
+        <p className="text-xs leading-4 text-text-muted">
+          {t('workbench.plugin_detail_get_started_hint', '进入当前对话，问题可修改且不会自动发送')}
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {prompts.map((prompt, index) => (
+          <button
+            key={prompt}
+            type="button"
+            data-testid={`plugin-prompt-${index}`}
+            className="overflow-hidden rounded-xl border border-border bg-background text-left transition-colors hover:bg-surface/35"
+            onClick={() => (onPromptSelect ? onPromptSelect(prompt) : onToggle())}
+          >
+            <span className="flex h-20 items-start justify-between bg-surface p-3">
+              <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-background">
+                {logo ? (
+                  <img src={logo} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <Boxes className="h-4 w-4" />
+                )}
+              </span>
+              <ArrowRight className="h-4 w-4 text-text-muted" />
+            </span>
+            <span className="block px-3 py-2">
+              <small className="block text-xs text-text-muted">
+                {t('workbench.plugin_template', '模板')} {index + 1}
+              </small>
+              <strong className="mt-0.5 block line-clamp-2 text-xs font-medium leading-4">
+                {prompt}
+              </strong>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
   )
 
   return (
@@ -379,7 +442,7 @@ export function PluginDetailView({
             )}
           </div>
           <div className="min-w-0">
-            <h1 className="heading-medium text-text-primary">{plugin.name}</h1>
+            <h1 className="heading-medium truncate text-text-primary">{plugin.name}</h1>
             <p className="mt-0.5 truncate text-xs leading-4 text-text-secondary">
               {plugin.raw.spec.interface?.category || plugin.sourceLabel} ·{' '}
               {plugin.raw.spec.interface?.developerName ||
@@ -387,9 +450,23 @@ export function PluginDetailView({
                 plugin.sourceLabel}
               {plugin.version ? ` · v${plugin.version}` : ''}
             </p>
+            {deviceSummary && (
+              <p className="mt-1 text-xs leading-4 text-text-muted">{deviceSummary}</p>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
+            {tertiaryActionLabel && onTertiaryAction && (
+              <button
+                type="button"
+                disabled={tertiaryActionDisabled}
+                data-testid={`plugin-detail-tertiary-${plugin.id}`}
+                className="flex h-8 items-center rounded-lg border border-border px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={onTertiaryAction}
+              >
+                {tertiaryActionLabel}
+              </button>
+            )}
             {secondaryActionLabel && onSecondaryAction && (
               <button
                 type="button"
@@ -401,7 +478,7 @@ export function PluginDetailView({
                 {secondaryActionLabel}
               </button>
             )}
-            {showUninstall && (
+            {(showUninstall || onEditAction) && (
               <div className="relative order-3">
                 <button
                   type="button"
@@ -418,17 +495,32 @@ export function PluginDetailView({
                     data-testid={`plugin-detail-actions-menu-${plugin.id}`}
                     className="absolute right-0 top-9 z-30 w-28 rounded-xl border border-border bg-background p-1 shadow-xl"
                   >
-                    <button
-                      type="button"
-                      data-testid={`plugin-detail-uninstall-${plugin.id}`}
-                      className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
-                      onClick={() => {
-                        setIsActionMenuOpen(false)
-                        onUninstall()
-                      }}
-                    >
-                      {t('workbench.plugins_uninstall', '卸载')}
-                    </button>
+                    {onEditAction && (
+                      <button
+                        type="button"
+                        data-testid={`plugin-detail-edit-${plugin.id}`}
+                        className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface"
+                        onClick={() => {
+                          setIsActionMenuOpen(false)
+                          onEditAction()
+                        }}
+                      >
+                        {editActionLabel || t('workbench.plugins_continue_editing', '继续编辑')}
+                      </button>
+                    )}
+                    {showUninstall && (
+                      <button
+                        type="button"
+                        data-testid={`plugin-detail-uninstall-${plugin.id}`}
+                        className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
+                        onClick={() => {
+                          setIsActionMenuOpen(false)
+                          onUninstall()
+                        }}
+                      >
+                        {t('workbench.plugins_uninstall', '卸载')}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -436,7 +528,7 @@ export function PluginDetailView({
             <button
               type="button"
               data-testid={`plugin-detail-toggle-${plugin.id}`}
-              disabled={primaryActionDisabled}
+              disabled={primaryActionDisabled || (isInstalled && !plugin.enabled)}
               className="flex h-9 items-center gap-1.5 rounded-lg bg-text-primary px-4 text-sm font-medium leading-[18px] text-background transition-colors hover:bg-text-primary/90 disabled:cursor-wait disabled:opacity-70"
               onClick={onToggle}
             >
@@ -459,6 +551,8 @@ export function PluginDetailView({
             {actionError}
           </div>
         )}
+
+        {guideTemplateSection}
 
         {connectorItems.length > 0 && (
           <section className="mt-7 space-y-3">
@@ -486,7 +580,8 @@ export function PluginDetailView({
                   <button
                     type="button"
                     data-testid={`plugin-connection-manage-${item.componentKey}`}
-                    className="h-8 rounded-lg bg-surface px-3 text-xs font-medium hover:bg-muted"
+                    disabled={!isInstalled}
+                    className="h-8 rounded-lg bg-surface px-3 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => {
                       if (onManageConnector) {
                         onManageConnector(item.name)
@@ -495,7 +590,9 @@ export function PluginDetailView({
                       navigateTo('/settings/connections')
                     }}
                   >
-                    {t('workbench.plugin_manage_connection', '管理连接')}
+                    {isInstalled
+                      ? t('workbench.plugin_manage_connection', '管理连接')
+                      : t('workbench.plugin_connect_after_install', '安装后可连接')}
                   </button>
                 </div>
               ))}
@@ -503,210 +600,59 @@ export function PluginDetailView({
           </section>
         )}
 
-        {/* 技能部分 */}
-        {skillItems.length > 0 && (
+        {componentItems.length > 0 && (
           <section className="mt-7 space-y-3">
             <h2 className="text-base font-medium leading-6 text-text-primary">
-              {t('workbench.plugin_detail_skills', '技能')}{' '}
+              {t('workbench.plugin_detail_capabilities', '包含能力')}{' '}
               <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
-                {skillItems.length}
+                {componentItems.length}
               </span>
             </h2>
             <div className="overflow-hidden rounded-xl border border-border">
-              {skillItems.map(item => (
-                <div
-                  key={item.key}
-                  className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
-                >
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                    <BookOpenText className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
-                    <p className="line-clamp-2 text-xs leading-4 text-text-secondary">
-                      {item.description}
-                    </p>
-                  </div>
-                  {item.toggleable && (
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={componentStates[item.componentKey] ?? true}
-                      aria-label={item.name}
-                      data-testid={`plugin-component-toggle-${item.componentKey}`}
-                      className={[
-                        'relative h-[22px] w-[38px] rounded-full transition-colors',
-                        (componentStates[item.componentKey] ?? true)
-                          ? 'bg-emerald-600'
-                          : 'bg-border',
-                      ].join(' ')}
-                      onClick={() =>
-                        onComponentToggle(
-                          item.componentKey,
-                          !(componentStates[item.componentKey] ?? true)
-                        )
-                      }
-                    >
-                      <span
-                        className={[
-                          'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-                          (componentStates[item.componentKey] ?? true)
-                            ? 'translate-x-4'
-                            : 'translate-x-0',
-                        ].join(' ')}
-                      />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* MCP 服务器部分 */}
-        {mcpItems.length > 0 && (
-          <section className="mt-7 space-y-3">
-            <h2 className="text-base font-medium leading-6 text-text-primary">
-              {t('workbench.plugin_detail_mcp_servers', 'MCP 服务器')}{' '}
-              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
-                {mcpItems.length}
-              </span>
-            </h2>
-            <div className="overflow-hidden rounded-xl border border-border">
-              {mcpItems.map(item => (
-                <div
-                  key={item.key}
-                  className="grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 px-4 py-3 border-b border-border last:border-b-0"
-                >
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                    <Boxes className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
-                    <p className="truncate text-xs leading-4 text-text-secondary">
-                      {item.description}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* 其他组件（如果有的话，保留向后兼容） */}
-        {otherItems.length > 0 && (
-          <section className="mt-7 space-y-3">
-            <h2 className="text-base font-medium leading-6 text-text-primary">
-              {t('workbench.plugin_detail_other_components', '其他组件')}{' '}
-              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
-                {otherItems.length}
-              </span>
-            </h2>
-            <div className="overflow-hidden rounded-xl border border-border">
-              {otherItems.map(item => (
-                <div
-                  key={item.key}
-                  className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
-                >
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                    {(() => {
-                      const Icon = componentIcon(item.type)
-                      return <Icon className="h-4 w-4" />
-                    })()}
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="truncate text-sm font-medium leading-5">
-                      <span className="mr-2 text-xs font-normal text-text-muted">
+              {componentItems.map(item => {
+                const Icon = componentIcon(item.type)
+                const enabled = componentStates[item.componentKey] ?? true
+                return (
+                  <div
+                    key={item.key}
+                    className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
+                  >
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-xs leading-4 text-text-muted">
                         {componentTypeLabel(item.type, t)}
-                      </span>
-                      {item.name}
-                    </h3>
-                    <p className="truncate text-xs leading-4 text-text-secondary">
-                      {item.description}
-                    </p>
-                  </div>
-                  {item.toggleable ? (
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={componentStates[item.componentKey] ?? true}
-                      aria-label={item.name}
-                      data-testid={`plugin-component-toggle-${item.componentKey}`}
-                      className={[
-                        'relative h-[22px] w-[38px] rounded-full transition-colors',
-                        (componentStates[item.componentKey] ?? true)
-                          ? 'bg-emerald-600'
-                          : 'bg-border',
-                      ].join(' ')}
-                      onClick={() =>
-                        onComponentToggle(
-                          item.componentKey,
-                          !(componentStates[item.componentKey] ?? true)
-                        )
-                      }
-                    >
-                      <span
+                      </p>
+                      <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
+                      <p className="line-clamp-2 text-xs leading-4 text-text-secondary">
+                        {item.description}
+                      </p>
+                    </div>
+                    {item.toggleable && isInstalled && (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={enabled}
+                        aria-label={item.name}
+                        data-testid={`plugin-component-toggle-${item.componentKey}`}
                         className={[
-                          'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-                          (componentStates[item.componentKey] ?? true)
-                            ? 'translate-x-4'
-                            : 'translate-x-0',
+                          'relative h-[22px] w-[38px] rounded-full transition-colors',
+                          enabled ? 'bg-emerald-500' : 'bg-border',
                         ].join(' ')}
-                      />
-                    </button>
-                  ) : (
-                    <span className="text-sm leading-5 text-text-muted">
-                      {t('workbench.plugins_component_included', '已包含')}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {prompts.length > 0 && (
-          <section className="mt-7 space-y-3">
-            <div>
-              <h2 className="text-base font-medium leading-6 text-text-primary">
-                {t('workbench.plugin_detail_get_started', '开始使用')}
-              </h2>
-              <p className="text-xs leading-4 text-text-muted">
-                {t(
-                  'workbench.plugin_detail_get_started_hint',
-                  '进入当前对话，问题可修改且不会自动发送'
-                )}
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {prompts.map((prompt, index) => (
-                <button
-                  key={prompt}
-                  type="button"
-                  data-testid={`plugin-prompt-${index}`}
-                  className="overflow-hidden rounded-xl border border-border bg-background text-left transition-colors hover:bg-surface/35"
-                  onClick={onToggle}
-                >
-                  <span className="flex h-20 items-start justify-between bg-surface p-3">
-                    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-background">
-                      {logo ? (
-                        <img src={logo} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <Boxes className="h-4 w-4" />
-                      )}
-                    </span>
-                    <ArrowRight className="h-4 w-4 text-text-muted" />
-                  </span>
-                  <span className="block px-3 py-2">
-                    <small className="block text-xs text-text-muted">
-                      {t('workbench.plugin_template', '模板')} {index + 1}
-                    </small>
-                    <strong className="mt-0.5 block line-clamp-2 text-xs font-medium leading-4">
-                      {prompt}
-                    </strong>
-                  </span>
-                </button>
-              ))}
+                        onClick={() => onComponentToggle(item.componentKey, !enabled)}
+                      >
+                        <span
+                          className={[
+                            'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                            enabled ? 'translate-x-4' : 'translate-x-0',
+                          ].join(' ')}
+                        />
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </section>
         )}

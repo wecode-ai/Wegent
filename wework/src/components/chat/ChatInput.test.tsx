@@ -283,7 +283,7 @@ describe('ChatInput', () => {
     })
   })
 
-  test('selects plan mode from the add context menu', async () => {
+  test('selects plan mode from the independent slash menu button', async () => {
     const setSelectedModelOption = vi.fn()
     render(
       <ChatInput
@@ -302,8 +302,8 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('plan-mode-pill')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cancel-plan-mode-button')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('add-context-button'))
-    await userEvent.click(screen.getByTestId('set-plan-mode-button'))
+    await userEvent.click(screen.getByTestId('composer-slash-button'))
+    await userEvent.click(await screen.findByTestId('slash-command-option-plan'))
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
   })
@@ -2497,9 +2497,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('skill-selector-menu')).not.toBeInTheDocument()
   })
 
-  test('opens the desktop add context menu with file upload, plan, and goal actions', async () => {
-    const setSelectedModelOption = vi.fn()
-    const onSetGoal = vi.fn()
+  test('keeps the desktop plus button scoped to files', async () => {
     render(
       <ChatInput
         value=""
@@ -2507,38 +2505,16 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         variant="desktop"
-        projectChat={projectChatControls({ setSelectedModelOption })}
-        onSetGoal={onSetGoal}
       />
     )
 
-    await userEvent.click(screen.getByTestId('add-context-button'))
-
-    const menu = within(screen.getByTestId('add-context-menu'))
-    expect(menu.getByText('添加照片和文件')).toBeInTheDocument()
-    expect(menu.getByText('计划模式')).toBeInTheDocument()
-    expect(menu.getByText('开启计划模式')).toBeInTheDocument()
-    expect(menu.getByText('目标')).toBeInTheDocument()
-    expect(menu.getByText('设置 WeWork 将持续努力实现的目标')).toBeInTheDocument()
-    expect(menu.queryByText('Attach Google Chrome')).not.toBeInTheDocument()
-    expect(menu.queryByText('插件')).not.toBeInTheDocument()
-    expect(screen.getByTestId('attach-files-button')).toHaveClass(
-      'font-normal',
-      'text-text-primary'
-    )
-    expect(screen.getByTestId('set-plan-mode-button')).toHaveClass(
-      'font-normal',
-      'text-text-primary'
-    )
-
-    await userEvent.click(screen.getByTestId('set-plan-mode-button'))
-
-    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
-
-    await userEvent.click(screen.getByTestId('add-context-button'))
-    await userEvent.click(screen.getByTestId('set-goal-button'))
-
-    expect(onSetGoal).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('add-context-button')).toHaveAccessibleName('添加照片和文件')
+    expect(screen.getByTestId('attachment-file-input')).toBeInTheDocument()
+    expect(screen.queryByTestId('add-context-menu')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('set-plan-mode-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('set-goal-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('composer-slash-button')).toBeInTheDocument()
+    expect(screen.getByTestId('composer-plugin-picker-button')).toBeInTheDocument()
   })
 
   test('renders desktop goal status bar actions', async () => {
@@ -3567,7 +3543,6 @@ describe('ChatInput', () => {
 
   test.each([
     ['model selector', 'model-selector-button', 'model-selector-menu'],
-    ['add context menu', 'add-context-button', 'add-context-menu'],
     ['project work menu', 'project-work-button', 'project-work-menu'],
   ])(
     'closes the desktop %s when clicking outside the dropdown',

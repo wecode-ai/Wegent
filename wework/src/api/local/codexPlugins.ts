@@ -9,6 +9,7 @@ import type {
   LocalDeviceApp,
   LocalDeviceSkill,
   PluginInterface,
+  PluginCopyResponse,
   PluginMarketplaceItem,
   PluginMarketplaceListResponse,
 } from '@/types/api'
@@ -56,6 +57,14 @@ export interface LocalCodexMarketplace {
   path: string
 }
 
+export interface LocalPluginCopyImportResult {
+  pluginName: string
+  displayName: string
+  version: string
+  marketplacePath: string
+  pluginPath: string
+}
+
 function normalizeMarketplaceSource(source: string): string {
   const normalized = source.trim().replace(/\\\\/g, '/')
   return normalized.replace(/(?:\/\.agents\/plugins)?\/marketplace\.json$/i, '')
@@ -72,6 +81,12 @@ export interface LocalCodexPluginApi {
   readCodexLocalConfig(): Promise<LocalCodexLocalConfig>
   updateCodexLocalConfig(patch: LocalCodexLocalConfigPatch): Promise<LocalCodexLocalConfig>
   packageCreatedPlugin(plugin: InstalledPlugin): Promise<File>
+  linkPersonalPluginRelease(
+    plugin: InstalledPlugin,
+    cloudPluginId: number,
+    cloudReleaseId: number
+  ): Promise<void>
+  importMarketplaceCopy(descriptor: PluginCopyResponse): Promise<InstalledPlugin>
   readState(params?: {
     q?: string
     marketplaceId?: string
@@ -378,11 +393,12 @@ function toLocalDeviceSkill(skill: CodexSkillMetadata): LocalDeviceSkill {
 }
 
 function toMarketplaceItem(
-  _marketplace: CodexPluginMarketplaceEntry,
+  marketplace: CodexPluginMarketplaceEntry,
   plugin: CodexPluginSummary,
   detail?: CodexPluginDetail | null
 ): PluginMarketplaceItem {
   const components = pluginComponents(detail)
+  const isPersonal = marketplace.name === 'wegent-personal'
   return {
     id: plugin.id,
     remotePluginId: plugin.remotePluginId ?? plugin.id,
@@ -391,7 +407,7 @@ function toMarketplaceItem(
     description: pluginDescription(plugin, detail),
     version: plugin.localVersion ?? null,
     author: plugin.interface?.developerName ?? null,
-    visibility: 'personal',
+    visibility: isPersonal ? 'personal' : 'public',
     featured: false,
     installed: plugin.installed,
     installedPluginId: plugin.installed ? plugin.id : null,
@@ -408,6 +424,8 @@ function toMarketplaceItem(
       availability: plugin.availability ?? null,
     },
     ownerUserId: 0,
+    sourceProvider: isPersonal ? 'user' : 'codex',
+    sourceLabel: isPersonal ? '个人分享' : 'Codex 官方',
   }
 }
 
@@ -437,6 +455,9 @@ function toInstalledPlugin(
         catalogItemId: plugin.remotePluginId ?? plugin.id,
       },
       origin: isCreated ? 'created' : 'market',
+      sourceProvider: isCreated ? 'user' : 'codex',
+      sourceLabel: isCreated ? '个人分享' : 'Codex 官方',
+      visibility: isCreated ? 'personal' : 'public',
       displayName: pluginDisplayName(plugin),
       description: pluginDescription(plugin, detail),
       version: plugin.localVersion ?? null,
@@ -632,6 +653,70 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return new File([new Uint8Array(packaged.bytes)], packaged.name, {
         type: 'application/zip',
       })
+    },
+    async linkPersonalPluginRelease(plugin, cloudPluginId, cloudReleaseId) {
+      if (!isTauriRuntime()) return
+      const sourcePayload = plugin.spec.sourcePayload ?? {}
+      const marketplacePath = sourcePayload.marketplacePath
+      const localPluginName = sourcePayload.pluginName
+      if (typeof marketplacePath !== 'string' || typeof localPluginName !== 'string') {
+        throw new Error('Local plugin source mapping is unavailable')
+      }
+      await invoke('local_executor_link_plugin_release', {
+        marketplacePath,
+        localPluginName,
+        cloudPluginId,
+        cloudReleaseId,
+      })
+    },
+    async importMarketplaceCopy(descriptor) {
+      if (!isTauriRuntime()) {
+        throw new Error('Importing a plugin copy requires the Wework desktop app')
+      }
+      const currentState = cachedState ?? (await readState())
+      const personalMarketplace = currentState.marketplaces.find(
+        marketplace => marketplace.id === 'wegent-personal'
+      )
+      if (!personalMarketplace || !isLocalMarketplacePath(personalMarketplace.path)) {
+        throw new Error('The wegent-personal marketplace is unavailable')
+      }
+      const imported = await invoke<LocalPluginCopyImportResult>(
+        'local_executor_import_plugin_copy',
+        {
+          options: {
+            marketplacePath: personalMarketplace.path,
+            ...descriptor,
+          },
+        }
+      )
+      try {
+        await codexAppServerRequest('plugin/install', {
+          marketplacePath: personalMarketplace.path,
+          remoteMarketplaceName: null,
+          pluginName: imported.pluginName,
+        })
+      } catch (error) {
+        await invoke('local_executor_rollback_plugin_copy', {
+          marketplacePath: personalMarketplace.path,
+          pluginName: imported.pluginName,
+        }).catch(() => undefined)
+        throw new Error(
+          `Plugin copy installation failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error }
+        )
+      }
+      const nextState = await readState({ marketplaceId: personalMarketplace.id, refresh: true })
+      const installed = nextState.installedPlugins.find(
+        plugin =>
+          plugin.metadata.namespace === personalMarketplace.id &&
+          plugin.spec.source.pluginKey === imported.pluginName
+      )
+      if (!installed) {
+        throw new Error('Plugin copy installed but was not returned by App Server')
+      }
+      return installed
     },
     readState(params = {}) {
       return readState({

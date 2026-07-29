@@ -53,7 +53,7 @@ export function PluginCreateMenu({
           'flex min-w-[44px] items-center justify-center text-text-primary transition-colors',
           compact
             ? 'h-11 w-11 gap-0 rounded-xl bg-surface px-0 text-sm font-semibold hover:bg-muted'
-            : 'h-7 gap-1.5 rounded-lg bg-transparent px-2 text-sm font-medium leading-[18px] hover:bg-black/[0.06] active:bg-black/[0.10]'
+            : 'h-11 gap-1.5 rounded-lg bg-surface px-3 text-sm font-medium leading-[18px] hover:bg-muted active:bg-black/[0.10] md:h-7 md:bg-transparent md:px-2 md:hover:bg-black/[0.06]'
         )}
         onClick={onToggle}
       >

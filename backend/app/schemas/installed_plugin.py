@@ -124,6 +124,7 @@ class InstalledPluginSpec(BaseModel):
     updatePolicy: Literal["manual"] = "manual"
     sourceProvider: Literal["wegent", "codex", "user"] = "wegent"
     sourceLabel: str = "Wegent 官方"
+    visibility: Literal["personal", "workspace", "public"] = "workspace"
 
 
 class InstalledPluginStatus(BaseModel):
@@ -236,6 +237,11 @@ class PluginMarketplaceItem(BaseModel):
     )
     manifest: Dict[str, Any] = Field(default_factory=dict)
     ownerUserId: int
+    ownerDisplayName: str = ""
+    accessRole: Literal["catalog", "owner", "recipient"] = "catalog"
+    allowCopy: bool = False
+    grantUserCount: int = 0
+    grantNamespaceCount: int = 0
     latestReleaseId: Optional[int] = None
     listingType: Literal["plugin", "skill"] = "plugin"
     origin: Literal["market"] = "market"
@@ -261,6 +267,7 @@ class PluginMarketplaceCapabilities(BaseModel):
     """User-specific marketplace operations enabled by server policy."""
 
     canPublish: bool = False
+    canSharePersonalPlugins: bool = True
 
 
 class PluginReleaseItem(BaseModel):
@@ -287,6 +294,7 @@ class PluginSubmissionInitRequest(BaseModel):
     sha256: str = Field(min_length=64, max_length=64)
     sizeBytes: int = Field(gt=0, le=50 * 1024 * 1024)
     listingType: Literal["plugin", "skill"] = "plugin"
+    purpose: Literal["marketplace_publish", "restricted_share"] = "marketplace_publish"
 
 
 class PluginSubmissionInitResponse(BaseModel):
@@ -301,6 +309,7 @@ class PluginSubmissionItem(BaseModel):
     id: int
     pluginId: int
     releaseId: int
+    purpose: Literal["marketplace_publish", "restricted_share"] = "marketplace_publish"
     status: Literal[
         "uploading",
         "scanning",
@@ -316,6 +325,38 @@ class PluginSubmissionItem(BaseModel):
 
 class PluginSubmissionCompleteResponse(BaseModel):
     submission: PluginSubmissionItem
+    plugin: Optional[PluginMarketplaceItem] = None
+
+
+class PluginAccessTarget(BaseModel):
+    entityType: Literal["user", "namespace"]
+    entityId: str = Field(..., min_length=1, max_length=100)
+    displayName: str = ""
+
+
+class PluginAccessUpdateRequest(BaseModel):
+    scope: Literal["private", "restricted"]
+    targets: List[PluginAccessTarget] = Field(default_factory=list)
+    allowCopy: bool = False
+
+
+class PluginAccessResponse(BaseModel):
+    pluginId: int
+    scope: Literal["private", "restricted"]
+    targets: List[PluginAccessTarget] = Field(default_factory=list)
+    allowCopy: bool = False
+    revocationPendingCount: int = 0
+
+
+class PluginCopyResponse(BaseModel):
+    sourcePluginId: int
+    sourceReleaseId: int
+    sourcePluginName: str
+    sourceDisplayName: str
+    version: str
+    sha256: str
+    downloadUrl: str
+    expiresAt: datetime
 
 
 class PluginSubmissionListResponse(BaseModel):

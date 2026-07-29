@@ -1,46 +1,32 @@
-import { Boxes, ExternalLink, Puzzle, Search } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { createHttpClient } from '@/api/http'
-import { createPluginApi } from '@/api/plugins'
-import { getRuntimeConfig } from '@/config/runtime'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { queuePluginTrial } from '@/features/plugins/pluginTrial'
+import { Boxes, CornerDownLeft, ExternalLink, Puzzle, Search } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { insertPluginReference } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
-import type { InstalledPlugin } from '@/types/api'
+import type { LocalDeviceApp } from '@/types/api'
 import { resolvePluginAssetUrl } from '@/components/plugins/plugin-assets'
+import { appReference, displayAppName } from './composerMentionCandidates'
+import { registerComposerMentionIcon } from './composerMentions'
 
 interface PluginPickerMenuProps {
   disabled?: boolean
   iconOnly?: boolean
+  onListLocalApps?: () => Promise<LocalDeviceApp[]>
 }
 
-function pluginId(plugin: InstalledPlugin): string {
-  const labels = plugin.metadata.labels
-  if (labels && typeof labels === 'object' && 'id' in labels) {
-    return String((labels as Record<string, unknown>).id)
-  }
-  return `${plugin.metadata.namespace}:${plugin.metadata.name}`
-}
+const RECENT_PLUGIN_APPS_KEY = 'wework:composer:recent-plugin-apps'
 
-export function PluginPickerMenu({ disabled = false, iconOnly = false }: PluginPickerMenuProps) {
+export function PluginPickerMenu({
+  disabled = false,
+  iconOnly = false,
+  onListLocalApps,
+}: PluginPickerMenuProps) {
   const { t } = useTranslation('common')
-  const cloudConnection = useOptionalCloudConnection()
   const rootRef = useRef<HTMLDivElement>(null)
-  const api = useMemo(() => {
-    const runtime = getRuntimeConfig()
-    return createPluginApi(
-      createHttpClient({
-        baseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
-        getToken: () => cloudConnection.token,
-        redirectOnUnauthorized: false,
-      })
-    )
-  }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [plugins, setPlugins] = useState<InstalledPlugin[]>([])
-  const [loading, setLoading] = useState(false)
+  const [apps, setApps] = useState<LocalDeviceApp[]>([])
+  const [loading, setLoading] = useState(Boolean(onListLocalApps))
 
   useEffect(() => {
     if (!open) return
@@ -52,15 +38,28 @@ export function PluginPickerMenu({ disabled = false, iconOnly = false }: PluginP
   }, [open])
 
   useEffect(() => {
-    if (!open) return
     let current = true
-    api
-      .listInstalledPlugins()
-      .then(response => {
-        if (current) setPlugins(response.items.filter(plugin => plugin.spec.enabled))
+    if (!onListLocalApps) return
+    onListLocalApps()
+      .then(items => {
+        if (!current) return
+        const recentIds = new Map(
+          JSON.parse(window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]').map(
+            (id: string, index: number) => [id, index]
+          )
+        )
+        setApps(
+          items
+            .filter(app => app.isEnabled !== false && app.isAccessible !== false)
+            .sort(
+              (left, right) =>
+                (recentIds.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+                (recentIds.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+            )
+        )
       })
       .catch(() => {
-        if (current) setPlugins([])
+        if (current) setApps([])
       })
       .finally(() => {
         if (current) setLoading(false)
@@ -68,10 +67,11 @@ export function PluginPickerMenu({ disabled = false, iconOnly = false }: PluginP
     return () => {
       current = false
     }
-  }, [api, open])
+  }, [onListLocalApps])
 
-  const visiblePlugins = plugins.filter(plugin => {
-    const text = `${plugin.spec.displayName} ${plugin.spec.description}`.toLowerCase()
+  const visibleApps = apps.filter(app => {
+    const text =
+      `${app.name} ${app.description ?? ''} ${app.pluginDisplayNames?.join(' ') ?? ''}`.toLowerCase()
     return text.includes(query.trim().toLowerCase())
   })
 
@@ -87,19 +87,36 @@ export function PluginPickerMenu({ disabled = false, iconOnly = false }: PluginP
           'flex h-7 items-center gap-1.5 rounded-lg text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
           iconOnly ? 'w-7 justify-center px-0' : 'px-2',
         ].join(' ')}
-        onClick={() => {
-          if (!open) setLoading(true)
-          setOpen(!open)
-        }}
+        onClick={() => setOpen(!open)}
       >
         <Puzzle className="h-4 w-4" />
-        {!iconOnly && <span>{t('workbench.composer_plugins', '插件')}</span>}
+        {!iconOnly && (
+          <>
+            <span>{t('workbench.composer_plugins', '插件')}</span>
+            {apps.slice(0, 3).map(app => {
+              const logo = resolvePluginAssetUrl(app.logoUrl)
+              return (
+                <span
+                  key={app.id}
+                  className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-md border border-border bg-background"
+                >
+                  {logo ? (
+                    <img src={logo} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <Boxes className="h-3 w-3" />
+                  )}
+                </span>
+              )
+            })}
+            {apps.length > 3 && <span className="text-xs text-text-muted">+{apps.length - 3}</span>}
+          </>
+        )}
       </button>
 
       {open && (
         <div
           data-testid="composer-plugin-picker"
-          className="absolute bottom-9 left-0 z-popover w-[430px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border border-border bg-popover p-2 shadow-xl"
+          className="absolute bottom-9 left-0 z-popover w-[min(760px,calc(100vw-36px))] overflow-hidden rounded-xl border border-border bg-popover p-2 shadow-xl"
         >
           <label className="relative mb-1 block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
@@ -121,19 +138,27 @@ export function PluginPickerMenu({ disabled = false, iconOnly = false }: PluginP
               <div className="px-2 py-4 text-sm text-text-muted">
                 {t('workbench.plugins_loading_plugins', '正在加载插件')}
               </div>
-            ) : (
-              visiblePlugins.slice(0, 8).map(plugin => {
-                const logo = resolvePluginAssetUrl(
-                  plugin.spec.interface?.composerIcon || plugin.spec.interface?.logo
-                )
+            ) : visibleApps.length > 0 ? (
+              visibleApps.slice(0, 8).map(app => {
+                const logo = resolvePluginAssetUrl(app.logoUrl)
                 return (
                   <button
-                    key={pluginId(plugin)}
+                    key={app.id}
                     type="button"
-                    data-testid={`composer-plugin-picker-item-${pluginId(plugin)}`}
+                    data-testid={`composer-plugin-picker-item-${app.id}`}
                     className="grid min-h-11 w-full grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
                     onClick={() => {
-                      if (queuePluginTrial(plugin)) setOpen(false)
+                      const reference = appReference(app)
+                      registerComposerMentionIcon(reference, logo)
+                      insertPluginReference(reference)
+                      const recent = JSON.parse(
+                        window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]'
+                      ) as string[]
+                      window.localStorage.setItem(
+                        RECENT_PLUGIN_APPS_KEY,
+                        JSON.stringify([app.id, ...recent.filter(id => id !== app.id)].slice(0, 8))
+                      )
+                      setOpen(false)
                     }}
                   >
                     <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
@@ -145,18 +170,23 @@ export function PluginPickerMenu({ disabled = false, iconOnly = false }: PluginP
                     </span>
                     <span className="min-w-0">
                       <strong className="block truncate text-sm font-medium">
-                        {plugin.spec.displayName || plugin.spec.source.pluginKey}
+                        {displayAppName(app)}
                       </strong>
                       <small className="block truncate text-xs text-text-muted">
-                        {plugin.spec.description}
+                        {app.description}
                       </small>
                     </span>
-                    <span className="text-xs text-text-muted">
-                      {t('workbench.composer_plugin_add', '添加')}
-                    </span>
+                    <CornerDownLeft className="h-4 w-4 text-text-muted" />
                   </button>
                 )
               })
+            ) : (
+              <div className="px-2 py-4 text-sm text-text-muted">
+                {t(
+                  'workbench.composer_no_available_plugins',
+                  '当前账号没有已安装且启用的匹配插件。'
+                )}
+              </div>
             )}
           </div>
           <button

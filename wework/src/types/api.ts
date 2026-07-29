@@ -1865,6 +1865,7 @@ export interface InstalledPlugin {
     updatePolicy?: 'manual'
     sourceProvider?: 'wegent' | 'codex' | 'user'
     sourceLabel?: string
+    visibility?: 'personal' | 'workspace' | 'public'
     displayName: string
     description: string
     version?: string | null
@@ -1916,6 +1917,11 @@ export interface PluginMarketplaceItem {
   components: InstalledPluginComponents
   manifest: Record<string, unknown>
   ownerUserId: number
+  ownerDisplayName?: string
+  accessRole?: 'catalog' | 'owner' | 'recipient'
+  allowCopy?: boolean
+  grantUserCount?: number
+  grantNamespaceCount?: number
   latestReleaseId?: number | null
   listingType?: 'plugin' | 'skill'
   origin?: 'market'
@@ -1949,6 +1955,7 @@ export interface PluginMarketplaceInstallResponse {
 
 export interface PluginMarketplaceCapabilities {
   canPublish: boolean
+  canSharePersonalPlugins?: boolean
 }
 
 export interface InstalledPluginUpdateRequest {
@@ -1967,12 +1974,14 @@ export interface PluginSubmissionInitRequest {
   sha256: string
   sizeBytes: number
   listingType?: 'plugin' | 'skill'
+  purpose?: 'marketplace_publish' | 'restricted_share'
 }
 
 export interface PluginSubmissionInitResponse {
   submissionId: number
   pluginId: number
   releaseId: number
+  purpose?: 'marketplace_publish' | 'restricted_share'
   uploadUrl: string
   expiresAt: string
 }
@@ -1989,6 +1998,35 @@ export interface PluginSubmissionItem {
 
 export interface PluginSubmissionCompleteResponse {
   submission: PluginSubmissionItem
+  plugin?: PluginMarketplaceItem | null
+}
+
+export interface PluginAccessTarget {
+  entityType: 'user' | 'namespace'
+  entityId: string
+  displayName: string
+}
+
+export interface PluginAccessUpdateRequest {
+  scope: 'private' | 'restricted'
+  targets: PluginAccessTarget[]
+  allowCopy: boolean
+}
+
+export interface PluginAccessResponse extends PluginAccessUpdateRequest {
+  pluginId: number
+  revocationPendingCount: number
+}
+
+export interface PluginCopyResponse {
+  sourcePluginId: number
+  sourceReleaseId: number
+  sourcePluginName: string
+  sourceDisplayName: string
+  version: string
+  sha256: string
+  downloadUrl: string
+  expiresAt: string
 }
 
 export type ChatBlockType =

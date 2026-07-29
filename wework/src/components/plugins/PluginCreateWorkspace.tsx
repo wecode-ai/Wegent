@@ -20,6 +20,10 @@ export function PluginCreateWorkspace({
     new URLSearchParams(window.location.search).get('type') === 'skill'
       ? 'skill'
       : 'plugin'
+  const editPluginName =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('edit')?.trim() || ''
+      : ''
   const { projectChat, sendCurrentInput } = useWorkbench()
   const [prompt, setPrompt] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -38,7 +42,9 @@ export function PluginCreateWorkspace({
       },
     ])
     const message = [
-      'Use the Codex plugin-creator workflow to create a local Codex-compatible plugin for Wegent.',
+      editPluginName
+        ? `Use the Codex plugin-creator workflow to continue editing the existing local plugin "${editPluginName}" in Wegent.`
+        : 'Use the Codex plugin-creator workflow to create a local Codex-compatible plugin for Wegent.',
       'Install it into the managed local marketplace named wegent-personal. Do not upload it or publish it.',
       createType === 'skill'
         ? 'Create a single-Skill plugin: .codex-plugin/plugin.json plus exactly one skills/<slug>/SKILL.md.'
@@ -93,9 +99,11 @@ export function PluginCreateWorkspace({
 
       <section className="mx-auto flex min-h-[calc(100vh-52px)] w-full max-w-[920px] flex-col items-center justify-center px-5 pb-20">
         <h1 className="mb-16 text-center text-2xl font-medium leading-[48px] tracking-normal text-text-primary">
-          {createType === 'skill'
-            ? t('workbench.plugins_create_skill_prompt_title', '你想创建一个什么技能？')
-            : t('workbench.plugins_create_prompt_title', '我们应该在 Wegent 中构建什么？')}
+          {editPluginName
+            ? t('workbench.plugins_edit_prompt_title', '你想怎样修改这个插件？')
+            : createType === 'skill'
+              ? t('workbench.plugins_create_skill_prompt_title', '你想创建一个什么技能？')
+              : t('workbench.plugins_create_prompt_title', '我们应该在 Wegent 中构建什么？')}
         </h1>
 
         <form
@@ -115,9 +123,11 @@ export function PluginCreateWorkspace({
               data-testid="plugin-create-prompt-input"
               rows={2}
               placeholder={
-                createType === 'skill'
-                  ? t('workbench.plugins_create_skill_prompt_placeholder', '描述技能要完成的工作')
-                  : t('workbench.plugins_create_prompt_placeholder', 'Plugin Creator')
+                editPluginName
+                  ? t('workbench.plugins_edit_prompt_placeholder', '描述要修改或新增的能力')
+                  : createType === 'skill'
+                    ? t('workbench.plugins_create_skill_prompt_placeholder', '描述技能要完成的工作')
+                    : t('workbench.plugins_create_prompt_placeholder', 'Plugin Creator')
               }
               className="min-h-[48px] flex-1 resize-none border-0 bg-transparent text-heading-sm font-medium leading-7 text-text-primary outline-none placeholder:text-primary"
             />

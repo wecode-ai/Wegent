@@ -2,6 +2,9 @@ import type {
   InstalledPlugin,
   InstalledPluginListResponse,
   InstalledPluginUpdateRequest,
+  PluginAccessResponse,
+  PluginAccessUpdateRequest,
+  PluginCopyResponse,
   PluginMarketplaceInstallResponse,
   PluginMarketplaceCapabilities,
   PluginMarketplaceListResponse,
@@ -13,6 +16,18 @@ import type {
 import type { HttpClient } from './http'
 import { shouldUseTauriFetch } from './http'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
+
+export interface PluginShareUserSearchItem {
+  id: number
+  user_name: string
+  email?: string | null
+}
+
+export interface PluginShareGroupSearchItem {
+  id: number
+  name: string
+  display_name?: string | null
+}
 
 export function createPluginApi(client: HttpClient) {
   const deviceQuery = (deviceId?: string) => {
@@ -66,6 +81,28 @@ export function createPluginApi(client: HttpClient) {
     ): Promise<InstalledPlugin> {
       return client.put(`/plugins/installed/${installedId}${deviceQuery(deviceId)}`, { releaseId })
     },
+    getMarketplacePluginAccess(id: string | number): Promise<PluginAccessResponse> {
+      return client.get(`/plugins/marketplace/${id}/access`)
+    },
+    updateMarketplacePluginAccess(
+      id: string | number,
+      data: PluginAccessUpdateRequest
+    ): Promise<PluginAccessResponse> {
+      return client.put(`/plugins/marketplace/${id}/access`, data)
+    },
+    copyMarketplacePlugin(id: string | number): Promise<PluginCopyResponse> {
+      return client.post(`/plugins/marketplace/${id}/copy`)
+    },
+    searchPluginShareUsers(
+      query: string
+    ): Promise<{ users: PluginShareUserSearchItem[]; total: number }> {
+      return client.get(`/users/search?q=${encodeURIComponent(query)}&limit=20`)
+    },
+    searchPluginShareGroups(
+      query: string
+    ): Promise<{ items: PluginShareGroupSearchItem[]; total: number }> {
+      return client.get(`/groups/search?q=${encodeURIComponent(query)}&limit=20`)
+    },
     initSubmission(data: PluginSubmissionInitRequest): Promise<PluginSubmissionInitResponse> {
       return client.post('/plugins/submissions/init', data)
     },
@@ -79,9 +116,9 @@ export function createPluginApi(client: HttpClient) {
       file: File,
       metadata: Pick<
         PluginSubmissionInitRequest,
-        'slug' | 'displayName' | 'version' | 'listingType'
+        'slug' | 'displayName' | 'version' | 'listingType' | 'purpose'
       >
-    ): Promise<PluginSubmissionItem> {
+    ): Promise<PluginSubmissionCompleteResponse> {
       const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
       const sha256 = Array.from(new Uint8Array(digest), byte =>
         byte.toString(16).padStart(2, '0')
@@ -105,7 +142,7 @@ export function createPluginApi(client: HttpClient) {
       const completed = await client.post<PluginSubmissionCompleteResponse>(
         `/plugins/submissions/${initialized.submissionId}/complete`
       )
-      return completed.submission
+      return completed
     },
   }
 }
