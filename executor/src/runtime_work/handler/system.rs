@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::codex_config::optional_proxy_url;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
@@ -386,6 +387,13 @@ impl RuntimeWorkRpcHandler {
                 "requiresConfirmation": true,
                 "activeTaskCount": active_task_count,
             }));
+        }
+        if payload.get("proxyUrl").is_some() || payload.get("proxy_url").is_some() {
+            let proxy_url = optional_proxy_url(&payload)?;
+            self.codex_app_server
+                .configure_runtime_proxy_for_restart(proxy_url.as_deref())
+                .await
+                .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
         }
         self.codex_app_server.restart().await;
         crate::server::codex_model_catalog::invalidate_models_cache()
