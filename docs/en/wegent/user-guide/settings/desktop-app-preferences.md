@@ -38,6 +38,8 @@ Open **Settings → General → Popout Window** to configure the lightweight inp
 
 Wework prewarms the Popout Window in the background after launch, so the first display and later reopens reuse the same WebView. The window is not resizable. Drag any visible surface outside the text input to move it, and press `Esc` to hide it without activating the main window. The transparent area around the visible surface does not receive pointer events, so clicks continue to the application behind it.
 
+Enable **Settings → General → Popout Window → System drag panel** to show a compact action panel at the top of the current screen while dragging files or text from another application. Selecting **Create new chat** activates the Popout Window and adds the dropped content to a new task. Disable the setting to keep the system drag panel hidden.
+
 New tasks start without a project. Use the project menu at the bottom of the composer to choose one, then use the more menu to select the current workspace or a new worktree, switch branches, and configure permissions. Wework remembers the user's latest selection the next time the Popout Window opens. After the first message is sent, the input window expands into a separate conversation window. **View in main window** closes the Popout Window and opens the current task in the main window, while **New message** returns to a fresh input state.
 
 Tasks created from the Popout Window still run on the local execution device and appear in the main window's task list. The Popout Window and main window are separate native windows, so hiding or moving one does not reposition the other.
