@@ -4103,7 +4103,7 @@ async function verifySideChatAttachmentIsolation({
   await control.command(
     'waitFor',
     `${sideChatSelector} [data-testid="restore-conversation-from-expanded-workspace-button"]`,
-    { timeoutMs: UI_TIMEOUT_MS }
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('finishAnimations', 'body')
   assert.equal(
@@ -4133,7 +4133,7 @@ async function verifySideChatAttachmentIsolation({
     `${sideChatSelector} [data-testid="restore-conversation-from-expanded-workspace-button"]`
   )
   await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
-    timeoutMs: UI_TIMEOUT_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('finishAnimations', 'body')
   assert.equal(
@@ -10398,7 +10398,7 @@ async function main() {
       await control.command(
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
-        { timeoutMs: UI_TIMEOUT_MS }
+        { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
       )
       await control.command('click', bottomPanelToggleSelector)
       const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
@@ -10479,7 +10479,7 @@ async function main() {
       await control.command(
         'waitFor',
         '[data-testid="restore-conversation-from-expanded-workspace-button"]',
-        { timeoutMs: UI_TIMEOUT_MS }
+        { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
       )
       await control.command('finishAnimations', 'body')
       assert.equal(
@@ -10507,20 +10507,20 @@ async function main() {
         '[data-testid="restore-conversation-from-expanded-workspace-button"]'
       )
       await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
-        timeoutMs: UI_TIMEOUT_MS,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
       await control.command('click', expandedPanelToggleSelector)
       await control.command(
         'waitFor',
         '[data-testid="restore-conversation-from-expanded-workspace-button"]',
-        { timeoutMs: UI_TIMEOUT_MS }
+        { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
       )
       await control.command('finishAnimations', 'body')
 
       await control.command('click', '[data-testid="collapse-sidebar-button"]')
       await control.command('waitFor', '[data-testid="expand-sidebar-button"]', {
-        timeoutMs: UI_TIMEOUT_MS,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
       const collapsedSidebarMetrics = await waitForElementWidth(
@@ -10553,7 +10553,7 @@ async function main() {
 
       await control.command('click', '[data-testid="expand-sidebar-button"]')
       await control.command('waitFor', '[data-testid="collapse-sidebar-button"]', {
-        timeoutMs: UI_TIMEOUT_MS,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
       await waitForElementWidth(
@@ -10564,7 +10564,7 @@ async function main() {
       )
       await control.command('click', expandedPanelToggleSelector)
       await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
-        timeoutMs: UI_TIMEOUT_MS,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
       await captureVerificationScreenshot(control, 'workspace-panel-04-restored-split.png')
