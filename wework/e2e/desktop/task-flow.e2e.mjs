@@ -361,6 +361,9 @@ const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
 const OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID = 'wework-e2e-official-plugin-mcp-search'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
+const QUALIFIED_SKILL_MENTION_PROMPT = 'Verify the sent qualified skill mention.'
+const QUALIFIED_SKILL_MENTION_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_QUALIFIED_SKILL_MENTION_COMPLETE'
 
 function readCommandLineOption(name) {
   const index = process.argv.indexOf(name)
@@ -2651,6 +2654,17 @@ async function verifyPluginLifecycle({
     text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="sent-plugin-token-OpenAI-Developers"]', {
+    text: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    (
+      await control.command('getText', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`)
+    ).includes(`@${OFFICIAL_PLUGIN_NAME}`),
+    false,
+    'The sent plugin reference degraded to its plain-text mention'
+  )
   await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
   await sendPrompt(
     control,
@@ -2668,6 +2682,36 @@ async function verifyPluginLifecycle({
     'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
   )
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
+
+  const qualifiedSkillName = `${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`
+  const qualifiedSkillTestId = qualifiedSkillName.replace(/[^a-zA-Z0-9_-]/g, '-')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  control.setScenario('skill_mention_display')
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+    value: `[$${qualifiedSkillName}](${skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
+  })
+  await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  assert.equal(
+    (
+      await control.command('getText', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`)
+    ).includes(`$${qualifiedSkillName}`),
+    false,
+    'The sent qualified skill reference degraded to its plain-text mention'
+  )
 
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', actionsSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
@@ -5183,6 +5227,7 @@ class DesktopE2EServer {
         'provider_switch_retry',
         'view_image',
         'official_plugin',
+        'skill_mention_display',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -6312,6 +6357,23 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(OFFICIAL_PLUGIN_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'skill_mention_display') {
+      this.recordScenarioRequest('skill_mention_display', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(QUALIFIED_SKILL_MENTION_PROMPT) &&
+          requestText.includes(`${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`) &&
+          requestText.includes(this.officialPluginSkillPath),
+        'The real Codex request did not preserve the qualified structured skill mention'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(QUALIFIED_SKILL_MENTION_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return

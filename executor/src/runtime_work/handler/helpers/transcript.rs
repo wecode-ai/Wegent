@@ -173,17 +173,51 @@ fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_message
         let Some(signature) = cached_user_message_signature(&message) else {
             continue;
         };
-        let matching_index = messages.iter().enumerate().find_map(|(index, provider_message)| {
-            (!matched_provider_indexes.contains(&index)
-                && cached_user_message_signature(provider_message).as_ref() == Some(&signature))
-            .then_some(index)
+        let client_message_id = user_message_client_id(&message);
+        let client_id_match = client_message_id.as_ref().and_then(|client_message_id| {
+            messages
+                .iter()
+                .enumerate()
+                .find_map(|(index, provider_message)| {
+                    (!matched_provider_indexes.contains(&index)
+                        && user_message_client_id(provider_message).as_ref()
+                            == Some(client_message_id))
+                    .then_some(index)
+                })
+        });
+        let matching_index = client_id_match.or_else(|| {
+            messages
+                .iter()
+                .enumerate()
+                .find_map(|(index, provider_message)| {
+                    (!matched_provider_indexes.contains(&index)
+                        && cached_user_message_signature(provider_message).as_ref()
+                            == Some(&signature))
+                    .then_some(index)
+                })
         });
         if let Some(index) = matching_index {
             matched_provider_indexes.insert(index);
             merge_missing_user_message_metadata(&mut messages[index], &message);
+            if client_id_match == Some(index) {
+                restore_cached_user_message_content(&mut messages[index], &message);
+            }
             continue;
         }
         messages.push(message);
+    }
+}
+
+fn user_message_client_id(message: &Value) -> Option<String> {
+    string_field(message, "clientMessageId").or_else(|| string_field(message, "client_message_id"))
+}
+
+fn restore_cached_user_message_content(target: &mut Value, source: &Value) {
+    let Some(source_content) = string_field(source, "content") else {
+        return;
+    };
+    if let Some(target) = target.as_object_mut() {
+        target.insert("content".to_owned(), Value::String(source_content));
     }
 }
 
