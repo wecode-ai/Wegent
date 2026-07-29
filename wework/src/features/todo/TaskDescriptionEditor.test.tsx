@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
@@ -41,5 +41,18 @@ describe('TaskDescriptionEditor', () => {
     expect(editor).toHaveFocus()
     await user.keyboard('List item')
     expect(onChange.mock.calls.at(-1)?.[0]).toContain('List item')
+  })
+
+  it('routes pasted files to the shared attachment flow', async () => {
+    const onPasteFiles = vi.fn()
+    render(<TaskDescriptionEditor value="" onChange={vi.fn()} onPasteFiles={onPasteFiles} />)
+    const editor = await screen.findByTestId('cloud-todo-detail-description')
+    const file = new File(['image'], 'capture.png', { type: 'image/png' })
+
+    fireEvent.paste(editor, {
+      clipboardData: { files: [file], types: ['Files'], getData: () => '' },
+    })
+
+    expect(onPasteFiles).toHaveBeenCalledWith([file])
   })
 })

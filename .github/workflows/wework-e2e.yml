@@ -190,9 +190,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-wework-desktop-e2e-
 
-      - name: Prepare real Codex binary
+      - name: Prepare bundled sidecars
         working-directory: ./wework
-        run: pnpm run prepare:codex
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Run Wework desktop ${{ matrix.name }} E2E
         env:
@@ -253,10 +255,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-wework-desktop-memory-e2e-
 
-      - name: Prepare real Codex binary
+      - name: Prepare bundled sidecars
         working-directory: ./wework
         run: |
           pnpm run prepare:codex
+          pnpm run prepare:dws
           codex_bin="$(find "$PWD/src-tauri/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
           test -n "$codex_bin"
           echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"

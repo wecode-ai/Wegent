@@ -781,6 +781,7 @@ impl RuntimeWorkRpcHandler {
         });
         if status != "running" {
             self.unmark_active_local_task(local_task_id);
+            self.schedule_worktree_prune();
         }
     }
 

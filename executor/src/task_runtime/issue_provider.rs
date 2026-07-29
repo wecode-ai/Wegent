@@ -889,6 +889,7 @@ fn provider_key(provider: TaskProviderKind) -> &'static str {
         TaskProviderKind::Gitlab => "gitlab",
         TaskProviderKind::Local => "local",
         TaskProviderKind::Backend => "backend",
+        TaskProviderKind::DingtalkAitable => "dingtalk_aitable",
     }
 }
 

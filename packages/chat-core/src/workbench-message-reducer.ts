@@ -309,16 +309,16 @@ export function reduceWorkbenchMessages<
               })
           : message
       )
-    case 'assistant_done':
-      if (
-        !state.some((message) => isAssistantMessageForAction(message, action))
-      ) {
+    case 'assistant_done': {
+      const messageIndex = findAssistantMessageIndexForDoneAction(state, action)
+      if (messageIndex === null) return state
+      if (messageIndex === -1) {
         return [
           ...state,
           limitWorkbenchMessage(
             createAssistantMessage<TAttachment, TFileChanges>({
               messageId: action.messageId,
-              subtaskId: action.subtaskId,
+              subtaskId: action.turnId ?? action.subtaskId,
               turnId: action.turnId,
               content: action.content ?? '',
               status: 'done',
@@ -328,10 +328,11 @@ export function reduceWorkbenchMessages<
           )
         ]
       }
-      return state.map((message) =>
-        isAssistantMessageForAction(message, action)
+      return state.map((message, index) =>
+        index === messageIndex
           ? limitWorkbenchMessage({
               ...clearMessageError(message),
+              subtaskId: action.turnId ?? message.subtaskId,
               turnId: action.turnId ?? message.turnId,
               content: action.content ?? message.content,
               streamTextOffset: undefined,
@@ -351,6 +352,7 @@ export function reduceWorkbenchMessages<
             })
           : message
       )
+    }
     case 'assistant_cancelled': {
       const completedAt = new Date().toISOString()
       const matches = state.some((message) =>
@@ -761,6 +763,34 @@ function isAssistantMessageForAction<TAttachment, TFileChanges>(
     typeof action.subtaskId === 'string' &&
     message.subtaskId === action.subtaskId
   )
+}
+
+function findAssistantMessageIndexForDoneAction<TAttachment, TFileChanges>(
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[],
+  action: { messageId?: string; subtaskId?: string; turnId?: string }
+): number | null {
+  if (action.messageId) {
+    return messages.findIndex(
+      message =>
+        message.role === 'assistant' && message.id === action.messageId
+    )
+  }
+  for (const identity of [action.subtaskId, action.turnId]) {
+    if (typeof identity !== 'string') continue
+    const candidates = messages.flatMap((message, index) =>
+      message.role === 'assistant' && message.subtaskId === identity
+        ? [{ index, message }]
+        : []
+    )
+    if (candidates.length === 1) return candidates[0].index
+    if (candidates.length > 1) {
+      const unsettled = candidates.filter(
+        candidate => candidate.message.status !== 'done'
+      )
+      return unsettled.length === 1 ? unsettled[0].index : null
+    }
+  }
+  return -1
 }
 
 function isAssistantMessageForCancellationAction<TAttachment, TFileChanges>(

@@ -72,7 +72,7 @@ describe('RequestUserInputCard', () => {
 
     expect(card).toHaveClass('max-h-[min(60dvh,36rem)]', 'flex', 'flex-col')
     expect(questionsContainer).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto')
-    expect(option).toHaveClass('min-h-9', 'items-start', 'py-2')
+    expect(option).toHaveClass('min-h-9', 'items-start', 'py-1.5')
     expect(option.querySelector('span.min-w-0')).toHaveClass('whitespace-normal', 'break-words')
     expect(option).toHaveTextContent(longLabel)
     expect(option).toHaveTextContent(longDescription)

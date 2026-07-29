@@ -14,19 +14,15 @@ export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
 }
 
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
-  const candidates = [task.completedAt, task.updatedAt, task.createdAt]
-    .map(value => (value ? new Date(value).getTime() : Number.NaN))
-    .filter(value => !Number.isNaN(value))
-  return candidates.length > 0 ? Math.max(...candidates) : undefined
+  const value = task.completedAt ?? task.createdAt ?? task.updatedAt
+  if (value == null) return 0
+  const timestamp = new Date(value).getTime()
+  return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
 export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {
   return [...tasks].sort((left, right) => {
-    const leftTime = new Date(getRuntimeTaskSortTime(left) || 0).getTime()
-    const rightTime = new Date(getRuntimeTaskSortTime(right) || 0).getTime()
-    const normalizedLeftTime = Number.isNaN(leftTime) ? 0 : leftTime
-    const normalizedRightTime = Number.isNaN(rightTime) ? 0 : rightTime
-    return normalizedRightTime - normalizedLeftTime
+    return getRuntimeTaskSortTime(right) - getRuntimeTaskSortTime(left)
   })
 }
 
@@ -52,11 +48,7 @@ export function getRuntimeChatSidebarTaskItems(
 
 export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
   return [...items].sort((left, right) => {
-    const leftTime = new Date(getRuntimeTaskSortTime(left.task) || 0).getTime()
-    const rightTime = new Date(getRuntimeTaskSortTime(right.task) || 0).getTime()
-    const normalizedLeftTime = Number.isNaN(leftTime) ? 0 : leftTime
-    const normalizedRightTime = Number.isNaN(rightTime) ? 0 : rightTime
-    return normalizedRightTime - normalizedLeftTime
+    return getRuntimeTaskSortTime(right.task) - getRuntimeTaskSortTime(left.task)
   })
 }
 

@@ -165,7 +165,8 @@ class CloudProject(LoopNode):
         if not isinstance(metadata, dict):
             return "local"
         provider = metadata.get("task_provider")
-        return provider if provider in {"local", "github", "gitlab"} else "local"
+        known = {"local", "github", "gitlab", "dingtalk_aitable"}
+        return provider if provider in known else "local"
 
     @property
     def provider_config(self) -> dict[str, object]:

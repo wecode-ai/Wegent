@@ -90,6 +90,7 @@ def test_todo_attachment_flow(
     attachment = uploaded.json()
     assert attachment["display_name"] == "brief.txt"
     assert attachment["size_bytes"] == 7
+    assert attachment["markdown_url"] == f"wegent://attachments/{attachment['id']}"
 
     listed = test_client.get(
         f"/api/v1/loop-items/{item_id}/attachments", headers=_auth(test_token)
@@ -101,7 +102,17 @@ def test_todo_attachment_flow(
         headers=_auth(test_token),
     )
     assert accessed.status_code == 200
-    assert accessed.json()["url"].startswith("https://storage.test/")
+    assert accessed.json() == {
+        "url": f"wegent://attachments/{attachment['id']}",
+        "expires_in_seconds": 0,
+    }
+
+    content = test_client.get(
+        f"/api/v1/loop-item-attachments/{attachment['id']}/content",
+        headers=_auth(test_token),
+    )
+    assert content.status_code == 200
+    assert content.content == b"context"
 
     deleted = test_client.delete(
         f"/api/v1/loop-item-attachments/{attachment['id']}",

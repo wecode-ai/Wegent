@@ -5,6 +5,7 @@ packages:
 confirmModulesPurge: false
 allowBuilds:
   core-js: true
+  dingtalk-workspace-cli: true
   esbuild: true
   msw: true
   protobufjs: true

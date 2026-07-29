@@ -3485,9 +3485,7 @@ def _build_runtime_execution_request(
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_model_options(db, execution_request, user, payload)
     _apply_runtime_attachments(db, execution_request, user_id, request.attachment_ids)
-    from app.core.config import settings
     from app.schemas.base_role import BaseRole
-    from app.services.auth import create_task_token
     from app.services.cloud_projects.access import require_cloud_project_role
     from app.services.delivery import delivery_service
 
@@ -3497,23 +3495,6 @@ def _build_runtime_execution_request(
         require_cloud_project_role(
             db, request.cloud_project_id, user_id, BaseRole.Reporter
         )
-    token = create_task_token(
-        task_id=task.id,
-        subtask_id=subtask.id,
-        user_id=user.id,
-        user_name=user.user_name,
-    )
-    execution_request.mcp_servers.append(
-        {
-            "name": "wegent_delivery",
-            "url": (
-                f"{settings.BACKEND_INTERNAL_URL.rstrip('/')}"
-                f"{settings.API_PREFIX}/mcp/delivery/sse"
-            ),
-            "type": "streamable-http",
-            "headers": {"Authorization": f"Bearer {token}"},
-        }
-    )
     return execution_request
 
 
@@ -3532,19 +3513,13 @@ def _message_with_application_context(
     ):
         entries.append(
             "[projectSpaceCapability]\n"
-            "The user activated the Wegent project-space capability.\n"
-            "Project storage and task source are independent.\n"
-            "Use wegent_tasks for local project spaces and for GitHub or GitLab "
-            "Issues, even when the project space is stored in the Backend.\n"
-            "Use wegent_delivery for cloud project metadata, files, deliveries, "
-            "and Backend-native TODOs only.\n"
-            "wegent_delivery and wegent_tasks are server ids, not callable tools.\n"
-            "List both sources when resolving a project name.\n"
-            "Never create or copy a cloud project merely because a local project "
-            "is not returned by list_cloud_projects.\n"
-            "Use resolve_cloud_reference to resolve cloud:// references.\n"
-            "MCP resources describe addressable data; do not use "
-            "list_mcp_resources to discover tools."
+            "Use wework_space as the only interface for WeWork project spaces, "
+            "board items, files, attachments, and deliveries.\n"
+            "Storage and task providers are internal implementation details.\n"
+            "Do not use git commands or call GitHub, GitLab, or object-storage "
+            "APIs to inspect or modify project-space data.\n"
+            "Use list_spaces to discover spaces, get_board_item for item details, "
+            "and read_item_attachment for attachment contents."
         )
     if not entries:
         return message

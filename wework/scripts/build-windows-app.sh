@@ -257,6 +257,7 @@ fi
 
 wework_build_windows_code_statistics_hook "$WEWORK_DIR" "$WINDOWS_BUILD_TARGET"
 WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
+WEWORK_DWS_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:dws
 pnpm exec tauri "${TAURI_ARGS[@]}"
 
 # Patch the generated NSIS installer to create the desktop shortcut via COM.
