@@ -34,6 +34,7 @@ import type {
 import { ApiError } from '@/api/http'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
+import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import type {
@@ -43,6 +44,7 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
+import { getPlatform } from '@/lib/platform'
 import { getActiveKeybinding, OPEN_SEARCH_COMMAND } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
 import type {
@@ -692,6 +694,7 @@ export function CloudTodoWorkspace({
   onRunTodo,
   onOpenRuntimeTask,
 }: CloudTodoWorkspaceProps) {
+  const platform = getPlatform()
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
     return {
@@ -1014,501 +1017,518 @@ export function CloudTodoWorkspace({
 
   return (
     <div
-      className="absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary"
+      className={cn(
+        'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary',
+        platform === 'win' && 'flex-col'
+      )}
       data-testid="cloud-todo-workspace"
     >
-      <aside
-        className={cn(
-          'relative shrink-0 overflow-hidden border-r border-border bg-background transition-[width] duration-200',
-          sidebarCollapsed ? 'w-0 border-r-0' : 'w-[248px]'
-        )}
-      >
-        <div className="flex h-full w-[248px] flex-col">
-          <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
-          <div
-            data-testid="cloud-todo-sidebar-chrome-controls"
-            className="relative z-10 ml-[92px] flex h-[38px] shrink-0 items-center gap-1"
-          >
-            <DesktopWindowControls
-              sidebarCollapsed={false}
-              onToggleSidebar={() => setSidebarCollapsed(true)}
-              className="gap-1"
-              toggleTestId="cloud-todo-collapse-sidebar"
-            />
-            <DesktopAppSwitcher
-              activeApp="todo"
-              onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-              testIds={{
-                wework: 'cloud-todo-app-wework',
-                todo: 'cloud-todo-app-current',
-                apps: 'cloud-todo-app-apps',
-                wegent: 'cloud-todo-app-wegent',
-              }}
-            />
-          </div>
-          <nav className="space-y-1 px-2">
-            <button
-              type="button"
-              onClick={() => {
-                setRootView('projects')
-                selectProject(null)
-                setSelectedItem(null)
-              }}
-              className={cn(
-                'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
-                rootView === 'projects'
-                  ? 'bg-muted font-medium text-text-primary'
-                  : 'text-text-secondary hover:bg-muted/60'
-              )}
-            >
-              <Cloud className="h-4 w-4" /> 项目空间
-            </button>
-            <button
-              type="button"
-              data-testid="cloud-my-work"
-              onClick={() => setRootView('my-work')}
-              className={cn(
-                'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
-                rootView === 'my-work'
-                  ? 'bg-muted font-medium text-text-primary'
-                  : 'text-text-secondary hover:bg-muted/60'
-              )}
-            >
-              <CircleUserRound className="h-4 w-4" /> 我的工作
-            </button>
-            <button
-              type="button"
-              data-testid="cloud-search-toggle"
-              onClick={() => setGlobalSearchOpen(true)}
-              className="flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted/60"
-            >
-              <Search className="h-4 w-4" /> 搜索
-              <KeyboardShortcut
-                value={getActiveKeybinding(OPEN_SEARCH_COMMAND) ?? 'Command+K'}
-                className="ml-auto rounded-md border border-border bg-background px-1.5 text-xs leading-5 text-text-muted"
-              />
-            </button>
-          </nav>
-          <div className="mt-6 flex items-center px-5 text-xs font-medium text-text-muted">
-            项目空间
-            <button
-              type="button"
-              data-testid="cloud-project-add"
-              onClick={() => setCreateProjectOpen(true)}
-              className="ml-auto h-6 w-6 rounded-md hover:bg-muted"
-            >
-              <Plus className="mx-auto h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2">
-            {projects.map(project => {
-              const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
-              return (
-                <button
-                  key={project.id}
-                  type="button"
-                  onClick={() => {
-                    selectProject(project.id)
-                    setRootView('projects')
-                    setProjectView('board')
-                    setSelectedItem(null)
-                  }}
-                  className={cn(
-                    'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
-                    rootView === 'projects' && selectedProjectId === project.id
-                      ? 'bg-muted font-medium text-text-primary'
-                      : 'text-text-secondary hover:bg-muted/60'
-                  )}
+      <DesktopWindowsTitlebar
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+        activeApp="todo"
+        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
+      />
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <aside
+          className={cn(
+            'relative shrink-0 overflow-hidden border-r border-border bg-background transition-[width] duration-200',
+            sidebarCollapsed ? 'w-0 border-r-0' : 'w-[248px]'
+          )}
+        >
+          <div className="flex h-full w-[248px] flex-col">
+            {platform !== 'win' && (
+              <>
+                <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+                <div
+                  data-testid="cloud-todo-sidebar-chrome-controls"
+                  className="relative z-10 ml-[92px] flex h-[38px] shrink-0 items-center gap-1"
                 >
-                  <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                  <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
-                  {projectCounts[project.id] ? (
-                    <span className="text-xs text-text-muted">{projectCounts[project.id]}</span>
-                  ) : null}
-                </button>
-              )
-            })}
+                  <DesktopWindowControls
+                    sidebarCollapsed={false}
+                    onToggleSidebar={() => setSidebarCollapsed(true)}
+                    className="gap-1"
+                    toggleTestId="cloud-todo-collapse-sidebar"
+                  />
+                  <DesktopAppSwitcher
+                    activeApp="todo"
+                    onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
+                    testIds={{
+                      wework: 'cloud-todo-app-wework',
+                      todo: 'cloud-todo-app-current',
+                      apps: 'cloud-todo-app-apps',
+                      wegent: 'cloud-todo-app-wegent',
+                    }}
+                  />
+                </div>
+              </>
+            )}
+            <nav className="space-y-1 px-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setRootView('projects')
+                  selectProject(null)
+                  setSelectedItem(null)
+                }}
+                className={cn(
+                  'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
+                  rootView === 'projects'
+                    ? 'bg-muted font-medium text-text-primary'
+                    : 'text-text-secondary hover:bg-muted/60'
+                )}
+              >
+                <Cloud className="h-4 w-4" /> 项目空间
+              </button>
+              <button
+                type="button"
+                data-testid="cloud-my-work"
+                onClick={() => setRootView('my-work')}
+                className={cn(
+                  'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
+                  rootView === 'my-work'
+                    ? 'bg-muted font-medium text-text-primary'
+                    : 'text-text-secondary hover:bg-muted/60'
+                )}
+              >
+                <CircleUserRound className="h-4 w-4" /> 我的工作
+              </button>
+              <button
+                type="button"
+                data-testid="cloud-search-toggle"
+                onClick={() => setGlobalSearchOpen(true)}
+                className="flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted/60"
+              >
+                <Search className="h-4 w-4" /> 搜索
+                <KeyboardShortcut
+                  value={getActiveKeybinding(OPEN_SEARCH_COMMAND) ?? 'Command+K'}
+                  className="ml-auto rounded-md border border-border bg-background px-1.5 text-xs leading-5 text-text-muted"
+                />
+              </button>
+            </nav>
+            <div className="mt-6 flex items-center px-5 text-xs font-medium text-text-muted">
+              项目空间
+              <button
+                type="button"
+                data-testid="cloud-project-add"
+                onClick={() => setCreateProjectOpen(true)}
+                className="ml-auto h-6 w-6 rounded-md hover:bg-muted"
+              >
+                <Plus className="mx-auto h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2">
+              {projects.map(project => {
+                const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
+                return (
+                  <button
+                    key={project.id}
+                    type="button"
+                    onClick={() => {
+                      selectProject(project.id)
+                      setRootView('projects')
+                      setProjectView('board')
+                      setSelectedItem(null)
+                    }}
+                    className={cn(
+                      'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
+                      rootView === 'projects' && selectedProjectId === project.id
+                        ? 'bg-muted font-medium text-text-primary'
+                        : 'text-text-secondary hover:bg-muted/60'
+                    )}
+                  >
+                    <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                    <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                    {projectCounts[project.id] ? (
+                      <span className="text-xs text-text-muted">{projectCounts[project.id]}</span>
+                    ) : null}
+                  </button>
+                )
+              })}
+            </div>
           </div>
-        </div>
-      </aside>
+        </aside>
 
-      <main className="relative flex min-w-0 flex-1 flex-col">
-        {!selectedProject && (
-          <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
-        )}
-        {sidebarCollapsed && (
-          <div
-            data-testid="cloud-todo-collapsed-chrome-controls"
-            className="absolute left-[92px] top-0 z-20 flex h-[38px] items-center gap-1"
-          >
-            <DesktopWindowControls
-              sidebarCollapsed
-              onToggleSidebar={() => setSidebarCollapsed(false)}
-              className="gap-1"
-              toggleTestId="cloud-todo-expand-sidebar"
-            />
-            <DesktopAppSwitcher
-              activeApp="todo"
-              onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-              testIds={{
-                wework: 'cloud-todo-collapsed-app-wework',
-                todo: 'cloud-todo-collapsed-app-current',
-                apps: 'cloud-todo-collapsed-app-apps',
-                wegent: 'cloud-todo-collapsed-app-wegent',
+        <main className="relative flex min-w-0 flex-1 flex-col">
+          {!selectedProject && (
+            <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+          )}
+          {sidebarCollapsed && (
+            <div
+              data-testid="cloud-todo-collapsed-chrome-controls"
+              className="absolute left-[92px] top-0 z-20 flex h-[38px] items-center gap-1"
+            >
+              <DesktopWindowControls
+                sidebarCollapsed
+                onToggleSidebar={() => setSidebarCollapsed(false)}
+                className="gap-1"
+                toggleTestId="cloud-todo-expand-sidebar"
+              />
+              <DesktopAppSwitcher
+                activeApp="todo"
+                onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
+                testIds={{
+                  wework: 'cloud-todo-collapsed-app-wework',
+                  todo: 'cloud-todo-collapsed-app-current',
+                  apps: 'cloud-todo-collapsed-app-apps',
+                  wegent: 'cloud-todo-collapsed-app-wegent',
+                }}
+              />
+            </div>
+          )}
+          {rootView === 'my-work' ? (
+            <CloudMyWorkView
+              items={myWork}
+              // Open the detail drawer in place instead of jumping to the board.
+              onSelectItem={item => {
+                if (item.can_view_detail !== false) setSelectedItem(item)
               }}
             />
-          </div>
-        )}
-        {rootView === 'my-work' ? (
-          <CloudMyWorkView
-            items={myWork}
-            // Open the detail drawer in place instead of jumping to the board.
-            onSelectItem={item => {
-              if (item.can_view_detail !== false) setSelectedItem(item)
-            }}
-          />
-        ) : loading ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
-            正在加载项目空间…
-          </div>
-        ) : !selectedProject && projects.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center">
-            <Cloud className="h-8 w-8 text-text-muted" />
-            <h1 className="mt-4 text-heading-md font-semibold">创建第一个项目空间</h1>
-            <p className="mt-2 text-sm text-text-muted">
-              共享任务、文件与交付，让成员和 AI 在不同本地工作区协作。
-            </p>
-            <button
-              type="button"
-              onClick={() => setCreateProjectOpen(true)}
-              className="mt-5 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
-            >
-              新建项目空间
-            </button>
-          </div>
-        ) : !selectedProject ? (
-          <CloudProjectsHome
-            projects={projects}
-            projectCounts={projectCounts}
-            projectMembers={projectMembers}
-            projectItems={projectItems}
-            myWork={myWork}
-            searchQuery=""
-            onCreateProject={() => setCreateProjectOpen(true)}
-            onSelectProject={projectId => selectProject(projectId)}
-            onManageProject={projectId => {
-              selectProject(projectId)
-              setProjectView('manage')
-            }}
-            onSelectItem={item => {
-              if (item.can_view_detail !== false) setSelectedItem(item)
-            }}
-            onOpenMyWork={() => setRootView('my-work')}
-          />
-        ) : (
-          <>
-            <header
-              data-testid="cloud-project-header"
-              className={cn(
-                'relative z-10 flex h-[52px] shrink-0 items-center border-b border-border bg-background pr-6',
-                sidebarCollapsed ? 'pl-[240px]' : 'pl-6'
-              )}
-            >
-              <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
-              {selectedProject.location === 'local' ? (
-                <HardDrive className="relative z-10 h-4 w-4 text-text-muted" />
-              ) : (
-                <Cloud className="relative z-10 h-4 w-4 text-text-muted" />
-              )}
-              <span className="relative z-10 ml-2 text-base font-semibold">
-                {selectedProject.name}
-              </span>
-              <span className="relative z-10 ml-2 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
-                {selectedProject.location === 'local' ? '本地' : '云端'}
-              </span>
-              <nav className="relative z-10 ml-8 flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-                <button
-                  type="button"
-                  data-testid="cloud-project-board-view"
-                  onClick={() => setProjectView('board')}
-                  className={cn(
-                    'rounded-md px-3.5 py-1 text-sm',
-                    projectView === 'board'
-                      ? 'bg-background font-medium text-text-primary shadow-sm'
-                      : 'text-text-secondary hover:text-text-primary'
-                  )}
-                >
-                  事项
-                </button>
-                {selectedProject.access_role !== 'RestrictedAnalyst' && (
+          ) : loading ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
+              正在加载项目空间…
+            </div>
+          ) : !selectedProject && projects.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center">
+              <Cloud className="h-8 w-8 text-text-muted" />
+              <h1 className="mt-4 text-heading-md font-semibold">创建第一个项目空间</h1>
+              <p className="mt-2 text-sm text-text-muted">
+                共享任务、文件与交付，让成员和 AI 在不同本地工作区协作。
+              </p>
+              <button
+                type="button"
+                onClick={() => setCreateProjectOpen(true)}
+                className="mt-5 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
+              >
+                新建项目空间
+              </button>
+            </div>
+          ) : !selectedProject ? (
+            <CloudProjectsHome
+              projects={projects}
+              projectCounts={projectCounts}
+              projectMembers={projectMembers}
+              projectItems={projectItems}
+              myWork={myWork}
+              searchQuery=""
+              onCreateProject={() => setCreateProjectOpen(true)}
+              onSelectProject={projectId => selectProject(projectId)}
+              onManageProject={projectId => {
+                selectProject(projectId)
+                setProjectView('manage')
+              }}
+              onSelectItem={item => {
+                if (item.can_view_detail !== false) setSelectedItem(item)
+              }}
+              onOpenMyWork={() => setRootView('my-work')}
+            />
+          ) : (
+            <>
+              <header
+                data-testid="cloud-project-header"
+                className={cn(
+                  'relative z-10 flex h-[52px] shrink-0 items-center border-b border-border bg-background pr-6',
+                  sidebarCollapsed ? 'pl-[240px]' : 'pl-6'
+                )}
+              >
+                <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
+                {selectedProject.location === 'local' ? (
+                  <HardDrive className="relative z-10 h-4 w-4 text-text-muted" />
+                ) : (
+                  <Cloud className="relative z-10 h-4 w-4 text-text-muted" />
+                )}
+                <span className="relative z-10 ml-2 text-base font-semibold">
+                  {selectedProject.name}
+                </span>
+                <span className="relative z-10 ml-2 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                  {selectedProject.location === 'local' ? '本地' : '云端'}
+                </span>
+                <nav className="relative z-10 ml-8 flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
                   <button
                     type="button"
-                    onClick={() => setProjectView('files')}
+                    data-testid="cloud-project-board-view"
+                    onClick={() => setProjectView('board')}
                     className={cn(
                       'rounded-md px-3.5 py-1 text-sm',
-                      projectView === 'files'
+                      projectView === 'board'
                         ? 'bg-background font-medium text-text-primary shadow-sm'
                         : 'text-text-secondary hover:text-text-primary'
                     )}
                   >
-                    文件
+                    事项
                   </button>
-                )}
-                {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') && (
-                  <button
-                    type="button"
-                    data-testid="cloud-project-manage-view"
-                    onClick={() => setProjectView('manage')}
-                    className={cn(
-                      'rounded-md px-3.5 py-1 text-sm',
-                      projectView === 'manage'
-                        ? 'bg-background font-medium text-text-primary shadow-sm'
-                        : 'text-text-secondary hover:text-text-primary'
-                    )}
-                  >
-                    管理
-                  </button>
-                )}
-              </nav>
-              <span className="flex-1" />
-              {projectView === 'board' && (
-                <>
-                  <button
-                    type="button"
-                    data-testid="cloud-project-task-search-toggle"
-                    onClick={() => setProjectSearchOpen(current => !current)}
-                    className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
-                  >
-                    <Search className="h-3.5 w-3.5" />
-                    搜索任务
-                  </button>
-                  {projectSearchOpen && (
-                    <TaskSearchPanel
-                      items={items}
-                      members={projectMembers[selectedProject.id] ?? []}
-                      query={projectSearchQuery}
-                      filters={projectSearchFilters}
-                      tags={availableTags}
-                      onQueryChange={setProjectSearchQuery}
-                      onFiltersChange={setProjectSearchFilters}
-                      onSelect={item => {
-                        if (item.can_view_detail === false) return
-                        setSelectedItem(item)
-                        setProjectSearchOpen(false)
-                      }}
-                    />
-                  )}
-                  {availableTags.length > 0 && (
-                    <span className="relative z-10 ml-2 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-background px-2.5 text-xs transition hover:bg-muted">
-                      <Tag className="h-3.5 w-3.5 text-text-muted" />
-                      <span className={tagFilter ? 'text-text-primary' : 'text-text-muted'}>
-                        {tagFilter ?? '全部标签'}
-                      </span>
-                      <ChevronDown className="h-3 w-3 text-text-muted" />
-                      <select
-                        data-testid="cloud-todo-tag-filter"
-                        aria-label="标签筛选"
-                        value={tagFilter ?? ''}
-                        onChange={event => setTagFilter(event.target.value || null)}
-                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                      >
-                        <option value="">全部标签</option>
-                        {availableTags.map(tag => (
-                          <option key={tag} value={tag}>
-                            {tag}
-                          </option>
-                        ))}
-                      </select>
-                    </span>
-                  )}
-                  {canCreateBoardTask && (
+                  {selectedProject.access_role !== 'RestrictedAnalyst' && (
                     <button
                       type="button"
-                      data-testid="cloud-todo-add"
-                      onClick={() => openTodoCreation(projectView === 'board' ? boardParent : null)}
-                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                      onClick={() => setProjectView('files')}
+                      className={cn(
+                        'rounded-md px-3.5 py-1 text-sm',
+                        projectView === 'files'
+                          ? 'bg-background font-medium text-text-primary shadow-sm'
+                          : 'text-text-secondary hover:text-text-primary'
+                      )}
                     >
-                      <Plus className="h-3.5 w-3.5" /> 新建任务
+                      文件
                     </button>
                   )}
-                </>
-              )}
-            </header>
-            {projectView === 'files' && selectedProjectApi ? (
-              <CloudFilesView api={selectedProjectApi} project={selectedProject} />
-            ) : projectView === 'manage' && selectedProjectApi ? (
-              <CloudProjectManageView
-                api={selectedProjectApi}
-                project={selectedProject}
-                onProjectUpdated={updated =>
-                  setProjects(current =>
-                    current.map(project =>
-                      project.id === updated.id
-                        ? { ...updated, location: project.location }
-                        : project
-                    )
-                  )
-                }
-              />
-            ) : (
-              <div className="flex min-h-0 flex-1 flex-col pb-6 pt-4">
-                <nav
-                  data-testid="cloud-todo-board-breadcrumb"
-                  aria-label="任务层级"
-                  className="px-6"
-                >
-                  {boardParent ? (
-                    <>
-                      <div className="flex h-7 items-center gap-1 text-xs">
-                        <button
-                          type="button"
-                          onClick={() => setBoardParentId(null)}
-                          className="rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
-                        >
-                          顶层任务
-                        </button>
-                        {boardBreadcrumb.map(parent => (
-                          <span key={parent.id} className="flex min-w-0 items-center gap-1">
-                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                            <button
-                              type="button"
-                              data-testid={`cloud-todo-board-breadcrumb-${parent.id}`}
-                              onClick={() => setBoardParentId(parent.id)}
-                              className={cn(
-                                'max-w-48 truncate rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary',
-                                parent.id === boardParentId && 'font-medium text-text-primary'
-                              )}
-                            >
-                              {parent.title}
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                      <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
-                        <h1 className="text-heading-sm font-semibold">{boardParent.title}</h1>
-                        <span className="text-xs text-text-muted">
-                          {boardLayerCount} 个任务 · 仅显示当前层的直接子任务
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
-                      <h1 className="text-heading-sm font-semibold">顶层任务</h1>
-                      <span className="text-xs text-text-muted">{boardLayerCount} 个任务</span>
-                    </div>
+                  {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') && (
+                    <button
+                      type="button"
+                      data-testid="cloud-project-manage-view"
+                      onClick={() => setProjectView('manage')}
+                      className={cn(
+                        'rounded-md px-3.5 py-1 text-sm',
+                        projectView === 'manage'
+                          ? 'bg-background font-medium text-text-primary shadow-sm'
+                          : 'text-text-secondary hover:text-text-primary'
+                      )}
+                    >
+                      管理
+                    </button>
                   )}
                 </nav>
-                {boardError && (
-                  <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
-                    {boardError}
-                  </p>
-                )}
-                {boardItemsLoading ? (
-                  <div className="min-h-0 flex-1 overflow-x-auto">
-                    <CloudTodoBoardSkeleton />
-                  </div>
-                ) : (
-                  <div className="min-h-0 flex-1 overflow-x-auto">
-                    <DndContext
-                      sensors={boardSensors}
-                      collisionDetection={boardCollisionDetection}
-                      onDragStart={event => setActiveDragItemId(String(event.active.id))}
-                      onDragCancel={() => setActiveDragItemId(null)}
-                      onDragEnd={finishBoardDrop}
+                <span className="flex-1" />
+                {projectView === 'board' && (
+                  <>
+                    <button
+                      type="button"
+                      data-testid="cloud-project-task-search-toggle"
+                      onClick={() => setProjectSearchOpen(current => !current)}
+                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
                     >
-                      <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
-                        {columns.map(column => {
-                          const columnItems = items.filter(
-                            item =>
-                              item.parent_id === boardParentId &&
-                              item.status === column.status &&
-                              (!tagFilter || (item.tags ?? []).includes(tagFilter))
-                          )
-                          return (
-                            <section
-                              key={column.status}
-                              data-testid={`cloud-todo-column-${column.status}`}
-                              className="group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5"
-                            >
-                              <header className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
-                                <span className="flex min-w-0 items-center">
-                                  <span
-                                    className={cn(
-                                      'mr-2 h-2 w-2 rounded-full',
-                                      columnDotClasses[column.status]
-                                    )}
-                                  />
-                                  <span className="text-sm font-semibold">{column.label}</span>
-                                  <span className="ml-2 text-xs text-text-muted">
-                                    {columnItems.length}
-                                  </span>
-                                </span>
-                                <button
-                                  type="button"
-                                  data-testid={`cloud-todo-column-add-${column.status}`}
-                                  onClick={() => openTodoCreation(boardParent, column.status)}
-                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                  aria-label={`在${column.label}中新建任务`}
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                </button>
-                              </header>
-                              <TodoColumnDropzone status={column.status}>
-                                {columnItems.map(item => (
-                                  <DraggableTodoCard
-                                    key={item.id}
-                                    item={item}
-                                    childCount={
-                                      items.filter(child => child.parent_id === item.id).length
-                                    }
-                                    onClick={() => {
-                                      if (item.can_view_detail !== false) setSelectedItem(item)
-                                    }}
-                                    onAddChild={() => openTodoCreation(item)}
-                                    onOpenChildren={() => setBoardParentId(item.id)}
-                                  />
-                                ))}
-                                {columnItems.length === 0 && columnEmptyHints[column.status] && (
-                                  <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
-                                    {columnEmptyHints[column.status]}
-                                  </div>
+                      <Search className="h-3.5 w-3.5" />
+                      搜索任务
+                    </button>
+                    {projectSearchOpen && (
+                      <TaskSearchPanel
+                        items={items}
+                        members={projectMembers[selectedProject.id] ?? []}
+                        query={projectSearchQuery}
+                        filters={projectSearchFilters}
+                        tags={availableTags}
+                        onQueryChange={setProjectSearchQuery}
+                        onFiltersChange={setProjectSearchFilters}
+                        onSelect={item => {
+                          if (item.can_view_detail === false) return
+                          setSelectedItem(item)
+                          setProjectSearchOpen(false)
+                        }}
+                      />
+                    )}
+                    {availableTags.length > 0 && (
+                      <span className="relative z-10 ml-2 inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-background px-2.5 text-xs transition hover:bg-muted">
+                        <Tag className="h-3.5 w-3.5 text-text-muted" />
+                        <span className={tagFilter ? 'text-text-primary' : 'text-text-muted'}>
+                          {tagFilter ?? '全部标签'}
+                        </span>
+                        <ChevronDown className="h-3 w-3 text-text-muted" />
+                        <select
+                          data-testid="cloud-todo-tag-filter"
+                          aria-label="标签筛选"
+                          value={tagFilter ?? ''}
+                          onChange={event => setTagFilter(event.target.value || null)}
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                        >
+                          <option value="">全部标签</option>
+                          {availableTags.map(tag => (
+                            <option key={tag} value={tag}>
+                              {tag}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                    )}
+                    {canCreateBoardTask && (
+                      <button
+                        type="button"
+                        data-testid="cloud-todo-add"
+                        onClick={() =>
+                          openTodoCreation(projectView === 'board' ? boardParent : null)
+                        }
+                        className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> 新建任务
+                      </button>
+                    )}
+                  </>
+                )}
+              </header>
+              {projectView === 'files' && selectedProjectApi ? (
+                <CloudFilesView api={selectedProjectApi} project={selectedProject} />
+              ) : projectView === 'manage' && selectedProjectApi ? (
+                <CloudProjectManageView
+                  api={selectedProjectApi}
+                  project={selectedProject}
+                  onProjectUpdated={updated =>
+                    setProjects(current =>
+                      current.map(project =>
+                        project.id === updated.id
+                          ? { ...updated, location: project.location }
+                          : project
+                      )
+                    )
+                  }
+                />
+              ) : (
+                <div className="flex min-h-0 flex-1 flex-col pb-6 pt-4">
+                  <nav
+                    data-testid="cloud-todo-board-breadcrumb"
+                    aria-label="任务层级"
+                    className="px-6"
+                  >
+                    {boardParent ? (
+                      <>
+                        <div className="flex h-7 items-center gap-1 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setBoardParentId(null)}
+                            className="rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+                          >
+                            顶层任务
+                          </button>
+                          {boardBreadcrumb.map(parent => (
+                            <span key={parent.id} className="flex min-w-0 items-center gap-1">
+                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                              <button
+                                type="button"
+                                data-testid={`cloud-todo-board-breadcrumb-${parent.id}`}
+                                onClick={() => setBoardParentId(parent.id)}
+                                className={cn(
+                                  'max-w-48 truncate rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary',
+                                  parent.id === boardParentId && 'font-medium text-text-primary'
                                 )}
-                              </TodoColumnDropzone>
-                              {canCreateBoardTask && (
-                                <div className="shrink-0 px-2 pb-2">
+                              >
+                                {parent.title}
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
+                          <h1 className="text-heading-sm font-semibold">{boardParent.title}</h1>
+                          <span className="text-xs text-text-muted">
+                            {boardLayerCount} 个任务 · 仅显示当前层的直接子任务
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
+                        <h1 className="text-heading-sm font-semibold">顶层任务</h1>
+                        <span className="text-xs text-text-muted">{boardLayerCount} 个任务</span>
+                      </div>
+                    )}
+                  </nav>
+                  {boardError && (
+                    <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
+                      {boardError}
+                    </p>
+                  )}
+                  {boardItemsLoading ? (
+                    <div className="min-h-0 flex-1 overflow-x-auto">
+                      <CloudTodoBoardSkeleton />
+                    </div>
+                  ) : (
+                    <div className="min-h-0 flex-1 overflow-x-auto">
+                      <DndContext
+                        sensors={boardSensors}
+                        collisionDetection={boardCollisionDetection}
+                        onDragStart={event => setActiveDragItemId(String(event.active.id))}
+                        onDragCancel={() => setActiveDragItemId(null)}
+                        onDragEnd={finishBoardDrop}
+                      >
+                        <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
+                          {columns.map(column => {
+                            const columnItems = items.filter(
+                              item =>
+                                item.parent_id === boardParentId &&
+                                item.status === column.status &&
+                                (!tagFilter || (item.tags ?? []).includes(tagFilter))
+                            )
+                            return (
+                              <section
+                                key={column.status}
+                                data-testid={`cloud-todo-column-${column.status}`}
+                                className="group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5"
+                              >
+                                <header className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
+                                  <span className="flex min-w-0 items-center">
+                                    <span
+                                      className={cn(
+                                        'mr-2 h-2 w-2 rounded-full',
+                                        columnDotClasses[column.status]
+                                      )}
+                                    />
+                                    <span className="text-sm font-semibold">{column.label}</span>
+                                    <span className="ml-2 text-xs text-text-muted">
+                                      {columnItems.length}
+                                    </span>
+                                  </span>
                                   <button
                                     type="button"
-                                    data-testid={`cloud-todo-column-bottom-add-${column.status}`}
+                                    data-testid={`cloud-todo-column-add-${column.status}`}
                                     onClick={() => openTodoCreation(boardParent, column.status)}
-                                    className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                                    className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
                                     aria-label={`在${column.label}中新建任务`}
                                   >
-                                    <Plus className="h-4 w-4" />
-                                    新建任务
+                                    <Plus className="h-3.5 w-3.5" />
                                   </button>
-                                </div>
-                              )}
-                            </section>
-                          )
-                        })}
-                      </div>
-                      <DragOverlay dropAnimation={null}>
-                        {activeDragItemId ? (
-                          <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
-                            <TodoCardContent
-                              item={items.find(item => item.id === activeDragItemId)!}
-                            />
-                          </div>
-                        ) : null}
-                      </DragOverlay>
-                    </DndContext>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </main>
+                                </header>
+                                <TodoColumnDropzone status={column.status}>
+                                  {columnItems.map(item => (
+                                    <DraggableTodoCard
+                                      key={item.id}
+                                      item={item}
+                                      childCount={
+                                        items.filter(child => child.parent_id === item.id).length
+                                      }
+                                      onClick={() => {
+                                        if (item.can_view_detail !== false) setSelectedItem(item)
+                                      }}
+                                      onAddChild={() => openTodoCreation(item)}
+                                      onOpenChildren={() => setBoardParentId(item.id)}
+                                    />
+                                  ))}
+                                  {columnItems.length === 0 && columnEmptyHints[column.status] && (
+                                    <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+                                      {columnEmptyHints[column.status]}
+                                    </div>
+                                  )}
+                                </TodoColumnDropzone>
+                                {canCreateBoardTask && (
+                                  <div className="shrink-0 px-2 pb-2">
+                                    <button
+                                      type="button"
+                                      data-testid={`cloud-todo-column-bottom-add-${column.status}`}
+                                      onClick={() => openTodoCreation(boardParent, column.status)}
+                                      className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                                      aria-label={`在${column.label}中新建任务`}
+                                    >
+                                      <Plus className="h-4 w-4" />
+                                      新建任务
+                                    </button>
+                                  </div>
+                                )}
+                              </section>
+                            )
+                          })}
+                        </div>
+                        <DragOverlay dropAnimation={null}>
+                          {activeDragItemId ? (
+                            <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
+                              <TodoCardContent
+                                item={items.find(item => item.id === activeDragItemId)!}
+                              />
+                            </div>
+                          ) : null}
+                        </DragOverlay>
+                      </DndContext>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </main>
+      </div>
 
       {globalSearchOpen && (
         <GlobalTodoSearch
