@@ -321,6 +321,7 @@ const SYSTEM_DRAG_PANEL_ONLY = process.argv.includes('--system-drag-panel-only')
 const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
+const AUTOMATION_ONLY = process.argv.includes('--automation-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
 const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
@@ -361,6 +362,10 @@ const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
 const OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID = 'wework-e2e-official-plugin-mcp-search'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
+const AUTOMATION_NAME = 'Desktop E2E automation'
+const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
+const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
+const AUTOMATION_SCHEDULE_TIMEOUT_MS = 70_000
 
 function readCommandLineOption(name) {
   const index = process.argv.indexOf(name)
@@ -2684,6 +2689,205 @@ async function verifyPluginLifecycle({
     'The marketplace did not return to the install state after uninstall'
   )
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
+}
+
+async function verifyAutomationLifecycle(control, workspacePath) {
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (!initialSnapshot.testIds.includes('automation-button')) {
+    await control.command('click', '[data-testid="settings-button"]')
+    await control.command('click', '[data-testid="settings-menu-button"]')
+    await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="general-experimental-features-toggle"]')
+    await control.command('click', '[data-testid="settings-back-button"]')
+    await control.command('waitFor', '[data-testid="automation-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+
+  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('waitFor', '[data-testid="create-automation-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="create-automation-button"]')
+  await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="automation-name-input"]', {
+    value: AUTOMATION_NAME,
+  })
+  await control.command('fill', '[data-testid="automation-prompt-input"]', {
+    value: AUTOMATION_PROMPT,
+  })
+  const draftSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !draftSnapshot.testIds.includes('automation-workspace-input'),
+    'Automation creation should derive its working directory instead of exposing a path input'
+  )
+  await control.command('click', '[data-testid="automation-conversation-mode"]')
+  await control.command(
+    'click',
+    '[data-testid="automation-conversation-mode-option-continue_thread"]'
+  )
+  await control.command('click', '[data-testid="automation-target-task-select"]')
+  const existingTaskEmptySnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes('目标任务') &&
+      snapshot.text.includes('请先置顶一个本地任务，再使用已安排任务') &&
+      snapshot.text.includes('现有任务') &&
+      !snapshot.text.includes('继续当前任务'),
+    'The existing-task selector did not match the ChatGPT pinned-task empty state'
+  )
+  assert.ok(
+    existingTaskEmptySnapshot.text.includes('选择一个已固定任务'),
+    'The existing-task selector did not use the ChatGPT trigger copy'
+  )
+  const [targetTaskMenuMetrics] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="automation-target-task-select-menu"]')
+  )
+  assert.ok(
+    targetTaskMenuMetrics.width >= 340,
+    `The existing-task menu was too narrow: ${targetTaskMenuMetrics.width}px`
+  )
+  assert.ok(
+    targetTaskMenuMetrics.scrollWidth <= targetTaskMenuMetrics.clientWidth + 1,
+    'The existing-task empty state overflowed horizontally'
+  )
+  await captureVerificationScreenshot(control, 'automations-00-existing-task-empty.png')
+  await control.command('click', '[data-testid="automation-target-task-select"]')
+  await control.command('click', '[data-testid="automation-conversation-mode"]')
+  await control.command('click', '[data-testid="automation-conversation-mode-option-independent"]')
+  await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const createdSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(AUTOMATION_NAME) &&
+      snapshot.testIds.some(testId => testId.startsWith('automation-open-')),
+    'The local automation was not persisted by the Executor'
+  )
+  const automationRow = createdSnapshot.testIds.find(testId =>
+    testId.startsWith('automation-open-')
+  )
+  assert.ok(automationRow, 'The automation row did not expose a stable test id')
+  const automationActions = createdSnapshot.testIds.find(testId =>
+    testId.startsWith('automation-detail-actions-')
+  )
+  assert.ok(automationActions, 'The automation detail did not expose its actions menu')
+
+  control.setScenario('automation')
+  await control.command('click', `[data-testid="${automationActions}"]`)
+  await control.command('click', '[data-testid="automation-run-now-button"]')
+  await control.awaitScenarioRequestCount('automation', 1, WORKBENCH_READY_TIMEOUT_MS)
+
+  const manualTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`) ||
+      snapshot.testIds.some(
+        testId =>
+          testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
+      ),
+    'The manual automation run did not expose its completed runtime task',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const manualTaskRow = manualTaskSnapshot.testIds.find(
+    testId =>
+      testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
+  )
+  assert.ok(manualTaskRow, 'The manual automation run did not expose its runtime task')
+  const manualTaskId = manualTaskRow.replace('runtime-local-task-row-', '')
+  if (!manualTaskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
+    await control.command('click', `[data-testid="${manualTaskRow}"]`)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: `${AUTOMATION_COMPLETION_TEXT}_1`,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  await control.command('click', `[data-testid="runtime-local-task-mark-${manualTaskId}"]`)
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes('sidebar-pinned-section'),
+    'The automation task was not pinned before testing existing-task mode'
+  )
+
+  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('click', `[data-testid="${automationRow}"]`)
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.some(testId => testId.startsWith('automation-run-status-')) &&
+      /Completed|已完成/.test(snapshot.text),
+    'The manual automation run did not update its run history to completed',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await control.command('click', '[data-testid="automation-conversation-mode"]')
+  await control.command(
+    'click',
+    '[data-testid="automation-conversation-mode-option-continue_thread"]'
+  )
+  await control.command('click', '[data-testid="automation-target-task-select"]')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(
+        `automation-target-task-select-option-local-device:${manualTaskId}`
+      ),
+    'The existing-task selector did not list the pinned local task'
+  )
+  await control.command('click', '[data-testid="automation-target-task-select"]')
+  await control.command('click', '[data-testid="automation-repeat-menu"]')
+  await control.command('click', '[data-testid="automation-repeat-menu-option-one_time"]')
+  const scheduledFor = new Date(Date.now() + 5_000)
+  const localScheduledFor = new Date(
+    scheduledFor.getTime() - scheduledFor.getTimezoneOffset() * 60_000
+  )
+    .toISOString()
+    .slice(0, 19)
+  await control.command('fill', '[data-testid="automation-execute-at-input"]', {
+    value: localScheduledFor,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="automation-save-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const beforeScheduledRun = JSON.parse(await control.command('snapshot', 'body'))
+  await control.awaitScenarioRequestCount('automation', 2, AUTOMATION_SCHEDULE_TIMEOUT_MS)
+  const scheduledRunSnapshot = await waitForSnapshot(
+    control,
+    snapshot => {
+      const completedRuns = snapshot.testIds.filter(testId =>
+        testId.startsWith('automation-run-status-')
+      ).length
+      const completedLabels = snapshot.text.match(/Completed|已完成/g)?.length ?? 0
+      const newTask = snapshot.testIds.some(
+        testId =>
+          testId.startsWith('runtime-local-task-row-') &&
+          !beforeScheduledRun.testIds.includes(testId)
+      )
+      return completedRuns >= 2 && completedLabels >= 2 && !newTask
+    },
+    'The scheduled automation did not continue the pinned task after becoming due',
+    AUTOMATION_SCHEDULE_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'automations-02-scheduled-complete.png')
+  await control.command('click', `[data-testid="${manualTaskRow}"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${AUTOMATION_COMPLETION_TEXT}_2`,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('click', '[data-testid="automation-button"]')
+  await control.command('waitFor', `[data-testid="${automationRow}"]`, {
+    text: AUTOMATION_NAME,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'automations-01-local-persisted.png')
 }
 
 function processIsAlive(processId) {
@@ -5183,6 +5387,7 @@ class DesktopE2EServer {
         'provider_switch_retry',
         'view_image',
         'official_plugin',
+        'automation',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -6326,6 +6531,21 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'automation') {
+      this.recordScenarioRequest('automation', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(AUTOMATION_PROMPT),
+        'The automation prompt was lost before model execution'
+      )
+      const requestNumber = this.scenarioRequests.get('automation').length
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${requestNumber}`),
         responseCompleted(responseId),
       ])
       return
@@ -8837,6 +9057,13 @@ async function main() {
       return
     }
 
+    if (AUTOMATION_ONLY) {
+      phase = 'automation-lifecycle'
+      await verifyAutomationLifecycle(control, workspacePath)
+      console.log(`Wework desktop automation E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (PLUGINS_ONLY) {
       phase = 'plugin-lifecycle'
       await verifyPluginLifecycle({
@@ -8865,6 +9092,9 @@ async function main() {
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       if (!GUIDANCE_SCROLL_ONLY) {
+        phase = 'automation-lifecycle'
+        await verifyAutomationLifecycle(control, workspacePath)
+
         phase = 'system-drag-panel-layout'
         await verifySystemDragPanelLayout(control)
       }
