@@ -188,6 +188,7 @@ function TopnavFeedbackButton() {
       </button>
       <TaskFeedbackDialog
         open={open}
+        hasActiveTask={false}
         onClose={() => setOpen(false)}
         getTaskContext={() => Promise.resolve({})}
       />
