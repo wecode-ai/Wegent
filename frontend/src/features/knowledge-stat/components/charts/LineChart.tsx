@@ -4,7 +4,7 @@
 
 'use client'
 
-import { Fragment, useMemo } from 'react'
+import { Fragment, useId, useMemo } from 'react'
 import {
   LineChart as RechartsLineChart,
   Area,
@@ -29,6 +29,9 @@ import {
 /* -------------------------------------------------------------------------- */
 
 export function LineChart({ rows, schema }: ChartProps) {
+  // Scope gradient ids to this chart instance so two LineCharts sharing a
+  // series key don't resolve url(#...) against the other's <linearGradient>.
+  const gidPrefix = useId().replace(/:/g, '')
   const xKey =
     schema.find(s => s.type === 'date')?.key ??
     schema.find(s => s.type === 'string' && !DIMENSION_KEYS.has(s.key))?.key ??
@@ -98,7 +101,14 @@ export function LineChart({ rows, schema }: ChartProps) {
       <RechartsLineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
         <defs>
           {ySchemas.map((s, i) => (
-            <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+            <linearGradient
+              key={s.key}
+              id={`${gidPrefix}-grad-${s.key}`}
+              x1="0"
+              y1="0"
+              x2="0"
+              y2="1"
+            >
               <stop
                 offset="5%"
                 stopColor={CHART_COLORS[i % CHART_COLORS.length]}
@@ -139,7 +149,7 @@ export function LineChart({ rows, schema }: ChartProps) {
             type="monotone"
             dataKey={s.key}
             stroke="none"
-            fill={`url(#grad-${s.key})`}
+            fill={`url(#${gidPrefix}-grad-${s.key})`}
             legendType="none"
           />
         ))}

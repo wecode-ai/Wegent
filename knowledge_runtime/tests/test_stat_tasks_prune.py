@@ -77,4 +77,12 @@ def test_prune_task_skips_when_retention_zero(monkeypatch) -> None:
 
     monkeypatch.setattr(stat_tasks, "prune_old_runs", fake_prune)
 
+    # A regression that opens a DB session before the early return must still
+    # fail this test, so assert the session factory is never touched.
+    mock_get_session_factory = MagicMock()
+    monkeypatch.setattr(
+        "shared.db.stat_session.get_stat_session_factory", mock_get_session_factory
+    )
+
     assert stat_tasks.prune_old_runs_task(None) == 0
+    mock_get_session_factory.assert_not_called()

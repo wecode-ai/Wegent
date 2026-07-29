@@ -90,10 +90,11 @@ export function aggregateByXKey(
   schema: FieldSchema[]
 ): Record<string, unknown>[] {
   if (rows.length === 0) return []
+  // s.key is an English snake_case identifier that never holds a Chinese
+  // glyph, so "率" only appears in the display label (e.g. "命中率"). Test
+  // the ASCII markers on the key and both ASCII + CJK on the label.
   const rateKeys = new Set(
-    ySchemas
-      .filter(s => /rate|ratio|率/i.test(s.key) || /rate|ratio/i.test(s.label))
-      .map(s => s.key)
+    ySchemas.filter(s => /rate|ratio/i.test(s.key) || /rate|ratio|率/.test(s.label)).map(s => s.key)
   )
   const byX: Record<string, Record<string, unknown>> = {}
   const rateCounters: Record<string, Record<string, number>> = {}

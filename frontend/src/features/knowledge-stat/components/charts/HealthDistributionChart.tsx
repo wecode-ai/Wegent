@@ -64,7 +64,9 @@ export function HealthDistributionChart({ data }: { data: HealthDistributionRow[
         <button
           type="button"
           onClick={() => setMode('percent')}
-          className={`text-xs px-2 py-0.5 rounded ${
+          aria-pressed={mode === 'percent'}
+          data-testid="health-distribution-percent-toggle"
+          className={`text-xs px-2 py-0.5 min-h-11 min-w-11 rounded ${
             mode === 'percent' ? 'bg-primary text-primary-foreground' : 'bg-muted text-text-muted'
           }`}
         >
@@ -73,7 +75,9 @@ export function HealthDistributionChart({ data }: { data: HealthDistributionRow[
         <button
           type="button"
           onClick={() => setMode('count')}
-          className={`text-xs px-2 py-0.5 rounded ${
+          aria-pressed={mode === 'count'}
+          data-testid="health-distribution-count-toggle"
+          className={`text-xs px-2 py-0.5 min-h-11 min-w-11 rounded ${
             mode === 'count' ? 'bg-primary text-primary-foreground' : 'bg-muted text-text-muted'
           }`}
         >

@@ -251,7 +251,11 @@ def collect_all(
         abort_exc = exc
         run_status = "failed"
         error_msg = _sanitize_error(exc)
-        logger.error(f"[kb_stat] run_id={run_id} aborted: {exc}")
+        logger.error(
+            "[kb_stat] run_id=%s aborted: %s",
+            run_id,
+            _sanitize_error(exc),
+        )
 
     _finalize_run(
         stat_session,

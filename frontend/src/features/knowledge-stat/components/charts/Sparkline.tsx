@@ -4,6 +4,7 @@
 
 'use client'
 
+import { useId } from 'react'
 import { Area, AreaChart as RechartsAreaChart, ResponsiveContainer } from 'recharts'
 import { CHART_COLORS } from './chart-shared'
 
@@ -12,6 +13,9 @@ import { CHART_COLORS } from './chart-shared'
 /* -------------------------------------------------------------------------- */
 
 export function Sparkline({ data, color }: { data: number[]; color?: string }) {
+  // Per-instance id so two same-color Sparklines don't emit a duplicate
+  // document-wide gradient id (browsers resolve url(#...) to the first match).
+  const gradientId = `spark-${useId().replace(/:/g, '')}`
   if (!data || data.length < 2) return null
 
   // Build recharts-compatible data objects.
@@ -22,7 +26,7 @@ export function Sparkline({ data, color }: { data: number[]; color?: string }) {
     <ResponsiveContainer width="100%" height={32}>
       <RechartsAreaChart data={chartData} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
         <defs>
-          <linearGradient id={`spark-${stroke.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={stroke} stopOpacity={0.4} />
             <stop offset="95%" stopColor={stroke} stopOpacity={0} />
           </linearGradient>
@@ -32,7 +36,7 @@ export function Sparkline({ data, color }: { data: number[]; color?: string }) {
           dataKey="value"
           stroke={stroke}
           strokeWidth={1.5}
-          fill={`url(#spark-${stroke.replace('#', '')})`}
+          fill={`url(#${gradientId})`}
           dot={false}
           isAnimationActive={false}
         />
