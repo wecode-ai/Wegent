@@ -828,7 +828,12 @@ async function verifyFollowUpMessageRestoration({
   )
 }
 
-async function verifyQueuedFollowUpNavigation({ composerSelector, control, projectRowSelector }) {
+async function verifyQueuedFollowUpNavigation({
+  composerSelector,
+  control,
+  projectRowSelector,
+  runningTaskRowTestId,
+}) {
   await control.command('fill', composerSelector, { value: QUEUED_FOLLOW_UP })
   await control.command('press', composerSelector, { key: 'Enter' })
   await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
@@ -836,16 +841,6 @@ async function verifyQueuedFollowUpNavigation({ composerSelector, control, proje
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'queue-navigation-01-source-queued.png')
-
-  const runningTaskSnapshot = await waitForSnapshot(
-    control,
-    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
-    'The streaming task row was not available before switching conversations'
-  )
-  const runningTaskRowTestId = runningTaskSnapshot.testIds.find(testId =>
-    testId.startsWith('runtime-local-task-row-')
-  )
-  assert.ok(runningTaskRowTestId, 'The streaming task row identity was not found')
 
   await control.command(
     'clickWhenEnabled',
@@ -10297,14 +10292,6 @@ async function main() {
       await control.command('waitFor', activeModelSelector, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
-      const backgroundNavigationTaskRowTestId = await createCheckpointTaskFixture(
-        control,
-        composerSelector
-      )
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', composerSelector, {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       control.setScenario('initial')
       const taskRowsBeforeInitialTask = new Set(
@@ -10378,11 +10365,13 @@ async function main() {
         )
         await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
         await control.command('press', 'body', { key: 'Escape' })
+        await control.command('fill', composerSelector, { value: '' })
         if (!GUIDANCE_BACKGROUND_ONLY) {
           await verifyQueuedFollowUpNavigation({
             composerSelector,
             control,
             projectRowSelector,
+            runningTaskRowTestId: taskRowTestId,
           })
         }
         if (QUEUE_NAVIGATION_ONLY) {
@@ -10394,6 +10383,18 @@ async function main() {
           console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
           return
         }
+        const backgroundNavigationTaskRowTestId = await createCheckpointTaskFixture(
+          control,
+          composerSelector
+        )
+        control.setScenario('initial')
+        await ensureTaskRowVisible(control, taskRowTestId)
+        await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await control.command('waitFor', '[data-testid="pause-response-button"]', {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
         taskRowTestId = await verifyBackgroundGuidanceNavigation({
           composerSelector,
           control,
