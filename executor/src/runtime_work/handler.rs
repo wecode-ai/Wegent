@@ -72,8 +72,9 @@ use super::{
         workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, cached_messages, clear_runtime_handle_messages,
-        set_runtime_handle_messages,
+        append_runtime_handle_message, append_runtime_handle_user_message_presentation,
+        cached_messages, clear_runtime_handle_messages, set_runtime_handle_messages,
+        user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{full_transcript_messages, normalized_user_request_content, transcript_messages},

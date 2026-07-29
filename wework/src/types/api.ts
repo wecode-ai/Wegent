@@ -275,12 +275,20 @@ export interface RuntimeMessageSource {
   message_id?: string | null
 }
 
+export interface RuntimeMessagePresentationReference {
+  start: number
+  end: number
+  href: string
+}
+
 export interface NormalizedRuntimeMessage {
   id: string
   clientMessageId?: string | null
   client_message_id?: string | null
   role: 'user' | 'assistant' | 'system' | string
   content: string
+  presentationReferences?: RuntimeMessagePresentationReference[] | null
+  presentation_references?: RuntimeMessagePresentationReference[] | null
   contentTruncated?: boolean | null
   content_truncated?: boolean | null
   contentOriginalChars?: number | null
