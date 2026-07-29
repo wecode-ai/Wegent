@@ -137,10 +137,10 @@ impl LocalTaskStore {
         validate_provider(project.project_store, project.task_provider)?;
         if !matches!(
             project.task_provider,
-            TaskProviderKind::Github | TaskProviderKind::Gitlab
+            TaskProviderKind::Github | TaskProviderKind::Gitlab | TaskProviderKind::DingtalkAitable
         ) {
             return Err(TaskRuntimeError::Invalid(
-                "external project requires github or gitlab".to_owned(),
+                "external project requires github, gitlab, or dingtalk_aitable".to_owned(),
             ));
         }
         let connection = self.connection()?;
@@ -906,7 +906,7 @@ pub(crate) fn task_provider(project: &LoopItem) -> Result<TaskProviderKind, Task
     .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
 }
 
-fn validate_provider(
+pub(crate) fn validate_provider(
     store: ProjectStoreKind,
     provider: TaskProviderKind,
 ) -> Result<(), TaskRuntimeError> {
@@ -915,9 +915,11 @@ fn validate_provider(
         (ProjectStoreKind::Local, TaskProviderKind::Local)
             | (ProjectStoreKind::Local, TaskProviderKind::Github)
             | (ProjectStoreKind::Local, TaskProviderKind::Gitlab)
+            | (ProjectStoreKind::Local, TaskProviderKind::DingtalkAitable)
             | (ProjectStoreKind::Backend, TaskProviderKind::Backend)
             | (ProjectStoreKind::Backend, TaskProviderKind::Github)
             | (ProjectStoreKind::Backend, TaskProviderKind::Gitlab)
+            | (ProjectStoreKind::Backend, TaskProviderKind::DingtalkAitable)
     );
     valid
         .then_some(())
@@ -937,6 +939,7 @@ fn task_provider_key(provider: TaskProviderKind) -> &'static str {
         TaskProviderKind::Backend => "backend",
         TaskProviderKind::Github => "github",
         TaskProviderKind::Gitlab => "gitlab",
+        TaskProviderKind::DingtalkAitable => "dingtalk_aitable",
     }
 }
 
@@ -963,27 +966,37 @@ fn provider_credential_config(
 
 fn list_external_projects(connection: &Connection) -> Result<Vec<LoopItem>, TaskRuntimeError> {
     let mut statement = connection.prepare(
-        "SELECT descriptor
+        "SELECT project_id, descriptor
          FROM external_project_catalog
          WHERE project_store = 'backend'
          ORDER BY updated_at DESC",
     )?;
     let descriptors = statement
-        .query_map([], |row| row.get::<_, String>(0))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
     descriptors
         .into_iter()
-        .map(|serialized| {
-            let descriptor = serde_json::from_str::<ProjectDescriptor>(&serialized)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+        .filter_map(|(project_id, serialized)| {
+            let descriptor = match serde_json::from_str::<ProjectDescriptor>(&serialized) {
+                Ok(descriptor) => descriptor,
+                Err(error) => {
+                    eprintln!(
+                        "ignoring incompatible cached external project {project_id}: {error}"
+                    );
+                    return None;
+                }
+            };
             let provider_config = provider_credential_config(
                 connection,
                 project_store_key(descriptor.project_store),
                 &descriptor.id,
-            )?
-            .unwrap_or_else(|| json!({}));
-            Ok(descriptor_loop_item(descriptor, provider_config))
+            )
+            .map(|config| config.unwrap_or_else(|| json!({})))
+            .map(|config| descriptor_loop_item(descriptor, config));
+            Some(provider_config)
         })
         .collect()
 }
@@ -1245,6 +1258,76 @@ mod tests {
         assert_eq!(
             store.get_project("cloud-1").unwrap().name.as_deref(),
             Some("Cloud GitHub board")
+        );
+    }
+
+    #[test]
+    fn incompatible_cached_external_project_does_not_hide_local_projects() {
+        let (_directory, store) = store();
+        let local = local_project(&store);
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO external_project_catalog (
+                    project_store, project_id, descriptor, updated_at
+                 ) VALUES ('backend', 'future-1', ?1, ?2)",
+                params![
+                    json!({
+                        "id": "future-1",
+                        "project_key": "FUTURE",
+                        "name": "Future provider",
+                        "project_store": "backend",
+                        "task_provider": "provider_from_newer_branch",
+                    })
+                    .to_string(),
+                    now(),
+                ],
+            )
+            .unwrap();
+
+        let projects = store.list_projects().unwrap();
+
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, local.id);
+    }
+
+    #[test]
+    fn caches_backend_dingtalk_aitable_projects() {
+        let (_directory, store) = store();
+        let configured = store
+            .configure_external_project(ProjectDescriptor {
+                id: "aitable-cloud-1".to_owned(),
+                public_id: Some("aitable-public-1".to_owned()),
+                project_key: "AITABLE".to_owned(),
+                name: "DingTalk AI Table".to_owned(),
+                description: String::new(),
+                project_store: ProjectStoreKind::Backend,
+                task_provider: TaskProviderKind::DingtalkAitable,
+                provider_config: json!({
+                    "base_id": "base-1",
+                    "table_id": "table-1",
+                    "source_url": "https://alidocs.dingtalk.com/i/nodes/base-1",
+                }),
+                version: 1,
+            })
+            .unwrap();
+
+        assert_eq!(
+            configured.metadata["task_provider"],
+            json!(TaskProviderKind::DingtalkAitable)
+        );
+        assert_eq!(
+            configured.metadata["provider_config"]["base_id"],
+            json!("base-1")
+        );
+        assert_eq!(
+            store
+                .get_project("aitable-cloud-1")
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("DingTalk AI Table")
         );
     }
 

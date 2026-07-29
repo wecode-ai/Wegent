@@ -44,7 +44,7 @@ fn hook_user_id(value: &Value) -> Option<String> {
 impl RuntimeWorkRpcHandler {
     pub(super) fn spawn_turn(&self, mut turn: SpawnTurnRequest) {
         self.apply_project_workspace_roots(&mut turn.request);
-        crate::task_runtime::mcp::ensure_task_mcp_server(&mut turn.request);
+        crate::task_runtime::mcp::ensure_space_mcp_server(&mut turn.request);
         let SpawnTurnRequest {
             local_task_id,
             request,

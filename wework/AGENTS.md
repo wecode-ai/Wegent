@@ -31,6 +31,8 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 - Changes to a core user flow must add or update automated E2E regression coverage in the same change. Treat task creation and launch, agent interaction, local-runtime lifecycle, permissions, and failure recovery as core flows when they are affected.
 - Add Wework E2E regression cases under `e2e/desktop/` and integrate them with the existing desktop runner so the GitHub desktop E2E jobs execute them. Do not place desktop regressions behind standalone local-only entry points.
 - Reuse the existing `e2e:desktop` command and its established CI variants. Do not add a package script or GitHub Actions command for each scenario; extend the desktop runner or its scenario discovery instead. Add a new command only when the test requires a genuinely different CI environment or job boundary.
+- Register long main-runner sections in the ordered desktop checkpoint list. `--segment <checkpoint>` must run that checkpoint alone after common bootstrap; `--from-segment <checkpoint>` must run it and every later checkpoint. Each checkpoint must create its own minimal fixtures when an earlier checkpoint is skipped, and must never silently rely on task IDs, model state, or UI state produced only by a previous checkpoint.
+- Ordinary desktop E2E UI actions and waits use the shared 10-second step timeout. Pass an explicit `timeoutMs` only for a genuinely slow operation such as application startup, workbench reconnection, or a deliberately held model response; do not restore a broad 120-second default.
 - E2E coverage complements, but never replaces, verification in the real Tauri application.
 
 ## Real desktop verification

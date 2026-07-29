@@ -327,11 +327,14 @@ jobs:
       - name: Build bundled code statistics hook
         run: wework/src-tauri/hook-plugins/codex-code-statistics/build-target.sh "${{ matrix.rust_target }}"
 
-      - name: Prepare bundled Codex
+      - name: Prepare bundled sidecars
         working-directory: wework
         env:
           WEWORK_CODEX_TARGET: ${{ matrix.rust_target }}
-        run: pnpm run prepare:codex
+          WEWORK_DWS_TARGET: ${{ matrix.rust_target }}
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Sync Wework version files
         working-directory: wework
@@ -615,11 +618,14 @@ jobs:
         shell: pwsh
         run: ./wework/src-tauri/hook-plugins/codex-code-statistics/build-target.ps1 -RustTarget x86_64-pc-windows-msvc
 
-      - name: Prepare bundled Codex
+      - name: Prepare bundled sidecars
         working-directory: wework
         env:
           WEWORK_CODEX_TARGET: x86_64-pc-windows-msvc
-        run: pnpm run prepare:codex
+          WEWORK_DWS_TARGET: x86_64-pc-windows-msvc
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Build Wework app bundle
         shell: pwsh

@@ -10,6 +10,14 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({ startDragging }),
 }))
 
+vi.mock('@/components/layout/WindowFrameControls', () => ({
+  WindowFrameControls: () => <div data-testid="window-frame-controls">FrameControls</div>,
+}))
+
+vi.mock('@/features/feedback/TaskFeedbackDialog', () => ({
+  TaskFeedbackDialog: () => <div data-testid="task-feedback-dialog">FeedbackDialog</div>,
+}))
+
 const mockTabs: AppTab[] = [
   { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
   {
@@ -197,19 +205,22 @@ describe('ChromeTitlebar', () => {
     disableTauri()
   })
 
-  test('shows right spacer in Tauri runtime on Windows', () => {
+  test('shows custom window frame controls in Tauri runtime on Windows', () => {
     mockUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
-    const dragRegion = screen.getByTestId('chrome-titlebar').lastElementChild
-    expect(dragRegion).toBeInTheDocument()
-    expect(dragRegion).toHaveAttribute('data-tauri-drag-region')
-    expect(dragRegion).toHaveClass('w-[138px]', 'self-stretch')
-    expect(
-      within(dragRegion as HTMLElement).getByTestId('macos-titlebar-drag-region')
-    ).toHaveAttribute('data-tauri-drag-region')
-    // Windows spacer is last child (right side)
-    expect(dragRegion?.parentElement?.lastChild).toBe(dragRegion)
+    expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
+    expect(screen.queryByTestId('macos-traffic-light-spacer')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('topnav-feedback-button')).not.toBeInTheDocument()
+    disableTauri()
+  })
+
+  test('shows feedback button in Tauri runtime on macOS', () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableTauri()
+    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
+    expect(screen.getByTestId('topnav-feedback-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('window-frame-controls')).not.toBeInTheDocument()
     disableTauri()
   })
 

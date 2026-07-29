@@ -99,6 +99,8 @@ Tool state follows app-server lifecycle events: `item/started` creates a running
 
 A Codex turn may interleave reasoning, assistant text, and tool calls. The executor must track streaming offsets and completed snapshots for each assistant text segment by provider item ID. A `delta` and `completed` event for the same item represent an incremental stream and its snapshot and must be deduplicated. Completed text from a different item must still be forwarded as subsequent text even when it occurs in the same turn; it cannot be discarded merely because an earlier item emitted deltas. Before Wework moves current assistant text into a tool or processing block, it clears that text stream's offset state so the next assistant segment after the tool starts at offset 0 and preserves transcript event order.
 
+Assistant text enters final content during streaming only when Codex explicitly provides a `final` or `final_answer` phase. Text with a missing or unrecognized phase must first be emitted as process text, preventing third-party models from making Wework alternate between final content and process blocks when text and tool calls are interleaved. The executor retains the latest unresolved text and promotes it to the final result only when the turn succeeds without explicit final text. If explicit final text appears later in the same turn, it always takes precedence.
+
 Reasoning content may remain in the runtime transcript for diagnostics and restoration, but Wework does not display reasoning characters or character counts. While the turn is active, the UI shows only the generic “Thinking” status. The task state machine and visible message or tool content determine when that indicator appears and disappears.
 
 ### Backend Device Chat Task REST Entrypoint

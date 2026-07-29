@@ -2414,9 +2414,9 @@ mod tests {
         assert_eq!(second_event["event"], "response.output_text.delta");
         assert_eq!(second_event["payload"]["data"]["delta"], " More.");
         assert_eq!(second_event["payload"]["data"]["offset"], 5);
-        assert_eq!(next_event["event"], "response.output_text.delta");
-        assert_eq!(next_event["payload"]["data"]["delta"], "Next.");
-        assert_eq!(next_event["payload"]["data"]["offset"], 0);
+        assert_eq!(next_event["event"], "response.block.created");
+        assert_eq!(next_event["payload"]["data"]["block"]["type"], "text");
+        assert_eq!(next_event["payload"]["data"]["block"]["content"], "Next.");
     }
 
     #[test]
@@ -2753,7 +2753,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_legacy_final_agent_message_snapshots_after_live_delta_stream() {
+    fn promotes_legacy_explicit_final_after_unphased_live_delta_stream() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
@@ -2790,12 +2790,20 @@ mod tests {
             }),
         );
 
-        let event = event_rx
+        let process_event = event_rx
             .try_recv()
-            .expect("live final delta should be emitted");
-        assert_eq!(event["event"], "response.output_text.delta");
-        assert_eq!(event["payload"]["data"]["delta"], "Done.");
-        assert_eq!(event["payload"]["data"]["offset"], 0);
+            .expect("unphased live delta should be emitted as process text");
+        let final_event = event_rx
+            .try_recv()
+            .expect("explicit final snapshot should be emitted as final text");
+        assert_eq!(process_event["event"], "response.block.created");
+        assert_eq!(
+            process_event["payload"]["data"]["block"]["content"],
+            "Done."
+        );
+        assert_eq!(final_event["event"], "response.output_text.delta");
+        assert_eq!(final_event["payload"]["data"]["delta"], "Done.");
+        assert_eq!(final_event["payload"]["data"]["offset"], 0);
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -3503,6 +3511,84 @@ mod tests {
         assert_eq!(
             final_text["payload"]["data"]["delta"],
             "Current directory: /tmp/project"
+        );
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn maps_unphased_agent_text_around_tools_as_process_text() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        for (id, text) in [
+            ("msg-before-tool", "I will inspect the workspace."),
+            ("msg-after-tool", "The issue is in the configuration."),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device-1",
+                "local-1",
+                &request,
+                json!({
+                    "method": "item/completed",
+                    "params": {
+                        "item": {
+                            "id": id,
+                            "type": "agentMessage",
+                            "role": "assistant",
+                            "text": text
+                        }
+                    }
+                }),
+            );
+
+            if id == "msg-before-tool" {
+                mapper.map(
+                    &Some(event_tx.clone()),
+                    "device-1",
+                    "local-1",
+                    &request,
+                    json!({
+                        "method": "item/started",
+                        "params": {
+                            "item": {
+                                "id": "call-1",
+                                "type": "function_call",
+                                "call_id": "call-1",
+                                "name": "exec_command",
+                                "arguments": "{\"cmd\":\"pwd\"}"
+                            }
+                        }
+                    }),
+                );
+            }
+        }
+
+        let before_tool = event_rx
+            .try_recv()
+            .expect("first process text should be emitted");
+        let tool = event_rx.try_recv().expect("tool should be emitted");
+        let after_tool = event_rx
+            .try_recv()
+            .expect("second process text should be emitted");
+
+        assert_eq!(before_tool["event"], "response.block.created");
+        assert_eq!(before_tool["payload"]["data"]["block"]["type"], "text");
+        assert_eq!(
+            before_tool["payload"]["data"]["block"]["content"],
+            "I will inspect the workspace."
+        );
+        assert_eq!(tool["payload"]["data"]["block"]["type"], "tool");
+        assert_eq!(after_tool["event"], "response.block.created");
+        assert_eq!(after_tool["payload"]["data"]["block"]["type"], "text");
+        assert_eq!(
+            after_tool["payload"]["data"]["block"]["content"],
+            "The issue is in the configuration."
         );
         assert!(event_rx.try_recv().is_err());
     }

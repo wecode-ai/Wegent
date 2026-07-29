@@ -1,4 +1,5 @@
 import { getRuntimeConfig } from '@/config/runtime'
+import type { DesktopAppKey } from '@/components/layout/DesktopAppSwitcher'
 
 function joinBrowserPath(basePath: string | undefined, path: string): string {
   const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
@@ -20,6 +21,19 @@ export function navigateTo(path: string) {
 
   window.history.pushState({}, '', browserPath)
   window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+export function resolveDesktopAppRoute(app: DesktopAppKey): string {
+  switch (app) {
+    case 'wework':
+      return '/'
+    case 'todo':
+      return '/todo'
+    case 'wegent':
+      return '/app/wegent'
+    default:
+      return '/apps'
+  }
 }
 
 export interface RuntimeTaskRoute {
