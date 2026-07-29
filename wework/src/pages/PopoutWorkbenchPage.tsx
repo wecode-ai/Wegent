@@ -205,7 +205,7 @@ export function PopoutWorkbenchPage() {
               aria-label={t('workbench.popout_window_new_chat')}
               title={t('workbench.popout_window_new_chat')}
             >
-              <SquarePen className="h-[18px] w-[18px]" />
+              <SquarePen className="h-4 w-4" />
             </button>
             <button
               type="button"
@@ -219,7 +219,7 @@ export function PopoutWorkbenchPage() {
               aria-label={t('workbench.popout_window_open_in_main')}
               title={t('workbench.popout_window_open_in_main')}
             >
-              <Copy className="h-[18px] w-[18px]" />
+              <Copy className="h-4 w-4" />
             </button>
           </div>
         </header>

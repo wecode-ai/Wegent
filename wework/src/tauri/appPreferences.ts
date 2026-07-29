@@ -292,14 +292,17 @@ export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<
     return preferences
   }
 
-  const nativePatch =
-    Object.prototype.hasOwnProperty.call(patch, 'browserDownloadDirectory') &&
+  const nativePatch = {
+    ...patch,
+    ...(Object.prototype.hasOwnProperty.call(patch, 'browserDownloadDirectory') &&
     patch.browserDownloadDirectory === null
-      ? { ...patch, browserDownloadDirectory: '' }
-      : Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut') &&
-          patch.popoutWindowShortcut === null
-        ? { ...patch, popoutWindowShortcut: '' }
-        : patch
+      ? { browserDownloadDirectory: '' }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut') &&
+    patch.popoutWindowShortcut === null
+      ? { popoutWindowShortcut: '' }
+      : {}),
+  }
   const preferences = mergeAppPreferences(
     await invoke('update_app_preferences', { patch: nativePatch })
   )

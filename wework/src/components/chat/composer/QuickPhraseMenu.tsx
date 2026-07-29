@@ -1,5 +1,5 @@
 import { File, FileText, MessageSquareText, Search, Settings, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -7,6 +7,7 @@ import { navigateTo } from '@/lib/navigation'
 import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/tauri/appPreferences'
 import { useQuickPhrases } from '@/hooks/useQuickPhrases'
 import { useAnchoredPortalMenu } from './useAnchoredPortalMenu'
+import { useOutsideClick } from './useOutsideClick'
 
 interface QuickPhraseMenuProps {
   disabled?: boolean
@@ -162,7 +163,10 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
   const menuRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const closeMenu = useCallback(() => setOpen(false), [])
+  const outsideRefs = useMemo(() => [menuRef], [])
   const menuLayout = useAnchoredPortalMenu(open, triggerRef, menuRef)
+  useOutsideClick(rootRef, open, closeMenu, outsideRefs)
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
     if (!normalized) return phrases
@@ -180,14 +184,6 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
     menuRef.current
       ?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
       ?.scrollIntoView?.({ block: 'nearest' })
-    const close = (event: PointerEvent) => {
-      const target = event.target as Node
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
-        setOpen(false)
-      }
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
   }, [open, selectedIndex])
 
   const choose = (phrase: QuickPhrase) => {

@@ -4383,27 +4383,30 @@ async function verifySystemDragPanelLayout(control) {
       }),
     })
   )
-  assert.equal(
-    focusSnapshot.mainFocused,
-    false,
-    'Completing a system drag incorrectly focused the main window'
-  )
-  assert.equal(
-    focusSnapshot.popoutExists && focusSnapshot.popoutVisible,
-    true,
-    'Completing a system drag did not reveal the Popout Window'
-  )
-  if (process.platform === 'darwin') {
-    const dataUrl = await control.command('capturePopoutWindow', 'body', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    const prefix = 'data:image/png;base64,'
-    assert.ok(dataUrl.startsWith(prefix), 'System drag did not reveal a capturable Popout Window')
-    const png = Buffer.from(dataUrl.slice(prefix.length), 'base64')
-    assert.ok(png.length > 10_000, 'System drag revealed an empty Popout Window')
-    await writeFile(join(resultDir, 'system-drag-popout-window.png'), png)
+  try {
+    assert.equal(
+      focusSnapshot.mainFocused,
+      false,
+      'Completing a system drag incorrectly focused the main window'
+    )
+    assert.equal(
+      focusSnapshot.popoutExists && focusSnapshot.popoutVisible,
+      true,
+      'Completing a system drag did not reveal the Popout Window'
+    )
+    if (process.platform === 'darwin') {
+      const dataUrl = await control.command('capturePopoutWindow', 'body', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      const prefix = 'data:image/png;base64,'
+      assert.ok(dataUrl.startsWith(prefix), 'System drag did not reveal a capturable Popout Window')
+      const png = Buffer.from(dataUrl.slice(prefix.length), 'base64')
+      assert.ok(png.length > 10_000, 'System drag revealed an empty Popout Window')
+      await writeFile(join(resultDir, 'system-drag-popout-window.png'), png)
+    }
+  } finally {
+    await control.command('dismissPopoutWindow', 'body')
   }
-  await control.command('dismissPopoutWindow', 'body')
 }
 
 async function verifyPastedWorkspacePaths({ composerSelector, control, workspacePath }) {

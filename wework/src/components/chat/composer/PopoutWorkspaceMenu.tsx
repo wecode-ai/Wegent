@@ -8,7 +8,7 @@ import {
   ShieldCheck,
   Workflow,
 } from 'lucide-react'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -33,68 +33,7 @@ interface PopoutWorkspaceMenuProps {
   onSelectProject: (projectId: number | null) => void
 }
 
-interface SubmenuLayout {
-  left: number
-  maxHeight: number
-  top: number
-}
-
-const VIEWPORT_MARGIN = 8
 const SUBMENU_GAP = 6
-
-function useSubmenuLayout(
-  open: boolean,
-  anchorRef: RefObject<HTMLElement | null>,
-  submenuRef: RefObject<HTMLElement | null>
-) {
-  const [layout, setLayout] = useState<SubmenuLayout | null>(null)
-
-  useLayoutEffect(() => {
-    if (!open) return
-
-    const update = () => {
-      const anchor = anchorRef.current
-      const submenu = submenuRef.current
-      if (!anchor || !submenu) return
-
-      const anchorRect = anchor.getBoundingClientRect()
-      const submenuRect = submenu.getBoundingClientRect()
-      const width = submenuRect.width
-      const height = Math.min(
-        submenu.scrollHeight || submenuRect.height,
-        window.innerHeight - VIEWPORT_MARGIN * 2
-      )
-      const left = Math.round(
-        Math.max(
-          VIEWPORT_MARGIN,
-          Math.min(anchorRect.right - width, window.innerWidth - VIEWPORT_MARGIN - width)
-        )
-      )
-      const belowTop = anchorRect.bottom + SUBMENU_GAP
-      const aboveTop = anchorRect.top - SUBMENU_GAP - height
-      const top =
-        belowTop + height <= window.innerHeight - VIEWPORT_MARGIN
-          ? belowTop
-          : Math.max(VIEWPORT_MARGIN, aboveTop)
-
-      setLayout({ left, maxHeight: window.innerHeight - VIEWPORT_MARGIN * 2, top: Math.round(top) })
-    }
-
-    update()
-    window.addEventListener('resize', update)
-    const observer =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => update())
-    if (anchorRef.current) observer?.observe(anchorRef.current)
-    if (submenuRef.current) observer?.observe(submenuRef.current)
-
-    return () => {
-      window.removeEventListener('resize', update)
-      observer?.disconnect()
-    }
-  }, [anchorRef, open, submenuRef])
-
-  return open ? layout : null
-}
 
 interface WorkspaceActionRowProps {
   active: boolean
@@ -178,9 +117,32 @@ export function PopoutWorkspaceMenu({
       : submenu === 'launchMode'
         ? launchModeRowRef
         : branchRowRef
-  const submenuLayout = useSubmenuLayout(submenu !== null, submenuAnchorRef, submenuRef)
+  const submenuLayout = useAnchoredPortalMenu(submenu !== null, submenuAnchorRef, submenuRef, {
+    align: 'end',
+    gap: SUBMENU_GAP,
+    placement: 'prefer-below',
+  })
 
   useOutsideClick(menuRef, open, closeMenu, outsideRefs)
+
+  useEffect(() => {
+    if (!open) return undefined
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (submenu) {
+        setSubmenu(null)
+        return
+      }
+      closeMenu()
+      triggerRef.current?.focus()
+    }
+
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [closeMenu, open, submenu])
 
   const filteredProjects = projects.filter(project =>
     project.name.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase())
@@ -313,7 +275,9 @@ export function PopoutWorkspaceMenu({
                 data-testid={`popout-workspace-branch-option-${branch}`}
                 className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal text-text-primary hover:bg-muted"
                 onClick={() => {
-                  void onCheckoutBranch?.(branch)
+                  void onCheckoutBranch?.(branch).catch(error => {
+                    console.error('[Wework] Failed to checkout Popout Window branch', error)
+                  })
                   closeMenu()
                 }}
               >

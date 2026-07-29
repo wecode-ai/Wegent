@@ -1,6 +1,6 @@
 import { ClipboardList, Paperclip, Plus, Target } from 'lucide-react'
 import type { ChangeEvent } from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useAnchoredPortalMenu } from './useAnchoredPortalMenu'
@@ -30,6 +30,28 @@ export function AddContextMenu({
   const menuLayout = useAnchoredPortalMenu(open, triggerRef, menuRef)
 
   useOutsideClick(containerRef, open, closeMenu, outsideRefs)
+
+  useEffect(() => {
+    if (!open) return undefined
+
+    const trigger = triggerRef.current
+    const animationFrame = window.requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+    })
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      closeMenu()
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      window.removeEventListener('keydown', handleKeyDown, true)
+      trigger?.focus()
+    }
+  }, [closeMenu, open])
 
   const handleFileChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -68,6 +90,7 @@ export function AddContextMenu({
         createPortal(
           <div
             ref={menuRef}
+            role="menu"
             data-testid="add-context-menu"
             style={{
               left: menuLayout?.left ?? 0,
@@ -79,6 +102,7 @@ export function AddContextMenu({
           >
             <button
               type="button"
+              role="menuitem"
               data-testid="attach-files-button"
               onClick={() => fileInputRef.current?.click()}
               className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
@@ -89,6 +113,7 @@ export function AddContextMenu({
             {onSetPlanMode && (
               <button
                 type="button"
+                role="menuitem"
                 data-testid="set-plan-mode-button"
                 onClick={handleSetPlanMode}
                 className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
@@ -105,6 +130,7 @@ export function AddContextMenu({
             {onSetGoal && (
               <button
                 type="button"
+                role="menuitem"
                 data-testid="set-goal-button"
                 onClick={handleSetGoal}
                 className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import type { ComponentProps } from 'react'
@@ -124,5 +124,42 @@ describe('PopoutWorkspaceMenu', () => {
       expect(screen.getByTestId('popout-workspace-branch-option-main')).toBeInTheDocument()
     )
     expect(screen.queryByText('加载中…')).not.toBeInTheDocument()
+  })
+
+  test('closes the submenu before closing the menu with Escape', async () => {
+    renderMenu()
+
+    const trigger = screen.getByTestId('composer-project-menu-button')
+    await userEvent.click(trigger)
+    await userEvent.click(screen.getByTestId('popout-workspace-project-button'))
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('popout-workspace-project-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('popout-workspace-menu')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('popout-workspace-menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  test('handles branch checkout failures without an unhandled rejection', async () => {
+    const error = new Error('checkout failed')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    renderMenu({ onCheckoutBranch: vi.fn().mockRejectedValue(error) })
+
+    await userEvent.click(screen.getByTestId('composer-project-menu-button'))
+    await userEvent.click(screen.getByTestId('popout-workspace-branch-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('popout-workspace-branch-option-fix/menu')).toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByTestId('popout-workspace-branch-option-fix/menu'))
+
+    await waitFor(() =>
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Wework] Failed to checkout Popout Window branch',
+        error
+      )
+    )
+    consoleError.mockRestore()
   })
 })

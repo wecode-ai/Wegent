@@ -140,6 +140,7 @@ export function GeneralSettingsPage() {
       }
       const shortcut = normalizeKeybinding(keybindingFromKeyboardEvent(event))
       if (!shortcut || !shortcut.includes('+')) return
+      setRecordingPopoutShortcut(false)
       void savePopoutShortcut(shortcut)
     }
 
@@ -388,7 +389,7 @@ export function GeneralSettingsPage() {
                   data-testid="general-popout-shortcut-record-button"
                   disabled={loading || saving}
                   onClick={() => setRecordingPopoutShortcut(true)}
-                  className="inline-flex min-h-8 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex min-h-8 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 max-md:min-h-11"
                   aria-label={t('workbench.general_settings_popout_shortcut_edit')}
                 >
                   {recordingPopoutShortcut ? (
@@ -413,7 +414,7 @@ export function GeneralSettingsPage() {
                   data-testid="general-popout-shortcut-clear-button"
                   disabled={loading || saving || !preferences.popoutWindowShortcut}
                   onClick={() => void savePopoutShortcut(null)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:h-11 max-md:w-11"
                   aria-label={t('workbench.keyboard_shortcuts_clear')}
                   title={t('workbench.keyboard_shortcuts_clear')}
                 >

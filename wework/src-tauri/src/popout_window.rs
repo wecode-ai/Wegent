@@ -22,6 +22,7 @@ pub struct PopoutWindowState {
     expanded: AtomicBool,
     overlay_active: AtomicBool,
     mouse_events_ignored: AtomicBool,
+    visible: AtomicBool,
 }
 
 impl Default for PopoutWindowState {
@@ -32,6 +33,7 @@ impl Default for PopoutWindowState {
             expanded: AtomicBool::new(false),
             overlay_active: AtomicBool::new(false),
             mouse_events_ignored: AtomicBool::new(false),
+            visible: AtomicBool::new(false),
         }
     }
 }
@@ -100,6 +102,9 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
     window
         .show()
         .map_err(|error| format!("Failed to show Popout Window: {error}"))?;
+    app.state::<PopoutWindowState>()
+        .visible
+        .store(true, Ordering::SeqCst);
     activate_popout_window(&window)?;
     window
         .set_focus()
@@ -334,15 +339,16 @@ fn window_position_for_surface_center(
 }
 
 fn update_mouse_passthrough(app: &AppHandle) -> Result<(), String> {
-    let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
-        return Ok(());
-    };
-    if !window
-        .is_visible()
-        .map_err(|error| format!("Failed to read Popout Window visibility: {error}"))?
+    if !app
+        .state::<PopoutWindowState>()
+        .visible
+        .load(Ordering::Relaxed)
     {
         return Ok(());
     }
+    let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
+        return Ok(());
+    };
 
     let state = app.state::<PopoutWindowState>();
     let should_ignore = !state.expanded.load(Ordering::Relaxed)
@@ -367,6 +373,13 @@ fn setup_mouse_passthrough_monitor(app: AppHandle) {
 
     let global_app = app.clone();
     let global_handler = RcBlock::new(move |_event: std::ptr::NonNull<NSEvent>| {
+        if !global_app
+            .state::<PopoutWindowState>()
+            .visible
+            .load(Ordering::Relaxed)
+        {
+            return;
+        }
         if let Err(error) = update_mouse_passthrough(&global_app) {
             log::debug!("Failed to update Popout Window from global mouse movement: {error}");
         }
@@ -380,6 +393,13 @@ fn setup_mouse_passthrough_monitor(app: AppHandle) {
     }
 
     let local_handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
+        if !app
+            .state::<PopoutWindowState>()
+            .visible
+            .load(Ordering::Relaxed)
+        {
+            return event.as_ptr();
+        }
         if let Err(error) = update_mouse_passthrough(&app) {
             log::debug!("Failed to update Popout Window from local mouse movement: {error}");
         }
@@ -416,6 +436,9 @@ pub fn dismiss_popout_window(app: AppHandle) -> Result<(), String> {
             .hide()
             .map_err(|error| format!("Failed to hide Popout Window: {error}"))?;
     }
+    app.state::<PopoutWindowState>()
+        .visible
+        .store(false, Ordering::SeqCst);
     restore_previous_frontmost_application(&app, previous_frontmost_pid);
     Ok(())
 }
@@ -431,15 +454,16 @@ pub fn hide_for_main_window(app: &AppHandle) -> Result<(), String> {
             .hide()
             .map_err(|error| format!("Failed to hide Popout Window: {error}"))?;
     }
+    app.state::<PopoutWindowState>()
+        .visible
+        .store(false, Ordering::SeqCst);
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_popout_window_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
-    let was_expanded = app
-        .state::<PopoutWindowState>()
-        .expanded
-        .swap(expanded, Ordering::SeqCst);
+    let state = app.state::<PopoutWindowState>();
+    let was_expanded = state.expanded.load(Ordering::SeqCst);
     let window = app
         .get_webview_window(WINDOW_LABEL)
         .ok_or_else(|| "Popout Window is not open".to_string())?;
@@ -485,6 +509,7 @@ pub fn set_popout_window_expanded(app: AppHandle, expanded: bool) -> Result<(), 
             next_y.round() as i32,
         ))
         .map_err(|error| format!("Failed to preserve Popout Window position: {error}"))?;
+    state.expanded.store(expanded, Ordering::SeqCst);
     update_mouse_passthrough(&app)
 }
 

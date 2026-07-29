@@ -33,7 +33,7 @@
   z-index: -1;
   border: 0.5px solid rgb(var(--color-border));
   border-radius: 30px;
-  background: rgb(247 247 248);
+  background: rgb(var(--color-bg-surface));
   box-shadow: 0 8px 24px rgb(0 0 0 / 8%);
   content: '';
 }

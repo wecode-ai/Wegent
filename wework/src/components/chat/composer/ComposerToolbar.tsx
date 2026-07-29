@@ -1,14 +1,9 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
-import type {
-  ModelOptions,
-  ProjectExecutionMode,
-  RuntimeContextUsage,
-  UnifiedModel,
-} from '@/types/api'
+import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -43,19 +38,7 @@ interface ComposerToolbarProps {
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
-  projectWorkMenuContext?: {
-    branchName?: string | null
-    currentProjectId?: number
-    executionMode: ProjectExecutionMode
-    executionModeLocked?: boolean
-    isGitProject?: boolean
-    projectName?: string | null
-    projects: import('@/types/api').ProjectWithTasks[]
-    onCheckoutBranch?: (branchName: string) => Promise<void>
-    onExecutionModeChange: (mode: ProjectExecutionMode) => void
-    onListBranches?: () => Promise<string[]>
-    onSelectProject: (projectId: number | null) => void
-  }
+  projectWorkMenuContext?: Omit<ComponentProps<typeof PopoutWorkspaceMenu>, 'disabled'>
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   leadingContext?: ReactNode
@@ -178,20 +161,7 @@ export function ComposerToolbar({
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
         )}
         {showWorkspaceMenu && projectWorkMenuContext ? (
-          <PopoutWorkspaceMenu
-            branchName={projectWorkMenuContext.branchName}
-            currentProjectId={projectWorkMenuContext.currentProjectId}
-            disabled={disabled}
-            executionMode={projectWorkMenuContext.executionMode}
-            executionModeLocked={projectWorkMenuContext.executionModeLocked}
-            isGitProject={projectWorkMenuContext.isGitProject}
-            projectName={projectWorkMenuContext.projectName}
-            projects={projectWorkMenuContext.projects}
-            onCheckoutBranch={projectWorkMenuContext.onCheckoutBranch}
-            onExecutionModeChange={projectWorkMenuContext.onExecutionModeChange}
-            onListBranches={projectWorkMenuContext.onListBranches}
-            onSelectProject={projectWorkMenuContext.onSelectProject}
-          />
+          <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
         ) : null}
         {isStreaming && !canSend ? (
           <button
