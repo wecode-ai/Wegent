@@ -166,124 +166,126 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
         .collect()
 }
 
-fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_messages: Vec<Value>) {
-    let mut matched_provider_indexes = HashSet::new();
+fn user_message_presentation(payload: &Value) -> Option<Value> {
+    let client_message_id = payload
+        .get("clientMessageId")
+        .or_else(|| payload.get("client_message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let content = payload
+        .get("message")
+        .or_else(|| payload.get("content"))
+        .and_then(Value::as_str)?;
+    let references = local_presentation_reference_descriptors(content);
+    (!references.is_empty()).then(|| {
+        json!({
+            "clientMessageId": client_message_id,
+            "references": references,
+        })
+    })
+}
 
-    for message in cached_messages {
-        let Some(signature) = cached_user_message_signature(&message) else {
+fn attach_user_message_presentations(messages: &mut [Value], presentations: Vec<Value>) {
+    for presentation in presentations {
+        let Some(client_message_id) = string_field(&presentation, "clientMessageId")
+            .or_else(|| string_field(&presentation, "client_message_id"))
+        else {
             continue;
         };
-        let client_message_id = user_message_client_id(&message);
-        let client_id_match = client_message_id.as_ref().and_then(|client_message_id| {
-            messages
-                .iter()
-                .enumerate()
-                .find_map(|(index, provider_message)| {
-                    (!matched_provider_indexes.contains(&index)
-                        && user_message_client_id(provider_message).as_ref()
-                            == Some(client_message_id))
-                    .then_some(index)
-                })
-        });
-        let matching_index = client_id_match.or_else(|| {
-            messages
-                .iter()
-                .enumerate()
-                .find_map(|(index, provider_message)| {
-                    (!matched_provider_indexes.contains(&index)
-                        && cached_user_message_signature(provider_message).as_ref()
-                            == Some(&signature)
-                        && (client_message_id.is_none()
-                            || user_message_client_id(provider_message).is_none()))
-                    .then_some(index)
-                })
-        });
-        if let Some(index) = matching_index {
-            matched_provider_indexes.insert(index);
-            merge_missing_user_message_metadata(&mut messages[index], &message);
-            if client_id_match == Some(index) {
-                attach_cached_user_message_presentation(&mut messages[index], &message);
-            }
+        let Some(message) = messages.iter_mut().find(|message| {
+            string_field(message, "clientMessageId")
+                .or_else(|| string_field(message, "client_message_id"))
+                .as_deref()
+                == Some(client_message_id.as_str())
+        }) else {
+            continue;
+        };
+        let Some(content) = string_field(message, "content") else {
+            continue;
+        };
+        let references = presentation
+            .get("references")
+            .and_then(Value::as_array)
+            .map(|references| presentation_reference_ranges(references, &content))
+            .unwrap_or_default();
+        if references.is_empty() {
             continue;
         }
-        messages.push(message);
+        if let Some(message) = message.as_object_mut() {
+            message.insert(
+                "presentationReferences".to_owned(),
+                Value::Array(references),
+            );
+        }
     }
 }
 
-fn user_message_client_id(message: &Value) -> Option<String> {
-    string_field(message, "clientMessageId").or_else(|| string_field(message, "client_message_id"))
-}
-
-fn attach_cached_user_message_presentation(target: &mut Value, source: &Value) {
-    let Some(provider_content) = string_field(target, "content") else {
-        return;
-    };
-    let Some(local_content) = string_field(source, "content") else {
-        return;
-    };
-    if provider_content == local_content {
-        return;
-    }
-    let references = local_presentation_references(&local_content, &provider_content);
-    if references.is_empty() {
-        return;
-    }
-    if let Some(target) = target.as_object_mut() {
-        target.insert(
-            "presentationReferences".to_owned(),
-            Value::Array(references),
-        );
-    }
-}
-
-fn local_presentation_references(local_content: &str, provider_content: &str) -> Vec<Value> {
+fn local_presentation_reference_descriptors(content: &str) -> Vec<Value> {
     let mut references = Vec::new();
-    let mut local_offset = 0;
-    let mut provider_offset = 0;
+    let mut offset = 0;
 
-    while let Some(relative_start) = local_content[local_offset..].find("[$") {
-        let reference_start = local_offset + relative_start;
-        let name_start = reference_start + 2;
-        let Some(relative_name_end) = local_content[name_start..].find("](") else {
+    while let Some(relative_start) = content[offset..].find("[$") {
+        let name_start = offset + relative_start + 2;
+        let Some(relative_name_end) = content[name_start..].find("](") else {
             break;
         };
         let name_end = name_start + relative_name_end;
         let href_start = name_end + 2;
-        let Some(relative_href_end) = local_content[href_start..].find(')') else {
+        let Some(relative_href_end) = content[href_start..].find(')') else {
             break;
         };
         let href_end = href_start + relative_href_end;
-        local_offset = href_end + 1;
+        offset = href_end + 1;
 
-        let name = &local_content[name_start..name_end];
-        let href = &local_content[href_start..href_end];
+        let name = &content[name_start..name_end];
+        let href = &content[href_start..href_end];
         let Some(token) = local_presentation_reference_token(name, href) else {
             continue;
         };
-
-        let provider_tail = &provider_content[provider_offset..];
-        let token_start = provider_tail.find(&token);
-        let reference = &local_content[reference_start..local_offset];
-        if let Some(existing_reference_start) = provider_tail.find(reference) {
-            if token_start.is_none_or(|start| existing_reference_start <= start) {
-                provider_offset += existing_reference_start + reference.len();
-                continue;
-            }
-        }
-        let Some(relative_provider_start) = token_start else {
-            continue;
-        };
-        let provider_start = provider_offset + relative_provider_start;
-        let provider_end = provider_start + token.len();
         references.push(json!({
-            "start": provider_content[..provider_start].encode_utf16().count(),
-            "end": provider_content[..provider_end].encode_utf16().count(),
+            "token": token,
             "href": href,
         }));
-        provider_offset = provider_end;
     }
 
     references
+}
+
+fn presentation_reference_ranges(references: &[Value], content: &str) -> Vec<Value> {
+    let mut ranges = Vec::new();
+    let mut offset = 0;
+
+    for reference in references {
+        let Some(token) = string_field(reference, "token") else {
+            continue;
+        };
+        let Some(href) = string_field(reference, "href") else {
+            continue;
+        };
+        let tail = &content[offset..];
+        let token_start = tail.find(&token);
+        let rich_reference = format!("[{token}]({href})");
+        if let Some(rich_start) = tail.find(&rich_reference) {
+            if token_start.is_none_or(|start| rich_start <= start) {
+                offset += rich_start + rich_reference.len();
+                continue;
+            }
+        }
+        let Some(relative_start) = token_start else {
+            continue;
+        };
+        let start = offset + relative_start;
+        let end = start + token.len();
+        ranges.push(json!({
+            "start": content[..start].encode_utf16().count(),
+            "end": content[..end].encode_utf16().count(),
+            "href": href,
+        }));
+        offset = end;
+    }
+
+    ranges
 }
 
 fn is_local_skill_reference(href: &str) -> bool {
@@ -299,80 +301,6 @@ fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> 
         return Some(format!("${name}"));
     }
     href.starts_with("plugin://").then(|| format!("@{name}"))
-}
-
-fn append_missing_cached_failed_assistant_messages(
-    messages: &mut Vec<Value>,
-    cached_messages: Vec<Value>,
-) {
-    let mut message_ids = messages
-        .iter()
-        .filter_map(|message| string_field(message, "id"))
-        .collect::<HashSet<_>>();
-    let mut assistant_subtask_ids = messages
-        .iter()
-        .filter(|message| {
-            string_field(message, "role")
-                .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
-        })
-        .filter_map(message_subtask_id)
-        .collect::<HashSet<_>>();
-
-    for message in cached_messages {
-        let is_failed_assistant = string_field(&message, "role")
-            .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
-            && string_field(&message, "status")
-                .is_some_and(|status| status.eq_ignore_ascii_case("failed"));
-        if !is_failed_assistant {
-            continue;
-        }
-        let Some(message_id) = string_field(&message, "id") else {
-            continue;
-        };
-        let subtask_id = message_subtask_id(&message);
-        if subtask_id
-            .as_ref()
-            .is_some_and(|subtask_id| assistant_subtask_ids.contains(subtask_id))
-        {
-            continue;
-        }
-        if !message_ids.insert(message_id) {
-            continue;
-        }
-        if let Some(subtask_id) = subtask_id {
-            assistant_subtask_ids.insert(subtask_id);
-        }
-        let Some(created_at) = message_created_at_ms(&message) else {
-            messages.push(message);
-            continue;
-        };
-        if let Some(index) = messages.iter().position(|existing| {
-            message_created_at_ms(existing).is_some_and(|existing_at| existing_at > created_at)
-        }) {
-            messages.insert(index, message);
-        } else {
-            messages.push(message);
-        }
-    }
-}
-
-fn message_subtask_id(message: &Value) -> Option<String> {
-    string_field(message, "subtaskId").or_else(|| string_field(message, "subtask_id"))
-}
-
-fn message_created_at_ms(message: &Value) -> Option<i64> {
-    timestamp_ms_field(message, "createdAt")
-        .or_else(|| timestamp_ms_field(message, "created_at"))
-        .or_else(|| timestamp_ms_field(message, "completedAt"))
-        .or_else(|| timestamp_ms_field(message, "completed_at"))
-}
-
-fn cached_user_message_signature(message: &Value) -> Option<String> {
-    string_field(message, "role")
-        .filter(|role| role.eq_ignore_ascii_case("user"))
-        .and_then(|_| string_field(message, "content"))
-        .map(|content| normalized_user_request_content(&content))
-        .filter(|content| !content.is_empty())
 }
 
 fn cached_user_message(

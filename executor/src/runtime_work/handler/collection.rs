@@ -775,8 +775,8 @@ impl RuntimeWorkRpcHandler {
             if status != "running" {
                 link.completed_at = Some(link.updated_at);
             }
-            if link.thread_id.is_some() && status != "running" {
-                retain_runtime_handle_user_messages(&mut link.runtime_handle);
+            if link.thread_id.is_some() {
+                clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
         if status != "running" {

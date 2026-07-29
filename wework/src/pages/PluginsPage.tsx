@@ -276,6 +276,8 @@ export function PluginsPage() {
         >
           <PluginsWorkspace
             cloudMarketplaceAvailable={cloudConnection.isConnected}
+            cloudApiBaseUrl={cloudConnection.apiBaseUrl ?? undefined}
+            cloudToken={cloudConnection.token ?? undefined}
             sidebarCollapsed={sidebarCollapsed && !isMobile}
             topBarLeftActions={
               !isMobile && sidebarCollapsed && !isTauri ? (

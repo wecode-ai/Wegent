@@ -131,6 +131,9 @@ impl RuntimeWorkRpcHandler {
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
+        if let Some(presentation) = user_message_presentation(&payload) {
+            append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
+        }
         let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         self.schedule_worktree_prune();
@@ -392,7 +395,6 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_action_failure(&existing_link, error));
         }
 
-        self.trim_runtime_handle_after_rollback(&local_task_id);
         self.mark_task_running_for_send(
             &local_task_id,
             &thread_id,
@@ -644,9 +646,16 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         payload: &Value,
     ) {
-        let message = cached_user_message(local_task_id, request, payload);
+        let presentation = user_message_presentation(payload);
         let updated = self.store.update_task(local_task_id, |link| {
             link.thread_id = Some(thread_id.to_owned());
+            clear_runtime_handle_messages(&mut link.runtime_handle);
+            if let Some(presentation) = presentation.clone() {
+                append_runtime_handle_user_message_presentation(
+                    &mut link.runtime_handle,
+                    presentation,
+                );
+            }
             link.workspace_path = workspace_path.to_owned();
             link.status = "running".to_owned();
             link.running = true;
@@ -661,9 +670,6 @@ impl RuntimeWorkRpcHandler {
             }
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
-            if let Some(message) = message.clone() {
-                append_runtime_handle_message(&mut link.runtime_handle, message);
-            }
         });
         if updated.is_some() {
             return;
@@ -679,23 +685,10 @@ impl RuntimeWorkRpcHandler {
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
-        if let Some(message) = message {
-            set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
+        if let Some(presentation) = presentation {
+            append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
         self.upsert_local_task(link);
-    }
-
-    pub(super) fn trim_runtime_handle_after_rollback(&self, local_task_id: &str) {
-        self.store.update_task(local_task_id, |link| {
-            let mut messages = cached_messages(link);
-            if let Some(index) = messages.iter().rposition(|message| {
-                string_field(message, "role").is_some_and(|role| role.eq_ignore_ascii_case("user"))
-            }) {
-                messages.truncate(index);
-                set_runtime_handle_messages(&mut link.runtime_handle, messages);
-                link.updated_at = now_ms();
-            }
-        });
     }
 }
 

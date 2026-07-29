@@ -7,7 +7,6 @@ import {
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
-  discardRuntimeConversationGuidance,
   dispatchRuntimeConversationQueueEvent,
   evictRuntimeConversation,
   getConversationScrollSnapshot,
@@ -15,7 +14,7 @@ import {
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
-  settleRuntimeConversationGuidance,
+  takeAppliedRuntimeConversationGuidance,
 } from './runtimeConversationCache'
 
 const address = {
@@ -145,7 +144,7 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
   })
 
-  test('settles applied guidance into the cached transcript while the pane is unmounted', () => {
+  test('settles background guidance without writing a second transcript source', () => {
     cacheRuntimeConversationMessages(address, [
       {
         id: 'assistant-1',
@@ -165,7 +164,7 @@ describe('runtimeConversationCache', () => {
       },
     ])
 
-    const settled = settleRuntimeConversationGuidance(address, {
+    const settled = takeAppliedRuntimeConversationGuidance(address, {
       taskId: address.taskId,
       deviceId: address.deviceId,
       guidanceId: 'runtime-guidance-1',
@@ -177,17 +176,10 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
     expect(getRuntimeConversationMessages(address)).toMatchObject([
       { id: 'assistant-1', role: 'assistant' },
-      {
-        id: 'client-guidance-1',
-        role: 'user',
-        content: 'follow the updated direction',
-        runtimeGuidance: true,
-        createdAt: '2026-07-27T00:00:02.000Z',
-      },
     ])
   })
 
-  test('does not duplicate a guidance already settled by another subscriber', () => {
+  test('returns an applied guidance to only one subscriber', () => {
     cacheRuntimeConversationQueuedMessages(address, [
       {
         id: 'client-guidance-1',
@@ -205,45 +197,9 @@ describe('runtimeConversationCache', () => {
       appliedAtMs: Date.now(),
     }
 
-    expect(settleRuntimeConversationGuidance(address, payload)).not.toBeNull()
-    expect(settleRuntimeConversationGuidance(address, payload)).toBeNull()
-    expect(
-      getRuntimeConversationMessages(address).filter(message => message.id === payload.guidanceId)
-    ).toHaveLength(1)
-  })
-
-  test('discards only the cached guidance message when its application is interrupted', () => {
-    cacheRuntimeConversationMessages(address, [
-      {
-        id: 'assistant-1',
-        role: 'assistant',
-        content: 'working',
-        status: 'streaming',
-        createdAt: '2026-07-27T00:00:00.000Z',
-      },
-    ])
-    cacheRuntimeConversationQueuedMessages(address, [
-      {
-        id: 'client-guidance-1',
-        content: 'follow the updated direction',
-        status: 'sending',
-        deliveryMode: 'guidance',
-        createdAt: '2026-07-27T00:00:01.000Z',
-      },
-    ])
-
-    const settled = settleRuntimeConversationGuidance(address, {
-      taskId: address.taskId,
-      deviceId: address.deviceId,
-      guidanceId: 'runtime-guidance-1',
-      message: 'follow the updated direction',
-      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
-    })
-    discardRuntimeConversationGuidance(address, settled?.id ?? '')
-
-    expect(getRuntimeConversationMessages(address)).toMatchObject([
-      { id: 'assistant-1', role: 'assistant' },
-    ])
+    expect(takeAppliedRuntimeConversationGuidance(address, payload)).not.toBeNull()
+    expect(takeAppliedRuntimeConversationGuidance(address, payload)).toBeNull()
+    expect(getRuntimeConversationMessages(address)).toEqual([])
   })
 
   test('bounds cached transcripts when many conversations are opened', () => {

@@ -152,6 +152,11 @@ async def lifespan(app: FastAPI):
 
     # ==================== STARTUP ====================
     require_internal_service_token_configured()
+    from app.services.builtin_plugin_service import builtin_plugin_service
+
+    # Every Backend process validates any plugins marked as required.
+    # Optional plugins may be absent and are published only when staged.
+    builtin_plugin_service.validate_required_plugins()
 
     # Try to get Redis client for distributed locking
     redis_client = None
@@ -269,6 +274,25 @@ async def lifespan(app: FastAPI):
                 logger.info("✓ YAML data initialization completed")
             except Exception as e:
                 logger.error(f"✗ Failed to initialize database from YAML: {e}")
+            finally:
+                db.close()
+
+            # Step 3: Publish staged built-in plugins to the cloud marketplace.
+            logger.info("Starting built-in plugin marketplace synchronization...")
+            db = SessionLocal()
+            try:
+                published = builtin_plugin_service.sync_marketplace_plugins(db)
+                logger.info(
+                    "✓ Built-in plugin marketplace synchronization completed: count=%s",
+                    len(published),
+                )
+            except Exception as e:
+                logger.error(
+                    "✗ Failed to synchronize built-in plugins: %s",
+                    e,
+                    exc_info=True,
+                )
+                raise
             finally:
                 db.close()
 

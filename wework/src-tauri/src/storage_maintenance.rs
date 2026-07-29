@@ -1,30 +1,92 @@
 use std::{
     collections::HashSet,
-    fs,
-    path::{Component, Path},
+    fs::{self, File},
+    path::{Component, Path, PathBuf},
     thread,
     time::{Duration, SystemTime},
 };
 
+use fs2::FileExt;
 use tauri::Manager;
 
 const INITIAL_DELAY: Duration = Duration::from_secs(5 * 60);
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const TEMP_FILE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const LOG_FILE_MAX_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+const RUNTIME_INSTANCE_MAX_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 const MAX_REMOVALS_PER_DIRECTORY: usize = 20;
+const MAX_RUNTIME_INSTANCE_REMOVALS: usize = 2;
+const RUNTIME_INSTANCE_LOCK_FILE: &str = ".instance.lock";
+
+struct RuntimeInstanceLease {
+    root: PathBuf,
+    instance: PathBuf,
+    lock: File,
+}
 
 pub fn schedule(app: tauri::AppHandle) {
     thread::spawn(move || {
+        let runtime_instance_lease = match acquire_runtime_instance_lease() {
+            Ok(lease) => lease,
+            Err(error) => {
+                log::warn!("Failed to protect the current runtime instance: {error}");
+                None
+            }
+        };
         thread::sleep(INITIAL_DELAY);
         loop {
-            run(&app, SystemTime::now());
+            let now = SystemTime::now();
+            if let Some(lease) = &runtime_instance_lease {
+                if let Err(error) = lease.lock.set_modified(now) {
+                    log::warn!(
+                        "Failed to refresh runtime instance lease {}: {error}",
+                        lease.instance.display()
+                    );
+                }
+            }
+            run(&app, now, runtime_instance_lease.as_ref());
             thread::sleep(MAINTENANCE_INTERVAL);
         }
     });
 }
 
-fn run(app: &tauri::AppHandle, now: SystemTime) {
+fn acquire_runtime_instance_lease() -> Result<Option<RuntimeInstanceLease>, String> {
+    let Some((root, instance)) = crate::local_executor::isolated_runtime_instance_paths()? else {
+        return Ok(None);
+    };
+    fs::create_dir_all(&instance).map_err(|error| {
+        format!(
+            "Failed to create runtime instance directory {}: {error}",
+            instance.display()
+        )
+    })?;
+    let lock_path = instance.join(RUNTIME_INSTANCE_LOCK_FILE);
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| {
+            format!(
+                "Failed to open runtime instance lock {}: {error}",
+                lock_path.display()
+            )
+        })?;
+    lock.lock_exclusive().map_err(|error| {
+        format!(
+            "Failed to lock runtime instance {}: {error}",
+            instance.display()
+        )
+    })?;
+    Ok(Some(RuntimeInstanceLease {
+        root,
+        instance,
+        lock,
+    }))
+}
+
+fn run(app: &tauri::AppHandle, now: SystemTime, lease: Option<&RuntimeInstanceLease>) {
     match app.path().app_cache_dir() {
         Ok(cache_directory) => cleanup_target(
             &cache_directory.join("feedback-staging"),
@@ -53,6 +115,21 @@ fn run(app: &tauri::AppHandle, now: SystemTime) {
             );
         }
         Err(error) => log::warn!("Failed to locate the log directory: {error}"),
+    }
+
+    if let Some(lease) = lease {
+        if let Err(error) = cleanup_old_runtime_instances(
+            &lease.root,
+            &lease.instance,
+            now,
+            RUNTIME_INSTANCE_MAX_AGE,
+            MAX_RUNTIME_INSTANCE_REMOVALS,
+        ) {
+            log::warn!(
+                "Runtime instance maintenance skipped {}: {error}",
+                lease.root.display()
+            );
+        }
     }
 }
 
@@ -131,6 +208,158 @@ fn cleanup_old_files(
     Ok(removed)
 }
 
+fn cleanup_old_runtime_instances(
+    root: &Path,
+    current_instance: &Path,
+    now: SystemTime,
+    max_age: Duration,
+    max_removals: usize,
+) -> Result<usize, String> {
+    ensure_concrete_absolute_path(root)?;
+    ensure_concrete_absolute_path(current_instance)?;
+    if !root.exists() {
+        return Ok(0);
+    }
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| format!("Failed to resolve {}: {error}", root.display()))?;
+    let canonical_current = fs::canonicalize(current_instance).map_err(|error| {
+        format!(
+            "Failed to resolve current runtime instance {}: {error}",
+            current_instance.display()
+        )
+    })?;
+    if canonical_current.parent() != Some(canonical_root.as_path()) {
+        return Err(format!(
+            "Current runtime instance {} is outside {}",
+            current_instance.display(),
+            root.display()
+        ));
+    }
+
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(root)
+        .map_err(|error| format!("Failed to inspect {}: {error}", root.display()))?
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => metadata,
+            _ => continue,
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !is_runtime_instance_name(&name) {
+            continue;
+        }
+        let canonical_path = match fs::canonicalize(&path) {
+            Ok(canonical_path) => canonical_path,
+            Err(error) => {
+                log::warn!(
+                    "Skipping unresolved runtime instance {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        if canonical_path == canonical_current {
+            continue;
+        }
+
+        let lock_path = path.join(RUNTIME_INSTANCE_LOCK_FILE);
+        let (modified, lock) = match inactive_instance_lock(&lock_path, &metadata) {
+            Ok(Some(state)) => state,
+            Ok(None) => continue,
+            Err(error) => {
+                log::warn!(
+                    "Skipping runtime instance with unreadable lock {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        let Some(age) = now.duration_since(modified).ok() else {
+            continue;
+        };
+        if age >= max_age {
+            candidates.push((modified, path, lock));
+        }
+    }
+    candidates.sort_by_key(|(modified, _, _)| *modified);
+
+    let mut removed = 0;
+    for (_, path, lock) in candidates.into_iter().take(max_removals) {
+        if let Err(error) = ensure_safe_directory_target(&canonical_root, &path) {
+            log::warn!("Skipping unsafe runtime instance target: {error}");
+            continue;
+        }
+        drop(lock);
+        match fs::remove_dir_all(&path) {
+            Ok(()) => removed += 1,
+            Err(error) => {
+                log::warn!(
+                    "Failed to remove runtime instance {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(removed)
+}
+
+fn inactive_instance_lock(
+    lock_path: &Path,
+    instance_metadata: &fs::Metadata,
+) -> Result<Option<(SystemTime, Option<File>)>, String> {
+    if !lock_path.exists() {
+        return Ok(Some((
+            instance_metadata
+                .modified()
+                .map_err(|error| format!("Failed to read instance modification time: {error}"))?,
+            None,
+        )));
+    }
+    let metadata = fs::symlink_metadata(lock_path)
+        .map_err(|error| format!("Failed to inspect {}: {error}", lock_path.display()))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "{} is not a regular lock file",
+            lock_path.display()
+        ));
+    }
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .map_err(|error| format!("Failed to open {}: {error}", lock_path.display()))?;
+    if let Err(error) = lock.try_lock_exclusive() {
+        if error.kind() == fs2::lock_contended_error().kind() {
+            return Ok(None);
+        }
+        return Err(format!("Failed to lock {}: {error}", lock_path.display()));
+    }
+    let modified = metadata.modified().map_err(|error| {
+        format!(
+            "Failed to read {} modification time: {error}",
+            lock_path.display()
+        )
+    })?;
+    Ok(Some((modified, Some(lock))))
+}
+
+fn is_runtime_instance_name(name: &str) -> bool {
+    let Some(identity) = name.strip_prefix("wework-") else {
+        return false;
+    };
+    let Some((pid, timestamp)) = identity.split_once('-') else {
+        return false;
+    };
+    !pid.is_empty()
+        && !timestamp.is_empty()
+        && pid.chars().all(|character| character.is_ascii_digit())
+        && timestamp
+            .chars()
+            .all(|character| character.is_ascii_digit())
+}
+
 fn ensure_concrete_absolute_path(path: &Path) -> Result<(), String> {
     let has_placeholder = path.components().any(|component| {
         let value = component.as_os_str().to_string_lossy();
@@ -162,6 +391,24 @@ fn ensure_safe_file_target(canonical_directory: &Path, path: &Path) -> Result<()
     if canonical_path.parent() != Some(canonical_directory) {
         return Err(format!(
             "{} resolves outside its maintenance directory",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_safe_directory_target(canonical_root: &Path, path: &Path) -> Result<(), String> {
+    ensure_concrete_absolute_path(path)?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!("{} is not a concrete directory", path.display()));
+    }
+    let canonical_path = fs::canonicalize(path)
+        .map_err(|error| format!("Failed to resolve {}: {error}", path.display()))?;
+    if canonical_path.parent() != Some(canonical_root) {
+        return Err(format!(
+            "{} resolves outside its runtime root",
             path.display()
         ));
     }
@@ -263,6 +510,97 @@ mod tests {
         assert!(protected.is_file());
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_file(outside);
+    }
+
+    #[test]
+    fn cleanup_removes_only_old_inactive_runtime_instances() {
+        let root = test_directory("wework-runtime-maintenance");
+        let current = root.join("wework-10-100");
+        let active = root.join("wework-20-200");
+        let stale = root.join("wework-30-300");
+        let recent = root.join("wework-40-400");
+        for directory in [&current, &active, &stale, &recent] {
+            fs::create_dir_all(directory.join("logs")).unwrap();
+        }
+        let active_lock = create_locked_instance_file(&active);
+        let stale_lock = create_instance_lock_file(&stale);
+        let recent_lock = create_instance_lock_file(&recent);
+        let now = SystemTime::now();
+        set_modified(
+            stale.join(RUNTIME_INSTANCE_LOCK_FILE),
+            now - Duration::from_secs(120),
+        );
+        set_modified(
+            recent.join(RUNTIME_INSTANCE_LOCK_FILE),
+            now - Duration::from_secs(30),
+        );
+        drop(stale_lock);
+
+        let removed =
+            cleanup_old_runtime_instances(&root, &current, now, Duration::from_secs(60), 10)
+                .unwrap();
+
+        assert_eq!(removed, 1);
+        assert!(current.is_dir());
+        assert!(active.is_dir());
+        assert!(!stale.exists());
+        assert!(recent.is_dir());
+        drop(active_lock);
+        drop(recent_lock);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_cleanup_is_bounded_and_ignores_unknown_directories() {
+        let root = test_directory("wework-runtime-maintenance-bounded");
+        let current = root.join("wework-10-100");
+        let unknown = root.join("user-data");
+        fs::create_dir_all(&current).unwrap();
+        fs::create_dir_all(&unknown).unwrap();
+        let now = SystemTime::now();
+        for index in 0..3 {
+            let instance = root.join(format!("wework-{}-{}", index + 20, index + 200));
+            fs::create_dir_all(&instance).unwrap();
+            let lock = create_instance_lock_file(&instance);
+            set_modified(
+                instance.join(RUNTIME_INSTANCE_LOCK_FILE),
+                now - Duration::from_secs(120),
+            );
+            drop(lock);
+        }
+
+        let removed =
+            cleanup_old_runtime_instances(&root, &current, now, Duration::from_secs(60), 2)
+                .unwrap();
+
+        assert_eq!(removed, 2);
+        assert!(current.is_dir());
+        assert!(unknown.is_dir());
+        assert_eq!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| is_runtime_instance_name(&entry.file_name().to_string_lossy()))
+                .count(),
+            2
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn create_instance_lock_file(instance: &Path) -> File {
+        fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(instance.join(RUNTIME_INSTANCE_LOCK_FILE))
+            .unwrap()
+    }
+
+    fn create_locked_instance_file(instance: &Path) -> File {
+        let file = create_instance_lock_file(instance);
+        file.lock_exclusive().unwrap();
+        file
     }
 
     fn test_directory(prefix: &str) -> PathBuf {

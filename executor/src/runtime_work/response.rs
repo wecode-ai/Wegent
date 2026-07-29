@@ -743,6 +743,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
         key,
         "message"
             | "messages"
+            | "userMessagePresentations"
             | "cachedMessage"
             | "cachedMessages"
             | "cached_message"
@@ -866,6 +867,13 @@ mod tests {
                         ],
                     }
                 ],
+                "userMessagePresentations": [{
+                    "clientMessageId": "runtime-local-pane-1",
+                    "references": [{
+                        "token": "$plugin:skill",
+                        "href": "/tmp/plugin/skill/SKILL.md"
+                    }]
+                }],
             }),
             ..RuntimeTaskLink::default()
         };
@@ -876,6 +884,7 @@ mod tests {
         assert_eq!(handle["threadId"], "thread-1");
         assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
         assert!(handle.get("messages").is_none());
+        assert!(handle.get("userMessagePresentations").is_none());
     }
 
     #[test]

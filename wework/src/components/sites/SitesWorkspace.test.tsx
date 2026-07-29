@@ -52,13 +52,15 @@ describe('SitesWorkspace', () => {
     vi.mocked(api.listSites).mockRejectedValueOnce(
       new ApiError('Sites is not available yet', 503, 'sites_not_available')
     )
-    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    const onCreate = vi.fn()
+    render(<SitesWorkspace api={api} onCreate={onCreate} />)
 
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
       '站点功能尚未推出'
     )
     expect(screen.queryByTestId('sites-refresh-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('sites-create-button')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('sites-create-button'))
+    expect(onCreate).toHaveBeenCalledOnce()
     expect(screen.queryByTestId('sites-search-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('sites-retry-button')).not.toBeInTheDocument()
     expect(screen.queryByText('外网发布')).not.toBeInTheDocument()

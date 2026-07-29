@@ -1912,8 +1912,40 @@ export interface PluginMarketplacePublishResponse {
   item: PluginMarketplaceItem
 }
 
+export interface DeviceCapabilityItemResult {
+  id?: string | number | null
+  name?: string | null
+  status: string
+  error?: string | null
+}
+
+export interface DeviceCapabilitySyncResult {
+  device_id: string
+  success: boolean
+  error?: string | null
+  skills: DeviceCapabilityItemResult[]
+  plugins: DeviceCapabilityItemResult[]
+  mcps: DeviceCapabilityItemResult[]
+  errors: Array<Record<string, unknown>>
+}
+
+export interface DeviceCapabilitySyncResponse {
+  success: boolean
+  device_id: string
+  mode: string
+  skills: DeviceCapabilityItemResult[]
+  plugins: DeviceCapabilityItemResult[]
+  mcps: DeviceCapabilityItemResult[]
+  errors: Array<Record<string, unknown>>
+  synced: number
+  failed: number
+  skipped: number
+  results: DeviceCapabilitySyncResult[]
+}
+
 export interface PluginMarketplaceInstallResponse {
   plugin: InstalledPlugin
+  sync?: DeviceCapabilitySyncResponse | null
 }
 
 export interface InstalledPluginUpdateRequest {
