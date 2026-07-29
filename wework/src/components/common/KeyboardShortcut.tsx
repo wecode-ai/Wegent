@@ -1,4 +1,5 @@
 import { CornerDownLeft } from 'lucide-react'
+import { getPlatform } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
 interface KeyboardShortcutProps {
@@ -25,10 +26,21 @@ export function KeyboardShortcut({ value, className }: KeyboardShortcutProps) {
 }
 
 function KeyboardShortcutPart({ value }: { value: string }) {
-  if (value === 'Command') return <span aria-label="Command">⌘</span>
-  if (value === 'Shift') return <span aria-label="Shift">⇧</span>
-  if (value === 'Control') return <span aria-label="Control">⌃</span>
-  if (value === 'Alt') return <span aria-label="Option">⌥</span>
+  const platform = getPlatform()
+  const isWindows = platform === 'win'
+
+  if (value === 'Command') {
+    return isWindows ? <span>Ctrl</span> : <span aria-label="Command">⌘</span>
+  }
+  if (value === 'Control') {
+    return isWindows ? <span>Ctrl</span> : <span aria-label="Control">⌃</span>
+  }
+  if (value === 'Shift') {
+    return isWindows ? <span>Shift</span> : <span aria-label="Shift">⇧</span>
+  }
+  if (value === 'Alt') {
+    return isWindows ? <span>Alt</span> : <span aria-label="Option">⌥</span>
+  }
   if (value === 'Enter') return <CornerDownLeft className="h-3.5 w-3.5" aria-label="Enter" />
   return <span>{value}</span>
 }

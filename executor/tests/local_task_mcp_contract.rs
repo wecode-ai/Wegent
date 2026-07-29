@@ -105,7 +105,7 @@ fn space_mcp_runs_over_stdio_without_listening_on_a_port() {
 }
 
 #[test]
-fn bound_backend_space_fails_clearly_without_backend_connection() {
+fn list_spaces_remains_available_locally_without_backend_connection() {
     let executor_home = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
         .arg("space-mcp-server")
@@ -128,9 +128,81 @@ fn bound_backend_space_fails_clearly_without_backend_connection() {
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
     let text = response["result"]["content"][0]["text"].as_str().unwrap();
 
-    assert_eq!(response["result"]["isError"], true);
-    assert!(text.contains("requires the WeWork Backend connection"));
-    assert!(text.contains("do not use git or provider APIs"));
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(serde_json::from_str::<Value>(text).unwrap(), json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
+    async fn list_spaces(headers: HeaderMap) -> Json<Value> {
+        assert_eq!(
+            headers.get("authorization").unwrap(),
+            "Bearer backend-token"
+        );
+        Json(json!({"items": [{"id": 9001, "name": "Cloud project"}]}))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route("/api/v1/cloud-projects", get(list_spaces)),
+        )
+        .await
+        .unwrap();
+    });
+    let executor_home = tempfile::tempdir().unwrap();
+
+    let mut local_child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
+        .arg("space-mcp-server")
+        .env("WEGENT_EXECUTOR_HOME", executor_home.path())
+        .env_remove("WEWORK_SPACE_BACKEND_URL")
+        .env_remove("WEWORK_SPACE_AUTH_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        local_child.stdin.take().unwrap(),
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"create_space","arguments":{{"name":"Local project"}}}}}}"#
+    )
+    .unwrap();
+    assert!(local_child.wait().unwrap().success());
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
+        .arg("space-mcp-server")
+        .env("WEGENT_EXECUTOR_HOME", executor_home.path())
+        .env("WEWORK_SPACE_BACKEND_URL", format!("http://{address}"))
+        .env("WEWORK_SPACE_AUTH_TOKEN", "backend-token")
+        .env_remove("WEWORK_SPACE_ID")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_spaces","arguments":{{}}}}}}"#
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let projects: Value =
+        serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(projects.as_array().unwrap().len(), 2);
+    assert!(projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["id"] == 9001));
+    assert!(projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["name"] == "Local project"));
+    server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -205,6 +277,10 @@ async fn space_mcp_routes_board_operations_through_backend() {
                 .route(
                     "/api/v1/cloud-projects/9001/loop-items",
                     get(list_board_items).post(create_board_item),
+                )
+                .route(
+                    "/api/v1/cloud-projects/9002/loop-items",
+                    get(list_board_items),
                 )
                 .route(
                     "/api/v1/cloud-projects/9001/loop-items/reorder",
@@ -311,7 +387,7 @@ async fn space_mcp_routes_board_operations_through_backend() {
     .unwrap();
     writeln!(
         stdin,
-        r#"{{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{{"name":"list_board_items","arguments":{{"space_id":"another-space"}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{{"name":"list_board_items","arguments":{{"space_id":"9002"}}}}}}"#
     )
     .unwrap();
     drop(stdin);
@@ -329,11 +405,7 @@ async fn space_mcp_routes_board_operations_through_backend() {
         .collect::<Vec<_>>();
     assert_eq!(responses[1].pointer("/result/isError"), Some(&json!(false)));
     assert_eq!(responses[2].pointer("/result/isError"), Some(&json!(false)));
-    assert_eq!(responses[9].pointer("/result/isError"), Some(&json!(true)));
-    assert!(responses[9]["result"]["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("limited to the current project space"));
+    assert_eq!(responses[9].pointer("/result/isError"), Some(&json!(false)));
     assert_eq!(std::fs::read(attachment_path).unwrap(), b"diagnostic");
     let projects = responses[0]
         .pointer("/result/content/0/text")
