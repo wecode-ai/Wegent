@@ -43,7 +43,7 @@ export function PluginPickerMenu({
     onListLocalApps()
       .then(items => {
         if (!current) return
-        const recentIds = new Map(
+        const recentIds = new Map<string, number>(
           JSON.parse(window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]').map(
             (id: string, index: number) => [id, index]
           )
