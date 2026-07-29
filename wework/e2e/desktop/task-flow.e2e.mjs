@@ -51,6 +51,7 @@ const RUNNING_FORK_FOLLOW_UP_PROMPT =
 const RUNNING_FORK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RUNNING_FORK_COMPLETE'
 const FORK_FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP: continue only in the forked task.'
 const FORK_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP_COMPLETE'
+const FORK_ENCRYPTED_CONTENT = 'gAAAA-wework-desktop-e2e-fork-context'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -312,6 +313,7 @@ const SHORT_CONVERSATION_ONLY = process.argv.includes('--short-conversation-only
 const RETRY_ONLY = process.argv.includes('--retry-only')
 const RATE_LIMIT_ONLY = process.argv.includes('--rate-limit-only')
 const RUNNING_FORK_ONLY = process.argv.includes('--running-fork-only')
+const COMPLETED_FORK_ONLY = process.argv.includes('--completed-fork-only')
 const SIDE_CHAT_ONLY = process.argv.includes('--side-chat-only')
 const GOAL_IDLE_ONLY = process.argv.includes('--goal-idle-only')
 const GOAL_RESTART_ONLY = process.argv.includes('--goal-restart-only')
@@ -390,6 +392,44 @@ function readCommandLineOption(name) {
 function validateDesktopSegmentOptions() {
   if (DESKTOP_SEGMENT && DESKTOP_FROM_SEGMENT) {
     throw new Error('--segment and --from-segment cannot be used together')
+  }
+  const activeOnlyModes = [
+    ['WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY=1', REQUEST_INPUT_ONLY],
+    ['--view-image-only', VIEW_IMAGE_ONLY],
+    ['--short-conversation-only', SHORT_CONVERSATION_ONLY],
+    ['--retry-only', RETRY_ONLY],
+    ['--rate-limit-only', RATE_LIMIT_ONLY],
+    ['--running-fork-only', RUNNING_FORK_ONLY],
+    ['--completed-fork-only', COMPLETED_FORK_ONLY],
+    ['--side-chat-only', SIDE_CHAT_ONLY],
+    ['--goal-idle-only', GOAL_IDLE_ONLY],
+    ['--goal-restart-only', GOAL_RESTART_ONLY],
+    ['--turn-navigation-only', TURN_NAVIGATION_ONLY],
+    ['--attachment-only', ATTACHMENT_ONLY],
+    ['--pasted-workspace-paths-only', PASTED_WORKSPACE_PATHS_ONLY],
+    ['--dropped-workspace-paths-only', DROPPED_WORKSPACE_PATHS_ONLY],
+    ['--system-drag-panel-only', SYSTEM_DRAG_PANEL_ONLY],
+    ['--model-switch-only', MODEL_SWITCH_ONLY],
+    ['--cloud-only', CLOUD_ONLY],
+    ['--plugins-only', PLUGINS_ONLY],
+    ['--automation-only', AUTOMATION_ONLY],
+    ['--memory-only', MEMORY_ONLY],
+    ['--tool-block-order-only', TOOL_BLOCK_ORDER_ONLY],
+    ['--queue-navigation-only', QUEUE_NAVIGATION_ONLY],
+    ['--guidance-background-only', GUIDANCE_BACKGROUND_ONLY],
+    ['--guidance-scroll-only', GUIDANCE_SCROLL_ONLY],
+    ['--message-restoration-only', MESSAGE_RESTORATION_ONLY],
+    ['--queue-management-only', QUEUE_MANAGEMENT_ONLY],
+    ['--task-plan-only', TASK_PLAN_ONLY],
+    ['WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true', DESKTOP_SCENARIO_ONLY],
+    ['WEWORK_E2E_MIXED_TOOL_TURNS_ONLY=1', MIXED_TOOL_TURNS_ONLY],
+  ].filter(([, enabled]) => enabled)
+  if (activeOnlyModes.length > 1) {
+    throw new Error(
+      `Desktop E2E only modes are mutually exclusive: ${activeOnlyModes
+        .map(([name]) => name)
+        .join(', ')}`
+    )
   }
   const availableSegments = [...DESKTOP_CHECKPOINTS, ...PLUGIN_SEGMENTS]
   if (SELECTED_DESKTOP_SEGMENT && !availableSegments.includes(SELECTED_DESKTOP_SEGMENT)) {
@@ -2087,14 +2127,19 @@ async function verifyCompletedTurnFork({
     FORK_FOLLOW_UP_PROMPT,
     'fork_follow_up'
   )
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: FORK_FOLLOW_UP_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   assert.ok(
     JSON.stringify(forkFollowUpRequest.body).includes(FORK_FOLLOW_UP_PROMPT),
     'The forked task did not accept an independent follow-up'
   )
+  assert.equal(
+    JSON.stringify(forkFollowUpRequest.body).includes(FORK_ENCRYPTED_CONTENT),
+    false,
+    'The forked request forwarded opaque encrypted reasoning history'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FORK_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'completed-turn-fork-03-follow-up-complete.png')
 
   await control.command('click', `[data-testid="${sourceTaskRowTestId}"]`)
@@ -4734,6 +4779,18 @@ function assistantMessage(text) {
   }
 }
 
+function encryptedReasoningItem(id, encryptedContent) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'reasoning',
+      id,
+      summary: [],
+      encrypted_content: encryptedContent,
+    },
+  }
+}
+
 function streamingMarkdownReport() {
   const section = index =>
     [
@@ -6525,11 +6582,13 @@ class DesktopE2EServer {
       // triggers a transcript refresh. Real providers have network latency here; an
       // immediate mock response can otherwise race the live image-view rendering.
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-      this.writeSse(response, [
+      const responseEvents = [
         responseCreated(responseId),
+        encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
         assistantMessage(COMPLETION_TEXT),
         responseCompleted(responseId),
-      ])
+      ]
+      this.writeSse(response, responseEvents)
       return
     }
 
@@ -6938,11 +6997,26 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(FORK_FOLLOW_UP_PROMPT),
         'The real Codex request did not contain the fork follow-up prompt'
       )
-      this.writeSse(response, [
+      const encryptedHistoryPresent = JSON.stringify(body).includes(FORK_ENCRYPTED_CONTENT)
+      if (encryptedHistoryPresent) {
+        const responseBody = {
+          error: {
+            message:
+              'The encrypted content gAAAA... could not be verified. Reason: Encrypted content could not be decrypted or parsed.',
+            type: 'invalid_request_error',
+            param: null,
+            code: 'invalid_encrypted_content',
+          },
+        }
+        json(response, 400, responseBody)
+        return
+      }
+      const responseEvents = [
         responseCreated(responseId),
         assistantMessage(FORK_FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
-      ])
+      ]
+      this.writeSse(response, responseEvents)
       return
     }
 
@@ -10417,14 +10491,14 @@ async function main() {
         return
       }
 
-      phase = 'running-follow-up-fork'
-      await verifyRunningFollowUpFork({
-        composerSelector,
-        control,
-        executorHome,
-        sourceTaskRowTestId: taskRowTestId,
-      })
       if (RUNNING_FORK_ONLY) {
+        phase = 'running-follow-up-fork'
+        await verifyRunningFollowUpFork({
+          composerSelector,
+          control,
+          executorHome,
+          sourceTaskRowTestId: taskRowTestId,
+        })
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -10432,6 +10506,16 @@ async function main() {
         )
         console.log(`Wework running-fork desktop E2E passed. Evidence: ${resultDir}`)
         return
+      }
+
+      if (!COMPLETED_FORK_ONLY) {
+        phase = 'running-follow-up-fork'
+        await verifyRunningFollowUpFork({
+          composerSelector,
+          control,
+          executorHome,
+          sourceTaskRowTestId: taskRowTestId,
+        })
       }
 
       phase = 'completed-turn-fork'
@@ -10442,6 +10526,15 @@ async function main() {
         sourceTaskRowTestId: taskRowTestId,
         workspacePath,
       })
+      if (COMPLETED_FORK_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework completed-fork desktop E2E passed. Evidence: ${resultDir}`)
+        return
+      }
 
       phase = 'blank-task-draft-restoration'
       await control.command(
