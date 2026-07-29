@@ -2,6 +2,8 @@ import {
   AppWindow,
   Check,
   ChevronDown,
+  Code2,
+  Eye,
   FileOutput,
   Folder,
   Folders,
@@ -81,6 +83,10 @@ const TEXT_FILE_PATTERN =
 
 function isTextFile(path: string) {
   return TEXT_FILE_PATTERN.test(path)
+}
+
+function isMarkdownFile(path: string) {
+  return /\.(?:md|markdown)$/i.test(path)
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -191,6 +197,7 @@ export function FileWorkspacePanel({
     useState<FilePreviewLoadingProgress | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
+  const [markdownMode, setMarkdownMode] = useState<'preview' | 'source'>('preview')
   const [editedContent, setEditedContent] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -319,6 +326,7 @@ export function FileWorkspacePanel({
       const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
       setSelectedFilePath(entry.path)
+      setMarkdownMode('preview')
       setSelectedPathIsDirectory(false)
       setSelectedApplicationPath(null)
       setPreviewLineTarget(nextLineTarget)
@@ -405,6 +413,7 @@ export function FileWorkspacePanel({
         fileRequestSequence.current += 1
         fileOpenerRequestSequence.current += 1
         setSelectedFilePath(resolvedPath)
+        setMarkdownMode('preview')
         setSelectedPathIsDirectory(true)
         setActiveDirectoryPath(resolvedPath)
         setDirectoryTreeVisible(true)
@@ -516,6 +525,7 @@ export function FileWorkspacePanel({
         setExpandedPaths(new Set())
         setActiveDirectoryPath(stableTarget.path)
         setSelectedFilePath(null)
+        setMarkdownMode('preview')
         setSelectedPathIsDirectory(false)
         setPreview(null)
         setEditing(false)
@@ -769,6 +779,28 @@ export function FileWorkspacePanel({
               {t('workbench.workspace_file_edit')}
             </button>
           )}
+          {preview && isMarkdownFile(preview.name) && !editing && (
+            <button
+              type="button"
+              data-testid="workspace-file-markdown-mode-button"
+              onClick={() => setMarkdownMode(mode => (mode === 'preview' ? 'source' : 'preview'))}
+              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+              aria-label={
+                markdownMode === 'preview'
+                  ? t('workbench.workspace_file_show_source')
+                  : t('workbench.workspace_file_show_preview')
+              }
+            >
+              {markdownMode === 'preview' ? (
+                <Code2 className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+              {markdownMode === 'preview'
+                ? t('workbench.workspace_file_source')
+                : t('workbench.workspace_file_preview')}
+            </button>
+          )}
           {editing && (
             <>
               <button
@@ -900,6 +932,7 @@ export function FileWorkspacePanel({
           editedContent={editedContent}
           onEditedContentChange={setEditedContent}
           onSave={() => void saveFile()}
+          markdownMode={markdownMode}
         />
         <div
           data-testid="workspace-file-tree-container"

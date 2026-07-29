@@ -5197,9 +5197,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     await user.click(await screen.findByText('README.md'))
 
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('hello world'))
-    expect(getWorkspaceCodeViewText()).toContain('/workspace/project/README.md')
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('hello world')
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(
+      '/workspace/project/README.md'
+    )
   })
 
   test('switches folders in the file tab for a multi-root project', async () => {
@@ -5340,8 +5341,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
 
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'opened from tool block'
+    )
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
       'pointer-events-none',
@@ -5529,7 +5531,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(await screen.findByTestId('local-skill-chip-gmail'))
 
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
@@ -5585,7 +5587,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(await screen.findByTestId('sent-local-skill-token-gmail'))
 
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
@@ -5790,8 +5792,7 @@ describe('DesktopWorkbenchLayout', () => {
         modifiedAt: null,
       })
     })
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('notes first'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('notes first')
 
     await act(async () => {
       readmeFile.resolve({
@@ -5804,8 +5805,8 @@ describe('DesktopWorkbenchLayout', () => {
       })
     })
 
-    expect(getWorkspaceCodeViewText()).toContain('notes first')
-    expect(getWorkspaceCodeViewText()).not.toContain('readme stale')
+    expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('notes first')
+    expect(screen.getByTestId('workspace-markdown-preview')).not.toHaveTextContent('readme stale')
   })
 
   test('right workspace panel ignores stale directory responses', async () => {
@@ -6082,7 +6083,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('stable preview content'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'stable preview content'
+    )
 
     rerender(
       <FileWorkspacePanel
@@ -6096,7 +6099,7 @@ describe('DesktopWorkbenchLayout', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-markdown-preview')).toBeInTheDocument()
     expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
     expect(readWorkspaceTextFile).toHaveBeenCalledTimes(1)
   })
@@ -6179,7 +6182,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
       expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
       expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
-      expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+      expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('hello world')
     })
   })
 
