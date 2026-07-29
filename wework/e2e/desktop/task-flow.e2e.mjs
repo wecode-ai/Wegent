@@ -30,6 +30,8 @@ const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
 )
 const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
+const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = 30_000
+const DESKTOP_CONTROL_RESULT_GRACE_MS = 5_000
 
 function readPositiveTimeout(value, fallback, name) {
   if (value === undefined) return fallback
@@ -2849,6 +2851,25 @@ async function confirmLocalProjectName(control, name) {
   )
 }
 
+async function createSingleRootLocalProject(control, workspacePath, name) {
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-local-option"]')
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForFolderPickerInitialized(control)
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await confirmLocalProjectName(control, name)
+}
+
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -5314,15 +5335,32 @@ class DesktopE2EServer {
     const id = randomUUID()
     const command = { id, action, selector, ...options }
     const clientId = this.activeControlClientId
+    let resolveDelivery
+    let rejectDelivery
+    const delivery = new Promise((resolvePromise, reject) => {
+      resolveDelivery = resolvePromise
+      rejectDelivery = reject
+    })
     const result = new Promise((resolvePromise, reject) => {
       this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
     })
-    this.commandQueue.push({ clientId, command })
-    return withTimeout(
-      this.guard(result),
-      options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
-      `Timed out running UI action ${action} for ${selector}`
-    )
+    this.commandQueue.push({ clientId, command, rejectDelivery, resolveDelivery })
+    try {
+      await withTimeout(
+        this.guard(Promise.race([delivery, result])),
+        DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
+        `Timed out delivering UI action ${action} for ${selector}`
+      )
+      return await withTimeout(
+        this.guard(result),
+        (options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS) + DESKTOP_CONTROL_RESULT_GRACE_MS,
+        `Timed out running UI action ${action} for ${selector}`
+      )
+    } catch (error) {
+      this.commandQueue = this.commandQueue.filter(item => item.command.id !== id)
+      this.commandResults.delete(id)
+      throw error
+    }
   }
 
   async handleControl(request, response) {
@@ -5474,7 +5512,11 @@ class DesktopE2EServer {
         const replacementError = new Error(
           `Desktop control client ${previousClientId} was replaced by ${ready.clientId}`
         )
-        this.commandQueue = this.commandQueue.filter(item => item.clientId !== previousClientId)
+        this.commandQueue = this.commandQueue.filter(item => {
+          if (item.clientId !== previousClientId) return true
+          item.rejectDelivery(replacementError)
+          return false
+        })
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
           this.commandResults.delete(id)
@@ -5507,12 +5549,13 @@ class DesktopE2EServer {
       }
       const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
       if (commandIndex >= 0) {
-        const [{ command }] = this.commandQueue.splice(commandIndex, 1)
+        const [{ command, resolveDelivery }] = this.commandQueue.splice(commandIndex, 1)
         this.commandHistory.push({
           ...command,
           clientId,
           deliveredAt: new Date().toISOString(),
         })
+        resolveDelivery()
         json(response, 200, command)
         return true
       }
@@ -8910,6 +8953,24 @@ async function main() {
       )
     }
 
+    phase = 'secondary-project-create'
+    await createSingleRootLocalProject(control, secondaryProjectPath, 'secondary-project')
+    const secondaryProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      'The standalone secondary project was not shown in the sidebar'
+    )
+    const secondaryProjectMenuTestId = secondaryProjectSnapshot.testIds.find(testId =>
+      testId.startsWith('project-menu-')
+    )
+    assert.ok(secondaryProjectMenuTestId, 'The standalone secondary project identity was not found')
+    const secondaryProjectId = secondaryProjectMenuTestId.slice('project-menu-'.length)
+    const secondaryProjectRowSelector = `[data-testid="project-row-${secondaryProjectId}"]`
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+
     phase = 'composer-project-folder-select'
     await control.command('click', '[data-testid="project-work-button"]')
     await control.command('click', '[data-testid="add-local-project-option"]')
@@ -8978,11 +9039,14 @@ async function main() {
     phase = 'composer-project-visible-in-sidebar'
     const openedProjectSnapshot = await waitForSnapshot(
       control,
-      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      snapshot =>
+        snapshot.testIds.some(
+          testId => testId.startsWith('project-menu-') && testId !== secondaryProjectMenuTestId
+        ),
       'The newly opened folder project was not shown in the sidebar'
     )
-    let projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
-      testId.startsWith('project-menu-')
+    let projectMenuTestId = openedProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-menu-') && testId !== secondaryProjectMenuTestId
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
     let projectId = projectMenuTestId.slice('project-menu-'.length)
@@ -8995,6 +9059,11 @@ async function main() {
       text: 'workspace',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, 'project-shared-root-both-visible.png')
 
     phase = 'sidebar-project-new-conversation'
     await control.command(
@@ -9021,6 +9090,10 @@ async function main() {
       snapshot => !snapshot.testIds.includes(projectMenuTestId),
       'A folder project could not be removed immediately after it was opened'
     )
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
 
     phase = 'project-folder-reopen'
     await control.command('click', '[data-testid="projects-create-button"]')
@@ -9088,12 +9161,18 @@ async function main() {
       control,
       snapshot =>
         snapshot.testIds.some(
-          testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+          testId =>
+            testId.startsWith('project-menu-') &&
+            testId !== projectMenuTestId &&
+            testId !== secondaryProjectMenuTestId
         ),
       'The reopened folder project was not shown with its current identity'
     )
     const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(
-      testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+      testId =>
+        testId.startsWith('project-menu-') &&
+        testId !== projectMenuTestId &&
+        testId !== secondaryProjectMenuTestId
     )
     assert.ok(reopenedProjectMenuTestId, 'The reopened folder project identity was not found')
     projectMenuTestId = reopenedProjectMenuTestId
@@ -9101,6 +9180,10 @@ async function main() {
     projectRowSelector = `[data-testid="project-row-${projectId}"]`
     await control.command('waitFor', projectRowSelector, {
       text: 'workspace',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
 
