@@ -116,15 +116,19 @@ Backend validates device ownership, online state, and capability authorization. 
 
 Backend does not expose local paths to the frontend and does not accept arbitrary installation directories. The sync action is delivered to the target device through the `device:sync_capabilities` event in the `/local-executor` Socket.IO namespace.
 
+InstalledPlugin publication, upload, and installation accept either Codex or Claude Code plugin packages. A ZIP must contain `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json`. Before storing the package, Backend adds the missing runtime manifest and removes runtime-specific fields from the generated manifest. The stored package therefore always contains compatible manifests for both runtimes; when both manifests are supplied, their plugin names must match.
+
 ## Executor Behavior
 
 When the local executor receives `device:sync_capabilities`, it:
 
 1. Validates `mode`; only `merge` and `replace` are accepted.
 2. Stores downloaded Skill and Plugin packages under `~/.wegent-executor/capabilities/store/`.
-3. Creates per-item symlinks in `~/.claude` and the reserved `~/.codex` runtime directories.
+3. Installs each Skill or Plugin into `~/.claude` and the reserved `~/.codex` runtime directories. Skills use per-item symlinks; Plugins use the standard marketplace cache layout with real directory copies in both runtimes so they pass installation integrity checks.
 4. Records Wegent-managed Skills, Plugins, and MCP servers in `~/.wegent-executor/capabilities/manifest.json`.
 5. Forces the next heartbeat to include the full capability list.
+
+Current device sync accepts either source format and also adds a missing runtime manifest while extracting legacy packages. The executor stores the normalized package centrally, creates real cache directories, and registers the required marketplace metadata for both Codex and Claude Code. Components supported by only one runtime remain available to that runtime without being copied into the other runtime's generated manifest.
 
 Central store layout:
 
@@ -150,13 +154,19 @@ Runtime directory layout:
     cache/{marketplace}/{name}/{version} -> ~/.wegent-executor/capabilities/store/plugins/{installed_plugin_id}-{marketplace}-{name}-{version}
 
 ~/.codex/
+  config.toml
+    marketplaces.{marketplace}
+    plugins."{name}@{marketplace}".enabled = true
   skills/
     {skill_name} -> ~/.wegent-executor/capabilities/store/skills/{skill_id}-{namespace}-{name}
   plugins/
-    {plugin_key} -> ~/.wegent-executor/capabilities/store/plugins/{installed_plugin_id}-{marketplace}-{name}-{version}
+    cache/{marketplace}/{name}/{version} -> ~/.wegent-executor/capabilities/store/plugins/{installed_plugin_id}-{marketplace}-{name}-{version}
+    marketplaces/{marketplace}/
+      .agents/plugins/marketplace.json
+      plugins/{name} -> ~/.wegent-executor/capabilities/store/plugins/{installed_plugin_id}-{marketplace}-{name}-{version}
 ```
 
-Runtime names must keep the original Skill name or Plugin key. Do not add a `wegent-` prefix, because a runtime directory name that diverges from `SKILL.md` metadata can affect discovery.
+Runtime names must preserve the original Skill name, Plugin name, and marketplace without adding an extra `wegent-` prefix. Codex identifies plugins by `name@marketplace` and loads their Skills, MCP servers, and Apps from the standard cache path.
 
 The manifest records Wegent-managed capabilities:
 
@@ -187,7 +197,7 @@ The manifest records Wegent-managed capabilities:
       "store_path": "~/.wegent-executor/capabilities/store/plugins/9-claude-plugins-official-context7-1057d02c5307",
       "runtime": {
         "claude_link": "~/.claude/plugins/cache/claude-plugins-official/context7/1057d02c5307",
-        "codex_link": "~/.codex/plugins/context7-claude-plugins-official"
+        "codex_link": "~/.codex/plugins/cache/claude-plugins-official/context7/1057d02c5307"
       }
     }
   },
@@ -260,14 +270,14 @@ CLAUDE_CONFIG_DIR=~/.claude
 SKILLS_DIR=~/.claude/skills
 ```
 
-Project tasks no longer create whole-directory `.claude/skills` or `.claude/plugins` symlinks under the project or task directory. Capabilities are exposed to Claude Code through per-item symlinks in the global `.claude` directory.
+Project tasks no longer create whole-directory `.claude/skills` or `.claude/plugins` symlinks under the project or task directory. Skills are exposed to Claude Code through per-item symlinks in the global `.claude` directory, while Plugins are installed in the global marketplace cache.
 
 Non-Project tasks continue to use `CLAUDE_CONFIG_DIR={workspace_root}/{task_id}/.claude` and `{config_dir}/skills` to preserve isolation and do not automatically consume global capability directories.
 
 Project task runtime consumes global MCP entries from the sync manifest:
 
 - Claude Code reads `mcps` from `~/.wegent-executor/capabilities/manifest.json` and merges them into the current SDK options as `mcp_servers`. `streamable-http` is converted to `http` before being passed to the Claude SDK.
-- Codex reads `mcps` from the same manifest and converts them to Codex CLI dynamic config overrides such as `-c mcp_servers.{name}.*=...` for the current Codex app-server launch. The executor does not overwrite the user's `~/.codex/config.toml`.
+- Codex reads `mcps` from the same manifest and converts them to Codex CLI dynamic config overrides such as `-c mcp_servers.{name}.*=...` for the current Codex app-server launch. MCP sync does not write `~/.codex/config.toml`; Plugin sync preserves existing settings while adding the marketplace source and the `name@marketplace` enabled state.
 
 Codex currently supports URL-based MCP servers (`url` or `base_url`) and stdio MCP servers (`command`, `args`, `env`). If a record includes `bearer_token_env_var`, `oauth_client_id`, or `oauth_resource`, the executor converts it to the corresponding Codex MCP config field.
 

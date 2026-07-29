@@ -257,6 +257,10 @@ export const MessageList = memo(function MessageList({
         : visibleMessages.findIndex(message => message.id === forceVirtualMessageId),
     [forceVirtualMessageId, visibleMessages]
   )
+  const streamingVirtualMessageIndex = useMemo(
+    () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
+    [visibleMessages]
+  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
@@ -307,10 +311,10 @@ export const MessageList = memo(function MessageList({
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
           ? Array.from({ length: range.count }, (_, index) => index)
           : defaultRangeExtractor(range)
-      if (forcedVirtualMessageIndex < 0 || indexes.includes(forcedVirtualMessageIndex)) {
-        return indexes
-      }
-      return [...indexes, forcedVirtualMessageIndex].sort((left, right) => left - right)
+      const forcedIndexes = [
+        ...new Set([forcedVirtualMessageIndex, streamingVirtualMessageIndex]),
+      ].filter(index => index >= 0 && !indexes.includes(index))
+      return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
     },
     initialMeasurementsCache,
   })
@@ -1733,6 +1737,8 @@ function renderUserContent(
               pathReference.directory ? { isDirectory: true } : undefined
             )
           }
+          const pluginReference = parsePluginUri(href)
+          if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
         }}
       >
         {mentionKind === 'folder' ? (
@@ -2371,3 +2377,5 @@ function AssistantErrorCard({
     </div>
   )
 }
+import { buildPluginDetailRoute, parsePluginUri } from '@/features/plugins/pluginNavigation'
+import { navigateTo } from '@/lib/navigation'

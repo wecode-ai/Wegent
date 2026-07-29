@@ -40,6 +40,14 @@ export function createPluginApi(client: HttpClient) {
     installMarketplacePlugin(id: string | number): Promise<PluginMarketplaceInstallResponse> {
       return client.post(`/plugins/marketplace/${id}/install`)
     },
+    ensureBuiltinPluginInstalled(
+      pluginKey: string,
+      options: { deviceId?: string } = {}
+    ): Promise<PluginMarketplaceInstallResponse> {
+      return client.post(`/plugins/builtin/${encodeURIComponent(pluginKey)}/ensure-installed`, {
+        ...(options.deviceId ? { device_id: options.deviceId } : {}),
+      })
+    },
     publishMarketplacePlugin(
       file: File,
       visibility: 'personal' | 'workspace' | 'public' = 'workspace',

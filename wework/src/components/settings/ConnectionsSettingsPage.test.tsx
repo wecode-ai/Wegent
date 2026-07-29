@@ -96,6 +96,7 @@ vi.mock('@/tauri/localExecutor', () => ({
     ready: true,
     runtimeInstanceId: 'runtime-instance-1',
   }),
+  getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
 

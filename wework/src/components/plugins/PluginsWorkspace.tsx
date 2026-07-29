@@ -22,13 +22,21 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { createHttpClient } from '@/api/http'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import {
+  createLocalCodexPluginApi,
+  installedPluginMatchesReference,
+} from '@/api/local/codexPlugins'
 import { createMcpApi } from '@/api/mcps'
 import { createPluginApi } from '@/api/plugins'
 import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import {
+  isWegentCloudMarketplace,
+  parsePluginDetailRoute,
+} from '@/features/plugins/pluginNavigation'
+import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import type {
   InstalledSkill,
   InstalledPlugin,
@@ -47,12 +55,12 @@ import { CustomMcpDialog, type CustomMcpFormState } from './McpManagementSection
 import { parseOptionalStringRecordJson } from './mcp-json-import'
 import { PluginCreateMenu } from './PluginCreateMenu'
 import { PluginDetailView } from './PluginDetailView'
+import { PluginLogo } from './PluginLogo'
 import { PluginUploadDialog } from './PluginUploadDialog'
 import { SkillUploadDialog } from './SkillUploadDialog'
-import { resolvePluginAssetUrl } from './plugin-assets'
 
 type CatalogTab = 'mcp' | 'skills' | 'plugins'
-type MarketplaceKind = 'local' | 'cloud'
+type MarketplaceKind = 'local' | 'cloud' | 'bundled'
 
 interface MarketplaceOption {
   key: string
@@ -69,6 +77,12 @@ interface MarketplaceFormState {
 
 function isUserManagedMarketplace(marketplace: MarketplaceOption): boolean {
   return marketplace.kind === 'local' && marketplace.id !== 'openai-curated-remote'
+}
+
+function isLocalRuntimeMarketplace(
+  marketplace: MarketplaceOption | null | undefined
+): marketplace is MarketplaceOption {
+  return marketplace?.kind === 'local' || marketplace?.kind === 'bundled'
 }
 
 interface PendingMarketplaceDelete {
@@ -285,6 +299,10 @@ function toMarketplaceInstalledPluginItem(item: PluginMarketplaceItem): Installe
   return toInstalledPluginItem(raw)
 }
 
+function normalizedPluginIdentity(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
 function serverConfigFromCustomForm(form: CustomMcpFormState): InstalledMCPServerConfig {
   if (form.type === 'stdio') {
     return {
@@ -316,9 +334,16 @@ function createDefaultMcpApi() {
   return createMcpApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
-function createDefaultPluginApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
+function createDefaultPluginApi(options?: { apiBaseUrl: string; token: string }) {
+  const apiBaseUrl = options?.apiBaseUrl ?? getRuntimeConfig().apiBaseUrl
+  const token = options?.token
+  return createPluginApi(
+    createHttpClient({
+      baseUrl: apiBaseUrl,
+      getToken: token ? () => token : undefined,
+      redirectOnUnauthorized: token ? false : undefined,
+    })
+  )
 }
 
 function marketplaceSectionTitle(item: PluginMarketplaceItem): string {
@@ -342,34 +367,57 @@ function localMarketplaceKey(id: string): string {
   return `local:${id}`
 }
 
+function bundledMarketplaceKey(): string {
+  return `bundled:${WEWORK_PERSONAL_MARKETPLACE_ID}`
+}
+
+function marketplaceKeyForId(id: string): string {
+  return id === WEWORK_PERSONAL_MARKETPLACE_ID ? bundledMarketplaceKey() : localMarketplaceKey(id)
+}
+
+function isLocalRuntimeMarketplaceKey(key: string): boolean {
+  return key.startsWith('local:') || key.startsWith('bundled:')
+}
+
 function cloudMarketplaceKey(): string {
   return 'cloud:default'
 }
 
 function toMarketplaceOptions(
   localMarketplaces: LocalCodexMarketplace[],
-  cloudAvailable: boolean
+  cloudAvailable: boolean,
+  cloudMarketplaceName: string,
+  personalMarketplaceName: string
 ): MarketplaceOption[] {
   const cloudOptions: MarketplaceOption[] = cloudAvailable
     ? [
         {
           key: cloudMarketplaceKey(),
           id: 'default',
-          name: 'Wegent 云端市场',
+          name: cloudMarketplaceName,
           kind: 'cloud',
         },
       ]
     : []
-  return [
-    ...cloudOptions,
-    ...localMarketplaces.map(marketplace => ({
+  const bundledOptions: MarketplaceOption[] = localMarketplaces
+    .filter(marketplace => marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID)
+    .map(marketplace => ({
+      key: bundledMarketplaceKey(),
+      id: marketplace.id,
+      name: personalMarketplaceName,
+      path: marketplace.path,
+      kind: 'bundled',
+    }))
+  const localOptions: MarketplaceOption[] = localMarketplaces
+    .filter(marketplace => marketplace.id !== WEWORK_PERSONAL_MARKETPLACE_ID)
+    .map(marketplace => ({
       key: localMarketplaceKey(marketplace.id),
       id: marketplace.id,
       name: marketplace.name,
       path: marketplace.path,
-      kind: 'local' as const,
-    })),
-  ]
+      kind: 'local',
+    }))
+  return [...cloudOptions, ...bundledOptions, ...localOptions]
 }
 
 function InstalledPluginStrip({
@@ -398,9 +446,6 @@ function InstalledPluginStrip({
       </div>
       <div className="flex min-h-10 items-center gap-3 overflow-x-auto pb-1 pl-0.5">
         {plugins.map(plugin => {
-          const logo = resolvePluginAssetUrl(
-            plugin.raw.spec.interface?.logo || plugin.raw.spec.interface?.composerIcon
-          )
           return (
             <button
               key={plugin.id}
@@ -410,11 +455,10 @@ function InstalledPluginStrip({
               className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-text-secondary shadow-[0_5px_14px_rgba(15,23,42,0.10)] transition-colors hover:bg-surface hover:text-text-primary"
               onClick={() => onSelect(plugin.id)}
             >
-              {logo ? (
-                <img src={logo} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <Boxes className="h-5 w-5" />
-              )}
+              <PluginLogo
+                source={plugin.raw.spec.interface?.logo || plugin.raw.spec.interface?.composerIcon}
+                testId={`plugins-installed-strip-logo-${plugin.id}`}
+              />
             </button>
           )
         })}
@@ -445,7 +489,6 @@ function PluginMarketplaceRow({
   onUninstall: () => void
 }) {
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
-  const logo = resolvePluginAssetUrl(item.interface?.logo || item.interface?.composerIcon)
   return (
     <article
       role="button"
@@ -467,11 +510,10 @@ function PluginMarketplaceRow({
           color: item.interface?.brandColor ? 'rgb(var(--color-bg-base))' : undefined,
         }}
       >
-        {logo ? (
-          <img src={logo} alt="" className="h-full w-full object-cover" />
-        ) : (
-          <Boxes className="h-5 w-5" />
-        )}
+        <PluginLogo
+          source={item.interface?.logo || item.interface?.composerIcon}
+          testId={`plugin-marketplace-logo-${item.id}`}
+        />
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
@@ -659,12 +701,16 @@ interface PluginsWorkspaceProps {
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
   cloudMarketplaceAvailable?: boolean
+  cloudApiBaseUrl?: string
+  cloudToken?: string
 }
 
 export function PluginsWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
   cloudMarketplaceAvailable = true,
+  cloudApiBaseUrl,
+  cloudToken,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -698,8 +744,21 @@ export function PluginsWorkspace({
   const [systemSkillPage, setSystemSkillPage] = useState(1)
   const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
   const mcpApi = useMemo(() => createDefaultMcpApi(), [])
-  const pluginApi = useMemo(() => createDefaultPluginApi(), [])
+  const pluginApi = useMemo(
+    () =>
+      createDefaultPluginApi(
+        cloudApiBaseUrl && cloudToken
+          ? {
+              apiBaseUrl: cloudApiBaseUrl,
+              token: cloudToken,
+            }
+          : undefined
+      ),
+    [cloudApiBaseUrl, cloudToken]
+  )
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const requestedPluginReference = useMemo(() => parsePluginDetailRoute(window.location.search), [])
+  const requestedPluginHandledRef = useRef(false)
   const initialMarketplaceLoadKeyRef = useRef<string | null>(null)
   const [isMarketplaceConfigLoading, setIsMarketplaceConfigLoading] = useState(true)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>([])
@@ -752,11 +811,23 @@ export function PluginsWorkspace({
 
   const applyLocalMarketplaceState = useCallback(
     (state: Awaited<ReturnType<typeof localPluginApi.readState>>) => {
-      const options = toMarketplaceOptions(state.marketplaces, cloudMarketplaceAvailable)
+      const options = toMarketplaceOptions(
+        state.marketplaces,
+        cloudMarketplaceAvailable,
+        t('workbench.plugins_wegent_cloud_marketplace', 'Wegent 云端市场'),
+        t('workbench.plugins_personal_marketplace', '个人市场')
+      )
       setMarketplaces(options)
       setSelectedMarketplaceKey(current => {
+        if (
+          requestedPluginReference &&
+          isWegentCloudMarketplace(requestedPluginReference.marketplaceName) &&
+          cloudMarketplaceAvailable
+        ) {
+          return cloudMarketplaceKey()
+        }
         const selectedKey = state.selectedMarketplaceId
-          ? localMarketplaceKey(state.selectedMarketplaceId)
+          ? marketplaceKeyForId(state.selectedMarketplaceId)
           : ''
         if (selectedKey && options.some(marketplace => marketplace.key === selectedKey)) {
           return selectedKey
@@ -768,7 +839,7 @@ export function PluginsWorkspace({
         return options[0]?.key || ''
       })
     },
-    [cloudMarketplaceAvailable, localPluginApi]
+    [cloudMarketplaceAvailable, localPluginApi, requestedPluginReference, t]
   )
 
   const updateCatalogItem = (itemId: string, updates: Partial<CatalogItem>) => {
@@ -1086,7 +1157,7 @@ export function PluginsWorkspace({
               plugin => String(plugin.id) === String(item.installedPluginId)
             ) ?? null)
       const trialPluginId = installed?.id ?? item.installedPluginId ?? item.id
-      if (selectedMarketplace.kind === 'local') {
+      if (isLocalRuntimeMarketplace(selectedMarketplace)) {
         tryLocalInstalledPluginInChat(trialPluginId)
         return
       }
@@ -1107,12 +1178,11 @@ export function PluginsWorkspace({
       ...previous,
       error: null,
     }))
-    const request =
-      selectedMarketplace.kind === 'local'
-        ? localPluginApi
-            .selectMarketplace(selectedMarketplace.id)
-            .then(() => localPluginApi.installAvailablePlugin(item.id))
-        : pluginApi.installMarketplacePlugin(item.id).then(response => response.plugin)
+    const request = isLocalRuntimeMarketplace(selectedMarketplace)
+      ? localPluginApi
+          .selectMarketplace(selectedMarketplace.id)
+          .then(() => localPluginApi.installAvailablePlugin(item.id))
+      : pluginApi.installMarketplacePlugin(item.id).then(response => response.plugin)
 
     request
       .then(plugin => {
@@ -1372,24 +1442,42 @@ export function PluginsWorkspace({
       error: null,
     }))
     localPluginApi
-      .readState()
+      .readState({
+        marketplaceId:
+          requestedPluginReference &&
+          !isWegentCloudMarketplace(requestedPluginReference.marketplaceName)
+            ? requestedPluginReference.marketplaceName
+            : undefined,
+      })
       .then(state => {
         if (!isCurrent) return
         applyLocalMarketplaceState(state)
-        const selectedKey = state.selectedMarketplaceId
-          ? localMarketplaceKey(state.selectedMarketplaceId)
-          : ''
-        initialMarketplaceLoadKeyRef.current = selectedKey
+        const requestedCloudMarketplace =
+          requestedPluginReference &&
+          isWegentCloudMarketplace(requestedPluginReference.marketplaceName) &&
+          cloudMarketplaceAvailable
+        const selectedKey = requestedCloudMarketplace
+          ? cloudMarketplaceKey()
+          : state.selectedMarketplaceId
+            ? marketplaceKeyForId(state.selectedMarketplaceId)
+            : ''
+        const useInitialLocalState = isLocalRuntimeMarketplaceKey(selectedKey)
+        initialMarketplaceLoadKeyRef.current = useInitialLocalState ? selectedKey : null
         setInstalledPlugins(state.installedPlugins.map(toInstalledPluginItem))
         setPluginMarketplaceState({
-          items: state.marketplaceItems,
-          isLoading: false,
+          items: useInitialLocalState ? state.marketplaceItems : [],
+          isLoading: !useInitialLocalState,
           error: null,
         })
       })
       .catch((error: Error) => {
         if (!isCurrent) return
-        const options = toMarketplaceOptions([], cloudMarketplaceAvailable)
+        const options = toMarketplaceOptions(
+          [],
+          cloudMarketplaceAvailable,
+          t('workbench.plugins_wegent_cloud_marketplace', 'Wegent 云端市场'),
+          t('workbench.plugins_personal_marketplace', '个人市场')
+        )
         setMarketplaces(options)
         setSelectedMarketplaceKey(current => current || options[0]?.key || '')
         setInstalledPlugins([])
@@ -1406,7 +1494,13 @@ export function PluginsWorkspace({
     return () => {
       isCurrent = false
     }
-  }, [applyLocalMarketplaceState, cloudMarketplaceAvailable, localPluginApi])
+  }, [
+    applyLocalMarketplaceState,
+    cloudMarketplaceAvailable,
+    localPluginApi,
+    requestedPluginReference,
+    t,
+  ])
 
   useEffect(() => {
     if (activeTab !== 'plugins') return
@@ -1462,16 +1556,15 @@ export function PluginsWorkspace({
       error: null,
     }))
 
-    const request =
-      marketplace.kind === 'local'
-        ? localPluginApi
-            .readState({
-              q: normalizedQuery || undefined,
-              marketplaceId: marketplace.id,
-              refresh: isExplicitRefresh,
-            })
-            .then(state => ({ items: state.marketplaceItems }))
-        : pluginApi.listMarketplacePlugins({ q: normalizedQuery || undefined })
+    const request = isLocalRuntimeMarketplace(marketplace)
+      ? localPluginApi
+          .readState({
+            q: normalizedQuery || undefined,
+            marketplaceId: marketplace.id,
+            refresh: isExplicitRefresh,
+          })
+          .then(state => ({ items: state.marketplaceItems }))
+      : pluginApi.listMarketplacePlugins({ q: normalizedQuery || undefined })
 
     request
       .then(response => {
@@ -1523,6 +1616,44 @@ export function PluginsWorkspace({
           null),
     [pluginMarketplaceState.items, selectedMarketplacePluginId]
   )
+
+  useEffect(() => {
+    if (
+      !requestedPluginReference ||
+      requestedPluginHandledRef.current ||
+      isMarketplaceConfigLoading ||
+      pluginMarketplaceState.isLoading
+    ) {
+      return
+    }
+
+    const marketplacePlugin = pluginMarketplaceState.items.find(
+      item =>
+        normalizedPluginIdentity(item.name) ===
+          normalizedPluginIdentity(requestedPluginReference.pluginName) ||
+        normalizedPluginIdentity(item.remotePluginId) ===
+          normalizedPluginIdentity(requestedPluginReference.pluginName) ||
+        normalizedPluginIdentity(item.id) ===
+          normalizedPluginIdentity(requestedPluginReference.pluginName)
+    )
+    if (marketplacePlugin) {
+      setSelectedMarketplacePluginId(marketplacePlugin.id)
+      requestedPluginHandledRef.current = true
+      return
+    }
+
+    const installedPlugin = installedPlugins.find(plugin =>
+      installedPluginMatchesReference(plugin.raw, requestedPluginReference)
+    )
+    if (installedPlugin) setSelectedPluginId(installedPlugin.id)
+    requestedPluginHandledRef.current = true
+  }, [
+    installedPlugins,
+    isMarketplaceConfigLoading,
+    pluginMarketplaceState.isLoading,
+    pluginMarketplaceState.items,
+    requestedPluginReference,
+  ])
   const marketplaceGroups = useMemo(() => {
     const groups = new Map<string, PluginMarketplaceItem[]>()
     for (const item of pluginMarketplaceState.items) {
@@ -1548,7 +1679,10 @@ export function PluginsWorkspace({
     return (
       <PluginDetailView
         plugin={selectedPlugin}
-        onBack={() => setSelectedPluginId(null)}
+        onBack={() => {
+          setSelectedPluginId(null)
+          navigateTo('/plugins')
+        }}
         onToggle={() => {
           const sourceType = selectedPlugin.raw.spec.source.type
           if (sourceType === 'marketplace') {
@@ -1595,10 +1729,13 @@ export function PluginsWorkspace({
         }
         primaryActionDisabled={isInstalling}
         showUninstall={isInstalled}
-        onBack={() => setSelectedMarketplacePluginId(null)}
+        onBack={() => {
+          setSelectedMarketplacePluginId(null)
+          navigateTo('/plugins')
+        }}
         onToggle={() => {
           if (isInstalled && installedDetail) {
-            if (selectedMarketplace?.kind === 'local') {
+            if (isLocalRuntimeMarketplace(selectedMarketplace)) {
               tryLocalInstalledPluginInChat(installedDetail.id)
               return
             }
@@ -1764,7 +1901,7 @@ export function PluginsWorkspace({
                     const key = event.target.value
                     const marketplace = marketplaces.find(item => item.key === key)
                     setSelectedMarketplaceKey(key)
-                    if (marketplace?.kind === 'local') {
+                    if (isLocalRuntimeMarketplace(marketplace)) {
                       void localPluginApi.selectMarketplace(marketplace.id)
                     }
                   }}
@@ -1790,7 +1927,7 @@ export function PluginsWorkspace({
                       ].join(' ')}
                       onClick={() => {
                         setSelectedMarketplaceKey(marketplace.key)
-                        if (marketplace.kind === 'local') {
+                        if (isLocalRuntimeMarketplace(marketplace)) {
                           void localPluginApi.selectMarketplace(marketplace.id)
                         }
                       }}
@@ -1891,6 +2028,13 @@ export function PluginsWorkspace({
                   }}
                   onManage={() => navigateTo('/plugins/manage')}
                 />
+              ) : marketplaceGroups.length === 0 && selectedMarketplace.kind === 'bundled' ? (
+                <div
+                  data-testid="plugins-bundled-marketplace-empty"
+                  className="flex min-h-[120px] items-center border-t border-border pt-8 text-sm font-medium text-text-secondary"
+                >
+                  {t('workbench.plugins_personal_marketplace_empty', '暂无 WeWork 自带插件')}
+                </div>
               ) : marketplaceGroups.length === 0 ? (
                 <div className="flex min-h-[120px] flex-col items-start justify-center gap-3 border-t border-border pt-8 text-sm font-semibold">
                   <div className="text-text-secondary">
@@ -1970,20 +2114,17 @@ export function PluginsWorkspace({
                         >
                           <span className="flex h-7 min-w-11 items-center">
                             {previewItems.map((item, index) => {
-                              const logo = resolvePluginAssetUrl(
-                                item.interface?.logo || item.interface?.composerIcon
-                              )
                               return (
                                 <span
                                   key={item.id}
                                   className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background text-text-muted shadow-sm"
                                   style={{ marginLeft: index === 0 ? 0 : -8 }}
                                 >
-                                  {logo ? (
-                                    <img src={logo} alt="" className="h-full w-full object-cover" />
-                                  ) : (
-                                    <Boxes className="h-3.5 w-3.5" />
-                                  )}
+                                  <PluginLogo
+                                    source={item.interface?.logo || item.interface?.composerIcon}
+                                    fallbackClassName="h-3.5 w-3.5"
+                                    testId={`plugin-marketplace-preview-logo-${item.id}`}
+                                  />
                                 </span>
                               )
                             })}

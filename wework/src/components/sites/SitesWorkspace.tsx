@@ -148,6 +148,39 @@ function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowPro
   )
 }
 
+function SitesCreateError({
+  message,
+  openPluginsLabel,
+  onOpenPlugins,
+}: {
+  message: string
+  openPluginsLabel: string
+  onOpenPlugins?: () => void
+}) {
+  return (
+    <div
+      className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-3"
+      role="alert"
+      data-testid="sites-create-error"
+    >
+      <span className="flex min-w-0 items-center gap-2 text-sm text-text-secondary">
+        <AlertCircle className="h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
+        <span className="truncate">{message}</span>
+      </span>
+      {onOpenPlugins && (
+        <button
+          type="button"
+          data-testid="sites-open-plugins-button"
+          onClick={onOpenPlugins}
+          className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
+        >
+          {openPluginsLabel}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function SitesWorkspace({
   api,
   onCreate,
@@ -311,6 +344,20 @@ export function SitesWorkspace({
             ].join(' ')}
           >
             <div>{topBarLeftActions}</div>
+            <button
+              type="button"
+              data-testid="sites-create-button"
+              disabled={creating}
+              onClick={() => void onCreate()}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-wait disabled:opacity-60"
+            >
+              {creating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {t('create', '创建')}
+            </button>
           </div>
         </div>
 
@@ -323,6 +370,13 @@ export function SitesWorkspace({
               {t('subtitle', '将你的想法变成真实网站')}
             </p>
           </section>
+          {createError && (
+            <SitesCreateError
+              message={createError}
+              openPluginsLabel={t('open_plugins', '查看插件')}
+              onOpenPlugins={onOpenPlugins}
+            />
+          )}
           <div
             data-testid="sites-unavailable-state"
             className="flex min-h-64 items-center justify-center text-center"
@@ -397,26 +451,11 @@ export function SitesWorkspace({
         </label>
 
         {createError && (
-          <div
-            className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-3"
-            role="alert"
-            data-testid="sites-create-error"
-          >
-            <span className="flex min-w-0 items-center gap-2 text-sm text-text-secondary">
-              <AlertCircle className="h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
-              <span className="truncate">{createError}</span>
-            </span>
-            {onOpenPlugins && (
-              <button
-                type="button"
-                data-testid="sites-open-plugins-button"
-                onClick={onOpenPlugins}
-                className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
-              >
-                {t('open_plugins', '查看插件')}
-              </button>
-            )}
-          </div>
+          <SitesCreateError
+            message={createError}
+            openPluginsLabel={t('open_plugins', '查看插件')}
+            onOpenPlugins={onOpenPlugins}
+          />
         )}
 
         <div className="mt-8">

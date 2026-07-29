@@ -5,12 +5,16 @@
 import pytest
 
 from app.models.kind import Kind
-from app.services.device.capability_sync_service import DeviceCapabilitySyncService
+from app.services.device.capability_sync_service import (
+    DeviceCapabilitySyncError,
+    DeviceCapabilitySyncService,
+)
 
 
 class FakeSio:
-    def __init__(self) -> None:
+    def __init__(self, response=None) -> None:
         self.calls = []
+        self.response = response or {"success": True}
 
     async def call(self, event, payload, to, namespace, timeout):
         self.calls.append(
@@ -22,7 +26,7 @@ class FakeSio:
                 "timeout": timeout,
             }
         )
-        return {"success": True}
+        return self.response
 
 
 def _create_skill(test_db, user_id: int, name: str = "image-gen") -> Kind:
@@ -289,3 +293,137 @@ async def test_sync_user_global_capabilities_uses_cloud_socket_device_id(
     assert result.synced == 1
     assert seen_device_ids == ["executor-device-1"]
     assert fake_sio.calls[0]["to"] == "socket-cloud"
+
+
+@pytest.mark.anyio
+async def test_sync_installed_plugin_to_device_merges_only_target_plugin(
+    test_db, test_user, monkeypatch
+):
+    device = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        name="sandbox-1",
+        namespace="default",
+        json={
+            "spec": {
+                "deviceId": "executor-device-1",
+                "deviceType": "cloud",
+            }
+        },
+        is_active=True,
+    )
+    test_db.add(device)
+    test_db.commit()
+    unrelated_skill = _create_skill(test_db, test_user.id, name="init-project")
+    _create_installed_skill(test_db, test_user.id, unrelated_skill)
+    installed_plugin = _create_installed_plugin(
+        test_db,
+        test_user.id,
+        name="wegent-sites",
+        marketplace="wegent",
+    )
+    fake_sio = FakeSio(
+        {
+            "success": True,
+            "plugins": [
+                {
+                    "id": installed_plugin.id,
+                    "name": "wegent-sites",
+                    "status": "synced",
+                }
+            ],
+        }
+    )
+    seen_device_ids = []
+
+    async def fake_all_devices(db, user_id):
+        return [{"device_id": "sandbox-1", "socket_device_id": "executor-device-1"}]
+
+    async def fake_online_info(user_id, device_id):
+        seen_device_ids.append(device_id)
+        return {"socket_id": "socket-cloud", "status": "online"}
+
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.device_service.get_all_devices",
+        fake_all_devices,
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.device_service.get_device_online_info",
+        fake_online_info,
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.get_sio",
+        lambda: fake_sio,
+    )
+
+    result = await DeviceCapabilitySyncService().sync_installed_plugin_to_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="sandbox-1",
+        installed_plugin_id=installed_plugin.id,
+    )
+
+    assert result.success is True
+    assert result.mode == "merge"
+    assert result.synced == 1
+    assert result.failed == 0
+    assert seen_device_ids == ["executor-device-1"]
+    payload = fake_sio.calls[0]["payload"]
+    assert payload["device_id"] == "executor-device-1"
+    assert payload["mode"] == "merge"
+    assert payload["skills"] == []
+    assert payload.get("mcps", []) == []
+    assert [item["installed_plugin_id"] for item in payload["plugins"]] == [
+        installed_plugin.id
+    ]
+    assert fake_sio.calls[0]["to"] == "socket-cloud"
+
+
+@pytest.mark.anyio
+async def test_sync_installed_plugin_to_device_rejects_missing_acknowledgement(
+    test_db, test_user, monkeypatch
+):
+    device = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        name="device-1",
+        namespace="default",
+        json={"spec": {"deviceId": "device-1", "deviceType": "local"}},
+        is_active=True,
+    )
+    installed_plugin = _create_installed_plugin(
+        test_db,
+        test_user.id,
+        name="wegent-sites",
+        marketplace="wegent",
+    )
+    test_db.add(device)
+    test_db.commit()
+    fake_sio = FakeSio({"success": True, "plugins": []})
+
+    async def fake_all_devices(db, user_id):
+        return [{"device_id": "device-1"}]
+
+    async def fake_online_info(user_id, device_id):
+        return {"socket_id": "socket-local", "status": "online"}
+
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.device_service.get_all_devices",
+        fake_all_devices,
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.device_service.get_device_online_info",
+        fake_online_info,
+    )
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.get_sio",
+        lambda: fake_sio,
+    )
+
+    with pytest.raises(DeviceCapabilitySyncError, match="not acknowledged"):
+        await DeviceCapabilitySyncService().sync_installed_plugin_to_device(
+            test_db,
+            user_id=test_user.id,
+            device_id="device-1",
+            installed_plugin_id=installed_plugin.id,
+        )

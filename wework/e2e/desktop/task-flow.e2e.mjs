@@ -2055,8 +2055,9 @@ async function verifyToolBlockChronologicalOrder({
   restartDesktopApp,
   workspacePath,
 }) {
-  await seedToolBlockOrderTask(executorHome, workspacePath)
-  await restartDesktopApp()
+  await restartDesktopApp({
+    afterStop: () => seedToolBlockOrderTask(executorHome, workspacePath),
+  })
 
   const taskRowTestId = `runtime-local-task-row-${TOOL_BLOCK_ORDER_TASK_ID}`
   await ensureTaskRowVisible(control, taskRowTestId)
@@ -2557,6 +2558,14 @@ async function verifyPluginLifecycle({
   })
   await verifyOfficialPluginSource(repositoryPath)
 
+  await control.command('waitFor', '[data-testid="plugins-marketplace-tab-wework-personal"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="plugins-marketplace-tab-wework-personal"]')
+  await control.command('waitFor', '[data-testid="plugins-bundled-marketplace-empty"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   const initialSnapshot = await waitForSnapshot(
     control,
     snapshot =>
@@ -2686,6 +2695,149 @@ async function verifyPluginLifecycle({
     'The marketplace did not return to the install state after uninstall'
   )
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
+}
+
+async function verifySitesPluginAutoInstall(control) {
+  const bootstrapStartedAt = Date.now()
+  while (
+    control.sitesConnectionBootstrapRequests === 0 &&
+    Date.now() - bootstrapStartedAt < WORKBENCH_READY_TIMEOUT_MS
+  ) {
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(
+    control.sitesConnectionBootstrapRequests,
+    1,
+    'Connecting the cloud account did not initialize the Sites plugin exactly once'
+  )
+
+  await control.command('navigate', 'body', { value: '/sites' })
+  await control.command('waitFor', '[data-testid="sites-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.text.includes('站点'),
+    'Creating a site did not place the bundled Sites plugin in the composer',
+    WORKBENCH_READY_TIMEOUT_MS,
+    ACTIVE_COMPOSER_SELECTOR
+  )
+  const composerText = await control.command('getText', ACTIVE_COMPOSER_SELECTOR)
+  assert.match(
+    composerText,
+    /站点/,
+    'Creating a site did not place the bundled Sites plugin in the composer'
+  )
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    snapshot.testIds.includes('sites-create-error'),
+    false,
+    'The Sites page reported an installation error after opening the plugin in chat'
+  )
+  await captureVerificationScreenshot(control, 'plugins-05-sites-auto-installed.png')
+
+  const sitesPluginSelector = '[data-testid="composer-plugin-chip-wegent-sites"]'
+  await control.command('waitFor', sitesPluginSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', sitesPluginSelector)
+  await control.command('waitFor', '[data-testid="plugin-detail-back-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    detailSnapshot =>
+      detailSnapshot.text.includes('站点') &&
+      detailSnapshot.testIds.includes('plugin-detail-back-button'),
+    'Clicking the Sites plugin mention did not open its plugin detail page'
+  )
+  await captureVerificationScreenshot(control, 'plugins-06-sites-detail.png')
+}
+
+function sitesMarketplacePlugin(installed) {
+  return {
+    id: 501,
+    remotePluginId: 'wegent~Plugin_501',
+    name: 'wegent-sites',
+    displayName: '站点',
+    description: 'Build and deploy websites with Wegent Sites',
+    version: '0.1.0',
+    author: 'Wegent Team',
+    visibility: 'public',
+    featured: true,
+    installed,
+    enabled: installed,
+    installedPluginId: installed ? 601 : null,
+    sourceType: 'marketplace',
+    interface: {
+      displayName: '站点',
+      shortDescription: 'Build and deploy sites with Wegent',
+      category: 'Productivity',
+      defaultPrompt: ['Build an internal website and validate it locally'],
+    },
+    components: {
+      skills: [
+        {
+          name: 'sites:sites-building',
+          description: 'Build and validate sites',
+          path: 'skills/sites-building/SKILL.md',
+        },
+      ],
+      commands: [],
+      agents: [],
+      hooks: [],
+      mcps: [],
+      lsps: [],
+      monitors: [],
+      bins: [],
+    },
+    manifest: { name: 'wegent-sites' },
+    ownerUserId: 0,
+  }
+}
+
+function installedSitesPlugin() {
+  const marketplacePlugin = sitesMarketplacePlugin(true)
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'wegent-sites',
+      namespace: 'default',
+      labels: { id: '601' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'wegent-marketplace',
+        pluginKey: 'wegent-sites',
+        catalogItemId: '501',
+        marketplace: 'wegent',
+      },
+      displayName: '站点',
+      description: marketplacePlugin.description,
+      version: marketplacePlugin.version,
+      author: marketplacePlugin.author,
+      installState: 'installed',
+      enabled: true,
+      componentStates: {},
+      manifest: marketplacePlugin.manifest,
+      components: marketplacePlugin.components,
+      interface: marketplacePlugin.interface,
+      packageRef: {
+        storageKey: 'skill-binaries/601',
+        checksum: 'sha256:desktop-e2e-sites',
+        sizeBytes: 1024,
+      },
+      sourcePayload: { filename: 'wegent-sites.zip' },
+    },
+    status: { state: 'Available' },
+  }
 }
 
 function processIsAlive(processId) {
@@ -4960,6 +5112,8 @@ class DesktopE2EServer {
     this.cloudModelsAvailable = false
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
+    this.sitesPluginInstalled = false
+    this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.viewImageStage = 'initial'
@@ -5396,6 +5550,67 @@ class DesktopE2EServer {
         user_name: 'wework-desktop-e2e-cloud-user',
         email: 'desktop-e2e@wework.local',
       })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
+      json(response, 200, {
+        items: this.sitesPluginInstalled ? [installedSitesPlugin()] : [],
+      })
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/plugins/builtin/wegent-sites/ensure-installed'
+    ) {
+      const body = await readRequestBody(request)
+      this.sitesPluginInstalled = true
+      if (!body.device_id) {
+        this.sitesConnectionBootstrapRequests += 1
+        json(response, 200, {
+          plugin: installedSitesPlugin(),
+          sync: null,
+        })
+        return
+      }
+      if (body.device_id !== 'local-device') {
+        json(response, 422, {
+          detail: 'A matching target device is required for Sites synchronization',
+        })
+        return
+      }
+      json(response, 200, {
+        plugin: installedSitesPlugin(),
+        sync: {
+          success: true,
+          device_id: 'local-device',
+          mode: 'merge',
+          skills: [],
+          plugins: [{ id: 601, name: 'wegent-sites', status: 'synced' }],
+          mcps: [],
+          errors: [],
+          synced: 1,
+          failed: 0,
+          skipped: 0,
+          results: [
+            {
+              device_id: 'local-device',
+              success: true,
+              error: null,
+              skills: [],
+              plugins: [{ id: 601, name: 'wegent-sites', status: 'synced' }],
+              mcps: [],
+              errors: [],
+            },
+          ],
+        },
+      })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/plugins/marketplace') {
+      json(response, 200, { items: [sitesMarketplacePlugin(true)] })
       return
     }
 
@@ -8605,7 +8820,8 @@ async function main() {
       return child
     }
     app = await startDesktopAppProcess()
-    const restartDesktopApp = async (beforeStart = null) => {
+    const restartDesktopApp = async (options = null) => {
+      const beforeStart = typeof options === 'function' ? options : options?.afterStop
       const readyCountBeforeRestart = control.readyCount
       await stopDesktopAppProcess(app)
       await beforeStart?.()
@@ -8890,6 +9106,8 @@ async function main() {
         repositoryPath: officialPluginRepositoryPath,
         workspacePath,
       })
+      phase = 'sites-plugin-auto-install'
+      await verifySitesPluginAutoInstall(control)
       console.log(`Wework desktop plugin E2E passed. Evidence: ${resultDir}`)
       return
     }

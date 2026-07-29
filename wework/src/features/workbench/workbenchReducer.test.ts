@@ -751,6 +751,61 @@ describe('workbenchReducer', () => {
     }
   )
 
+  test('preserves current runtime handle metadata while hydrating a task address', () => {
+    const state = {
+      ...initialWorkbenchState,
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+        runtimeHandle: {
+          modelSelection: {
+            modelName: 'local-model:luna',
+            modelType: 'runtime',
+            options: {},
+          },
+          threadId: 'pending-thread',
+        },
+      },
+    }
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-1',
+            workspacePath: '/Users/me/chat',
+            available: true,
+            mapped: true,
+            tasks: [
+              {
+                taskId: 'task-1',
+                threadId: 'ready-thread',
+                workspacePath: '/Users/me/chat',
+                title: 'Chat',
+                runtime: 'codex',
+                runtimeHandle: {
+                  threadId: 'ready-thread',
+                },
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+
+    expect(refreshed.currentRuntimeTask?.runtimeHandle).toEqual({
+      modelSelection: {
+        modelName: 'local-model:luna',
+        modelType: 'runtime',
+        options: {},
+      },
+      threadId: 'ready-thread',
+    })
+  })
+
   test('updates cached device and runtime workspace status from websocket events', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

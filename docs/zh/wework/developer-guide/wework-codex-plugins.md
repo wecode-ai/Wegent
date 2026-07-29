@@ -21,9 +21,13 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 ## 市场和安装
 
-市场数据由 Wework 前端通过本机 executor 的 Codex app-server 请求读取。列表请求不限制 `marketplaceKinds`，因此 Codex 可以按照当前功能开关和登录态同时返回本地市场与 `openai-curated-remote` 官方市场。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。安装、卸载、刷新和自定义市场删除都走 Codex app-server 方法，Wework 不维护一套独立的插件安装状态。
+本地市场和 OpenAI 官方市场由 Wework 前端通过本机 executor 的 Codex app-server 读取。列表请求不限制 `marketplaceKinds`，因此 Codex 可以按照当前功能开关和登录态返回本地市场与 `openai-curated-remote` 官方市场。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。本地市场的安装、卸载、刷新和删除都走 Codex app-server。
 
-前端只保存当前选中的市场。市场列表、插件是否已安装、skill/app 是否可用，以及插件详情中的内容列表，都以 Codex app-server 返回结果为准。OpenAI 官方市场由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
+连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。本机 Codex app-server 中用于承载云端插件的 `wegent` 内部市场继续参与插件注册和运行时解析，但不会作为设备侧市场标签显示。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
+
+`wegent-sites` 由独立插件仓库维护。构建 Backend 镜像前，`pnpm prepare:builtin-plugins` 将外部插件复制到忽略提交的 `backend/init_data/plugins/wegent-sites` 目录；标准 `build_image.sh` 和 `build_image_mac.sh` 会自动执行该步骤。正式镜像工作流从配置的归档地址下载插件，校验固定 SHA-256 后执行同一 staging。下载、校验或 staging 失败会终止镜像构建；每个 Backend 进程启动时也会校验必需插件目录和 manifest。Backend 随后以系统所有者 `user_id=0` 将插件幂等发布为公开、推荐的 Wegent 云端市场条目。
+
+站点页的创建操作调用 `POST /api/plugins/builtin/wegent-sites/ensure-installed`，请求体必须携带目标 `device_id`。该接口只允许安装系统所有者发布的公开插件，重复调用会复用并重新启用已有安装记录，然后以 `merge` 模式只同步本次安装的 `wegent-sites`，并校验设备回执中的安装 ID 和 `synced` 状态。其他历史 skill 或插件的同步错误不会阻塞 Sites 对话；目标设备不存在、离线或 Sites 自身同步失败时接口返回错误，前端不会创建对话。确认成功后，前端使用稳定的 `plugin://wegent-sites@wegent` 引用打开新任务；点击该 mention 时，插件页直接加载云端插件详情。
 
 ## 独立 Codex Home
 
@@ -65,6 +69,6 @@ Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模�
 
 从插件详情或市场列表点击“在对话中试用”时，Wework 会按 Codex 协议写入单条 plugin mention，而不是同时写入 plugin 和 skill 两条 mention。试用内容会进入新对话草稿，相关模板会显示在输入框上方；用户发送后，消息气泡继续把 `plugin://` mention 渲染成 badge，避免把协议字符串作为普通文本展示。
 
-## Backend 上传
+## Backend 市场与上传
 
-Backend 提供已安装插件包的解析和上传辅助能力，用于读取 Codex 插件包中的 manifest、skill 和 app 元数据。解析逻辑只负责服务端存储和展示，不替代 Wework 本地 Codex app-server 的安装状态。
+Backend 同时接受 Codex 与 Claude Code 插件包，支持上传、云端市场发布、安装与设备同步，并为每个存储包标准化生成两个运行时的清单。Wegent 云端市场以 Backend 的安装记录为准；本地自定义市场和 OpenAI 官方市场仍以本机 Codex app-server 为准。

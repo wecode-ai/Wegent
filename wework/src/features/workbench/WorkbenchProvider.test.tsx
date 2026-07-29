@@ -684,6 +684,9 @@ function ProjectSendProbe() {
             ].join(':')
           : 'none'}
       </span>
+      <span data-testid="current-runtime-handle-model-selection">
+        {modelSelectionFromRuntimeHandle(currentRuntimeTask?.runtimeHandle)?.modelName ?? 'none'}
+      </span>
       <span data-testid="runtime-project-order">
         {workbench.state.runtimeWork?.projects
           .map(projectWork => projectWork.project.name)
@@ -3771,6 +3774,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: request.taskId,
         workspacePath: request.workspacePath,
         runtime: 'codex',
+        runtimeHandle: {
+          threadId: 'ready-thread',
+        },
       })),
       getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
         taskId: address.taskId,
@@ -3810,6 +3816,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('runtime-task-model-selection')).toHaveTextContent(
         'local-model:mimo:runtime:'
       )
+    )
+    expect(screen.getByTestId('current-runtime-handle-model-selection')).toHaveTextContent(
+      'local-model:mimo'
     )
     await waitFor(() => expect(streamHandlers.onChatDone).toBeDefined())
 

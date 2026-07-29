@@ -121,7 +121,9 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
       "$workflow" >&2
     exit 1
   fi
-  if ! grep -q "github.event_name != 'pull_request'" "$workflow_path"; then
+  if ! grep -Fq \
+    "FORCE_ALL: \${{ github.event_name != 'pull_request'" \
+    "$workflow_path"; then
     printf '%s must force all E2E outside pull request events\n' \
       "$workflow" >&2
     exit 1

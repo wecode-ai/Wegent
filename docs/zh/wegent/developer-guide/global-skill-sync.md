@@ -116,15 +116,19 @@ Backend 负责设备归属、在线状态和能力权限校验。通过校验后
 
 Backend 不向 frontend 暴露本地路径，也不接受任意安装目录。同步动作通过 `/local-executor` Socket.IO namespace 的 `device:sync_capabilities` 事件下发给目标设备。
 
+InstalledPlugin 的发布、上传和安装同时接受 Codex 与 Claude Code 插件包。ZIP 必须包含 `.codex-plugin/plugin.json` 或 `.claude-plugin/plugin.json`。Backend 入库前会补齐缺少的运行时清单，并从生成的清单中移除另一运行时的专属字段，因此存储包始终同时包含两个运行时可用的清单；若上传包已包含两份清单，两者的插件名称必须一致。
+
 ## Executor 行为
 
 local executor 收到 `device:sync_capabilities` 后会：
 
 1. 校验 `mode`，只接受 `merge` 和 `replace`。
 2. 将下载的 Skill 和 Plugin 包统一存入 `~/.wegent-executor/capabilities/store/`。
-3. 在 `~/.claude` 和预留的 `~/.codex` 运行目录中，为每个 Skill 或 Plugin 创建单项软链。
+3. 在 `~/.claude` 和预留的 `~/.codex` 运行目录中安装每个 Skill 或 Plugin。Skill 使用单项软链；Plugin 在两个运行时中都使用标准 marketplace cache 布局和真实目录副本，以通过运行时的安装完整性校验。
 4. 在 `~/.wegent-executor/capabilities/manifest.json` 记录 Wegent 管理的 Skill、Plugin 和 MCP manifest。
 5. 触发下一次 heartbeat 上报完整能力列表。
+
+当前设备同步同时接受两种源格式，解压历史包时也会补齐缺少的运行时清单。Executor 将标准化插件保存到中心 store，为 Codex 与 Claude Code 分别创建真实缓存目录，并登记各自要求的 marketplace 元数据。仅由某个运行时支持的组件仍由该运行时使用，不会写入另一运行时的生成清单。
 
 中心 store 结构：
 
@@ -150,13 +154,19 @@ local executor 收到 `device:sync_capabilities` 后会：
     cache/{marketplace}/{name}/{version} -> ~/.wegent-executor/capabilities/store/plugins/{installed_plugin_id}-{marketplace}-{name}-{version}
 
 ~/.codex/
+  config.toml
+    marketplaces.{marketplace}
+    plugins."{name}@{marketplace}".enabled = true
   skills/
     {skill_name} -> ~/.wegent-executor/capabilities/store/skills/{skill_id}-{namespace}-{name}
   plugins/
-    {plugin_key} -> ~/.wegent-executor/capabilities/store/plugins/{installed_plugin_id}-{marketplace}-{name}-{version}
+    cache/{marketplace}/{name}/{version} -> ~/.wegent-executor/capabilities/store/plugins/{installed_plugin_id}-{marketplace}-{name}-{version}
+    marketplaces/{marketplace}/
+      .agents/plugins/marketplace.json
+      plugins/{name} -> ~/.wegent-executor/capabilities/store/plugins/{installed_plugin_id}-{marketplace}-{name}-{version}
 ```
 
-运行目录中的名称必须保持原始 Skill name 或 Plugin key，不添加 `wegent-` 前缀。这样可以避免目录名与 `SKILL.md` 中的 `name` 不一致。
+运行目录中的名称必须保持原始 Skill name、Plugin name 和 marketplace，不添加额外的 `wegent-` 前缀。Codex 通过 `name@marketplace` 识别插件，并从标准 cache 路径加载 Skill、MCP 和 App。
 
 manifest 记录 Wegent 管理的能力：
 
@@ -187,7 +197,7 @@ manifest 记录 Wegent 管理的能力：
       "store_path": "~/.wegent-executor/capabilities/store/plugins/9-claude-plugins-official-context7-1057d02c5307",
       "runtime": {
         "claude_link": "~/.claude/plugins/cache/claude-plugins-official/context7/1057d02c5307",
-        "codex_link": "~/.codex/plugins/context7-claude-plugins-official"
+        "codex_link": "~/.codex/plugins/cache/claude-plugins-official/context7/1057d02c5307"
       }
     }
   },
@@ -260,14 +270,14 @@ CLAUDE_CONFIG_DIR=~/.claude
 SKILLS_DIR=~/.claude/skills
 ```
 
-Project task 不再在项目或任务目录下创建 `.claude/skills`、`.claude/plugins` 的整目录软链。能力由全局 `.claude` 目录中的逐项软链暴露给 Claude Code。
+Project task 不再在项目或任务目录下创建 `.claude/skills`、`.claude/plugins` 的整目录软链。Skill 通过全局 `.claude` 目录中的逐项软链提供给 Claude Code，Plugin 则安装到全局 marketplace cache。
 
 非 Project task 继续使用任务级 `CLAUDE_CONFIG_DIR={workspace_root}/{task_id}/.claude` 和 `{config_dir}/skills`，保持隔离，不自动消费全局能力目录。
 
 Project task 运行时会消费同步 manifest 中的全局 MCP：
 
 - Claude Code：从 `~/.wegent-executor/capabilities/manifest.json` 读取 `mcps`，合并到本次 SDK options 的 `mcp_servers`。`streamable-http` 会在传给 Claude SDK 前转换为 `http`。
-- Codex：从同一个 manifest 读取 `mcps`，转换为 Codex CLI 的 `-c mcp_servers.{name}.*=...` 动态配置覆盖项，注入本次 Codex app-server 启动参数。executor 不直接覆盖用户的 `~/.codex/config.toml`。
+- Codex：从同一个 manifest 读取 `mcps`，转换为 Codex CLI 的 `-c mcp_servers.{name}.*=...` 动态配置覆盖项，注入本次 Codex app-server 启动参数。MCP 同步不写入 `~/.codex/config.toml`；Plugin 同步会保留现有配置，并补充对应的 marketplace 来源和 `name@marketplace` 启用状态。
 
 Codex 当前支持 URL 型 MCP（`url` 或 `base_url`）和 stdio 型 MCP（`command`、`args`、`env`）。如果记录中存在 `bearer_token_env_var`、`oauth_client_id` 或 `oauth_resource`，也会转换为对应的 Codex MCP 配置字段。
 
