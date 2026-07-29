@@ -122,6 +122,18 @@ pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 ```
 
+The plugin desktop suite reuses the same segment options while keeping its
+separate Codex Home initialization environment. Its ordered segments are
+`plugin-lifecycle`, `skill-mention-rendering`, and
+`sites-plugin-auto-install`. Each segment establishes the minimal plugin
+fixture it needs, so it can run alone or continue through the later plugin
+features:
+
+```bash
+pnpm --filter wework e2e:desktop:plugins -- --segment skill-mention-rendering
+pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-rendering
+```
+
 Ordinary desktop-runner UI steps time out after 10 seconds by default, so one
 failed step does not always wait for the former 120-second limit. Control
 commands and wait helpers accept `timeoutMs` for genuinely slower special

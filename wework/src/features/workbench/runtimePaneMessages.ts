@@ -13,6 +13,7 @@ import type {
   RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
   RuntimeGuidanceAppliedPayload,
+  RuntimeMessagePresentationReference,
   RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
   RuntimeTaskAddress,
@@ -503,12 +504,19 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
       ? normalizeProcessingBlocks(subtaskId, message.blocks, messageCreatedAtMs)
       : []
   const contentTruncated = hasTruncatedRuntimeContent(message)
+  const content =
+    role === 'assistant'
+      ? stripCodexUiDirectives(message.content)
+      : combineRuntimeUserMessagePresentation(
+          message.content,
+          message.presentationReferences ?? message.presentation_references
+        )
   return {
     id: role === 'user' && clientMessageId ? clientMessageId : message.id,
     role,
     subtaskId,
     turnId: message.turnId ?? message.turn_id ?? undefined,
-    content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
+    content,
     contentTruncated: contentTruncated || undefined,
     contentOriginalChars: contentTruncated ? runtimeMessageOriginalChars(message) : undefined,
     runtimeMessageIndex,
@@ -527,6 +535,35 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     completedAt,
     stoppedNotice,
   }
+}
+
+function combineRuntimeUserMessagePresentation(
+  content: string,
+  references: RuntimeMessagePresentationReference[] | null | undefined
+): string {
+  if (!references?.length) return content
+
+  const orderedReferences = [...references].sort((left, right) => left.start - right.start)
+  const parts: string[] = []
+  let offset = 0
+  for (const reference of orderedReferences) {
+    if (
+      !Number.isInteger(reference.start) ||
+      !Number.isInteger(reference.end) ||
+      reference.start < offset ||
+      reference.end <= reference.start ||
+      reference.end > content.length ||
+      !reference.href
+    ) {
+      continue
+    }
+    parts.push(content.slice(offset, reference.start))
+    parts.push(`[${content.slice(reference.start, reference.end)}](${reference.href})`)
+    offset = reference.end
+  }
+  if (offset === 0) return content
+  parts.push(content.slice(offset))
+  return parts.join('')
 }
 
 function hasTruncatedRuntimeContent(message: NormalizedRuntimeMessage): boolean {
