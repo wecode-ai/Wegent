@@ -13,6 +13,7 @@ use std::{
 };
 
 use serde_json::{json, Value};
+use toml_edit::DocumentMut;
 use wegent_executor::{
     config::device::{ConnectionConfig, DeviceConfig},
     local::capabilities::{
@@ -240,7 +241,7 @@ async fn sync_redownloads_broken_managed_skill_and_reports_local_user_conflicts(
 }
 
 #[tokio::test]
-async fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claude_metadata() {
+async fn plugin_sync_accepts_claude_package_and_installs_both_runtimes() {
     let temp = TempRoot::new("capability-sync-plugin");
     let skills_dir = temp.path().join("skills");
     let plugins_dir = temp.path().join(".claude/plugins");
@@ -248,9 +249,9 @@ async fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claud
     let store_dir = temp.path().join("store");
     let manifest_path = temp.path().join("capabilities.json");
     let store_plugin_path = store_dir.join("plugins/9-market-context7-1.0.0");
-    fs::create_dir_all(store_plugin_path.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(store_plugin_path.join(".codex-plugin")).unwrap();
     fs::write(
-        store_plugin_path.join(".claude-plugin/plugin.json"),
+        store_plugin_path.join(".codex-plugin/plugin.json"),
         r#"{"name":"context7"}"#,
     )
     .unwrap();
@@ -273,11 +274,18 @@ async fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claud
         .to_string(),
     )
     .unwrap();
+    fs::create_dir_all(codex_plugins_dir.parent().unwrap()).unwrap();
+    fs::write(
+        codex_plugins_dir.parent().unwrap().join("config.toml"),
+        "[features]\napps = true\n",
+    )
+    .unwrap();
     let package = zip_bytes(&[
         (
             "context7/.claude-plugin/plugin.json",
-            r#"{"name":"context7"}"#,
+            r#"{"name":"context7","displayName":"Context 7","commands":["./commands/test.md"]}"#,
         ),
+        ("context7/commands/test.md", "# Test"),
         ("context7/new.txt", "new"),
     ]);
     let checksum = sha256_hex(&package);
@@ -317,12 +325,64 @@ async fn plugin_sync_downloads_changed_packages_links_runtimes_and_updates_claud
         "new"
     );
     let runtime_link = plugins_dir.join("cache/market/context7/1.0.0");
-    assert!(runtime_link.is_symlink());
+    assert!(runtime_link.is_dir());
+    assert!(!runtime_link.is_symlink());
     assert_eq!(
-        fs::canonicalize(&runtime_link).unwrap(),
-        fs::canonicalize(&store_plugin_path).unwrap()
+        fs::read_to_string(runtime_link.join("new.txt")).unwrap(),
+        "new"
     );
-    assert!(codex_plugins_dir.join("context7-market").is_symlink());
+    assert!(runtime_link.join(".claude-plugin/plugin.json").is_file());
+    let claude_codex_manifest = read_json(runtime_link.join(".codex-plugin/plugin.json"));
+    assert_eq!(
+        claude_codex_manifest["interface"]["displayName"],
+        "Context 7"
+    );
+    assert!(claude_codex_manifest.get("commands").is_none());
+    let codex_runtime = codex_plugins_dir.join("cache/market/context7/1.0.0");
+    assert!(codex_runtime.is_dir());
+    assert!(!codex_runtime.is_symlink());
+    assert_eq!(
+        fs::read_to_string(codex_runtime.join("new.txt")).unwrap(),
+        "new"
+    );
+    assert!(codex_runtime.join(".codex-plugin/plugin.json").is_file());
+    assert!(codex_runtime.join(".claude-plugin/plugin.json").is_file());
+    assert!(codex_plugins_dir
+        .join("marketplaces/market/plugins/context7")
+        .is_symlink());
+    let codex_marketplace =
+        read_json(codex_plugins_dir.join("marketplaces/market/.agents/plugins/marketplace.json"));
+    assert_eq!(
+        codex_marketplace["plugins"],
+        json!([{
+            "name": "context7",
+            "source": {"source": "local", "path": "./plugins/context7"},
+            "policy": {
+                "installation": "AVAILABLE",
+                "authentication": "ON_INSTALL",
+                "products": ["CODEX"]
+            }
+        }])
+    );
+    let codex_config = read_toml(codex_plugins_dir.parent().unwrap().join("config.toml"));
+    assert_eq!(codex_config["features"]["apps"].as_bool(), Some(true));
+    assert_eq!(
+        codex_config["marketplaces"]["market"]["source_type"].as_str(),
+        Some("local")
+    );
+    assert_eq!(
+        codex_config["marketplaces"]["market"]["source"].as_str(),
+        Some(
+            codex_plugins_dir
+                .join("marketplaces/market")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+    assert_eq!(
+        codex_config["plugins"]["context7@market"]["enabled"].as_bool(),
+        Some(true)
+    );
     let installed = read_json(plugins_dir.join("installed_plugins.json"));
     assert_eq!(
         installed["plugins"]["context7@market"][0]["checksum"],
@@ -350,15 +410,15 @@ async fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_weg
     let store_dir = temp.path().join("store");
     let manifest_path = temp.path().join("capabilities.json");
     let context7_store = store_dir.join("plugins/9-claude-plugins-official-context7-1057d02c5307");
-    fs::create_dir_all(context7_store.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(context7_store.join(".codex-plugin")).unwrap();
     fs::write(
-        context7_store.join(".claude-plugin/plugin.json"),
+        context7_store.join(".codex-plugin/plugin.json"),
         r#"{"name":"context7"}"#,
     )
     .unwrap();
     let uploaded = zip_bytes(&[
         (
-            "superpowers/5.0.7/.claude-plugin/plugin.json",
+            "superpowers/5.0.7/.codex-plugin/plugin.json",
             r#"{"name":"superpowers","version":"5.0.7"}"#,
         ),
         ("superpowers/5.0.7/skills/debugging/SKILL.md", "# Debug"),
@@ -411,23 +471,27 @@ async fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_weg
         ])
     );
     let context7_runtime = plugins_dir.join("cache/claude-plugins-official/context7/1057d02c5307");
-    assert!(context7_runtime.is_symlink());
-    assert_eq!(
-        fs::canonicalize(&context7_runtime).unwrap(),
-        fs::canonicalize(&context7_store).unwrap()
-    );
-    assert!(codex_plugins_dir
-        .join("context7-claude-plugins-official")
-        .is_symlink());
+    assert!(context7_runtime.is_dir());
+    assert!(!context7_runtime.is_symlink());
+    let context7_codex_runtime =
+        codex_plugins_dir.join("cache/claude-plugins-official/context7/1057d02c5307");
+    assert!(context7_codex_runtime.is_dir());
+    assert!(!context7_codex_runtime.is_symlink());
     let uploaded_store = store_dir.join("plugins/302-wegent-superpowers-5.0.7");
     assert_eq!(
         fs::read_to_string(uploaded_store.join("skills/debugging/SKILL.md")).unwrap(),
         "# Debug"
     );
-    assert!(plugins_dir
-        .join("cache/wegent/superpowers/5.0.7")
-        .is_symlink());
-    assert!(codex_plugins_dir.join("superpowers-wegent").is_symlink());
+    let uploaded_claude_runtime = plugins_dir.join("cache/wegent/superpowers/5.0.7");
+    assert!(uploaded_claude_runtime.is_dir());
+    assert!(!uploaded_claude_runtime.is_symlink());
+    assert_eq!(
+        fs::read_to_string(uploaded_claude_runtime.join("skills/debugging/SKILL.md")).unwrap(),
+        "# Debug"
+    );
+    let uploaded_codex_runtime = codex_plugins_dir.join("cache/wegent/superpowers/5.0.7");
+    assert!(uploaded_codex_runtime.is_dir());
+    assert!(!uploaded_codex_runtime.is_symlink());
     let manifest = read_json(manifest_path);
     assert_eq!(
         manifest["plugins"]["superpowers@wegent"]["store_path"],
@@ -439,9 +503,9 @@ async fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_weg
 fn extract_plugin_zip_normalizes_roots_ignores_macos_metadata_and_keeps_existing_on_invalid() {
     let temp = TempRoot::new("capability-sync-plugin-zip");
     let install_path = temp.path().join("plugins/superpowers");
-    fs::create_dir_all(install_path.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(install_path.join(".codex-plugin")).unwrap();
     fs::write(
-        install_path.join(".claude-plugin/plugin.json"),
+        install_path.join(".codex-plugin/plugin.json"),
         r#"{"name":"superpowers"}"#,
     )
     .unwrap();
@@ -462,10 +526,46 @@ fn extract_plugin_zip_normalizes_roots_ignores_macos_metadata_and_keeps_existing
         "old"
     );
 
+    let mismatched = zip_bytes(&[
+        (
+            "superpowers/.codex-plugin/plugin.json",
+            r#"{"name":"superpowers"}"#,
+        ),
+        (
+            "superpowers/.claude-plugin/plugin.json",
+            r#"{"name":"another-plugin"}"#,
+        ),
+    ]);
+    let error = handler
+        .extract_plugin_zip(&mismatched, &install_path)
+        .unwrap_err();
+    assert!(error.to_string().contains("manifest names must match"));
+    assert_eq!(
+        fs::read_to_string(install_path.join("old.txt")).unwrap(),
+        "old"
+    );
+
+    let claude_only = zip_bytes(&[
+        (
+            "superpowers/.claude-plugin/plugin.json",
+            r#"{"name":"superpowers","displayName":"Superpowers","commands":["./commands/test.md"]}"#,
+        ),
+        ("superpowers/commands/test.md", "# Test"),
+    ]);
+    handler
+        .extract_plugin_zip(&claude_only, &install_path)
+        .unwrap();
+    assert!(install_path.join(".claude-plugin/plugin.json").is_file());
+    let generated_codex = read_json(install_path.join(".codex-plugin/plugin.json"));
+    assert_eq!(generated_codex["interface"]["displayName"], "Superpowers");
+    assert!(generated_codex.get("commands").is_none());
+    let normalized_claude = read_json(install_path.join(".claude-plugin/plugin.json"));
+    assert!(normalized_claude.get("displayName").is_none());
+
     let valid = zip_bytes(&[
         (
-            "superpowers/5.0.7/.claude-plugin/plugin.json",
-            r#"{"name":"superpowers","version":"5.0.7"}"#,
+            "superpowers/5.0.7/.codex-plugin/plugin.json",
+            r#"{"name":"superpowers","version":"5.0.7","interface":{"displayName":"Superpowers"}}"#,
         ),
         (
             "superpowers/5.0.7/hooks/claude/session-start-hook.cmd",
@@ -477,7 +577,10 @@ fn extract_plugin_zip_normalizes_roots_ignores_macos_metadata_and_keeps_existing
     ]);
     handler.extract_plugin_zip(&valid, &install_path).unwrap();
 
-    assert!(install_path.join(".claude-plugin/plugin.json").exists());
+    assert!(install_path.join(".codex-plugin/plugin.json").exists());
+    let generated_claude = read_json(install_path.join(".claude-plugin/plugin.json"));
+    assert!(generated_claude.get("displayName").is_none());
+    assert!(generated_claude.get("interface").is_none());
     assert_eq!(
         fs::read_to_string(install_path.join("skills/debugging/SKILL.md")).unwrap(),
         "# Debug"
@@ -538,6 +641,86 @@ fn restore_enabled_claude_plugin_cache_repairs_existing_hook_permissions() {
     assert_ne!(mode & 0o111, 0);
 }
 
+#[test]
+fn restore_enabled_claude_plugin_cache_recovers_managed_plugin_from_store() {
+    let temp = TempRoot::new("capability-sync-plugin-store-restore");
+    let claude_dir = temp.path().join(".claude");
+    let plugins_dir = claude_dir.join("plugins");
+    let install_path = plugins_dir.join("cache/wegent/wegent-sites/1.0.0");
+    let store_path = temp
+        .path()
+        .join(".wegent-executor/capabilities/store/plugins/9-wegent-wegent-sites-1.0.0");
+    fs::create_dir_all(store_path.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(store_path.join("skills/sites-building")).unwrap();
+    fs::write(
+        store_path.join(".claude-plugin/plugin.json"),
+        r#"{"name":"wegent-sites","version":"1.0.0","displayName":"Sites"}"#,
+    )
+    .unwrap();
+    fs::write(
+        store_path.join("skills/sites-building/SKILL.md"),
+        "---\nname: sites-building\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(install_path.join(".claude-plugin")).unwrap();
+    fs::write(
+        install_path.join(".claude-plugin/plugin.json"),
+        r#"{"name":"wegent-sites","displayName":"Stale Sites"}"#,
+    )
+    .unwrap();
+    ManagedCapabilityManifest::new(
+        temp.path()
+            .join(".wegent-executor/capabilities/manifest.json"),
+    )
+    .save(json!({
+        "version": 1,
+        "revision": 1,
+        "skills": {},
+        "plugins": {
+            "wegent-sites@wegent": {
+                "managed": true,
+                "name": "wegent-sites",
+                "marketplace": "wegent",
+                "version": "1.0.0",
+                "store_path": store_path.display().to_string(),
+                "runtime": {
+                    "claude_link": install_path.display().to_string()
+                }
+            }
+        },
+        "mcps": {}
+    }))
+    .unwrap();
+
+    let restored = restore_enabled_claude_plugin_cache(&claude_dir).unwrap();
+
+    assert_eq!(restored, vec!["wegent-sites@wegent"]);
+    assert!(install_path.is_dir());
+    assert!(!install_path.is_symlink());
+    assert!(install_path
+        .join("skills/sites-building/SKILL.md")
+        .is_file());
+    assert!(install_path.join(".codex-plugin/plugin.json").is_file());
+    let claude_manifest = read_json(install_path.join(".claude-plugin/plugin.json"));
+    assert!(claude_manifest.get("displayName").is_none());
+    let installed = read_json(plugins_dir.join("installed_plugins.json"));
+    assert_eq!(
+        installed["plugins"]["wegent-sites@wegent"][0]["installPath"],
+        install_path.display().to_string()
+    );
+    let settings = read_json(claude_dir.join("settings.json"));
+    assert_eq!(settings["enabledPlugins"]["wegent-sites@wegent"], true);
+    assert_eq!(
+        settings["extraKnownMarketplaces"]["wegent"]["source"]["source"],
+        "directory"
+    );
+    let marketplace =
+        read_json(plugins_dir.join("marketplaces/wegent/.claude-plugin/marketplace.json"));
+    assert_eq!(marketplace["name"], "wegent");
+    assert_eq!(marketplace["owner"]["name"], "Wegent Team");
+    assert_eq!(marketplace["plugins"][0]["name"], "wegent-sites");
+}
+
 #[tokio::test]
 async fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin() {
     let temp = TempRoot::new("capability-sync-remove-plugin");
@@ -552,10 +735,10 @@ async fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin()
     let old_codex_link = codex_plugins_dir.join("old-plugin-market");
     let old_store_plugin = temp.path().join("store/plugins/old-plugin");
     fs::create_dir_all(&old_store_plugin).unwrap();
-    fs::create_dir_all(old_claude_link.parent().unwrap()).unwrap();
-    fs::create_dir_all(old_codex_link.parent().unwrap()).unwrap();
-    symlink_dir(&old_store_plugin, &old_claude_link);
-    symlink_dir(&old_store_plugin, &old_codex_link);
+    fs::create_dir_all(&old_claude_link).unwrap();
+    fs::write(old_claude_link.join("plugin.txt"), "managed copy").unwrap();
+    fs::create_dir_all(&old_codex_link).unwrap();
+    fs::write(old_codex_link.join("plugin.txt"), "managed copy").unwrap();
     fs::write(
         plugins_dir.join("installed_plugins.json"),
         json!({
@@ -623,9 +806,9 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
     let store_dir = temp.path().join("store");
     let manifest_path = temp.path().join("capabilities.json");
     let store_plugin_path = store_dir.join("plugins/1614-wegent-superpowers-5.0.7");
-    fs::create_dir_all(store_plugin_path.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(store_plugin_path.join(".codex-plugin")).unwrap();
     fs::write(
-        store_plugin_path.join(".claude-plugin/plugin.json"),
+        store_plugin_path.join(".codex-plugin/plugin.json"),
         r#"{"name":"superpowers","version":"5.0.7"}"#,
     )
     .unwrap();
@@ -644,6 +827,24 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
     fs::write(
         plugins_dir.parent().unwrap().join("settings.json"),
         json!({"enabledPlugins": {"context7@market": true}}).to_string(),
+    )
+    .unwrap();
+    let claude_marketplace_path =
+        plugins_dir.join("marketplaces/wegent/.claude-plugin/marketplace.json");
+    fs::create_dir_all(claude_marketplace_path.parent().unwrap()).unwrap();
+    fs::write(
+        &claude_marketplace_path,
+        json!({
+            "name": "wegent",
+            "owner": {"name": "Wegent Team"},
+            "plugins": [{
+                "description": "",
+                "name": "context7",
+                "source": "./plugins/context7-wegent",
+                "version": "latest"
+            }]
+        })
+        .to_string(),
     )
     .unwrap();
     fs::write(
@@ -674,6 +875,9 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
         .to_string(),
     )
     .unwrap();
+    let legacy_codex_link = codex_plugins_dir.join("superpowers-wegent");
+    fs::create_dir_all(legacy_codex_link.parent().unwrap()).unwrap();
+    symlink_dir(&store_plugin_path, &legacy_codex_link);
     let store = GlobalCapabilityStore::new(manifest_path, skills_dir)
         .with_plugins_dir(plugins_dir.clone())
         .with_codex_plugins_dir(codex_plugins_dir.clone())
@@ -683,12 +887,35 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
 
     assert_eq!(restored, vec!["superpowers@wegent"]);
     let runtime_link = plugins_dir.join("cache/wegent/superpowers/5.0.7");
-    assert!(runtime_link.is_symlink());
+    assert!(runtime_link.is_dir());
+    assert!(!runtime_link.is_symlink());
+    assert!(runtime_link
+        .join("skills/systematic-debugging/SKILL.md")
+        .is_file());
+    let codex_runtime = codex_plugins_dir.join("cache/wegent/superpowers/5.0.7");
+    assert!(codex_runtime.is_dir());
+    assert!(!codex_runtime.is_symlink());
+    assert!(codex_runtime
+        .join("skills/systematic-debugging/SKILL.md")
+        .is_file());
+    assert!(codex_plugins_dir
+        .join("marketplaces/wegent/plugins/superpowers")
+        .is_symlink());
+    assert!(!legacy_codex_link.exists());
+    let codex_config = read_toml(codex_plugins_dir.parent().unwrap().join("config.toml"));
     assert_eq!(
-        fs::canonicalize(&runtime_link).unwrap(),
-        fs::canonicalize(&store_plugin_path).unwrap()
+        codex_config["marketplaces"]["wegent"]["source"].as_str(),
+        Some(
+            codex_plugins_dir
+                .join("marketplaces/wegent")
+                .to_string_lossy()
+                .as_ref()
+        )
     );
-    assert!(codex_plugins_dir.join("superpowers-wegent").is_symlink());
+    assert_eq!(
+        codex_config["plugins"]["superpowers@wegent"]["enabled"].as_bool(),
+        Some(true)
+    );
     let installed = read_json(plugins_dir.join("installed_plugins.json"));
     assert_eq!(
         installed["plugins"]["superpowers@wegent"][0]["checksum"],
@@ -701,6 +928,13 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
     let settings = read_json(plugins_dir.parent().unwrap().join("settings.json"));
     assert_eq!(settings["enabledPlugins"]["context7@market"], true);
     assert_eq!(settings["enabledPlugins"]["superpowers@wegent"], true);
+    assert_eq!(
+        settings["extraKnownMarketplaces"]["wegent"]["source"],
+        json!({
+            "source": "directory",
+            "path": plugins_dir.join("marketplaces/wegent").display().to_string()
+        })
+    );
     let known = read_json(plugins_dir.join("known_marketplaces.json"));
     assert_eq!(
         known["wegent"]["installLocation"],
@@ -709,18 +943,35 @@ fn reconcile_managed_plugins_restores_claude_codex_marketplace_and_enablement() 
             .display()
             .to_string()
     );
+    assert_eq!(
+        known["wegent"]["source"],
+        json!({
+            "source": "directory",
+            "path": plugins_dir.join("marketplaces/wegent").display().to_string()
+        })
+    );
+    assert!(known["wegent"]["lastUpdated"].as_str().is_some());
     let marketplace_link = plugins_dir.join("marketplaces/wegent/plugins/superpowers-wegent");
     assert!(marketplace_link.is_symlink());
-    let marketplace =
-        read_json(plugins_dir.join("marketplaces/wegent/.claude-plugin/marketplace.json"));
+    let marketplace = read_json(claude_marketplace_path);
+    assert_eq!(marketplace["name"], "wegent");
+    assert_eq!(marketplace["owner"], json!({"name": "Wegent Team"}));
     assert_eq!(
         marketplace["plugins"],
-        json!([{
-            "description": "",
-            "name": "superpowers",
-            "source": "./plugins/superpowers-wegent",
-            "version": "5.0.7"
-        }])
+        json!([
+            {
+                "description": "",
+                "name": "context7",
+                "source": "./plugins/context7-wegent",
+                "version": "latest"
+            },
+            {
+                "description": "",
+                "name": "superpowers",
+                "source": "./plugins/superpowers-wegent",
+                "version": "5.0.7"
+            }
+        ])
     );
 }
 
@@ -1022,6 +1273,10 @@ impl Drop for EnvGuard {
 
 fn read_json(path: impl AsRef<Path>) -> Value {
     serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn read_toml(path: impl AsRef<Path>) -> DocumentMut {
+    fs::read_to_string(path).unwrap().parse().unwrap()
 }
 
 fn symlink_dir(target: &Path, link: &Path) {

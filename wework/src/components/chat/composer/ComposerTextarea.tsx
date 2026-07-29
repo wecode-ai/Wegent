@@ -2,7 +2,9 @@ import { ClipboardList, Cpu, Package, Plug, Target } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
+import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
+import { navigateTo } from '@/lib/navigation'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
@@ -137,6 +139,17 @@ export function ComposerTextarea({
       cloudMentionCandidates,
       conversationMentionCandidates
     )
+
+  // The `$` trigger searches skills and apps only. Conversation and cloud
+  // references belong to the `@` mention menu, so they must be excluded here
+  // even though both menus share the same candidate pipeline.
+  const filteredSkillCandidates = useMemo(
+    () =>
+      filteredMentionCandidates.filter(
+        candidate => candidate.kind === 'skill' || candidate.kind === 'app'
+      ),
+    [filteredMentionCandidates]
+  )
 
   const workspaceSearch = useWorkspaceMentionSearch(
     activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
@@ -293,7 +306,7 @@ export function ComposerTextarea({
   const mentionMenuRows = useMemo<MentionMenuRow[]>(() => {
     if (!showSkillMenu) return []
     if (activeMenu?.kind === 'skill') {
-      return filteredMentionCandidates.map(candidate => ({ kind: 'candidate', candidate }))
+      return filteredSkillCandidates.map(candidate => ({ kind: 'candidate', candidate }))
     }
     if (!activeMenu?.trigger.query.trim()) {
       const nonCloudCandidates = filteredMentionCandidates.filter(
@@ -344,6 +357,7 @@ export function ComposerTextarea({
     cloudSpaceEnabled,
     filteredCloudProjectCandidates,
     filteredMentionCandidates,
+    filteredSkillCandidates,
     onSetGoal,
     onSetPlanMode,
     planModeActive,
@@ -1089,6 +1103,7 @@ export function ComposerTextarea({
         onPaste={handlePaste}
         onDrop={handleDrop}
         onOpenMentionFile={onOpenSkillFile}
+        onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
         onClick={() => updateAutocompleteTrigger()}
         onFocus={() => updateAutocompleteTrigger()}
         disabled={disabled}

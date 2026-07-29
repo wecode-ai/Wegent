@@ -1,17 +1,10 @@
-import {
-  ArrowRight,
-  Boxes,
-  ExternalLink,
-  MessageCircle,
-  MoreHorizontal,
-  Sparkles,
-} from 'lucide-react'
+import { ArrowRight, ExternalLink, MessageCircle, MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import { resolvePluginAssetUrl } from './plugin-assets'
+import { PluginLogo } from './PluginLogo'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
@@ -137,12 +130,6 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
       toggleable: false,
     })),
   ]
-}
-
-function installedPluginLogo(plugin: InstalledPluginItem): string {
-  return resolvePluginAssetUrl(
-    plugin.raw.spec.interface?.logo || plugin.raw.spec.interface?.composerIcon
-  )
 }
 
 function pluginDisplayDescription(plugin: InstalledPluginItem): string {
@@ -284,7 +271,7 @@ export function PluginDetailView({
     { label: '功能', value: pluginCapabilitySummary(plugin) },
     ...detailRows(raw),
   ].filter(row => row.value)
-  const logo = installedPluginLogo(plugin)
+  const logo = raw.spec.interface?.logo || raw.spec.interface?.composerIcon
   const prompts = pluginPromptExamples(plugin)
   const description = pluginDisplayDescription(plugin)
 
@@ -316,11 +303,11 @@ export function PluginDetailView({
         <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0">
             <div className="mb-5 flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl border border-border bg-violet-50 text-violet-600 shadow-sm">
-              {logo ? (
-                <img src={logo} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <Boxes className="h-7 w-7" />
-              )}
+              <PluginLogo
+                source={logo}
+                fallbackClassName="h-7 w-7"
+                testId={`plugin-detail-logo-${plugin.id}`}
+              />
             </div>
             <h1 className="text-xl font-normal leading-9 tracking-normal text-text-primary">
               {plugin.name}
@@ -408,11 +395,12 @@ export function PluginDetailView({
                 className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3"
               >
                 <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background text-emerald-700">
-                  {logo ? (
-                    <img src={logo} alt="" className="h-full w-full rounded-lg object-cover" />
-                  ) : (
-                    <Sparkles className="h-4 w-4" />
-                  )}
+                  <PluginLogo
+                    source={logo}
+                    imageClassName="h-full w-full rounded-lg object-cover"
+                    fallbackClassName="h-4 w-4"
+                    testId={`plugin-component-logo-${item.key}`}
+                  />
                 </div>
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
