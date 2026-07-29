@@ -1,6 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
-import { baseKeymap } from 'prosemirror-commands'
 import { history, redo, undo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
@@ -117,7 +116,6 @@ export const ComposerProseMirrorEditor = forwardRef<
               return true
             },
           }),
-          keymap(baseKeymap),
         ],
       }),
       attributes: editorAttributes(initialProps),
@@ -325,19 +323,13 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
     event.shiftKey ||
     event.altKey ||
     event.ctrlKey ||
+    event.metaKey ||
     !view.state.selection.empty
   ) {
     return false
   }
 
   const { $head } = view.state.selection
-  if (event.metaKey) {
-    return setComposerSelection(
-      view,
-      event,
-      event.key === 'ArrowLeft' ? $head.start() : $head.end()
-    )
-  }
   if (event.key === 'ArrowLeft' && $head.pos === $head.start()) {
     return setComposerSelection(view, event, $head.pos)
   }
