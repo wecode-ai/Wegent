@@ -100,10 +100,10 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
     window
         .show()
         .map_err(|error| format!("Failed to show Popout Window: {error}"))?;
+    activate_popout_window(&window)?;
     window
         .set_focus()
         .map_err(|error| format!("Failed to focus Popout Window: {error}"))?;
-    activate_popout_window(&window)?;
     update_mouse_passthrough(app)
 }
 
@@ -129,8 +129,17 @@ fn activate_popout_window(window: &tauri::WebviewWindow) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn activate_popout_window(_window: &tauri::WebviewWindow) -> Result<(), String> {
-    Ok(())
+fn activate_popout_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let visible_window = window.clone();
+    window
+        .run_on_main_thread(move || {
+            // On Linux, show and focus are queued separately. Deferring focus by one main-loop
+            // turn ensures Tao observes the window as visible instead of dropping the request.
+            if let Err(error) = visible_window.set_focus() {
+                log::warn!("Failed to focus visible Popout Window: {error}");
+            }
+        })
+        .map_err(|error| format!("Failed to schedule Popout Window activation: {error}"))
 }
 
 fn ensure_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
