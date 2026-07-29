@@ -301,6 +301,66 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
 }
 
 #[tokio::test]
+async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
+    let _lock = env_lock().await;
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-shared-proxy-rpc-{}.jsonl",
+        std::process::id()
+    ));
+    let fake_codex = write_fake_codex_for_auxiliary_rpc_then_turn(&log_path);
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    client
+        .configure_runtime_proxy(Some("http://127.0.0.1:7890"))
+        .await
+        .expect("runtime proxy should be configured");
+
+    client
+        .request("account/rateLimits/read", Value::Null)
+        .await
+        .expect("auxiliary RPC should start the shared app-server");
+    let turn = client
+        .run_turn_with_cancel(
+            ExecutionRequest {
+                prompt: json!("implement feature"),
+                bot: json!([{"shell_type": "ClaudeCode"}]),
+                model_config: json!({
+                    "model": "openai",
+                    "model_id": "gpt-5.5",
+                    "protocol": "openai-responses"
+                }),
+                ..ExecutionRequest::default()
+            },
+            CodexAppServerTurnOptions::default(),
+        )
+        .await
+        .expect("task should reuse the proxy-configured app-server");
+
+    assert_eq!(
+        turn.outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    let messages = read_json_lines(&log_path);
+    assert_eq!(messages[0]["env"]["HTTP_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(messages[0]["env"]["HTTPS_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "initialize")
+            .count(),
+        1,
+        "auxiliary RPC and task should share one Codex app-server process"
+    );
+    assert!(messages
+        .iter()
+        .any(|message| message["method"] == "account/rateLimits/read"));
+    assert!(messages
+        .iter()
+        .any(|message| message["method"] == "turn/start"));
+}
+
+#[tokio::test]
 async fn codex_app_server_receives_normalized_developer_path() {
     let _lock = env_lock().await;
     let _path = EnvGuard::set("PATH", "/usr/bin:/bin");
@@ -843,6 +903,54 @@ done
         log_path.display(),
         provider,
         provider
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_for_auxiliary_rpc_then_turn(log_path: &Path) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-shared-proxy-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+http_proxy=$(printenv HTTP_PROXY)
+https_proxy=$(printenv HTTPS_PROXY)
+printf '{{"env":{{"HTTP_PROXY":"%s","HTTPS_PROXY":"%s"}}}}\n' "$http_proxy" "$https_proxy" >> "$LOG_PATH"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"id":%s,"result":{{"protocolVersion":1}}}}\n' "$request_id"
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"account/rateLimits/read"'*)
+      printf '{{"id":%s,"result":{{"rateLimits":[]}}}}\n' "$request_id"
+      ;;
+    *'"method":"thread/start"'*)
+      printf '{{"id":%s,"result":{{"thread":{{"id":"thread-1"}}}}}}\n' "$request_id"
+      ;;
+    *'"method":"turn/start"'*)
+      printf '{{"id":%s,"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}\n' "$request_id"
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
     );
     fs::write(&path, content).unwrap();
     #[cfg(unix)]

@@ -18,6 +18,7 @@ import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
 import { AppsPage } from '@/pages/AppsPage'
 import { SitesPage } from '@/pages/SitesPage'
+import { CloudWorkPage } from '@/pages/CloudWorkPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -127,6 +128,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     path === '/plugins/manage' ||
     path === '/plugins/create' ||
     path === '/plugins' ||
+    path === '/cloud-work' ||
     path === '/sites' ||
     path === '/apps'
   const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
@@ -173,6 +175,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <PluginCreatePage />
     ) : path === '/plugins' ? (
       <PluginsPage />
+    ) : path === '/cloud-work' ? (
+      <CloudWorkPage />
     ) : path === '/sites' ? (
       <SitesPage />
     ) : path === '/apps' ? (

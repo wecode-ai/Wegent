@@ -33,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
+      wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
+      wework_desktop_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_e2e_matrix }}
 
     steps:
       - name: Checkout code
@@ -49,9 +51,12 @@ jobs:
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
+            .github/scripts/classify-wework-desktop-e2e.sh --all
           else
-            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
-              .github/scripts/classify-ci-changes.sh
+            changed_files="$(mktemp)"
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
+            .github/scripts/classify-ci-changes.sh < "$changed_files"
+            .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
           fi
 
   wework-e2e:
@@ -123,22 +128,12 @@ jobs:
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - id: plugins
-            name: Plugins
-            command: e2e:desktop:plugins
-          - id: core
-            name: Core
-            command: e2e:desktop
-          - id: cloud
-            name: Cloud
-            command: e2e:desktop:cloud
+      matrix: ${{ fromJSON(needs.changes.outputs.wework_desktop_e2e_matrix) }}
 
     steps:
       - name: Checkout code
@@ -203,10 +198,16 @@ jobs:
         env:
           CI: true
           CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          E2E_COMMAND: ${{ matrix.command }}
+          E2E_SEGMENT: ${{ matrix.segment }}
         run: |
           test -x "$CODEX_BIN"
+          args=()
+          if [[ -n "$E2E_SEGMENT" ]]; then
+            args=(-- --segment "$E2E_SEGMENT")
+          fi
           xvfb-run -a --server-args="-screen 0 1280x720x24" \
-            pnpm --filter wework ${{ matrix.command }}
+            pnpm --filter wework "$E2E_COMMAND" "${args[@]}"
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
@@ -232,6 +233,7 @@ jobs:
       - name: Check Wework E2E results
         env:
           RUN_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
+          RUN_DESKTOP_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_E2E_RESULT: ${{ needs.wework-desktop-e2e.result }}
@@ -251,7 +253,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "$DESKTOP_E2E_RESULT" != "success" ]]; then
+          if [[ "$RUN_DESKTOP_E2E" == "true" && "$DESKTOP_E2E_RESULT" != "success" ]]; then
             echo "Wework desktop E2E completed with: $DESKTOP_E2E_RESULT"
             exit 1
           fi

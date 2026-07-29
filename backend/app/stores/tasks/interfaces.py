@@ -563,6 +563,14 @@ class SubtaskStore(Protocol):
         owner_user_id: Optional[int] = None,
     ) -> Optional[Subtask]: ...
 
+    def list_by_ids_and_role(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        role: SubtaskRole,
+    ) -> list[Subtask]: ...
+
     def get_accessible_by_id(
         self,
         db: Session,

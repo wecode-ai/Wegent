@@ -28,6 +28,7 @@ import {
   SkillResponsePayload,
 } from '@/types/socket'
 import type { InteractiveFormAnswerPayload, TaskDetailSubtask, Team, TaskType } from '@/types/api'
+import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { generateMessageId, TaskStateMachine } from '@wegent/chat-core'
 import type { TaskStateMachineDeps, UnifiedMessage } from '@wegent/chat-core'
@@ -79,6 +80,8 @@ export interface ChatMessageRequest {
   task_type?: TaskType
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
+  /** Interactive Artifact node that initiated this message */
+  artifact_context?: ArtifactNodeContext
   // Local device ID for task execution (optional, when undefined use cloud executor)
   device_id?: string
   // Project ID to associate this task with
@@ -735,6 +738,7 @@ export function useMessageSyncer({
         branch_name: request.branch_name,
         task_type: request.task_type,
         knowledge_base_id: request.knowledge_base_id,
+        artifact_context: request.artifact_context,
         device_id: request.device_id,
         project_id: request.project_id,
         additional_skills: request.additional_skills,

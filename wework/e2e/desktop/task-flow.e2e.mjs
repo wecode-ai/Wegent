@@ -1687,6 +1687,17 @@ async function waitForTopMetrics(control, selector, description, timeoutMs = 3_0
   )
 }
 
+async function waitForElementWidth(control, selector, predicate, description, timeoutMs = 1_500) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (predicate(metrics.width)) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description} remained ${metrics.width}px wide after ${timeoutMs}ms`)
+}
+
 async function waitForProcessingBlock(
   control,
   selector,
@@ -2637,6 +2648,32 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
   assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
   await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
   return screenshotPath
+}
+
+async function verifyCloudWorkPage(control) {
+  await control.command('navigate', 'body', { value: '/cloud-work' })
+  await control.command('waitFor', '[data-testid="cloud-work-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    snapshot.testIds.includes('cloud-work-devices-section'),
+    'The cloud work page did not render its device status section'
+  )
+  assert.ok(
+    snapshot.testIds.includes('cloud-work-projects-section'),
+    'The cloud work page did not render its cloud projects section'
+  )
+  assert.equal(
+    snapshot.testIds.includes('general-settings-page'),
+    false,
+    'The cloud work route unexpectedly opened general settings'
+  )
+  await captureVerificationScreenshot(control, '00-cloud-work-page.png')
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 }
 
 async function initializeBlankCodexHome({ codexHome, control }) {
@@ -4231,6 +4268,55 @@ async function verifySideChatAttachmentIsolation({
     'Sending the side chat leaked an attachment into the main composer'
   )
   await captureVerificationScreenshot(control, '03-side-chat-sent-main-clean.png')
+
+  await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
+  await control.command(
+    'waitFor',
+    `${sideChatSelector} [data-testid="restore-conversation-from-expanded-workspace-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('finishAnimations', 'body')
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="project-chat-composer"]`
+      )
+    ),
+    1,
+    'Expanded temporary chat rendered more than its own composer'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
+      )
+    ),
+    0,
+    'The main task composer remained visible behind the expanded temporary chat'
+  )
+  await captureVerificationScreenshot(control, '04-side-chat-expanded-single-composer.png')
+
+  await control.command(
+    'click',
+    `${sideChatSelector} [data-testid="restore-conversation-from-expanded-workspace-button"]`
+  )
+  await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('finishAnimations', 'body')
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="project-chat-composer"]`
+      )
+    ),
+    2,
+    'Restoring the split view did not restore the two independent composers'
+  )
+  await captureVerificationScreenshot(control, '05-side-chat-restored-two-composers.png')
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
 
   const requests = control.scenarioRequests.get('side_chat_attachment') ?? []
@@ -5194,7 +5280,7 @@ class RealCloudEnvironment {
       WEGENT_AUTH_TOKEN: this.authToken,
       DEVICE_ID: CLOUD_DEVICE_ID,
       DEVICE_NAME: 'Wework E2E Cloud Device',
-      DEVICE_TYPE: 'remote',
+      DEVICE_TYPE: 'cloud',
       BIND_SHELL: 'claudecode',
       LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
@@ -5418,6 +5504,9 @@ class DesktopE2EServer {
     })
     this.taskPlanCompletionWritten = new Promise(resolvePromise => {
       this.resolveTaskPlanCompletionWritten = resolvePromise
+    })
+    this.cancellationCompletionRelease = new Promise(resolvePromise => {
+      this.releaseCancellationCompletion = resolvePromise
     })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
@@ -5702,6 +5791,10 @@ class DesktopE2EServer {
   releaseTaskPlanResponse() {
     this.releaseTaskPlanCompletion()
     return this.guard(this.taskPlanCompletionWritten)
+  }
+
+  releaseCancellationResponse() {
+    this.releaseCancellationCompletion()
   }
 
   awaitReconnectResponseStarted() {
@@ -7016,6 +7109,11 @@ class DesktopE2EServer {
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
       response.write(createSse([responseCreated(responseId)]))
+      await this.cancellationCompletionRelease
+      if (response.destroyed || response.writableEnded) return
+      response.end(
+        createSse([assistantMessage(CANCELLATION_COMPLETION_TEXT), responseCompleted(responseId)])
+      )
       return
     }
 
@@ -8551,6 +8649,52 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'The cloud flow did not expose exactly one remote project'
   )
   await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
+  await control.command('navigate', 'body', { value: '/plugins' })
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
+    text: '云端工作',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-work-01-plugin-entry.png')
+  await control.command('click', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('waitFor', '[data-testid="cloud-work-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `[data-testid="connection-device-${CLOUD_DEVICE_ID}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const cloudWorkSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('cloud-work-project-')),
+    'The cloud work page did not show the created cloud project'
+  )
+  const cloudWorkProjectTestId = cloudWorkSnapshot.testIds.find(testId =>
+    testId.startsWith('cloud-work-project-')
+  )
+  assert.ok(cloudWorkProjectTestId, 'The cloud work page did not expose a project row')
+  assert.equal(
+    cloudWorkSnapshot.testIds.includes('general-settings-page'),
+    false,
+    'Clicking Cloud work from Plugins unexpectedly opened general settings'
+  )
+  await control.command('waitFor', `[data-testid="connection-device-metrics-${CLOUD_DEVICE_ID}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="connection-more-button-${CLOUD_DEVICE_ID}"]`)
+  await control.command('waitFor', `[data-testid="connection-more-menu-${CLOUD_DEVICE_ID}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-work-02-device-and-project.png')
+  await control.command('click', `[data-testid="connection-more-button-${CLOUD_DEVICE_ID}"]`)
+  await control.command('click', `[data-testid="${cloudWorkProjectTestId}"]`)
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'workspace',
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-work-03-project-opened.png')
   await control.command(
     'clickWhenEnabled',
     '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]'
@@ -9445,6 +9589,9 @@ async function main() {
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       if (!GUIDANCE_SCROLL_ONLY) {
+        phase = 'cloud-work-page'
+        await verifyCloudWorkPage(control)
+
         phase = 'system-drag-panel-layout'
         await verifySystemDragPanelLayout(control)
       }
@@ -10416,6 +10563,35 @@ async function main() {
         false,
         'The cancelled task unexpectedly rendered a completion response'
       )
+      control.releaseCancellationResponse()
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+      const cancellationTextAfterUpstreamCompletion = await control.command('getText', 'body')
+      assert.equal(
+        cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_COMPLETION_TEXT),
+        false,
+        'The cancelled task rendered content emitted after cancellation'
+      )
+      const cancellationSnapshotAfterUpstreamCompletion = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      assert.equal(
+        cancellationSnapshotAfterUpstreamCompletion.workbench?.lifecycleCurrentTaskRunning,
+        false,
+        'The cancelled task resumed after the upstream completion response'
+      )
+      assert.equal(
+        cancellationSnapshotAfterUpstreamCompletion.pane?.status?.isBusy,
+        false,
+        'The cancelled task made the composer busy after the upstream completion response'
+      )
+      const cancellationUiAfterUpstreamCompletion = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        cancellationUiAfterUpstreamCompletion.testIds.includes('pause-response-button'),
+        false,
+        'The cancelled task restored the stop control after the upstream completion response'
+      )
 
       phase = 'retry'
       await verifyRetryFailureRestoration(control, composerSelector)
@@ -10522,6 +10698,12 @@ async function main() {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
+      await control.command('submit', activeBrowserInputSelector)
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
+        { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      )
       await control.command('click', bottomPanelToggleSelector)
       const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
         control,
@@ -10591,7 +10773,99 @@ async function main() {
         restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
         'The browser tab was not restored after switching conversations'
       )
-      await captureVerificationScreenshot(control, 'workspace-resources-restored-after-switch.png')
+      await control.command('finishAnimations', 'body')
+      await captureVerificationScreenshot(control, 'workspace-panel-01-default-split.png')
+
+      const expandedPanelToggleSelector =
+        '[data-testid="toggle-right-workspace-panel-expanded-button"]'
+      const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
+      await control.command('click', expandedPanelToggleSelector)
+      await control.command(
+        'waitFor',
+        '[data-testid="restore-conversation-from-expanded-workspace-button"]',
+        { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      )
+      await control.command('finishAnimations', 'body')
+      assert.equal(
+        await control.command('getInlineStyle', rightPanelShellSelector, { value: 'width' }),
+        '100%',
+        'The expanded right workspace panel did not occupy the full workbench width'
+      )
+      const expandedWorkspaceSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        expandedWorkspaceSnapshot.testIds.includes('right-workspace-resize-handle'),
+        false,
+        'The right workspace resize handle remained visible while expanded'
+      )
+      assert.equal(
+        expandedWorkspaceSnapshot.testIds.includes('project-chat-composer'),
+        false,
+        'The main composer remained visible while the non-chat workspace panel was expanded'
+      )
+      await captureVerificationScreenshot(control, 'workspace-panel-02-expanded.png')
+
+      await control.command(
+        'click',
+        '[data-testid="restore-conversation-from-expanded-workspace-button"]'
+      )
+      await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('finishAnimations', 'body')
+      await control.command('click', expandedPanelToggleSelector)
+      await control.command(
+        'waitFor',
+        '[data-testid="restore-conversation-from-expanded-workspace-button"]',
+        { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      )
+      await control.command('finishAnimations', 'body')
+
+      await control.command('toggleSidebar', '')
+      await control.command('finishAnimations', 'body')
+      const collapsedSidebarMetrics = await waitForElementWidth(
+        control,
+        '[data-testid="desktop-sidebar"]',
+        width => width <= 1,
+        'The desktop sidebar'
+      )
+      assert.ok(
+        collapsedSidebarMetrics.width <= 1,
+        'The desktop sidebar remained visible after it was collapsed'
+      )
+      assert.equal(
+        await control.command('getInlineStyle', rightPanelShellSelector, { value: 'width' }),
+        '100%',
+        'The expanded right workspace panel changed width after the sidebar collapsed'
+      )
+      const sidebarHiddenPanelMetrics = await getSingleElementMetrics(
+        control,
+        rightPanelShellSelector,
+        'The expanded right workspace panel'
+      )
+      assert.ok(
+        sidebarHiddenPanelMetrics.left <= 1,
+        `The expanded right workspace panel remained ${sidebarHiddenPanelMetrics.left}px from the left edge`
+      )
+      await control.command('pointerLeave', '[data-testid="desktop-sidebar-hover-edge"]')
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 350))
+      await captureVerificationScreenshot(control, 'workspace-panel-03-expanded-sidebar-hidden.png')
+
+      await control.command('toggleSidebar', '')
+      await control.command('finishAnimations', 'body')
+      await waitForElementWidth(
+        control,
+        '[data-testid="desktop-sidebar"]',
+        width => width >= 239,
+        'The desktop sidebar'
+      )
+      await control.command('click', expandedPanelToggleSelector)
+      await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('finishAnimations', 'body')
+      await captureVerificationScreenshot(control, 'workspace-panel-04-restored-split.png')
       await control.command('click', bottomWorkspaceTabCloseSelector)
       await control.command('click', rightBrowserTabCloseSelector)
 
