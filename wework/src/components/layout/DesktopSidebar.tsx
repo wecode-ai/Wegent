@@ -150,7 +150,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'automation'
+  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -196,6 +196,7 @@ interface DesktopSidebarProps {
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
+  onOpenCloudWork?: () => void
   onOpenSites?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenStandaloneFolderProject?: (
@@ -2516,6 +2517,7 @@ export function DesktopSidebar({
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
+  onOpenCloudWork,
   onOpenSites,
   onRefreshDevices,
   onOpenStandaloneFolderProject,
@@ -3115,6 +3117,8 @@ export function DesktopSidebar({
                 <CloudConnectionSidebarButton
                   devices={devices}
                   cloudWorkStatus={cloudWorkStatus}
+                  selected={activeItem === 'cloud-work'}
+                  onOpenCloudWork={onOpenCloudWork ?? (() => navigateTo('/cloud-work'))}
                   onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
                   onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
                   onAddDevice={() => {

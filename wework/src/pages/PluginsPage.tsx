@@ -206,7 +206,13 @@ export function PluginsPage() {
             onGetDeviceHomeDirectory={getDeviceHomeDirectory}
             onListDeviceDirectories={listDeviceDirectories}
             onCreateDeviceDirectory={createDeviceDirectory}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={options => {
+              if (options?.settingsPage === 'connections') {
+                navigateTo('/settings/connections')
+                return
+              }
+              setSettingsOpen(true)
+            }}
             onLogout={logout}
           />
         )}
