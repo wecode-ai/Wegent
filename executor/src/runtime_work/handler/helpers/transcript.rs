@@ -166,6 +166,159 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
         .collect()
 }
 
+fn user_message_presentation(payload: &Value) -> Option<Value> {
+    let client_message_id = payload
+        .get("clientMessageId")
+        .or_else(|| payload.get("client_message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let content = payload
+        .get("message")
+        .or_else(|| payload.get("content"))
+        .and_then(Value::as_str)?;
+    let references = local_presentation_reference_descriptors(content);
+    (!references.is_empty()).then(|| {
+        json!({
+            "clientMessageId": client_message_id,
+            "references": references,
+        })
+    })
+}
+
+fn attach_user_message_presentations(messages: &mut [Value], presentations: Vec<Value>) {
+    for presentation in presentations {
+        let Some(client_message_id) = string_field(&presentation, "clientMessageId")
+            .or_else(|| string_field(&presentation, "client_message_id"))
+        else {
+            continue;
+        };
+        let Some(message) = messages.iter_mut().find(|message| {
+            string_field(message, "clientMessageId")
+                .or_else(|| string_field(message, "client_message_id"))
+                .as_deref()
+                == Some(client_message_id.as_str())
+        }) else {
+            continue;
+        };
+        let Some(content) = string_field(message, "content") else {
+            continue;
+        };
+        let references = presentation
+            .get("references")
+            .and_then(Value::as_array)
+            .map(|references| presentation_reference_ranges(references, &content))
+            .unwrap_or_default();
+        if references.is_empty() {
+            continue;
+        }
+        if let Some(message) = message.as_object_mut() {
+            message.insert(
+                "presentationReferences".to_owned(),
+                Value::Array(references),
+            );
+        }
+    }
+}
+
+fn local_presentation_reference_descriptors(content: &str) -> Vec<Value> {
+    let mut references = Vec::new();
+    let mut offset = 0;
+
+    while let Some(relative_start) = content[offset..].find("[$") {
+        let name_start = offset + relative_start + 2;
+        let Some(relative_name_end) = content[name_start..].find("](") else {
+            break;
+        };
+        let name_end = name_start + relative_name_end;
+        let href_start = name_end + 2;
+        let Some(relative_href_end) = content[href_start..].find(')') else {
+            break;
+        };
+        let href_end = href_start + relative_href_end;
+        offset = href_end + 1;
+
+        let name = &content[name_start..name_end];
+        let href = &content[href_start..href_end];
+        let Some(token) = local_presentation_reference_token(name, href) else {
+            continue;
+        };
+        references.push(json!({
+            "token": token,
+            "href": href,
+        }));
+    }
+
+    references
+}
+
+fn presentation_reference_ranges(references: &[Value], content: &str) -> Vec<Value> {
+    let mut ranges = Vec::new();
+    let mut offset = 0;
+
+    for reference in references {
+        let Some(token) = string_field(reference, "token") else {
+            continue;
+        };
+        let Some(href) = string_field(reference, "href") else {
+            continue;
+        };
+        let tail = &content[offset..];
+        let token_start = find_complete_presentation_token(tail, &token);
+        let rich_reference = format!("[{token}]({href})");
+        if let Some(rich_start) = tail.find(&rich_reference) {
+            if token_start.map_or(true, |start| rich_start <= start) {
+                offset += rich_start + rich_reference.len();
+                continue;
+            }
+        }
+        let Some(relative_start) = token_start else {
+            continue;
+        };
+        let start = offset + relative_start;
+        let end = start + token.len();
+        ranges.push(json!({
+            "start": content[..start].encode_utf16().count(),
+            "end": content[..end].encode_utf16().count(),
+            "href": href,
+        }));
+        offset = end;
+    }
+
+    ranges
+}
+
+fn find_complete_presentation_token(content: &str, token: &str) -> Option<usize> {
+    content.match_indices(token).find_map(|(start, _)| {
+        let end = start + token.len();
+        content[end..]
+            .chars()
+            .next()
+            .map_or(Some(start), |next| {
+                (!is_presentation_token_continuation(next)).then_some(start)
+            })
+    })
+}
+
+fn is_presentation_token_continuation(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '-' | '_' | ':')
+}
+
+fn is_local_skill_reference(href: &str) -> bool {
+    let path = href.strip_prefix("skill://").unwrap_or(href);
+    path.starts_with('/') && path.ends_with("/SKILL.md")
+}
+
+fn local_presentation_reference_token(name: &str, href: &str) -> Option<String> {
+    if name.is_empty() {
+        return None;
+    }
+    if is_local_skill_reference(href) {
+        return Some(format!("${name}"));
+    }
+    href.starts_with("plugin://").then(|| format!("@{name}"))
+}
+
 fn cached_user_message(
     local_task_id: &str,
     request: &ExecutionRequest,
