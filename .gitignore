@@ -112,5 +112,6 @@ executor/build/
 executor/dist/
 executor/target/
 wework/src-tauri/binaries/
+backend/init_data/plugins/wegent-sites/
 docs/superpowers/
 .worktrees/

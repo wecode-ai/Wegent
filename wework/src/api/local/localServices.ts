@@ -310,12 +310,81 @@ function localRuntimeModels(
   ]
 }
 
+type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+
 interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
-  request?: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+  request?: LocalExecutorRequest
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   cloudModelGateway?: CloudModelGateway
   user?: User
+}
+
+interface CatalogReconciliationTracker {
+  attemptedAt: number
+  inFlight: Promise<void> | null
+  key: string
+}
+
+const catalogReconciliationTrackers = new WeakMap<
+  LocalExecutorRequest,
+  CatalogReconciliationTracker
+>()
+
+function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
+  const existing = catalogReconciliationTrackers.get(request)
+  if (existing) return existing
+  const tracker = { attemptedAt: 0, inFlight: null, key: '' }
+  catalogReconciliationTrackers.set(request, tracker)
+  return tracker
+}
+
+async function reconcilePendingLocalModelCatalog(
+  request: LocalExecutorRequest,
+  runtimeInstanceId?: string
+): Promise<void> {
+  const tracker = catalogReconciliationTracker(request)
+  if (tracker.inFlight) {
+    try {
+      await tracker.inFlight
+    } catch {
+      return
+    }
+    return reconcilePendingLocalModelCatalog(request, runtimeInstanceId)
+  }
+
+  const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+  const pendingCatalogModels = catalogModels.filter(
+    model => !model.catalogReady && model.catalogEntry
+  )
+  const reconciliationKey = pendingCatalogModels
+    .map(model => `${runtimeInstanceId ?? ''}:${model.id}:${model.updatedAt}`)
+    .sort()
+    .join('|')
+  const now = Date.now()
+  const shouldReconcile =
+    reconciliationKey && (reconciliationKey !== tracker.key || now - tracker.attemptedAt >= 30_000)
+  if (!shouldReconcile) return
+
+  tracker.key = reconciliationKey
+  tracker.attemptedAt = now
+  const reconciliation = (async () => {
+    await request('runtime.codex.catalog.custom.write', {
+      models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
+    })
+    const restart = await request<{
+      restarted?: boolean
+    }>('runtime.codex.app_server.restart', { ifIdle: true })
+    if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
+  })()
+  tracker.inFlight = reconciliation
+  try {
+    await reconciliation
+  } catch (error) {
+    console.error('Local model catalog reconciliation failed', error)
+  } finally {
+    if (tracker.inFlight === reconciliation) tracker.inFlight = null
+  }
 }
 
 interface CloudModelGateway {
@@ -2342,8 +2411,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
   let lastStatus: LocalExecutorStatus | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
-  let catalogReconciliationKey = ''
-  let catalogReconciliationAttemptedAt = 0
 
   const ensureStatus = async () => {
     if (!ensurePromise) {
@@ -2351,36 +2418,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         .then(async status => {
           lastStatus = status
           reconcileLocalModelCatalogRuntime(status.runtimeInstanceId)
-          const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
-          const pendingCatalogModels = catalogModels.filter(
-            model => !model.catalogReady && model.catalogEntry
-          )
-          const reconciliationKey = pendingCatalogModels
-            .map(model => `${status.runtimeInstanceId ?? ''}:${model.id}:${model.updatedAt}`)
-            .sort()
-            .join('|')
-          const now = Date.now()
-          const shouldReconcile =
-            reconciliationKey &&
-            (reconciliationKey !== catalogReconciliationKey ||
-              now - catalogReconciliationAttemptedAt >= 30_000)
-          if (shouldReconcile) {
-            catalogReconciliationKey = reconciliationKey
-            catalogReconciliationAttemptedAt = now
-            try {
-              await request('runtime.codex.catalog.custom.write', {
-                models: catalogModels.flatMap(model =>
-                  model.catalogEntry ? [model.catalogEntry] : []
-                ),
-              })
-              const restart = await request<{
-                restarted?: boolean
-              }>('runtime.codex.app_server.restart', { ifIdle: true })
-              if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
-            } catch (error) {
-              console.error('Local model catalog reconciliation failed', error)
-            }
-          }
+          await reconcilePendingLocalModelCatalog(request, status.runtimeInstanceId)
           return status
         })
         .finally(() => {

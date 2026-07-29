@@ -30,6 +30,8 @@ const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
 )
 const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
+const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS
+const DESKTOP_CONTROL_RESULT_GRACE_MS = 5_000
 
 function readPositiveTimeout(value, fallback, name) {
   if (value === undefined) return fallback
@@ -327,6 +329,7 @@ const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
+const MESSAGE_RESTORATION_ONLY = process.argv.includes('--message-restoration-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
@@ -340,8 +343,12 @@ const DESKTOP_CHECKPOINTS = [
   'workspace-attachments',
   'rendering-extensions',
 ]
+const PLUGIN_SEGMENTS = ['plugin-lifecycle', 'skill-mention-rendering', 'sites-plugin-auto-install']
 const DESKTOP_SEGMENT = readCommandLineOption('--segment')
 const DESKTOP_FROM_SEGMENT = readCommandLineOption('--from-segment')
+const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
+const RUNS_PLUGIN_E2E =
+  PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -366,6 +373,9 @@ const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
 const AUTOMATION_SCHEDULE_TIMEOUT_MS = 70_000
+const QUALIFIED_SKILL_MENTION_PROMPT = 'Verify the sent qualified skill mention.'
+const QUALIFIED_SKILL_MENTION_COMPLETION_TEXT =
+  'WEWORK_DESKTOP_E2E_QUALIFIED_SKILL_MENTION_COMPLETE'
 
 function readCommandLineOption(name) {
   const index = process.argv.indexOf(name)
@@ -381,11 +391,14 @@ function validateDesktopSegmentOptions() {
   if (DESKTOP_SEGMENT && DESKTOP_FROM_SEGMENT) {
     throw new Error('--segment and --from-segment cannot be used together')
   }
-  const selectedSegment = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
-  if (selectedSegment && !DESKTOP_CHECKPOINTS.includes(selectedSegment)) {
+  const availableSegments = [...DESKTOP_CHECKPOINTS, ...PLUGIN_SEGMENTS]
+  if (SELECTED_DESKTOP_SEGMENT && !availableSegments.includes(SELECTED_DESKTOP_SEGMENT)) {
     throw new Error(
-      `Unknown desktop E2E checkpoint "${selectedSegment}". Available checkpoints: ${DESKTOP_CHECKPOINTS.join(', ')}`
+      `Unknown desktop E2E segment "${SELECTED_DESKTOP_SEGMENT}". Available segments: ${availableSegments.join(', ')}`
     )
+  }
+  if (PLUGINS_ONLY && DESKTOP_CHECKPOINTS.includes(SELECTED_DESKTOP_SEGMENT)) {
+    throw new Error('--plugins-only accepts only plugin E2E segments')
   }
 }
 
@@ -399,6 +412,15 @@ function shouldRunDesktopCheckpoint(checkpoint) {
 
 function shouldStopAfterDesktopCheckpoint(checkpoint) {
   return DESKTOP_SEGMENT === checkpoint
+}
+
+function shouldRunPluginSegment(segment) {
+  const segmentIndex = PLUGIN_SEGMENTS.indexOf(segment)
+  assert.notEqual(segmentIndex, -1, `Unknown plugin E2E segment: ${segment}`)
+  if (!RUNS_PLUGIN_E2E) return false
+  if (DESKTOP_SEGMENT) return segment === DESKTOP_SEGMENT
+  if (!DESKTOP_FROM_SEGMENT) return true
+  return segmentIndex >= PLUGIN_SEGMENTS.indexOf(DESKTOP_FROM_SEGMENT)
 }
 
 async function findFileBySuffix(root, suffix) {
@@ -663,6 +685,107 @@ async function sendPromptWithButton(
   })
   await control.command('press', selector, { key: 'Enter', timeoutMs })
   await waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs)
+}
+
+async function assertConversationMessageState(control, { assistantText, userText }) {
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: userText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const transcriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  assert.equal(
+    countTextOccurrences(transcriptText, userText),
+    1,
+    `The restored conversation rendered "${userText}" more than once`
+  )
+  if (!assistantText) return
+
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: assistantText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const completedTranscriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  const userIndex = completedTranscriptText.indexOf(userText)
+  const assistantIndex = completedTranscriptText.indexOf(assistantText)
+  assert.ok(userIndex >= 0, `The completed conversation lost "${userText}"`)
+  assert.ok(assistantIndex >= 0, `The completed conversation lost "${assistantText}"`)
+  assert.ok(
+    userIndex < assistantIndex,
+    `The assistant response "${assistantText}" appeared above its user message "${userText}"`
+  )
+}
+
+async function verifyUserMessageNavigation({
+  assistantText,
+  control,
+  projectRowSelector,
+  screenshotPrefix,
+  taskRowTestId,
+  userText,
+}) {
+  await assertConversationMessageState(control, { assistantText, userText })
+  await captureVerificationScreenshot(control, `${screenshotPrefix}-01-before-switch.png`)
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await ensureTaskRowVisible(control, taskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await assertConversationMessageState(control, { assistantText, userText })
+  await captureVerificationScreenshot(control, `${screenshotPrefix}-02-after-restore.png`)
+}
+
+async function verifyFollowUpMessageRestoration({
+  composerSelector,
+  control,
+  projectRowSelector,
+  taskRowTestId,
+}) {
+  control.setScenario('follow_up')
+  const followUpRequest = await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    FOLLOW_UP_PROMPT,
+    'follow_up'
+  )
+  await verifyUserMessageNavigation({
+    control,
+    projectRowSelector,
+    screenshotPrefix: 'follow-up-message-pending',
+    taskRowTestId,
+    userText: FOLLOW_UP_PROMPT,
+  })
+  control.releaseFollowUpResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await verifyUserMessageNavigation({
+    assistantText: FOLLOW_UP_COMPLETION_TEXT,
+    control,
+    projectRowSelector,
+    screenshotPrefix: 'follow-up-message-completed',
+    taskRowTestId,
+    userText: FOLLOW_UP_PROMPT,
+  })
+  assert.ok(
+    JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
+    'The follow-up request did not preserve the user prompt'
+  )
 }
 
 async function verifyQueuedFollowUpNavigation({ composerSelector, control, projectRowSelector }) {
@@ -954,6 +1077,22 @@ async function verifyBackgroundGuidanceNavigation({
     Number(await control.command('getElementCount', '[data-testid="message-user"]')),
     appliedUserMessageCount,
     'Reopening the source conversation duplicated the applied user message'
+  )
+  const restoredUserMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  const restoredAssistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const restoredGuidance = restoredUserMessages.at(-1)
+  const assistantAfterGuidance = restoredAssistantMessages.at(-1)
+  assert.ok(restoredGuidance, 'The restored guidance message was not rendered')
+  assert.ok(assistantAfterGuidance, 'The assistant continuation after guidance was not rendered')
+  assert.ok(
+    restoredGuidance.top < assistantAfterGuidance.top,
+    'The restored guidance message was appended after the assistant continuation'
   )
   await captureVerificationScreenshot(control, 'guidance-background-07-restored.png')
 
@@ -1468,6 +1607,21 @@ async function waitForSnapshot(
       ].includes(testId)
   )
   throw new Error(`${message}; relevant test IDs: ${JSON.stringify(relevantTestIds)}`)
+}
+
+async function assertMentionRenderedAsToken(
+  control,
+  { tokenSelector, tokenText, plainTextMention, errorLabel }
+) {
+  await control.command('waitFor', tokenSelector, {
+    ...(tokenText ? { text: tokenText } : {}),
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const userMessageText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  assert.equal(userMessageText.includes(plainTextMention), false, errorLabel)
 }
 
 async function getElementMetrics(control, selector) {
@@ -2058,8 +2212,9 @@ async function verifyToolBlockChronologicalOrder({
   restartDesktopApp,
   workspacePath,
 }) {
-  await seedToolBlockOrderTask(executorHome, workspacePath)
-  await restartDesktopApp()
+  await restartDesktopApp({
+    afterStop: () => seedToolBlockOrderTask(executorHome, workspacePath),
+  })
 
   const taskRowTestId = `runtime-local-task-row-${TOOL_BLOCK_ORDER_TASK_ID}`
   await ensureTaskRowVisible(control, taskRowTestId)
@@ -2546,7 +2701,7 @@ async function verifyOfficialPluginSource(repositoryRoot) {
   )
 }
 
-async function verifyPluginLifecycle({
+async function installOfficialPluginFixture({
   codexHome,
   control,
   marketplacePath,
@@ -2559,6 +2714,14 @@ async function verifyPluginLifecycle({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await verifyOfficialPluginSource(repositoryPath)
+
+  await control.command('waitFor', '[data-testid="plugins-marketplace-tab-wework-personal"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="plugins-marketplace-tab-wework-personal"]')
+  await control.command('waitFor', '[data-testid="plugins-bundled-marketplace-empty"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 
   const initialSnapshot = await waitForSnapshot(
     control,
@@ -2602,6 +2765,9 @@ async function verifyPluginLifecycle({
   const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
   await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
 
+  await control.command('waitFor', installSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', installSelector)
   await waitForSnapshot(
     control,
@@ -2614,19 +2780,6 @@ async function verifyPluginLifecycle({
     'The installed plugin did not expose its chat action'
   )
   await captureVerificationScreenshot(control, 'plugins-02-installed.png')
-
-  await control.command('click', installSelector)
-  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await waitForSnapshot(
-    control,
-    snapshot => snapshot.text.includes(OFFICIAL_PLUGIN_DISPLAY_NAME),
-    'Trying the installed official plugin did not place its reference in the composer',
-    DEFAULT_STEP_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
-  await captureVerificationScreenshot(control, 'plugins-03-used-in-chat.png')
 
   const skillPath = await findFileBySuffix(
     join(codexHome, 'plugins', 'cache', OFFICIAL_PLUGIN_MARKETPLACE_NAME),
@@ -2648,7 +2801,32 @@ async function verifyPluginLifecycle({
     'Installing the official plugin discarded the isolated E2E model provider'
   )
 
+  return { actionsSelector, installSelector, pluginId, skillPath }
+}
+
+async function openOfficialPluginChat(control, installSelector) {
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', installSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', installSelector)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.text.includes(OFFICIAL_PLUGIN_DISPLAY_NAME),
+    'Trying the installed official plugin did not place its reference in the composer',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
+async function createOfficialPluginTask({ control, installSelector, skillPath }) {
+  await openOfficialPluginChat(control, installSelector)
+  await captureVerificationScreenshot(control, 'plugins-03-used-in-chat.png')
   control.officialPluginSkillPath = skillPath
+  control.scenarioRequests.delete('official_plugin')
   control.setScenario('official_plugin')
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -2656,7 +2834,25 @@ async function verifyPluginLifecycle({
     text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await assertMentionRenderedAsToken(control, {
+    tokenSelector: '[data-testid="sent-plugin-token-OpenAI-Developers"]',
+    tokenText: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    plainTextMention: `@${OFFICIAL_PLUGIN_NAME}`,
+    errorLabel: 'The sent plugin reference degraded to its plain-text mention',
+  })
   await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
+  const taskId = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+    ?.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The official plugin conversation did not expose its task ID')
+  return taskId
+}
+
+async function verifyPluginLifecycle({ control, fixture }) {
+  await createOfficialPluginTask({
+    control,
+    installSelector: fixture.installSelector,
+    skillPath: fixture.skillPath,
+  })
   await sendPrompt(
     control,
     ACTIVE_COMPOSER_SELECTOR,
@@ -2673,18 +2869,95 @@ async function verifyPluginLifecycle({
     'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
   )
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
+}
 
+async function verifySkillMentionRendering({ control, fixture }) {
+  const officialPluginTaskId = await createOfficialPluginTask({
+    control,
+    installSelector: fixture.installSelector,
+    skillPath: fixture.skillPath,
+  })
+  const qualifiedSkillName = `${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`
+  const qualifiedSkillTestId = qualifiedSkillName.replace(/[^a-zA-Z0-9_-]/g, '-')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  control.setScenario('skill_mention_display')
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+    value: `[$${qualifiedSkillName}](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
+  })
+  await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const qualifiedSkillTaskId = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  ).workbench?.currentRuntimeTask?.taskId
+  assert.ok(qualifiedSkillTaskId, 'The qualified skill conversation did not expose its task ID')
+  const officialPluginTaskRow = `[data-testid="runtime-local-task-row-${officialPluginTaskId}"]`
+  const qualifiedSkillTaskRow = `[data-testid="runtime-local-task-row-${qualifiedSkillTaskId}"]`
+  await control.command('waitFor', officialPluginTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', qualifiedSkillTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', officialPluginTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertMentionRenderedAsToken(control, {
+    tokenSelector: '[data-testid="sent-plugin-token-OpenAI-Developers"]',
+    tokenText: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    plainTextMention: `@${OFFICIAL_PLUGIN_NAME}`,
+    errorLabel: 'The reopened plugin reference degraded to its plain-text mention',
+  })
+  await control.command('clickWhenEnabled', qualifiedSkillTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertMentionRenderedAsToken(control, {
+    tokenSelector: `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
+    plainTextMention: `$${qualifiedSkillName}`,
+    errorLabel: 'The reloaded qualified skill reference degraded to its plain-text mention',
+  })
+  await captureVerificationScreenshot(control, 'skill-mention-01-reloaded.png')
+}
+
+async function uninstallOfficialPlugin(control, fixture) {
   await control.command('click', '[data-testid="plugins-button"]')
-  await control.command('waitFor', actionsSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
-  await control.command('click', actionsSelector)
-  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${pluginId}"]`)
+  const pluginsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (pluginsSnapshot.testIds.includes('plugin-detail-back-button')) {
+    await control.command('click', '[data-testid="plugin-detail-back-button"]')
+  }
+  const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${OFFICIAL_PLUGIN_MARKETPLACE_NAME}"]`
+  await control.command('waitFor', marketplaceTabSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', marketplaceTabSelector)
+  await control.command('fill', '[data-testid="plugins-search-input"]', {
+    value: OFFICIAL_PLUGIN_DISPLAY_NAME,
+  })
+  await control.command('waitFor', fixture.actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', fixture.actionsSelector)
+  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${fixture.pluginId}"]`)
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${fixture.pluginId}`),
     'The plugin remained installed after the uninstall request'
   )
   assert.match(
-    await control.command('getText', installSelector),
+    await control.command('getText', fixture.installSelector),
     /Install|安装/,
     'The marketplace did not return to the install state after uninstall'
   )
@@ -2890,6 +3163,149 @@ async function verifyAutomationLifecycle(control, workspacePath) {
   await captureVerificationScreenshot(control, 'automations-01-local-persisted.png')
 }
 
+async function verifySitesPluginAutoInstall(control) {
+  const bootstrapStartedAt = Date.now()
+  while (
+    control.sitesConnectionBootstrapRequests === 0 &&
+    Date.now() - bootstrapStartedAt < WORKBENCH_READY_TIMEOUT_MS
+  ) {
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(
+    control.sitesConnectionBootstrapRequests,
+    1,
+    'Connecting the cloud account did not initialize the Sites plugin exactly once'
+  )
+
+  await control.command('navigate', 'body', { value: '/sites' })
+  await control.command('waitFor', '[data-testid="sites-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.text.includes('站点'),
+    'Creating a site did not place the bundled Sites plugin in the composer',
+    WORKBENCH_READY_TIMEOUT_MS,
+    ACTIVE_COMPOSER_SELECTOR
+  )
+  const composerText = await control.command('getText', ACTIVE_COMPOSER_SELECTOR)
+  assert.match(
+    composerText,
+    /站点/,
+    'Creating a site did not place the bundled Sites plugin in the composer'
+  )
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    snapshot.testIds.includes('sites-create-error'),
+    false,
+    'The Sites page reported an installation error after opening the plugin in chat'
+  )
+  await captureVerificationScreenshot(control, 'plugins-05-sites-auto-installed.png')
+
+  const sitesPluginSelector = '[data-testid="composer-plugin-chip-wegent-sites"]'
+  await control.command('waitFor', sitesPluginSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', sitesPluginSelector)
+  await control.command('waitFor', '[data-testid="plugin-detail-back-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    detailSnapshot =>
+      detailSnapshot.text.includes('站点') &&
+      detailSnapshot.testIds.includes('plugin-detail-back-button'),
+    'Clicking the Sites plugin mention did not open its plugin detail page'
+  )
+  await captureVerificationScreenshot(control, 'plugins-06-sites-detail.png')
+}
+
+function sitesMarketplacePlugin(installed) {
+  return {
+    id: 501,
+    remotePluginId: 'wegent~Plugin_501',
+    name: 'wegent-sites',
+    displayName: '站点',
+    description: 'Build and deploy websites with Wegent Sites',
+    version: '0.1.0',
+    author: 'Wegent Team',
+    visibility: 'public',
+    featured: true,
+    installed,
+    enabled: installed,
+    installedPluginId: installed ? 601 : null,
+    sourceType: 'marketplace',
+    interface: {
+      displayName: '站点',
+      shortDescription: 'Build and deploy sites with Wegent',
+      category: 'Productivity',
+      defaultPrompt: ['Build an internal website and validate it locally'],
+    },
+    components: {
+      skills: [
+        {
+          name: 'sites:sites-building',
+          description: 'Build and validate sites',
+          path: 'skills/sites-building/SKILL.md',
+        },
+      ],
+      commands: [],
+      agents: [],
+      hooks: [],
+      mcps: [],
+      lsps: [],
+      monitors: [],
+      bins: [],
+    },
+    manifest: { name: 'wegent-sites' },
+    ownerUserId: 0,
+  }
+}
+
+function installedSitesPlugin() {
+  const marketplacePlugin = sitesMarketplacePlugin(true)
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'wegent-sites',
+      namespace: 'default',
+      labels: { id: '601' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'wegent-marketplace',
+        pluginKey: 'wegent-sites',
+        catalogItemId: '501',
+        marketplace: 'wegent',
+      },
+      displayName: '站点',
+      description: marketplacePlugin.description,
+      version: marketplacePlugin.version,
+      author: marketplacePlugin.author,
+      installState: 'installed',
+      enabled: true,
+      componentStates: {},
+      manifest: marketplacePlugin.manifest,
+      components: marketplacePlugin.components,
+      interface: marketplacePlugin.interface,
+      packageRef: {
+        storageKey: 'skill-binaries/601',
+        checksum: 'sha256:desktop-e2e-sites',
+        sizeBytes: 1024,
+      },
+      sourcePayload: { filename: 'wegent-sites.zip' },
+    },
+    status: { state: 'Available' },
+  }
+}
+
 function processIsAlive(processId) {
   try {
     process.kill(processId, 0)
@@ -3051,6 +3467,25 @@ async function confirmLocalProjectName(control, name) {
     snapshot => !snapshot.testIds.includes('local-project-create-dialog'),
     'The local project create dialog did not close after confirmation'
   )
+}
+
+async function createSingleRootLocalProject(control, workspacePath, name) {
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-local-option"]')
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForFolderPickerInitialized(control)
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await confirmLocalProjectName(control, name)
 }
 
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
@@ -5143,6 +5578,8 @@ class DesktopE2EServer {
     this.cloudModelsAvailable = false
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
+    this.sitesPluginInstalled = false
+    this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.viewImageStage = 'initial'
@@ -5160,6 +5597,9 @@ class DesktopE2EServer {
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
       this.releaseInitialTool = resolvePromise
+    })
+    this.followUpRelease = new Promise(resolvePromise => {
+      this.releaseFollowUp = resolvePromise
     })
     this.guidanceScrollStage = 'setup'
     this.guidanceScrollToolRelease = new Promise(resolvePromise => {
@@ -5388,6 +5828,7 @@ class DesktopE2EServer {
         'view_image',
         'official_plugin',
         'automation',
+        'skill_mention_display',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -5440,6 +5881,10 @@ class DesktopE2EServer {
 
   releaseInitialToolExecution() {
     this.releaseInitialTool()
+  }
+
+  releaseFollowUpResponse() {
+    this.releaseFollowUp()
   }
 
   releaseGuidanceScrollToolExecution() {
@@ -5519,15 +5964,32 @@ class DesktopE2EServer {
     const id = randomUUID()
     const command = { id, action, selector, ...options }
     const clientId = this.activeControlClientId
+    let resolveDelivery
+    let rejectDelivery
+    const delivery = new Promise((resolvePromise, reject) => {
+      resolveDelivery = resolvePromise
+      rejectDelivery = reject
+    })
     const result = new Promise((resolvePromise, reject) => {
       this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
     })
-    this.commandQueue.push({ clientId, command })
-    return withTimeout(
-      this.guard(result),
-      options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
-      `Timed out running UI action ${action} for ${selector}`
-    )
+    this.commandQueue.push({ clientId, command, rejectDelivery, resolveDelivery })
+    try {
+      await withTimeout(
+        this.guard(Promise.race([delivery, result])),
+        DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS,
+        `Timed out delivering UI action ${action} for ${selector}`
+      )
+      return await withTimeout(
+        this.guard(result),
+        (options.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS) + DESKTOP_CONTROL_RESULT_GRACE_MS,
+        `Timed out running UI action ${action} for ${selector}`
+      )
+    } catch (error) {
+      this.commandQueue = this.commandQueue.filter(item => item.command.id !== id)
+      this.commandResults.delete(id)
+      throw error
+    }
   }
 
   async handleControl(request, response) {
@@ -5563,6 +6025,67 @@ class DesktopE2EServer {
         user_name: 'wework-desktop-e2e-cloud-user',
         email: 'desktop-e2e@wework.local',
       })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
+      json(response, 200, {
+        items: this.sitesPluginInstalled ? [installedSitesPlugin()] : [],
+      })
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/plugins/builtin/wegent-sites/ensure-installed'
+    ) {
+      const body = await readRequestBody(request)
+      this.sitesPluginInstalled = true
+      if (!body.device_id) {
+        this.sitesConnectionBootstrapRequests += 1
+        json(response, 200, {
+          plugin: installedSitesPlugin(),
+          sync: null,
+        })
+        return
+      }
+      if (body.device_id !== 'local-device') {
+        json(response, 422, {
+          detail: 'A matching target device is required for Sites synchronization',
+        })
+        return
+      }
+      json(response, 200, {
+        plugin: installedSitesPlugin(),
+        sync: {
+          success: true,
+          device_id: 'local-device',
+          mode: 'merge',
+          skills: [],
+          plugins: [{ id: 601, name: 'wegent-sites', status: 'synced' }],
+          mcps: [],
+          errors: [],
+          synced: 1,
+          failed: 0,
+          skipped: 0,
+          results: [
+            {
+              device_id: 'local-device',
+              success: true,
+              error: null,
+              skills: [],
+              plugins: [{ id: 601, name: 'wegent-sites', status: 'synced' }],
+              mcps: [],
+              errors: [],
+            },
+          ],
+        },
+      })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/plugins/marketplace') {
+      json(response, 200, { items: [sitesMarketplacePlugin(true)] })
       return
     }
 
@@ -5679,7 +6202,11 @@ class DesktopE2EServer {
         const replacementError = new Error(
           `Desktop control client ${previousClientId} was replaced by ${ready.clientId}`
         )
-        this.commandQueue = this.commandQueue.filter(item => item.clientId !== previousClientId)
+        this.commandQueue = this.commandQueue.filter(item => {
+          if (item.clientId !== previousClientId) return true
+          item.rejectDelivery(replacementError)
+          return false
+        })
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
           this.commandResults.delete(id)
@@ -5712,12 +6239,13 @@ class DesktopE2EServer {
       }
       const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
       if (commandIndex >= 0) {
-        const [{ command }] = this.commandQueue.splice(commandIndex, 1)
+        const [{ command, resolveDelivery }] = this.commandQueue.splice(commandIndex, 1)
         this.commandHistory.push({
           ...command,
           clientId,
           deliveredAt: new Date().toISOString(),
         })
+        resolveDelivery()
         json(response, 200, command)
         return true
       }
@@ -6129,11 +6657,17 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(FOLLOW_UP_PROMPT),
         'The real Codex request did not contain the follow-up prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      await this.followUpRelease
+      response.end(
+        createSse([assistantMessage(FOLLOW_UP_COMPLETION_TEXT), responseCompleted(responseId)])
+      )
       return
     }
 
@@ -6517,6 +7051,23 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(OFFICIAL_PLUGIN_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'skill_mention_display') {
+      this.recordScenarioRequest('skill_mention_display', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(QUALIFIED_SKILL_MENTION_PROMPT) &&
+          requestText.includes(`${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`) &&
+          requestText.includes(this.officialPluginSkillPath),
+        'The real Codex request did not preserve the qualified structured skill mention'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(QUALIFIED_SKILL_MENTION_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -8039,8 +8590,8 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: PLUGINS_ONLY ? 'true' : 'false',
-        VITE_WEWORK_E2E_SEED_LOCAL_MODELS: PLUGINS_ONLY || MEMORY_ONLY ? 'false' : 'true',
+        VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
+        VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -8627,7 +9178,7 @@ async function main() {
     join(workspacePath, IMAGE_ARTIFACT_NAME),
     Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
   )
-  if (PLUGINS_ONLY) {
+  if (RUNS_PLUGIN_E2E) {
     await createOfficialPluginMarketplaceFixture({
       marketplaceRoot: pluginMarketplacePath,
       repositoryRoot: officialPluginRepositoryPath,
@@ -8701,7 +9252,7 @@ async function main() {
     )
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
-    if (!PLUGINS_ONLY) {
+    if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)
     }
 
@@ -8722,7 +9273,7 @@ async function main() {
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
-      ...(PLUGINS_ONLY ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
+      ...(RUNS_PLUGIN_E2E ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
     }
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin') {
@@ -8743,7 +9294,7 @@ async function main() {
           'WEWORK_E2E_MODEL_API_KEY',
           'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
           'WEWORK_EXECUTOR_SIDECAR',
-          ...(PLUGINS_ONLY ? ['WEWORK_E2E_NATIVE_CODEX_HOME'] : []),
+          ...(RUNS_PLUGIN_E2E ? ['WEWORK_E2E_NATIVE_CODEX_HOME'] : []),
         ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
         const launcher = spawn(
           'open',
@@ -8782,7 +9333,8 @@ async function main() {
       return child
     }
     app = await startDesktopAppProcess()
-    const restartDesktopApp = async (beforeStart = null) => {
+    const restartDesktopApp = async (options = null) => {
+      const beforeStart = typeof options === 'function' ? options : options?.afterStop
       const readyCountBeforeRestart = control.readyCount
       await stopDesktopAppProcess(app)
       await beforeStart?.()
@@ -8811,7 +9363,7 @@ async function main() {
         'The desktop E2E application stole macOS foreground focus'
       )
     }
-    if (PLUGINS_ONLY) {
+    if (RUNS_PLUGIN_E2E) {
       phase = 'blank-codex-home-initialization'
       await initializeBlankCodexHome({
         codexHome,
@@ -9064,17 +9616,45 @@ async function main() {
       return
     }
 
-    if (PLUGINS_ONLY) {
-      phase = 'plugin-lifecycle'
-      await verifyPluginLifecycle({
-        codexHome,
-        control,
-        marketplacePath: pluginMarketplacePath,
-        modelServerUrl: control.url,
-        repositoryPath: officialPluginRepositoryPath,
-        workspacePath,
-      })
-      console.log(`Wework desktop plugin E2E passed. Evidence: ${resultDir}`)
+    if (RUNS_PLUGIN_E2E) {
+      let officialPluginFixture = null
+      const ensureOfficialPluginFixture = async () => {
+        officialPluginFixture ??= await installOfficialPluginFixture({
+          codexHome,
+          control,
+          marketplacePath: pluginMarketplacePath,
+          modelServerUrl: control.url,
+          repositoryPath: officialPluginRepositoryPath,
+          workspacePath,
+        })
+        return officialPluginFixture
+      }
+
+      if (shouldRunPluginSegment('plugin-lifecycle')) {
+        phase = 'plugin-lifecycle'
+        await verifyPluginLifecycle({
+          control,
+          fixture: await ensureOfficialPluginFixture(),
+        })
+      }
+      if (shouldRunPluginSegment('skill-mention-rendering')) {
+        phase = 'skill-mention-rendering'
+        await verifySkillMentionRendering({
+          control,
+          fixture: await ensureOfficialPluginFixture(),
+        })
+      }
+      if (shouldRunPluginSegment('sites-plugin-auto-install')) {
+        phase = 'sites-plugin-auto-install'
+        await verifySitesPluginAutoInstall(control)
+      }
+      if (officialPluginFixture) {
+        phase = 'plugin-uninstall'
+        await uninstallOfficialPlugin(control, officialPluginFixture)
+      }
+      console.log(
+        `Wework desktop plugin E2E${SELECTED_DESKTOP_SEGMENT ? ` segment ${SELECTED_DESKTOP_SEGMENT}` : ''} passed. Evidence: ${resultDir}`
+      )
       return
     }
 
@@ -9139,6 +9719,24 @@ async function main() {
         'Cancelling folder selection did not restore the workbench'
       )
     }
+
+    phase = 'secondary-project-create'
+    await createSingleRootLocalProject(control, secondaryProjectPath, 'secondary-project')
+    const secondaryProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      'The standalone secondary project was not shown in the sidebar'
+    )
+    const secondaryProjectMenuTestId = secondaryProjectSnapshot.testIds.find(testId =>
+      testId.startsWith('project-menu-')
+    )
+    assert.ok(secondaryProjectMenuTestId, 'The standalone secondary project identity was not found')
+    const secondaryProjectId = secondaryProjectMenuTestId.slice('project-menu-'.length)
+    const secondaryProjectRowSelector = `[data-testid="project-row-${secondaryProjectId}"]`
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
 
     phase = 'composer-project-folder-select'
     await control.command('click', '[data-testid="project-work-button"]')
@@ -9208,11 +9806,14 @@ async function main() {
     phase = 'composer-project-visible-in-sidebar'
     const openedProjectSnapshot = await waitForSnapshot(
       control,
-      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      snapshot =>
+        snapshot.testIds.some(
+          testId => testId.startsWith('project-menu-') && testId !== secondaryProjectMenuTestId
+        ),
       'The newly opened folder project was not shown in the sidebar'
     )
-    let projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
-      testId.startsWith('project-menu-')
+    let projectMenuTestId = openedProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-menu-') && testId !== secondaryProjectMenuTestId
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
     let projectId = projectMenuTestId.slice('project-menu-'.length)
@@ -9225,6 +9826,11 @@ async function main() {
       text: 'workspace',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, 'project-shared-root-both-visible.png')
 
     phase = 'sidebar-project-new-conversation'
     await control.command(
@@ -9251,6 +9857,10 @@ async function main() {
       snapshot => !snapshot.testIds.includes(projectMenuTestId),
       'A folder project could not be removed immediately after it was opened'
     )
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
 
     phase = 'project-folder-reopen'
     await control.command('click', '[data-testid="projects-create-button"]')
@@ -9318,12 +9928,18 @@ async function main() {
       control,
       snapshot =>
         snapshot.testIds.some(
-          testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+          testId =>
+            testId.startsWith('project-menu-') &&
+            testId !== projectMenuTestId &&
+            testId !== secondaryProjectMenuTestId
         ),
       'The reopened folder project was not shown with its current identity'
     )
     const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(
-      testId => testId.startsWith('project-menu-') && testId !== projectMenuTestId
+      testId =>
+        testId.startsWith('project-menu-') &&
+        testId !== projectMenuTestId &&
+        testId !== secondaryProjectMenuTestId
     )
     assert.ok(reopenedProjectMenuTestId, 'The reopened folder project identity was not found')
     projectMenuTestId = reopenedProjectMenuTestId
@@ -9331,6 +9947,10 @@ async function main() {
     projectRowSelector = `[data-testid="project-row-${projectId}"]`
     await control.command('waitFor', projectRowSelector, {
       text: 'workspace',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('waitFor', secondaryProjectRowSelector, {
+      text: 'secondary-project',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
 
@@ -9410,8 +10030,24 @@ async function main() {
         DEFAULT_STEP_TIMEOUT_MS,
         'The model service did not receive the initial task request'
       )
+      const runningTaskSnapshot = await waitForSnapshot(
+        control,
+        snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+        'The initial task row was not available before its response completed'
+      )
+      taskRowTestId = runningTaskSnapshot.testIds.find(testId =>
+        testId.startsWith('runtime-local-task-row-')
+      )
+      assert.ok(taskRowTestId, 'The initial task row identity was not found')
+      await verifyUserMessageNavigation({
+        control,
+        projectRowSelector,
+        screenshotPrefix: 'initial-message-pending',
+        taskRowTestId,
+        userText: TASK_PROMPT,
+      })
 
-      if (VIEW_IMAGE_ONLY) {
+      if (VIEW_IMAGE_ONLY || MESSAGE_RESTORATION_ONLY) {
         control.releaseInitialToolExecution()
       } else {
         phase = 'send-mode-menu'
@@ -9488,6 +10124,29 @@ async function main() {
         text: COMPLETION_TEXT,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      await verifyUserMessageNavigation({
+        assistantText: COMPLETION_TEXT,
+        control,
+        projectRowSelector,
+        screenshotPrefix: 'initial-message-completed',
+        taskRowTestId,
+        userText: TASK_PROMPT,
+      })
+      if (MESSAGE_RESTORATION_ONLY) {
+        await verifyFollowUpMessageRestoration({
+          composerSelector,
+          control,
+          projectRowSelector,
+          taskRowTestId,
+        })
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework message restoration desktop E2E passed. Evidence: ${resultDir}`)
+        return
+      }
       await control.command('click', '[data-testid="final-processing-toggle"]')
       await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -9687,21 +10346,12 @@ async function main() {
         })
 
         phase = 'follow-up'
-        control.setScenario('follow_up')
-        const followUpRequest = await sendPromptUntilScenarioRequest(
-          control,
+        await verifyFollowUpMessageRestoration({
           composerSelector,
-          FOLLOW_UP_PROMPT,
-          'follow_up'
-        )
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: FOLLOW_UP_COMPLETION_TEXT,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          control,
+          projectRowSelector,
+          taskRowTestId,
         })
-        assert.ok(
-          JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
-          'The follow-up request did not preserve the user prompt'
-        )
 
         for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
           phase = `local-model-switch-${switchCase.id}`

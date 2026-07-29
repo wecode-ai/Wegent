@@ -275,12 +275,20 @@ export interface RuntimeMessageSource {
   message_id?: string | null
 }
 
+export interface RuntimeMessagePresentationReference {
+  start: number
+  end: number
+  href: string
+}
+
 export interface NormalizedRuntimeMessage {
   id: string
   clientMessageId?: string | null
   client_message_id?: string | null
   role: 'user' | 'assistant' | 'system' | string
   content: string
+  presentationReferences?: RuntimeMessagePresentationReference[] | null
+  presentation_references?: RuntimeMessagePresentationReference[] | null
   contentTruncated?: boolean | null
   content_truncated?: boolean | null
   contentOriginalChars?: number | null
@@ -1904,8 +1912,40 @@ export interface PluginMarketplacePublishResponse {
   item: PluginMarketplaceItem
 }
 
+export interface DeviceCapabilityItemResult {
+  id?: string | number | null
+  name?: string | null
+  status: string
+  error?: string | null
+}
+
+export interface DeviceCapabilitySyncResult {
+  device_id: string
+  success: boolean
+  error?: string | null
+  skills: DeviceCapabilityItemResult[]
+  plugins: DeviceCapabilityItemResult[]
+  mcps: DeviceCapabilityItemResult[]
+  errors: Array<Record<string, unknown>>
+}
+
+export interface DeviceCapabilitySyncResponse {
+  success: boolean
+  device_id: string
+  mode: string
+  skills: DeviceCapabilityItemResult[]
+  plugins: DeviceCapabilityItemResult[]
+  mcps: DeviceCapabilityItemResult[]
+  errors: Array<Record<string, unknown>>
+  synced: number
+  failed: number
+  skipped: number
+  results: DeviceCapabilitySyncResult[]
+}
+
 export interface PluginMarketplaceInstallResponse {
   plugin: InstalledPlugin
+  sync?: DeviceCapabilitySyncResponse | null
 }
 
 export interface InstalledPluginUpdateRequest {
