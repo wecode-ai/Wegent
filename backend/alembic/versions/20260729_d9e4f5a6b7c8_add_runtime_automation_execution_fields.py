@@ -1,7 +1,7 @@
 """Add runtime automation execution fields.
 
-Revision ID: c8d2e3f4a5b6
-Revises: b7c1d2e3f4a5
+Revision ID: d9e4f5a6b7c8
+Revises: c8d2e3f4a5b6
 """
 
 from typing import Sequence, Union
@@ -10,8 +10,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "c8d2e3f4a5b6"
-down_revision: Union[str, None] = "b7c1d2e3f4a5"
+revision: str = "d9e4f5a6b7c8"
+down_revision: Union[str, None] = "c8d2e3f4a5b6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
