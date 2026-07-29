@@ -57,6 +57,7 @@ const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
 ];
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
 const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
+const WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
 const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
@@ -2644,6 +2645,20 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             ]),
             toml_value(&label)
         ));
+    }
+    if let Ok(token) = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV) {
+        if !token.trim().is_empty() {
+            overrides.push(format!(
+                "{}={}",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_BROWSER_MCP_SERVER_NAME,
+                    "env",
+                    "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"
+                ]),
+                toml_value(token.trim())
+            ));
+        }
     }
 
     overrides

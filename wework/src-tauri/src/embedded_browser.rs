@@ -1,5 +1,3 @@
-#[cfg(target_os = "macos")]
-use std::process::Command;
 use std::{
     collections::HashMap,
     env,
@@ -8,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Condvar, Mutex, Weak,
+        Arc, Mutex, Weak,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -21,13 +19,36 @@ use tauri::{
     webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
     Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Webview, WebviewUrl, Wry,
 };
-#[cfg(desktop)]
-use tauri_plugin_dialog::DialogExt;
+
+mod agent_control;
+mod bridge_security;
+mod browser_runtime;
+mod popup;
+mod screenshot;
+
+use agent_control::{
+    agent_action_signature, agent_action_target, agent_control_paused_result,
+    clear_label_agent_state, consume_approved_agent_risk, emit_agent_state,
+    is_agent_control_paused, is_agent_mutating_bridge_action, is_agent_observable_bridge_action,
+    merge_request_option, register_agent_approval, EmbeddedBrowserApprovalState,
+};
+use bridge_security::{bridge_navigation_url, bridge_request_authorized, generate_bridge_token};
+#[cfg(test)]
+use browser_runtime::script_semantic_inspect_for_test as script_semantic_inspect;
+use browser_runtime::{
+    ax_probe_result, embedded_browser_capabilities, eval_json_nonblocking,
+    inspect_embedded_browser, native_input_probe_result, present_probe_result,
+    script_browser_action, script_expression, script_resolve_inspect_target,
+    wait_for_embedded_browser,
+};
+use popup::{classify_popup_url, emit_popup_observed};
+use screenshot::screenshot_embedded_browser;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const BROWSER_WEBVIEW_LABEL: &str = "workspace-browser";
 const EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:0";
 const EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
+const EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
 const BRIDGE_READ_TIMEOUT_MS: u64 = 5_000;
 const BRIDGE_EVAL_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
@@ -169,53 +190,6 @@ struct EmbeddedBrowserDownloadPayload {
     total_bytes: Option<u64>,
 }
 
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct EmbeddedBrowserPopupPayload {
-    popup_id: String,
-    parent_label: String,
-    parent_native_label: String,
-    url: String,
-    origin: String,
-    kind: String,
-    strategy: String,
-    status: String,
-    created_at_unix_ms: u128,
-    warning: Option<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct EmbeddedBrowserAgentStatePayload {
-    label: String,
-    status: String,
-    action: Option<String>,
-    target: Option<String>,
-    message: Option<String>,
-    error_code: Option<String>,
-    approval: Option<EmbeddedBrowserApprovalPayload>,
-    created_at_unix_ms: u128,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct EmbeddedBrowserApprovalPayload {
-    approval_id: String,
-    risk: String,
-    action_kind: String,
-    reason: String,
-    target: Option<Value>,
-    expires_at_unix_ms: u128,
-}
-
-#[derive(Debug, Clone)]
-struct EmbeddedBrowserApprovalState {
-    label: String,
-    signature: String,
-    payload: EmbeddedBrowserApprovalPayload,
-    approved: bool,
-}
-
 #[derive(Clone)]
 struct EmbeddedBrowserDownloadControl {
     app: tauri::AppHandle,
@@ -224,8 +198,6 @@ struct EmbeddedBrowserDownloadControl {
     owner_webviews: Weak<Mutex<HashMap<String, EmbeddedBrowserEntry>>>,
     url: String,
     path: PathBuf,
-    paused: Arc<(Mutex<bool>, Condvar)>,
-    cancelled: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
     received_bytes: Arc<AtomicU64>,
     total_bytes: Arc<AtomicU64>,
@@ -264,80 +236,6 @@ impl EmbeddedBrowserDownloadControl {
     }
 }
 
-fn run_browser_download(state: EmbeddedBrowserState, control: EmbeddedBrowserDownloadControl) {
-    thread::spawn(move || {
-        if let Err(error) = stream_browser_download(&control) {
-            if !control.cancelled.load(Ordering::Relaxed) {
-                control.failed.store(true, Ordering::Relaxed);
-                log::warn!("Embedded browser download failed: {error}");
-                control.emit("failed");
-            }
-            return;
-        }
-        control.emit("finished");
-        if let Ok(mut downloads) = state.downloads.lock() {
-            downloads.remove(&control.id);
-        }
-    });
-}
-
-fn stream_browser_download(control: &EmbeddedBrowserDownloadControl) -> Result<(), String> {
-    let mut response = reqwest::blocking::Client::new()
-        .get(&control.url)
-        .send()
-        .map_err(|error| format!("Failed to request download: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Download request failed: {error}"))?;
-    if let Some(total_bytes) = response.content_length() {
-        control.total_bytes.store(total_bytes, Ordering::Relaxed);
-    }
-    let mut file = std::fs::File::create(&control.path)
-        .map_err(|error| format!("Failed to create download file: {error}"))?;
-    control.emit("progress");
-    let mut buffer = [0_u8; 64 * 1024];
-    let mut last_progress_emit = Instant::now();
-    loop {
-        let (paused, wake) = &*control.paused;
-        let mut is_paused = paused
-            .lock()
-            .map_err(|_| "Download pause lock poisoned".to_string())?;
-        while *is_paused && !control.cancelled.load(Ordering::Relaxed) {
-            is_paused = wake
-                .wait(is_paused)
-                .map_err(|_| "Download pause lock poisoned".to_string())?;
-        }
-        drop(is_paused);
-        if control.cancelled.load(Ordering::Relaxed) {
-            return Err("Download cancelled".to_string());
-        }
-        let read = response
-            .read(&mut buffer)
-            .map_err(|error| format!("Failed to read download: {error}"))?;
-        if read == 0 {
-            break;
-        }
-        file.write_all(&buffer[..read])
-            .map_err(|error| format!("Failed to write download: {error}"))?;
-        control
-            .received_bytes
-            .fetch_add(read as u64, Ordering::Relaxed);
-        let is_paused = control
-            .paused
-            .0
-            .lock()
-            .map(|paused| *paused)
-            .unwrap_or(false);
-        if is_paused {
-            control.emit("paused");
-        } else if last_progress_emit.elapsed() >= Duration::from_millis(100) {
-            control.emit("progress");
-            last_progress_emit = Instant::now();
-        }
-    }
-    file.flush()
-        .map_err(|error| format!("Failed to finish download: {error}"))
-}
-
 struct NormalizedBounds {
     position: LogicalPosition<f64>,
     size: LogicalSize<f64>,
@@ -374,295 +272,6 @@ fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
         "http" | "https" => WebviewUrl::External(url),
         _ => WebviewUrl::CustomProtocol(url),
     }
-}
-
-fn popup_origin(url: &tauri::Url) -> String {
-    match (url.scheme(), url.host_str(), url.port()) {
-        (scheme, Some(host), Some(port)) => format!("{scheme}://{host}:{port}"),
-        (scheme, Some(host), None) => format!("{scheme}://{host}"),
-        (scheme, None, _) => scheme.to_string(),
-    }
-}
-
-fn classify_popup_url(url: &tauri::Url) -> (&'static str, &'static str, Option<String>) {
-    let scheme = url.scheme().to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return (
-            "external_scheme",
-            "user_confirmation_required",
-            Some("External schemes are not opened silently.".to_string()),
-        );
-    }
-
-    let combined = format!(
-        "{} {} {}",
-        url.host_str().unwrap_or_default(),
-        url.path(),
-        url.query().unwrap_or_default()
-    )
-    .to_ascii_lowercase();
-    if combined.contains("pay") || combined.contains("payment") || combined.contains("checkout") {
-        return (
-            "payment",
-            "controlled_popup_required",
-            Some(
-                "Payment-like popup should require user confirmation before production use."
-                    .to_string(),
-            ),
-        );
-    }
-    if [
-        "oauth",
-        "authorize",
-        "openid",
-        "sso",
-        "saml",
-        "cas",
-        "login",
-        "signin",
-        "auth",
-    ]
-    .iter()
-    .any(|marker| combined.contains(marker))
-    {
-        return ("oauth", "observe_and_allow", None);
-    }
-    ("unknown", "observe_and_allow", None)
-}
-
-fn emit_popup_observed(
-    app: &tauri::AppHandle,
-    parent_label: &str,
-    parent_native_label: &str,
-    url: tauri::Url,
-) {
-    let (kind, strategy, warning) = classify_popup_url(&url);
-    let payload = EmbeddedBrowserPopupPayload {
-        popup_id: format!(
-            "browser-popup-{}",
-            EMBEDDED_BROWSER_POPUP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ),
-        parent_label: parent_label.to_string(),
-        parent_native_label: parent_native_label.to_string(),
-        origin: popup_origin(&url),
-        url: url.to_string(),
-        kind: kind.to_string(),
-        strategy: strategy.to_string(),
-        status: "observed".to_string(),
-        created_at_unix_ms: current_unix_millis(),
-        warning,
-    };
-    let _ = app.emit(EMBEDDED_BROWSER_POPUP_EVENT, payload);
-}
-
-fn emit_agent_state(
-    app: &tauri::AppHandle,
-    label: &str,
-    status: &str,
-    action: Option<&str>,
-    target: Option<String>,
-    message: Option<String>,
-    error_code: Option<String>,
-    approval: Option<EmbeddedBrowserApprovalPayload>,
-) {
-    let payload = EmbeddedBrowserAgentStatePayload {
-        label: label.to_string(),
-        status: status.to_string(),
-        action: action.map(str::to_string),
-        target,
-        message,
-        error_code,
-        approval,
-        created_at_unix_ms: current_unix_millis(),
-    };
-    let _ = app.emit(EMBEDDED_BROWSER_AGENT_STATE_EVENT, payload);
-}
-
-fn is_agent_observable_bridge_action(action: &str) -> bool {
-    matches!(
-        action,
-        "open"
-            | "navigate"
-            | "inspect"
-            | "resolveRef"
-            | "click"
-            | "typeText"
-            | "fill"
-            | "hover"
-            | "focus"
-            | "select"
-            | "setChecked"
-            | "scroll"
-            | "scrollIntoView"
-            | "press"
-            | "waitFor"
-            | "screenshot"
-    )
-}
-
-fn is_agent_mutating_bridge_action(action: &str) -> bool {
-    matches!(
-        action,
-        "open"
-            | "navigate"
-            | "click"
-            | "typeText"
-            | "fill"
-            | "hover"
-            | "focus"
-            | "select"
-            | "setChecked"
-            | "scroll"
-            | "scrollIntoView"
-            | "press"
-    )
-}
-
-fn agent_action_target(request: &EmbeddedBrowserBridgeRequest) -> Option<String> {
-    if let Some(ref_) = &request.ref_ {
-        return Some(ref_.clone());
-    }
-    if let Some(index) = request.index {
-        return Some(format!("index {index}"));
-    }
-    if let Some(selector) = &request.selector {
-        return Some(selector.clone());
-    }
-    request.url.clone()
-}
-
-fn agent_action_signature(action: &str, request: &EmbeddedBrowserBridgeRequest) -> String {
-    let target = if let Some(ref_) = &request.ref_ {
-        format!("ref:{ref_}")
-    } else if let Some(inspect_id) = &request.inspect_id {
-        format!("inspect:{inspect_id}:{}", request.index.unwrap_or_default())
-    } else if let Some(selector) = &request.selector {
-        format!("selector:{selector}")
-    } else if request.x.is_some() || request.y.is_some() {
-        format!(
-            "coord:{:.1}:{:.1}",
-            request.x.unwrap_or_default(),
-            request.y.unwrap_or_default()
-        )
-    } else {
-        "active".to_string()
-    };
-    format!("{action}:{target}")
-}
-
-fn merge_request_option(request: &mut EmbeddedBrowserBridgeRequest, key: &str, value: Value) {
-    let mut options = request.options.take().unwrap_or_else(|| json!({}));
-    if let Some(object) = options.as_object_mut() {
-        object.insert(key.to_string(), value);
-        request.options = Some(options);
-        return;
-    }
-    request.options = Some(json!({ key: value }));
-}
-
-fn consume_approved_agent_risk(
-    state: &EmbeddedBrowserState,
-    label: &str,
-    signature: &str,
-) -> Result<bool, String> {
-    let now = current_unix_millis();
-    let mut approvals = state
-        .agent_approvals
-        .lock()
-        .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?;
-    approvals.retain(|_, approval| approval.payload.expires_at_unix_ms > now);
-    let approval_id = approvals.iter().find_map(|(id, approval)| {
-        (approval.label == label && approval.signature == signature && approval.approved)
-            .then(|| id.clone())
-    });
-    if let Some(approval_id) = approval_id {
-        approvals.remove(&approval_id);
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-fn register_agent_approval(
-    state: &EmbeddedBrowserState,
-    label: &str,
-    action: &str,
-    signature: &str,
-    result: &mut Value,
-) -> Result<Option<EmbeddedBrowserApprovalPayload>, String> {
-    if result.pointer("/error/code").and_then(Value::as_str) != Some("approval_required") {
-        return Ok(None);
-    }
-    let approval_source = result.get("approval").cloned().unwrap_or_else(|| json!({}));
-    let approval_id = format!(
-        "browser-approval-{}",
-        EMBEDDED_BROWSER_NATIVE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    );
-    let payload = EmbeddedBrowserApprovalPayload {
-        approval_id: approval_id.clone(),
-        risk: approval_source
-            .get("risk")
-            .and_then(Value::as_str)
-            .unwrap_or("high")
-            .to_string(),
-        action_kind: approval_source
-            .get("actionKind")
-            .and_then(Value::as_str)
-            .unwrap_or(action)
-            .to_string(),
-        reason: approval_source
-            .get("reason")
-            .and_then(Value::as_str)
-            .unwrap_or("This browser action may change data on the page.")
-            .to_string(),
-        target: approval_source.get("target").cloned(),
-        expires_at_unix_ms: current_unix_millis() + 60_000,
-    };
-    if let Some(object) = result.as_object_mut() {
-        object.insert(
-            "approval".to_string(),
-            serde_json::to_value(&payload).unwrap_or_default(),
-        );
-    }
-    state
-        .agent_approvals
-        .lock()
-        .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?
-        .insert(
-            approval_id,
-            EmbeddedBrowserApprovalState {
-                label: label.to_string(),
-                signature: signature.to_string(),
-                payload: payload.clone(),
-                approved: false,
-            },
-        );
-    Ok(Some(payload))
-}
-
-fn is_agent_control_paused(state: &EmbeddedBrowserState, label: &str) -> Result<bool, String> {
-    let paused = state
-        .agent_control_paused
-        .lock()
-        .map_err(|_| "Embedded browser agent control state lock poisoned".to_string())?
-        .get(label)
-        .copied()
-        .unwrap_or(false);
-    Ok(paused)
-}
-
-fn agent_control_paused_result(action: &str) -> Value {
-    json!({
-        "ok": false,
-        "kind": "browser.action",
-        "action": action,
-        "error": {
-            "code": "user_control",
-            "message": "User is controlling the embedded browser. Ask before continuing.",
-            "recoverable": true,
-            "category": "control",
-            "suggestedNextAction": "ask_user_to_resume_agent_control"
-        }
-    })
 }
 
 fn browser_label(label: Option<String>) -> String {
@@ -818,7 +427,7 @@ fn browser_download_destination(
     ))
 }
 
-fn start_managed_browser_download(
+fn start_native_browser_download(
     app: tauri::AppHandle,
     state: EmbeddedBrowserState,
     native_label: String,
@@ -836,8 +445,6 @@ fn start_managed_browser_download(
         owner_webviews: Arc::downgrade(&state.webviews),
         url,
         path,
-        paused: Arc::new((Mutex::new(false), Condvar::new())),
-        cancelled: Arc::new(AtomicBool::new(false)),
         failed: Arc::new(AtomicBool::new(false)),
         received_bytes: Arc::new(AtomicU64::new(0)),
         total_bytes: Arc::new(AtomicU64::new(0)),
@@ -846,7 +453,32 @@ fn start_managed_browser_download(
         downloads.insert(id, control.clone());
     }
     control.emit("started");
-    run_browser_download(state, control);
+}
+
+fn finish_native_browser_download(
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+    url: &str,
+    success: bool,
+) {
+    let control = state.downloads.lock().ok().and_then(|downloads| {
+        downloads
+            .values()
+            .find(|control| control.native_label == native_label && control.url == url)
+            .cloned()
+    });
+    let Some(control) = control else {
+        return;
+    };
+    if success {
+        control.emit("finished");
+        if let Ok(mut downloads) = state.downloads.lock() {
+            downloads.remove(&control.id);
+        }
+    } else {
+        control.failed.store(true, Ordering::Relaxed);
+        control.emit("failed");
+    }
 }
 
 fn get_entry(state: &EmbeddedBrowserState, label: &str) -> Result<EmbeddedBrowserEntry, String> {
@@ -941,20 +573,15 @@ fn current_logical_owner(
     ))
 }
 
-fn start_managed_browser_download_for_native(
-    app: tauri::AppHandle,
-    state: EmbeddedBrowserState,
+fn current_logical_owner_or(
+    state: &EmbeddedBrowserState,
     native_label: &str,
-    url: String,
-    path: PathBuf,
-) {
-    match current_logical_owner(&state, native_label) {
-        Ok(Some(_)) => {
-            start_managed_browser_download(app, state, native_label.to_string(), url, path)
-        }
-        Ok(None) => log::warn!("Ignored download from a closed embedded browser"),
-        Err(error) => log::warn!("Failed to resolve embedded browser download owner: {error}"),
-    }
+    fallback_label: &str,
+) -> String {
+    current_logical_owner(state, native_label)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| fallback_label.to_string())
 }
 
 fn page_state_for_label(
@@ -969,10 +596,7 @@ fn page_state_for_label(
     })
 }
 
-fn embedded_browser_entry_snapshot(
-    state: &EmbeddedBrowserState,
-    label: &str,
-) -> Option<Value> {
+fn embedded_browser_entry_snapshot(state: &EmbeddedBrowserState, label: &str) -> Option<Value> {
     let webviews = state.webviews.lock().ok()?;
     let entry = webviews.get(label)?;
     let readiness = match entry.readiness() {
@@ -1038,9 +662,7 @@ fn log_embedded_browser_diagnostic(
     detail: Value,
 ) {
     let Some(entry_snapshot) = embedded_browser_entry_snapshot(state, label) else {
-        log::info!(
-            "Embedded browser diagnostic stage={stage} label={label} detail={detail}"
-        );
+        log::info!("Embedded browser diagnostic stage={stage} label={label} detail={detail}");
         return;
     };
     let payload = json!({
@@ -1203,618 +825,11 @@ fn eval_json(
     serde_json::from_str(&result).or(Ok(Value::String(result)))
 }
 
-async fn eval_json_nonblocking(
-    state: &EmbeddedBrowserState,
-    label: &str,
-    script: String,
-    timeout_ms: u64,
-) -> Result<Value, String> {
-    let entry = get_entry(state, label)?;
-    let (sender, receiver) = std::sync::mpsc::channel();
-    entry
-        .ready_webview()?
-        .eval_with_callback(script, move |result| {
-            let _ = sender.send(result);
-        })
-        .map_err(|error| format!("Failed to evaluate embedded browser script: {error}"))?;
-
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        receiver
-            .recv_timeout(Duration::from_millis(timeout_ms))
-            .map_err(|_| "Timed out waiting for embedded browser evaluation".to_string())
-    })
-    .await
-    .map_err(|error| format!("Failed to join embedded browser evaluation task: {error}"))??;
-    serde_json::from_str(&result).or(Ok(Value::String(result)))
-}
-
-fn script_expression(expression: &str) -> String {
-    format!(
-        r#"(() => {{
-  try {{
-    const value = (() => {{ return ({expression}); }})();
-    return {{ ok: true, value }};
-  }} catch (error) {{
-    return {{ ok: false, error: String(error?.stack || error?.message || error) }};
-  }}
-}})()"#
-    )
-}
-
-fn script_wait_for(request: &EmbeddedBrowserBridgeRequest, wait_id: &str) -> String {
-    let input = json!({
-        "waitId": wait_id,
-        "selector": request.selector,
-        "text": request.text,
-        "url": request.url,
-        "expression": request.expression,
-        "timeoutMs": request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
-        "options": request.options,
-    });
-    let encoded_input = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
-    EMBEDDED_BROWSER_WAIT_SCRIPT.replace("__WEWORK_WAIT_INPUT__", &encoded_input)
-}
-
-fn wait_for_embedded_browser(
-    state: &EmbeddedBrowserState,
-    label: &str,
-    request: &EmbeddedBrowserBridgeRequest,
-) -> Result<Value, String> {
-    let timeout_ms = request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
-    let poll_ms = request
-        .options
-        .as_ref()
-        .and_then(|options| options.get("pollMs"))
-        .and_then(Value::as_u64)
-        .unwrap_or(100)
-        .clamp(50, 1_000);
-    let wait_id = format!(
-        "wk-wait-{}",
-        EMBEDDED_BROWSER_BRIDGE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    );
-    let started = Instant::now();
-    let deadline = started + Duration::from_millis(timeout_ms);
-    let mut last_result = json!({
-        "ok": false,
-        "kind": "browser.wait",
-        "backend": "wkwebview-js",
-        "reason": "not_started",
-    });
-
-    while Instant::now() <= deadline {
-        let remaining_ms = deadline
-            .saturating_duration_since(Instant::now())
-            .as_millis()
-            .try_into()
-            .unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
-        let eval_timeout_ms = remaining_ms.clamp(1, BRIDGE_EVAL_TIMEOUT_MS);
-        last_result = match eval_json(
-            state,
-            label,
-            script_wait_for(request, &wait_id),
-            eval_timeout_ms,
-        ) {
-            Ok(value) => value,
-            Err(error) => json!({
-                "ok": false,
-                "kind": "browser.wait",
-                "backend": "wkwebview-js",
-                "reason": "operation_failed",
-                "elapsedMs": started.elapsed().as_millis() as u64,
-                "observed": {},
-                "warnings": [],
-                "error": {
-                    "code": "wait_eval_failed",
-                    "message": error,
-                    "recoverable": true,
-                    "suggestedNextAction": "wait"
-                }
-            }),
-        };
-        if last_result
-            .get("ok")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            return Ok(last_result);
-        }
-        let sleep_ms = deadline
-            .saturating_duration_since(Instant::now())
-            .min(Duration::from_millis(poll_ms));
-        if sleep_ms.is_zero() {
-            break;
-        }
-        thread::sleep(sleep_ms);
-    }
-
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-    if let Some(object) = last_result.as_object_mut() {
-        object.insert("ok".to_string(), Value::Bool(false));
-        object.insert("reason".to_string(), Value::String("timeout".to_string()));
-        object.insert("elapsedMs".to_string(), Value::from(elapsed_ms));
-        object.insert(
-            "error".to_string(),
-            json!({
-                "code": "wait_timeout",
-                "message": "Timed out waiting for embedded browser condition.",
-                "recoverable": true,
-                "suggestedNextAction": "inspect"
-            }),
-        );
-    }
-    Ok(last_result)
-}
-
-fn script_browser_action(
-    action: &str,
-    request: &EmbeddedBrowserBridgeRequest,
-) -> Result<String, String> {
-    let input = json!({
-        "action": action,
-        "selector": request.selector,
-        "text": request.text,
-        "key": request.key,
-        "x": request.x,
-        "y": request.y,
-        "inspectId": request.inspect_id,
-        "index": request.index,
-        "ref": request.ref_,
-        "options": request.options,
-    });
-    let encoded_input = serde_json::to_string(&input)
-        .map_err(|error| format!("Failed to encode embedded browser action input: {error}"))?;
-    Ok(EMBEDDED_BROWSER_ACTION_SCRIPT.replace("__WEWORK_ACTION_INPUT__", &encoded_input))
-}
-
-fn script_semantic_inspect(options: &Value) -> Result<String, String> {
-    let encoded_options = serde_json::to_string(options)
-        .map_err(|error| format!("Failed to encode embedded browser inspect options: {error}"))?;
-    Ok(EMBEDDED_BROWSER_INSPECT_SCRIPT.replace("__WEWORK_INSPECT_OPTIONS__", &encoded_options))
-}
-
-fn inspect_embedded_browser(
-    state: &EmbeddedBrowserState,
-    label: &str,
-    options: Value,
-    timeout_ms: u64,
-) -> Result<Value, String> {
-    eval_json(state, label, script_semantic_inspect(&options)?, timeout_ms)
-}
-
-fn embedded_browser_capabilities() -> Value {
-    json!({
-        "kind": "browser.capabilities",
-        "backend": "wkwebview",
-        "schemaVersion": 1,
-        "inspect": {
-            "structuredDom": true,
-            "indexRef": true,
-            "frame": "same-origin",
-            "shadowDom": "open-shadow-dom"
-        },
-        "actions": {
-            "syntheticDom": [
-                "click",
-                "type",
-                "fill",
-                "hover",
-                "focus",
-                "press",
-                "select",
-                "setChecked",
-                "scroll",
-                "scrollIntoView"
-            ],
-            "trustedNativeInput": "poc_only",
-            "appKitNativeInputProbe": true
-        },
-        "wait": {
-            "structured": true,
-            "conditions": [
-                "selectorAttached",
-                "selectorVisible",
-                "textVisible",
-                "urlIncludes",
-                "urlMatches",
-                "titleIncludes",
-                "revisionChanged",
-                "domStable",
-                "pageStable",
-                "inputValueChanged",
-                "elementGone",
-                "expression"
-            ]
-        },
-        "screenshot": {
-            "viewport": true,
-            "primaryBackend": "wkwebview-nsview-cache",
-            "fallbackBackend": "macos-screencapture-region",
-            "wkTakeSnapshot": false
-        },
-        "p2": {
-            "reparentApiAvailable": true,
-            "newWindowHookAvailable": true,
-            "popupObservation": true,
-            "controlledPopup": "not_productionized",
-            "macAxTreeProbe": "not_productionized"
-        },
-        "warnings": [
-            {
-                "code": "synthetic_input_limit",
-                "message": "Current production actions use DOM synthetic events; some pages may require trusted input."
-            },
-            {
-                "code": "p2_poc_not_default",
-                "message": "P2 native input, AX tree and WebView reparent are exposed as capability/probe surfaces, not production defaults."
-            }
-        ]
-    })
-}
-
-fn native_input_probe_result(request: &EmbeddedBrowserBridgeRequest) -> Value {
-    json!({
-        "ok": false,
-        "kind": "browser.nativeInputProbe",
-        "backend": "appkit-poc",
-        "probeKind": request.options
-            .as_ref()
-            .and_then(|value| value.get("kind"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown"),
-        "permissionRequired": false,
-        "eventTrusted": null,
-        "effect": {
-            "urlChanged": false,
-            "domChanged": false,
-            "focusChanged": false,
-            "valueChanged": false
-        },
-        "warnings": [
-            {
-                "code": "native_input_probe_not_executed",
-                "message": "Native AppKit event dispatch is not enabled as a production path; use DOM actions or user control."
-            },
-            {
-                "code": "requires_real_tauri_verification",
-                "message": "Trusted input must be verified in an isolated real Tauri session before enabling."
-            }
-        ],
-        "error": {
-            "code": "requires_trusted_input",
-            "message": "AppKit native input is only a PoC surface in this build.",
-            "recoverable": true,
-            "category": "capability",
-            "suggestedNextAction": "ask_user_to_take_control"
-        }
-    })
-}
-
-fn ax_probe_result() -> Value {
-    json!({
-        "ok": false,
-        "kind": "browser.axProbe",
-        "backend": "macos-ax-poc",
-        "permissionRequired": true,
-        "root": null,
-        "stats": {
-            "nodeCount": 0,
-            "durationMs": 0,
-            "roleCount": {}
-        },
-        "warnings": [
-            {
-                "code": "ax_tree_not_enabled",
-                "message": "macOS AX tree collection is not enabled by default because it may require Accessibility permission."
-            }
-        ],
-        "error": {
-            "code": "unsupported_browser_capability",
-            "message": "AX tree probing has not been productionized for WKWebView content.",
-            "recoverable": true,
-            "category": "capability",
-            "suggestedNextAction": "inspect"
-        }
-    })
-}
-
-fn present_probe_result(state: &EmbeddedBrowserState, label: &str) -> Result<Value, String> {
-    let entry = get_entry(state, label)?;
-    Ok(json!({
-        "ok": true,
-        "kind": "browser.presentProbe",
-        "backend": "tauri-webview",
-        "label": label,
-        "nativeLabel": entry.native_label,
-        "placement": {
-            "kind": "panel",
-            "surfaceEpoch": 1
-        },
-        "reparentApiAvailable": true,
-        "reparented": false,
-        "restoredByReload": false,
-        "warnings": [
-            {
-                "code": "popout_not_productionized",
-                "message": "Tauri exposes Webview::reparent, but panel/popout shell state has not been enabled as a production user flow."
-            }
-        ]
-    }))
-}
-
-fn script_resolve_inspect_target(request: &EmbeddedBrowserBridgeRequest) -> String {
-    let input = json!({
-        "inspectId": request.inspect_id,
-        "index": request.index,
-        "ref": request.ref_,
-    });
-    let encoded_input = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
-    format!(
-        r#"(() => {{
-  try {{
-    const resolver = window.__WEWORK_BROWSER_AGENT__?.resolveInspectTarget;
-    if (typeof resolver !== "function") {{
-      return {{
-        ok: false,
-        errorCode: "stale_inspect",
-        message: "No inspect registry is available."
-      }};
-    }}
-    return resolver({encoded_input});
-  }} catch (error) {{
-    return {{
-      ok: false,
-      errorCode: "resolve_failed",
-      message: String(error?.stack || error?.message || error)
-    }};
-  }}
-}})()"#
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Result<Value, String> {
-    let entry = get_entry(state, label)?;
-    let webview = entry.ready_webview()?;
-    let screenshot_id = format!(
-        "wk-screenshot-{}",
-        EMBEDDED_BROWSER_SCREENSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    );
-    let page = eval_json(
-        state,
-        label,
-        script_expression(
-            "({
-              url: location.href,
-              title: document.title || '',
-              readyState: document.readyState,
-              viewport: {
-                width: window.innerWidth,
-                height: window.innerHeight,
-                devicePixelRatio: window.devicePixelRatio || 1,
-                scrollX: window.scrollX,
-                scrollY: window.scrollY,
-                visualViewport: window.visualViewport ? {
-                  width: window.visualViewport.width,
-                  height: window.visualViewport.height,
-                  offsetLeft: window.visualViewport.offsetLeft,
-                  offsetTop: window.visualViewport.offsetTop,
-                  scale: window.visualViewport.scale
-                } : null
-              }
-            })",
-        ),
-        BRIDGE_EVAL_TIMEOUT_MS,
-    )
-    .ok()
-    .and_then(|value| value.get("value").cloned())
-    .unwrap_or_else(|| json!({}));
-    let path = screenshot_path(&screenshot_id)?;
-
-    match capture_webview_to_png_file(&webview, &path) {
-        Ok(capture) => {
-            return Ok(screenshot_result(
-                &screenshot_id,
-                "wkwebview-nsview-cache",
-                &path,
-                capture.width,
-                capture.height,
-                capture.scale_factor,
-                None,
-                page,
-                vec![json!({
-                    "code": "wk_take_snapshot_not_used",
-                    "message": "Screenshot uses native NSView cacheDisplay rather than WKWebView takeSnapshot."
-                })],
-            ));
-        }
-        Err(error) => {
-            log::warn!("Embedded browser native view snapshot failed: {error}");
-        }
-    }
-
-    let window_position = webview
-        .window()
-        .inner_position()
-        .map_err(|error| format!("Failed to read Wework window position: {error}"))?;
-    let webview_position = webview
-        .position()
-        .map_err(|error| format!("Failed to read embedded browser position: {error}"))?;
-    let webview_size = webview
-        .size()
-        .map_err(|error| format!("Failed to read embedded browser size: {error}"))?;
-    let scale_factor = webview
-        .window()
-        .scale_factor()
-        .map_err(|error| format!("Failed to read Wework window scale factor: {error}"))?
-        .max(1.0);
-    let x = ((window_position.x + webview_position.x) as f64 / scale_factor).round() as i32;
-    let y = ((window_position.y + webview_position.y) as f64 / scale_factor).round() as i32;
-    let width = (webview_size.width.max(1) as f64 / scale_factor).round() as u32;
-    let height = (webview_size.height.max(1) as f64 / scale_factor).round() as u32;
-    let region = format!("{x},{y},{width},{height}");
-    let output = Command::new("screencapture")
-        .args(["-x", "-R", &region])
-        .arg(&path)
-        .output()
-        .map_err(|error| format!("Failed to run macOS screencapture: {error}"))?;
-    if output.status.success() {
-        let (image_width, image_height) = png_dimensions(&path).unwrap_or((width, height));
-        return Ok(screenshot_result(
-            &screenshot_id,
-            "macos-screencapture-region",
-            &path,
-            image_width,
-            image_height,
-            scale_factor,
-            Some(json!({ "x": x, "y": y, "width": width, "height": height })),
-            page,
-            vec![json!({
-                "code": "native_view_snapshot_failed",
-                "message": "Screenshot used macOS region capture fallback; it may require screen-recording permission or include occlusion."
-            })],
-        ));
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(if stderr.is_empty() {
-        "Failed to capture embedded browser screenshot".to_string()
-    } else {
-        stderr
-    })
-}
-
-#[cfg(target_os = "macos")]
-struct EmbeddedBrowserScreenshotCapture {
-    width: u32,
-    height: u32,
-    scale_factor: f64,
-}
-
-#[cfg(target_os = "macos")]
-fn capture_webview_to_png_file(
-    webview: &Webview<Wry>,
-    path: &Path,
-) -> Result<EmbeddedBrowserScreenshotCapture, String> {
-    let scale_factor = webview
-        .window()
-        .scale_factor()
-        .map_err(|error| format!("Failed to read Wework window scale factor: {error}"))?
-        .max(1.0);
-    let (sender, receiver) = std::sync::mpsc::channel();
-    webview
-        .with_webview(move |platform_webview| {
-            let result = unsafe { capture_macos_webview_bytes(platform_webview) };
-            let _ = sender.send(result);
-        })
-        .map_err(|error| format!("Failed to access embedded browser webview: {error}"))?;
-    let bytes = receiver
-        .recv_timeout(Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS))
-        .map_err(|_| "Timed out waiting for native embedded browser snapshot".to_string())??;
-    std::fs::write(path, &bytes)
-        .map_err(|error| format!("Failed to write embedded browser snapshot: {error}"))?;
-    let (width, height) = png_dimensions(path)?;
-    Ok(EmbeddedBrowserScreenshotCapture {
-        width,
-        height,
-        scale_factor,
-    })
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn capture_macos_webview_bytes(
-    platform_webview: tauri::webview::PlatformWebview,
-) -> Result<Vec<u8>, String> {
-    use objc2::runtime::AnyObject;
-    use objc2_app_kit::{NSBitmapImageFileType, NSView};
-    use objc2_foundation::NSDictionary;
-
-    let webview: &NSView = &*platform_webview.inner().cast();
-    let bounds = webview.bounds();
-    let bitmap = webview
-        .bitmapImageRepForCachingDisplayInRect(bounds)
-        .ok_or_else(|| "Failed to create bitmap for embedded browser".to_string())?;
-    webview.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
-    let properties: objc2::rc::Retained<
-        NSDictionary<objc2_app_kit::NSBitmapImageRepPropertyKey, AnyObject>,
-    > = NSDictionary::new();
-    let png = bitmap
-        .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
-        .ok_or_else(|| "Failed to encode embedded browser snapshot as PNG".to_string())?;
-    Ok(ns_data_bytes(&png))
-}
-
-#[cfg(target_os = "macos")]
-fn ns_data_bytes(data: &objc2_foundation::NSData) -> Vec<u8> {
-    let mut bytes = vec![0; data.length()];
-    if let Some(buffer) = std::ptr::NonNull::new(bytes.as_mut_ptr().cast()) {
-        unsafe { data.getBytes_length(buffer, bytes.len()) };
-    }
-    bytes
-}
-
-fn screenshot_result(
-    screenshot_id: &str,
-    backend: &str,
-    path: &Path,
-    width: u32,
-    height: u32,
-    scale_factor: f64,
-    region: Option<Value>,
-    page: Value,
-    warnings: Vec<Value>,
-) -> Value {
-    json!({
-        "ok": true,
-        "kind": "browser.screenshot",
-        "schemaVersion": 1,
-        "screenshotId": screenshot_id,
-        "backend": backend,
-        "format": "png",
-        "scope": "viewport",
-        "path": path.to_string_lossy(),
-        "width": width,
-        "height": height,
-        "scale": scale_factor,
-        "region": region,
-        "page": page,
-        "capturedAtUnixMs": current_unix_millis(),
-        "warnings": warnings,
-    })
-}
-
 fn current_unix_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn screenshot_embedded_browser(
-    _state: &EmbeddedBrowserState,
-    _label: &str,
-) -> Result<Value, String> {
-    Err("Embedded browser screenshots are currently supported on macOS only".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn screenshot_path(screenshot_id: &str) -> Result<PathBuf, String> {
-    let directory = std::env::temp_dir().join("wework-embedded-browser");
-    std::fs::create_dir_all(&directory).map_err(|error| {
-        format!("Failed to create embedded browser screenshot directory: {error}")
-    })?;
-    Ok(directory.join(format!("{screenshot_id}.png")))
-}
-
-fn png_dimensions(path: &Path) -> Result<(u32, u32), String> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| format!("Failed to read embedded browser screenshot: {error}"))?;
-    if bytes.len() < 24 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
-        return Err("Embedded browser screenshot is not a PNG file".to_string());
-    }
-    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
-    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-    Ok((width, height))
 }
 
 fn bridge_success(data: Value) -> EmbeddedBrowserBridgeResponse {
@@ -1888,7 +903,7 @@ fn handle_bridge_request(
             let url = request
                 .url
                 .ok_or_else(|| "Embedded browser navigate requires url".to_string())?;
-            browser_url(&url)?;
+            bridge_navigation_url(&url)?;
             if !is_browser_open(state, &label)? {
                 request_browser_open(app, state, &label, &url)?;
             }
@@ -2082,8 +1097,8 @@ fn read_http_request(stream: &mut TcpStream) -> Result<(String, String), String>
         .ok_or_else(|| "Bridge request is missing HTTP header terminator".to_string())?;
     let content_length = headers
         .lines()
-        .find_map(|line| line.split_once(':'))
-        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, value)| value.trim().parse::<usize>().ok())
         .unwrap_or(0);
     while body.len() < content_length {
@@ -2136,6 +1151,18 @@ fn handle_bridge_connection(
         "Embedded browser bridge request id={request_id} stage=request_read path={path} elapsed_ms={}",
         started.elapsed().as_millis()
     );
+    if !bridge_request_authorized(&headers)? {
+        write_http_response(
+            &mut stream,
+            "401 Unauthorized",
+            &bridge_error("Unauthorized embedded browser bridge request".to_string()),
+        )?;
+        log::warn!(
+            "Embedded browser bridge request id={request_id} stage=unauthorized path={path} elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
+        return Ok(());
+    }
     if path == "/status" {
         let result = handle_bridge_request(
             app,
@@ -2208,7 +1235,9 @@ pub fn start_embedded_browser_bridge(app: tauri::AppHandle) -> Result<(), String
     let listening_addr = listener
         .local_addr()
         .map_err(|error| format!("Failed to read embedded browser bridge address: {error}"))?;
+    let bridge_token = generate_bridge_token()?;
     env::set_var(EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, listening_addr.to_string());
+    env::set_var(EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, bridge_token);
     let state = app.state::<EmbeddedBrowserState>().inner().clone();
     let app_handle = app.clone();
     std::thread::Builder::new()
@@ -2341,10 +1370,9 @@ pub async fn embedded_browser_open(
         EMBEDDED_BROWSER_NATIVE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
     );
     let native_label_for_load = native_label.clone();
+    let native_label_for_navigation = native_label.clone();
     let native_label_for_title = native_label.clone();
     let native_label_for_popup = native_label.clone();
-    let label_for_load = label.clone();
-    let label_for_popup = label.clone();
     let app_for_popup = app.clone();
     let data_directory = browser_data_directory(&app)?;
 
@@ -2387,11 +1415,15 @@ pub async fn embedded_browser_open(
             .accept_first_mouse(true)
             .on_navigation({
                 let state = state.inner().clone();
-                let label = label.clone();
                 move |url| {
+                    let owner = current_logical_owner_or(
+                        &state,
+                        &native_label_for_navigation,
+                        &native_label_for_navigation,
+                    );
                     log_embedded_browser_diagnostic(
                         &state,
-                        &label,
+                        &owner,
                         "navigation_requested",
                         json!({
                             "requestedUrl": url.to_string(),
@@ -2404,9 +1436,14 @@ pub async fn embedded_browser_open(
                 let event = format!("{:?}", payload.event());
                 let current_url = payload.url().to_string();
                 let webview_url = webview.url().ok().map(|url| url.to_string());
+                let owner = current_logical_owner_or(
+                    &load_state_handle,
+                    &native_label_for_load,
+                    &native_label_for_load,
+                );
                 log_embedded_browser_diagnostic(
                     &load_state_handle,
-                    &label_for_load,
+                    &owner,
                     "page_load_event",
                     json!({
                         "event": event,
@@ -2423,7 +1460,7 @@ pub async fn embedded_browser_open(
                     );
                     log_embedded_browser_page_diagnostics(
                         load_state_handle.clone(),
-                        label_for_load.clone(),
+                        owner,
                         "page_load_finished",
                     );
                 }
@@ -2436,9 +1473,14 @@ pub async fn embedded_browser_open(
                 );
             })
             .on_new_window(move |url, _features| {
+                let parent_label = current_logical_owner_or(
+                    app_for_popup.state::<EmbeddedBrowserState>().inner(),
+                    &native_label_for_popup,
+                    &native_label_for_popup,
+                );
                 emit_popup_observed(
                     &app_for_popup,
-                    &label_for_popup,
+                    &parent_label,
                     &native_label_for_popup,
                     url.clone(),
                 );
@@ -2460,46 +1502,17 @@ pub async fn embedded_browser_open(
         builder.on_download(move |_webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
                 match browser_download_destination(&download_app, destination) {
-                    Ok((path, suggested_name, ask_before_download)) => {
+                    Ok((path, _suggested_name, _ask_before_download)) => {
                         let url = url.to_string();
-                        if ask_before_download {
-                            let callback_app = download_app.clone();
-                            let callback_state = download_state.clone();
-                            let callback_native_label = download_native_label.clone();
-                            download_app
-                                .dialog()
-                                .file()
-                                .set_directory(
-                                    path.parent().unwrap_or_else(|| std::path::Path::new("/")),
-                                )
-                                .set_file_name(&suggested_name)
-                                .save_file(move |selected| {
-                                    let Some(selected) = selected else {
-                                        return;
-                                    };
-                                    match selected.into_path() {
-                                        Ok(path) => start_managed_browser_download_for_native(
-                                            callback_app,
-                                            callback_state,
-                                            &callback_native_label,
-                                            url,
-                                            path,
-                                        ),
-                                        Err(_) => {
-                                            log::warn!("Invalid browser download destination")
-                                        }
-                                    }
-                                });
-                        } else {
-                            start_managed_browser_download_for_native(
-                                download_app.clone(),
-                                download_state.clone(),
-                                &download_native_label,
-                                url,
-                                path,
-                            );
-                        }
-                        false
+                        *destination = path.clone();
+                        start_native_browser_download(
+                            download_app.clone(),
+                            download_state.clone(),
+                            download_native_label.clone(),
+                            url,
+                            path,
+                        );
+                        true
                     }
                     Err(error) => {
                         log::warn!("Failed to prepare embedded browser download: {error}");
@@ -2507,7 +1520,19 @@ pub async fn embedded_browser_open(
                     }
                 }
             }
-            DownloadEvent::Finished { .. } => true,
+            DownloadEvent::Finished {
+                url,
+                path: _,
+                success,
+            } => {
+                finish_native_browser_download(
+                    &download_state,
+                    &download_native_label,
+                    &url.to_string(),
+                    success,
+                );
+                true
+            }
             _ => true,
         })
     };
@@ -2616,456 +1641,7 @@ pub async fn embedded_browser_open(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Barrier, Mutex},
-        thread,
-        time::Duration,
-    };
-
-    use super::{
-        browser_open_action, browser_webview_url, consume_approved_agent_risk,
-        download_event_owner, logical_owner_for_native_label, merge_request_option,
-        native_webview_label, ready_logical_entry, register_agent_approval, relabel_logical_entry,
-        remove_logical_entry_if_native_matches, script_browser_action,
-        script_resolve_inspect_target, script_semantic_inspect,
-        update_logical_entry_if_native_matches, wait_for_browser_ready,
-        EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
-        EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
-        EMBEDDED_BROWSER_NOT_READY_ERROR,
-    };
-    use serde_json::{json, Value};
-    use tauri::WebviewUrl;
-
-    #[test]
-    fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
-        let external_url = tauri::Url::parse("https://example.com/").unwrap();
-        let app_url =
-            tauri::Url::parse("tauri://localhost/extension-page.html?sessionId=test").unwrap();
-
-        assert!(matches!(
-            browser_webview_url(external_url),
-            WebviewUrl::External(_)
-        ));
-        assert!(matches!(
-            browser_webview_url(app_url),
-            WebviewUrl::CustomProtocol(_)
-        ));
-    }
-
-    #[test]
-    fn opening_route_is_hidden_from_public_access_but_available_to_native_callbacks() {
-        let native_label = native_webview_label("workspace-browser", 41);
-        let mut entries = HashMap::from([(
-            "workspace-browser".to_string(),
-            (
-                native_label.clone(),
-                EmbeddedBrowserReadiness::Opening,
-                None,
-            ),
-        )]);
-
-        let public_entry = ready_logical_entry(&entries, "workspace-browser", |entry| entry.1);
-        assert_eq!(public_entry.unwrap_err(), EMBEDDED_BROWSER_NOT_READY_ERROR);
-
-        let callback_updated = update_logical_entry_if_native_matches(
-            &mut entries,
-            &native_label,
-            |entry| entry.0.as_str(),
-            |entry| entry.2 = Some("loaded"),
-        );
-        assert!(callback_updated);
-        assert_eq!(entries["workspace-browser"].2, Some("loaded"));
-
-        entries.get_mut("workspace-browser").unwrap().1 = EmbeddedBrowserReadiness::Ready;
-        assert!(ready_logical_entry(&entries, "workspace-browser", |entry| entry.1).is_ok());
-    }
-
-    #[test]
-    fn bridge_open_waits_for_an_opening_route_without_requesting_again() {
-        assert_eq!(
-            browser_open_action(Some(EmbeddedBrowserReadiness::Opening)),
-            EmbeddedBrowserOpenAction::WaitForReady
-        );
-        assert_eq!(
-            browser_open_action(None),
-            EmbeddedBrowserOpenAction::RequestOpen
-        );
-        assert_eq!(
-            browser_open_action(Some(EmbeddedBrowserReadiness::Ready)),
-            EmbeddedBrowserOpenAction::Ready
-        );
-    }
-
-    #[test]
-    fn bridge_waits_for_ready_instead_of_accepting_an_opening_registration() {
-        let readiness = Arc::new(Mutex::new(EmbeddedBrowserReadiness::Opening));
-        let waiter_readiness = Arc::clone(&readiness);
-        let started = Arc::new(Barrier::new(2));
-        let waiter_started = Arc::clone(&started);
-
-        let waiter = thread::spawn(move || {
-            let mut first_check = true;
-            wait_for_browser_ready(
-                || {
-                    if first_check {
-                        first_check = false;
-                        waiter_started.wait();
-                    }
-                    Ok(Some(*waiter_readiness.lock().unwrap()))
-                },
-                100,
-                Duration::from_millis(1),
-            )
-        });
-
-        started.wait();
-        assert!(!waiter.is_finished());
-        *readiness.lock().unwrap() = EmbeddedBrowserReadiness::Ready;
-        assert_eq!(waiter.join().unwrap(), Ok(()));
-    }
-
-    #[test]
-    fn native_webview_labels_are_unique_across_creation_sequences() {
-        let first = native_webview_label("workspace-browser", 41);
-        let second = native_webview_label("workspace-browser", 42);
-
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn page_state_serializes_native_identity() {
-        let state = EmbeddedBrowserPageState {
-            native_label: "workspace-browser-native-41".to_string(),
-            title: Some("Example".to_string()),
-            url: Some("https://example.com/".to_string()),
-        };
-
-        let serialized = serde_json::to_value(state).unwrap();
-
-        assert_eq!(serialized["nativeLabel"], "workspace-browser-native-41");
-    }
-
-    #[test]
-    fn bridge_request_deserializes_inspect_options_and_ref_target() {
-        let request: EmbeddedBrowserBridgeRequest = serde_json::from_value(json!({
-            "action": "resolveRef",
-            "inspectId": "wk-inspect-1",
-            "index": 4,
-            "ref": "wk-mvp:wk-inspect-1:main:4:abcd1234",
-            "options": { "maxNodes": 12 }
-        }))
-        .unwrap();
-
-        assert_eq!(request.action, "resolveRef");
-        assert_eq!(request.inspect_id.as_deref(), Some("wk-inspect-1"));
-        assert_eq!(request.index, Some(4));
-        assert_eq!(
-            request.ref_.as_deref(),
-            Some("wk-mvp:wk-inspect-1:main:4:abcd1234")
-        );
-        assert_eq!(request.options.unwrap()["maxNodes"], 12);
-    }
-
-    #[test]
-    fn inspect_script_embeds_options_as_json_data() {
-        let script = script_semantic_inspect(&json!({
-            "mode": "compact",
-            "maxNodes": 25,
-            "label": "quote \" and </script>"
-        }))
-        .unwrap();
-
-        assert!(script.contains("const rawOptions = {"));
-        assert!(script.contains("\"maxNodes\":25"));
-        assert!(script.contains("bridgeTrust: 'page_world'"));
-        assert!(!script.contains("__WEWORK_INSPECT_OPTIONS__"));
-    }
-
-    #[test]
-    fn resolve_ref_script_uses_opaque_ref_without_selector_parsing() {
-        let script = script_resolve_inspect_target(&EmbeddedBrowserBridgeRequest {
-            action: "resolveRef".to_string(),
-            url: None,
-            expression: None,
-            selector: None,
-            text: None,
-            key: None,
-            x: None,
-            y: None,
-            timeout_ms: None,
-            label: None,
-            options: None,
-            inspect_id: Some("wk-inspect-1".to_string()),
-            index: Some(7),
-            ref_: Some("wk-mvp:wk-inspect-1:main:7:abcd1234".to_string()),
-        });
-
-        assert!(script.contains("resolveInspectTarget"));
-        assert!(script.contains("\"inspectId\":\"wk-inspect-1\""));
-        assert!(script.contains("\"index\":7"));
-        assert!(script.contains("\"ref\":\"wk-mvp:wk-inspect-1:main:7:abcd1234\""));
-        assert!(!script.contains("document.querySelector"));
-    }
-
-    #[test]
-    fn browser_action_script_embeds_target_input_as_json_data() {
-        let script = script_browser_action(
-            "fill",
-            &EmbeddedBrowserBridgeRequest {
-                action: "fill".to_string(),
-                url: None,
-                expression: None,
-                selector: Some("#name".to_string()),
-                text: Some("Alice \" Admin".to_string()),
-                key: None,
-                x: None,
-                y: None,
-                timeout_ms: None,
-                label: None,
-                options: None,
-                inspect_id: Some("wk-inspect-1".to_string()),
-                index: Some(2),
-                ref_: None,
-            },
-        )
-        .unwrap();
-
-        assert!(script.contains("const input = {"));
-        assert!(script.contains("\"action\":\"fill\""));
-        assert!(script.contains("\"selector\":\"#name\""));
-        assert!(script.contains("\"text\":\"Alice \\\" Admin\""));
-        assert!(script.contains("\"inspectId\":\"wk-inspect-1\""));
-        assert!(script.contains("\"index\":2"));
-        assert!(!script.contains("__WEWORK_ACTION_INPUT__"));
-    }
-
-    #[test]
-    fn approval_registration_adds_payload_and_consumes_approved_risk_once() {
-        let state = EmbeddedBrowserState::default();
-        let mut result = json!({
-            "ok": false,
-            "approval": {
-                "risk": "high",
-                "actionKind": "click",
-                "reason": "AI wants to click submit.",
-                "target": {
-                    "role": "button",
-                    "name": "Submit"
-                }
-            },
-            "error": {
-                "code": "approval_required",
-                "message": "AI wants to click submit."
-            }
-        });
-
-        let payload = register_agent_approval(
-            &state,
-            "workspace-browser",
-            "click",
-            "click:ref:wk-mvp:1",
-            &mut result,
-        )
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(payload.risk, "high");
-        assert_eq!(payload.action_kind, "click");
-        assert_eq!(
-            result
-                .pointer("/approval/approvalId")
-                .and_then(Value::as_str),
-            Some(payload.approval_id.as_str())
-        );
-        assert!(
-            !consume_approved_agent_risk(&state, "workspace-browser", "click:ref:wk-mvp:1")
-                .unwrap()
-        );
-
-        {
-            let mut approvals = state.agent_approvals.lock().unwrap();
-            approvals
-                .get_mut(&payload.approval_id)
-                .expect("approval state")
-                .approved = true;
-        }
-
-        assert!(
-            consume_approved_agent_risk(&state, "workspace-browser", "click:ref:wk-mvp:1").unwrap()
-        );
-        assert!(
-            !consume_approved_agent_risk(&state, "workspace-browser", "click:ref:wk-mvp:1")
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn merge_request_option_preserves_existing_object_options() {
-        let mut request = EmbeddedBrowserBridgeRequest {
-            action: "click".to_string(),
-            url: None,
-            expression: None,
-            selector: None,
-            text: None,
-            key: None,
-            x: None,
-            y: None,
-            timeout_ms: None,
-            label: None,
-            options: Some(json!({ "waitAfterMs": 100 })),
-            inspect_id: None,
-            index: None,
-            ref_: Some("wk-mvp:1".to_string()),
-        };
-
-        merge_request_option(&mut request, "riskApproved", Value::Bool(true));
-
-        let options = request.options.expect("options");
-        assert_eq!(options["waitAfterMs"], 100);
-        assert_eq!(options["riskApproved"], true);
-    }
-
-    #[test]
-    fn download_payload_serializes_native_identity() {
-        let payload = EmbeddedBrowserDownloadPayload {
-            id: "download-1".to_string(),
-            label: "workspace-browser-owner".to_string(),
-            native_label: "workspace-browser-native-41".to_string(),
-            url: "https://example.com/app.dmg".to_string(),
-            path: Some("/tmp/app.dmg".to_string()),
-            status: "finished".to_string(),
-            received_bytes: Some(1024),
-            total_bytes: Some(1024),
-        };
-
-        let serialized = serde_json::to_value(payload).unwrap();
-
-        assert_eq!(serialized["nativeLabel"], "workspace-browser-native-41");
-    }
-
-    #[test]
-    fn native_identity_resolves_the_current_owner_after_logical_relabel() {
-        let native_label = native_webview_label("workspace-browser", 41);
-        let mut owners = HashMap::from([("workspace-browser".to_string(), native_label.clone())]);
-        let identity = owners.remove("workspace-browser").unwrap();
-        owners.insert("workspace-browser-regression-owner".to_string(), identity);
-
-        let owner = logical_owner_for_native_label(
-            owners.iter().map(|(logical_label, native_label)| {
-                (logical_label.as_str(), native_label.as_str())
-            }),
-            &native_label,
-        );
-
-        assert_eq!(owner.as_deref(), Some("workspace-browser-regression-owner"));
-    }
-
-    #[test]
-    fn download_event_owner_follows_relabel_and_ignores_reused_logical_label() {
-        let original_native = native_webview_label("workspace-browser", 41);
-        let replacement_native = native_webview_label("workspace-browser", 42);
-        let owners = HashMap::from([
-            (
-                "workspace-browser-regression-owner".to_string(),
-                original_native.clone(),
-            ),
-            ("workspace-browser".to_string(), replacement_native),
-        ]);
-
-        let owner = download_event_owner(
-            owners.iter().map(|(logical_label, native_label)| {
-                (logical_label.as_str(), native_label.as_str())
-            }),
-            &original_native,
-        );
-
-        assert_eq!(owner.as_deref(), Some("workspace-browser-regression-owner"));
-    }
-
-    #[test]
-    fn conditional_native_removal_preserves_a_replacement_entry() {
-        let original_native = native_webview_label("workspace-browser", 41);
-        let replacement_native = native_webview_label("workspace-browser", 42);
-        let mut owners =
-            HashMap::from([("workspace-browser".to_string(), replacement_native.clone())]);
-
-        let removed = remove_logical_entry_if_native_matches(
-            &mut owners,
-            "workspace-browser",
-            &original_native,
-            String::as_str,
-        );
-
-        assert_eq!(removed, None);
-        assert_eq!(owners.get("workspace-browser"), Some(&replacement_native));
-    }
-
-    #[test]
-    fn conditional_native_removal_removes_the_matching_entry() {
-        let native_label = native_webview_label("workspace-browser", 41);
-        let mut owners = HashMap::from([("workspace-browser".to_string(), native_label.clone())]);
-
-        let removed = remove_logical_entry_if_native_matches(
-            &mut owners,
-            "workspace-browser",
-            &native_label,
-            String::as_str,
-        );
-
-        assert_eq!(removed.as_deref(), Some(native_label.as_str()));
-        assert!(!owners.contains_key("workspace-browser"));
-    }
-
-    #[test]
-    fn native_scoped_update_follows_relabel_without_mutating_reused_logical_label() {
-        let original_native = native_webview_label("workspace-browser", 41);
-        let replacement_native = native_webview_label("workspace-browser", 42);
-        let mut entries = HashMap::from([
-            (
-                "workspace-browser-task-1".to_string(),
-                (original_native.clone(), None),
-            ),
-            ("workspace-browser".to_string(), (replacement_native, None)),
-        ]);
-
-        let updated = update_logical_entry_if_native_matches(
-            &mut entries,
-            &original_native,
-            |entry| entry.0.as_str(),
-            |entry| entry.1 = Some("https://openai.com/".to_string()),
-        );
-
-        assert!(updated);
-        assert_eq!(
-            entries["workspace-browser-task-1"].1.as_deref(),
-            Some("https://openai.com/")
-        );
-        assert_eq!(entries["workspace-browser"].1, None);
-    }
-
-    #[test]
-    fn relabel_rejects_an_occupied_destination_without_orphaning_the_source() {
-        let mut entries = HashMap::from([
-            ("workspace-browser-source".to_string(), "source-native"),
-            ("workspace-browser-target".to_string(), "target-native"),
-        ]);
-
-        let result = relabel_logical_entry(
-            &mut entries,
-            "workspace-browser-source",
-            "workspace-browser-target",
-        );
-
-        assert_eq!(
-            result,
-            Err("Embedded browser destination label is already open".to_string())
-        );
-        assert_eq!(entries["workspace-browser-source"], "source-native");
-        assert_eq!(entries["workspace-browser-target"], "target-native");
-    }
-}
+mod tests;
 
 #[tauri::command]
 pub fn embedded_browser_set_bounds(
@@ -3125,13 +1701,8 @@ pub fn embedded_browser_pause_download(
     state: tauri::State<'_, EmbeddedBrowserState>,
     id: String,
 ) -> Result<(), String> {
-    let control = browser_download_control(&state, &id)?;
-    let (paused, _) = &*control.paused;
-    *paused
-        .lock()
-        .map_err(|_| "Download pause lock poisoned".to_string())? = true;
-    control.emit("paused");
-    Ok(())
+    let _ = browser_download_control(&state, &id)?;
+    Err("Native WebKit downloads cannot be paused".to_string())
 }
 
 #[tauri::command]
@@ -3139,17 +1710,8 @@ pub fn embedded_browser_resume_download(
     state: tauri::State<'_, EmbeddedBrowserState>,
     id: String,
 ) -> Result<(), String> {
-    let control = browser_download_control(&state, &id)?;
-    if control.failed.load(Ordering::Relaxed) {
-        return Err("Failed downloads cannot be resumed".to_string());
-    }
-    let (paused, wake) = &*control.paused;
-    *paused
-        .lock()
-        .map_err(|_| "Download pause lock poisoned".to_string())? = false;
-    wake.notify_all();
-    control.emit("progress");
-    Ok(())
+    let _ = browser_download_control(&state, &id)?;
+    Err("Native WebKit downloads cannot be resumed".to_string())
 }
 
 #[tauri::command]
@@ -3158,16 +1720,9 @@ pub fn embedded_browser_delete_download(
     id: String,
 ) -> Result<(), String> {
     let control = browser_download_control(&state, &id)?;
-    let is_paused = *control
-        .paused
-        .0
-        .lock()
-        .map_err(|_| "Download pause lock poisoned".to_string())?;
-    if !is_paused && !control.failed.load(Ordering::Relaxed) {
-        return Err("Pause the download before deleting it".to_string());
+    if !control.failed.load(Ordering::Relaxed) {
+        return Err("Native WebKit downloads cannot be deleted while in progress".to_string());
     }
-    control.cancelled.store(true, Ordering::Relaxed);
-    control.paused.1.notify_all();
     let _ = std::fs::remove_file(&control.path);
     state
         .downloads
@@ -3261,29 +1816,7 @@ pub fn embedded_browser_set_agent_control_paused(
     label: Option<String>,
     paused: bool,
 ) -> Result<(), String> {
-    let label = browser_label(label);
-    {
-        let mut paused_labels = state
-            .agent_control_paused
-            .lock()
-            .map_err(|_| "Embedded browser agent control state lock poisoned".to_string())?;
-        if paused {
-            paused_labels.insert(label.clone(), true);
-        } else {
-            paused_labels.remove(&label);
-        }
-    }
-    emit_agent_state(
-        &app,
-        &label,
-        if paused { "paused" } else { "idle" },
-        None,
-        None,
-        None,
-        None,
-        None,
-    );
-    Ok(())
+    agent_control::set_agent_control_paused(app, state, label, paused)
 }
 
 #[tauri::command]
@@ -3294,51 +1827,7 @@ pub fn embedded_browser_resolve_agent_approval(
     approval_id: String,
     approved: bool,
 ) -> Result<(), String> {
-    let label = browser_label(label);
-    let mut approvals = state
-        .agent_approvals
-        .lock()
-        .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?;
-    let approval = approvals
-        .get_mut(&approval_id)
-        .ok_or_else(|| "Browser approval request not found".to_string())?;
-    if approval.label != label {
-        return Err("Browser approval request belongs to a different label".to_string());
-    }
-    if approval.payload.expires_at_unix_ms <= current_unix_millis() {
-        approvals.remove(&approval_id);
-        return Err("Browser approval request expired".to_string());
-    }
-    if approved {
-        approval.approved = true;
-        let payload = approval.payload.clone();
-        drop(approvals);
-        emit_agent_state(
-            &app,
-            &label,
-            "idle",
-            Some(&payload.action_kind),
-            None,
-            Some("Browser action approved. The agent can retry it now.".to_string()),
-            None,
-            None,
-        );
-    } else {
-        let payload = approval.payload.clone();
-        approvals.remove(&approval_id);
-        drop(approvals);
-        emit_agent_state(
-            &app,
-            &label,
-            "error",
-            Some(&payload.action_kind),
-            None,
-            Some("Browser action was rejected by the user.".to_string()),
-            Some("approval_rejected".to_string()),
-            None,
-        );
-    }
-    Ok(())
+    agent_control::resolve_agent_approval(app, state, label, approval_id, approved)
 }
 
 #[tauri::command]
@@ -3385,17 +1874,7 @@ pub async fn embedded_browser_close(
             |current| current.native_label.as_str(),
         );
     }
-    state
-        .agent_control_paused
-        .lock()
-        .map_err(|_| "Embedded browser agent control state lock poisoned".to_string())?
-        .remove(&label);
-    state
-        .agent_approvals
-        .lock()
-        .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?
-        .retain(|_, approval| approval.label != label);
-    Ok(())
+    clear_label_agent_state(&state, &label)
 }
 
 #[tauri::command]
