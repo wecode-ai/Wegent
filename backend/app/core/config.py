@@ -487,6 +487,7 @@ class Settings(BaseSettings):
     INIT_DATA_FORCE: bool = (
         False  # Force re-initialize YAML resources (delete and recreate)
     )
+    BUILTIN_PLUGINS_DIR: str = "/app/init_data/plugins"
 
     # Default headers forwarded to the model backend on every LLM call.
     # Keys are sent verbatim as HTTP headers (resolved by model_resolver against

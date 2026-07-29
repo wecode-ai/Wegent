@@ -41,6 +41,7 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
     plugin.spec.source.pluginKey
   const marketplaceName =
     (typeof payload.marketplaceName === 'string' && payload.marketplaceName.trim()) ||
+    plugin.spec.source.marketplace ||
     plugin.metadata.namespace
   if (typeof pluginName !== 'string' || !pluginName.trim()) return null
   if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
