@@ -26,6 +26,11 @@ pnpm --filter wework exec prettier --check <changed-files>
 pnpm --filter wework exec eslint <changed-files>
 ```
 
+Direct debug Cargo builds create marked, unavailable stubs for ignored bundled
+sidecars when their real binaries have not been prepared. Do not prepare DWS
+only to run Rust unit tests or checks. Real Tauri verification and release
+builds must still use the standard scripts that prepare the actual sidecars.
+
 E2E tests use real backend requests. Do not skip, silently fail, or replace a failing integration with frontend mocks.
 
 - Design verification cases as a QA test plan before running them. For every changed behavior, cover the preconditions, environment and test data, exact steps, expected results, negative and recovery paths, and cleanup. Record the actual result and retain reproducible evidence for failures and critical-path success.
