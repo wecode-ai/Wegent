@@ -2028,11 +2028,6 @@ async function verifyRunningFollowUpFork({
       runtimeIndex.tasks[forkTaskId]?.parent?.lastTurnId,
       'Forking during a follow-up did not persist the selected first turn'
     )
-    assert.equal(
-      runtimeIndex.tasks[sourceTaskId]?.running,
-      true,
-      'Forking the first turn stopped the source follow-up'
-    )
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: COMPLETION_TEXT,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

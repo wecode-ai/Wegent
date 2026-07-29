@@ -356,6 +356,12 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 真实 Tauri、Executor 与 Codex 验证语义，同时避免三个场景在同一个 job 中串行等待。
 矩阵关闭 fail-fast，使一个场景失败时其他场景仍能完成并上传各自诊断。
 
+Linux 桌面场景会把 Tauri 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
+并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存
+只作为恢复来源，缺失或更新后的软件包会从 Ubuntu 软件源下载。安装使用
+`--no-install-recommends`，并为软件源请求设置重试和超时，降低托管 runner 镜像源
+抖动导致整个桌面 E2E job 超时的概率。
+
 内存门禁依赖 macOS 的 WebKit 进程关联和 physical footprint 采样，必须在 macOS runner 上单独运行：
 
 ```bash
