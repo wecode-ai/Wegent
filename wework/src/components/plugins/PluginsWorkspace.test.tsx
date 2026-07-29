@@ -817,7 +817,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByText('发现并接入开发工具、企业数据和专业方法。')).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-search-input')).toHaveAttribute(
       'placeholder',
-      '搜索插件、品牌或能力'
+      '搜索插件'
     )
     expect(screen.getByTestId('plugins-search-input')).toHaveClass('h-9', 'rounded-lg')
     expect(screen.getByTestId('plugins-marketplace-source-switcher')).toBeInTheDocument()
