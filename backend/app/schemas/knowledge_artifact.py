@@ -144,8 +144,6 @@ class KnowledgeArtifactUpdate(BaseModel):
 class KnowledgeArtifact(BaseModel):
     """Persisted Artifact record and API response."""
 
-    schema_version: int = 1
-    version: int = 1
     attempt: int = 1
     artifact_id: str
     knowledge_base_id: int = Field(gt=0)
@@ -157,7 +155,6 @@ class KnowledgeArtifact(BaseModel):
     content: str | None = None
     source_document_ids: list[int] = Field(default_factory=list)
     generation_config: dict[str, Any] = Field(default_factory=dict)
-    error_code: str | None = None
     error_message: str | None = None
     execution_health: KnowledgeArtifactExecutionHealth = (
         KnowledgeArtifactExecutionHealth.HEALTHY
@@ -167,7 +164,6 @@ class KnowledgeArtifact(BaseModel):
     user_id: int = Field(gt=0)
     created_at: datetime
     updated_at: datetime
-    completed_at: datetime | None = None
 
 
 class KnowledgeArtifactListResponse(BaseModel):

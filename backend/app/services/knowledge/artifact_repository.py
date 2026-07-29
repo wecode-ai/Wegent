@@ -13,7 +13,6 @@ from sqlalchemy.orm import Query, Session
 
 from app.models.knowledge_artifact import (
     KNOWLEDGE_ARTIFACT_ERROR_MESSAGE_MAX_LENGTH,
-    KNOWLEDGE_ARTIFACT_UNSET_DATETIME,
     KNOWLEDGE_ARTIFACT_UNSET_ID,
     KnowledgeArtifactRecord,
 )
@@ -48,15 +47,11 @@ class KnowledgeArtifactRepository:
             content=self._content_to_storage(artifact.content),
             source_document_ids=artifact.source_document_ids,
             generation_config=artifact.generation_config,
-            error_code=artifact.error_code or "",
             error_message=self._error_message_to_storage(artifact.error_message),
             user_id=artifact.user_id,
-            schema_version=artifact.schema_version,
-            version=artifact.version,
             attempt=artifact.attempt,
             created_at=artifact.created_at,
             updated_at=artifact.updated_at,
-            completed_at=self._datetime_to_storage(artifact.completed_at),
         )
         try:
             self.db.add(record)
@@ -115,7 +110,6 @@ class KnowledgeArtifactRepository:
                 self.db.rollback()
                 return None
             record.title = title
-            record.version += 1
             record.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             self.db.commit()
             self.db.refresh(record)
@@ -155,11 +149,8 @@ class KnowledgeArtifactRepository:
             record.task_id = KNOWLEDGE_ARTIFACT_UNSET_ID
             record.assistant_subtask_id = KNOWLEDGE_ARTIFACT_UNSET_ID
             record.content = ""
-            record.error_code = ""
             record.error_message = ""
-            record.completed_at = KNOWLEDGE_ARTIFACT_UNSET_DATETIME
             record.attempt += 1
-            record.version += 1
             record.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             self.db.commit()
             self.db.refresh(record)
@@ -193,17 +184,10 @@ class KnowledgeArtifactRepository:
                         KnowledgeArtifactRecord.content: self._content_to_storage(
                             artifact.content
                         ),
-                        KnowledgeArtifactRecord.error_code: artifact.error_code or "",
                         KnowledgeArtifactRecord.error_message: (
                             self._error_message_to_storage(artifact.error_message)
                         ),
-                        KnowledgeArtifactRecord.completed_at: (
-                            self._datetime_to_storage(artifact.completed_at)
-                        ),
                         KnowledgeArtifactRecord.updated_at: artifact.updated_at,
-                        KnowledgeArtifactRecord.version: (
-                            KnowledgeArtifactRecord.version + 1
-                        ),
                     },
                     synchronize_session=False,
                 )
@@ -275,17 +259,11 @@ class KnowledgeArtifactRepository:
             content=record.content or None,
             source_document_ids=list(record.source_document_ids or []),
             generation_config=dict(record.generation_config or {}),
-            error_code=record.error_code or None,
             error_message=record.error_message or None,
             user_id=record.user_id,
-            schema_version=record.schema_version,
-            version=record.version,
             attempt=record.attempt,
             created_at=record.created_at,
             updated_at=record.updated_at,
-            completed_at=KnowledgeArtifactRepository._datetime_from_storage(
-                record.completed_at
-            ),
         )
 
     @staticmethod
@@ -295,16 +273,6 @@ class KnowledgeArtifactRepository:
     @staticmethod
     def _id_from_storage(value: int) -> int | None:
         return None if value == KNOWLEDGE_ARTIFACT_UNSET_ID else value
-
-    @staticmethod
-    def _datetime_to_storage(value: datetime | None) -> datetime:
-        return KNOWLEDGE_ARTIFACT_UNSET_DATETIME if value is None else value
-
-    @staticmethod
-    def _datetime_from_storage(value: datetime) -> datetime | None:
-        if value == KNOWLEDGE_ARTIFACT_UNSET_DATETIME:
-            return None
-        return value
 
     @staticmethod
     def _content_to_storage(value: str | None) -> str:

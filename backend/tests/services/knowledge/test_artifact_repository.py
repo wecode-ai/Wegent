@@ -12,7 +12,6 @@ from sqlalchemy import Text, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.knowledge_artifact import (
-    KNOWLEDGE_ARTIFACT_UNSET_DATETIME,
     KNOWLEDGE_ARTIFACT_UNSET_ID,
     KnowledgeArtifactRecord,
 )
@@ -96,15 +95,11 @@ def test_repository_maps_optional_values_to_non_null_storage(db: Session):
     assert persisted.task_id is None
     assert persisted.assistant_subtask_id is None
     assert persisted.content is None
-    assert persisted.error_code is None
     assert persisted.error_message is None
-    assert persisted.completed_at is None
     assert record.task_id == KNOWLEDGE_ARTIFACT_UNSET_ID
     assert record.assistant_subtask_id == KNOWLEDGE_ARTIFACT_UNSET_ID
     assert record.content == ""
-    assert record.error_code == ""
     assert record.error_message == ""
-    assert record.completed_at == KNOWLEDGE_ARTIFACT_UNSET_DATETIME
 
 
 def test_repository_persists_content_beyond_previous_varchar_limit(db: Session):

@@ -308,8 +308,7 @@ class ArtifactService:
         except Exception as exc:
             artifact.status = KnowledgeArtifactStatus.FAILED
             artifact.error_message = str(exc) or "Failed to start artifact generation"
-            artifact.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            artifact.updated_at = artifact.completed_at
+            artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             self.repository.update_execution(artifact)
             raise
 
@@ -422,15 +421,8 @@ class ArtifactService:
             SubtaskStatus.DELETE.value,
         }:
             artifact.status = KnowledgeArtifactStatus.FAILED
-            result = subtask.result if isinstance(subtask.result, dict) else {}
-            artifact.error_code = result.get("error_type")
             artifact.error_message = (
                 subtask.error_message or "Artifact generation failed"
-            )
-            artifact.completed_at = (
-                self._subtask_datetime_as_utc(subtask.completed_at)
-                if subtask.completed_at
-                else datetime.now(timezone.utc).replace(tzinfo=None)
             )
             changed = True
 
@@ -452,18 +444,11 @@ class ArtifactService:
         try:
             artifact.content = self._parse_content(artifact.artifact_type, content)
             artifact.status = KnowledgeArtifactStatus.SUCCEEDED
-            artifact.error_code = None
             artifact.error_message = None
         except ArtifactValidationError as exc:
             artifact.content = None
             artifact.status = KnowledgeArtifactStatus.FAILED
-            artifact.error_code = "INVALID_GENERATED_RESULT"
             artifact.error_message = str(exc)
-        artifact.completed_at = (
-            self._subtask_datetime_as_utc(subtask.completed_at)
-            if subtask.completed_at
-            else datetime.now(timezone.utc).replace(tzinfo=None)
-        )
 
     def _apply_execution_health(
         self,

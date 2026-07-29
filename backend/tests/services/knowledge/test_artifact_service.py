@@ -419,7 +419,6 @@ async def test_reconcile_completed_mind_map_saves_renderable_content():
     assert reconciled.status == KnowledgeArtifactStatus.SUCCEEDED
     assert reconciled.content is not None
     assert '"root_id":"root"' in reconciled.content
-    assert reconciled.completed_at == completed_at - timedelta(hours=8)
     repository.update_execution.assert_called_once_with(artifact)
 
 
@@ -542,14 +541,12 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
     prepared_team = MagicMock()
     launcher.preflight.return_value = prepared_team
     artifact = build_artifact(status=KnowledgeArtifactStatus.FAILED)
-    artifact.error_code = "MODEL_ERROR"
     artifact.error_message = "模型调用失败"
     repository.get.return_value = artifact
     claimed = artifact.model_copy(deep=True)
     claimed.status = KnowledgeArtifactStatus.QUEUED
     claimed.task_id = None
     claimed.assistant_subtask_id = None
-    claimed.error_code = None
     claimed.error_message = None
     claimed.attempt = 2
     repository.claim_retry.return_value = (claimed, True)
@@ -566,7 +563,6 @@ async def test_retry_reuses_artifact_identity_and_relaunches():
     assert retried.status == KnowledgeArtifactStatus.RUNNING
     assert retried.task_id == 32
     assert retried.assistant_subtask_id == 42
-    assert retried.error_code is None
     assert retried.error_message is None
     assert retried.attempt == 2
     assert launcher.launch.await_args.kwargs["attempt"] == 2

@@ -35,8 +35,6 @@ jest.mock('@/features/knowledge/artifact/components/ArtifactSaveDialog', () => (
 }))
 
 const failedArtifact: KnowledgeArtifact = {
-  schema_version: 1,
-  version: 1,
   attempt: 1,
   artifact_id: 'artifact-1',
   knowledge_base_id: 12,
@@ -48,7 +46,6 @@ const failedArtifact: KnowledgeArtifact = {
   content: null,
   source_document_ids: [101],
   generation_config: {},
-  error_code: 'MODEL_ERROR',
   error_message: '模型调用失败',
   execution_health: 'healthy',
   can_retry: true,
@@ -56,7 +53,6 @@ const failedArtifact: KnowledgeArtifact = {
   user_id: 7,
   created_at: '2026-07-26T12:00:00+08:00',
   updated_at: '2026-07-26T12:01:00+08:00',
-  completed_at: '2026-07-26T12:01:00+08:00',
 }
 
 it('hides all shared artifact mutations from read-only users', () => {
@@ -94,7 +90,6 @@ it('sends a structured node question through the parent callback', () => {
         { id: 'child', parent_id: 'root', title: '过滤条件' },
       ],
     }),
-    error_code: null,
     error_message: null,
     can_retry: false,
   }
@@ -130,7 +125,6 @@ it('rejects mind maps outside the structured data contract', () => {
     artifact_type: 'mind_map',
     status: 'succeeded',
     content: 'mindmap\n  root((主题))',
-    error_code: null,
     error_message: null,
     can_retry: false,
   }

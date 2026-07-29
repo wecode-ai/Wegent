@@ -31,8 +31,6 @@ export interface ArtifactPromptRequest {
 }
 
 export interface KnowledgeArtifact {
-  schema_version: number
-  version: number
   attempt: number
   artifact_id: string
   knowledge_base_id: number
@@ -46,7 +44,6 @@ export interface KnowledgeArtifact {
   generation_config: {
     instruction?: string | null
   }
-  error_code: string | null
   error_message: string | null
   execution_health: KnowledgeArtifactExecutionHealth
   can_retry: boolean
@@ -54,7 +51,6 @@ export interface KnowledgeArtifact {
   user_id: number
   created_at: string
   updated_at: string
-  completed_at: string | null
 }
 
 export interface KnowledgeArtifactListResponse {

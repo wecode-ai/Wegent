@@ -16,7 +16,6 @@ from shared.models.db.types import big_integer_id_type
 
 KNOWLEDGE_ARTIFACT_ERROR_MESSAGE_MAX_LENGTH = 2_000
 KNOWLEDGE_ARTIFACT_UNSET_ID = 0
-KNOWLEDGE_ARTIFACT_UNSET_DATETIME = datetime(1970, 1, 1)
 
 
 class KnowledgeArtifactRecord(Base):
@@ -89,13 +88,6 @@ class KnowledgeArtifactRecord(Base):
         default=dict,
         comment="Generation configuration",
     )
-    error_code: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        default="",
-        server_default="",
-        comment="Failure code; empty means no error",
-    )
     error_message: Mapped[str] = mapped_column(
         String(KNOWLEDGE_ARTIFACT_ERROR_MESSAGE_MAX_LENGTH),
         nullable=False,
@@ -109,20 +101,6 @@ class KnowledgeArtifactRecord(Base):
         default=0,
         server_default="0",
         comment="Creator user ID; 0 means unset",
-    )
-    schema_version: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=1,
-        server_default="1",
-        comment="Content schema version",
-    )
-    version: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=1,
-        server_default="1",
-        comment="Record version",
     )
     attempt: Mapped[int] = mapped_column(
         Integer,
@@ -146,14 +124,6 @@ class KnowledgeArtifactRecord(Base):
         onupdate=func.now(),
         comment="Last update time",
     )
-    completed_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        default=KNOWLEDGE_ARTIFACT_UNSET_DATETIME,
-        server_default="1970-01-01 00:00:00",
-        comment="Completion time; Unix epoch means incomplete",
-    )
-
     __table_args__ = (
         Index(
             "idx_knowledge_artifacts_kb_created",

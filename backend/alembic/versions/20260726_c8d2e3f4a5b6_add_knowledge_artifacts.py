@@ -87,13 +87,6 @@ def upgrade() -> None:
             comment="Generation configuration",
         ),
         sa.Column(
-            "error_code",
-            sa.String(length=64),
-            nullable=False,
-            server_default="",
-            comment="Failure code; empty means no error",
-        ),
-        sa.Column(
             "error_message",
             sa.String(length=2000),
             nullable=False,
@@ -106,20 +99,6 @@ def upgrade() -> None:
             nullable=False,
             server_default="0",
             comment="Creator user ID; 0 means unset",
-        ),
-        sa.Column(
-            "schema_version",
-            sa.Integer(),
-            nullable=False,
-            server_default="1",
-            comment="Content schema version",
-        ),
-        sa.Column(
-            "version",
-            sa.Integer(),
-            nullable=False,
-            server_default="1",
-            comment="Record version",
         ),
         sa.Column(
             "attempt",
@@ -141,13 +120,6 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.func.now(),
             comment="Last update time",
-        ),
-        sa.Column(
-            "completed_at",
-            sa.DateTime(),
-            nullable=False,
-            server_default="1970-01-01 00:00:00",
-            comment="Completion time; Unix epoch means incomplete",
         ),
         sa.PrimaryKeyConstraint("artifact_id"),
         comment="Knowledge base generated artifacts",

@@ -17,8 +17,6 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 const artifact: KnowledgeArtifact = {
-  schema_version: 1,
-  version: 1,
   attempt: 1,
   artifact_id: 'artifact-1',
   knowledge_base_id: 12,
@@ -30,7 +28,6 @@ const artifact: KnowledgeArtifact = {
   content: '# 项目简报',
   source_document_ids: [101],
   generation_config: {},
-  error_code: null,
   error_message: null,
   execution_health: 'healthy',
   can_retry: false,
@@ -38,7 +35,6 @@ const artifact: KnowledgeArtifact = {
   user_id: 7,
   created_at: '2026-07-26T12:00:00+08:00',
   updated_at: '2026-07-26T12:01:00+08:00',
-  completed_at: '2026-07-26T12:01:00+08:00',
 }
 
 it('keeps opening and deletion as separate card actions', async () => {

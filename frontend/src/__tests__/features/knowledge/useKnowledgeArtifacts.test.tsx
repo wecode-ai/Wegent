@@ -22,8 +22,6 @@ function buildArtifact(
   status: KnowledgeArtifact['status']
 ): KnowledgeArtifact {
   return {
-    schema_version: 1,
-    version: 1,
     attempt: 1,
     artifact_id: `artifact-${knowledgeBaseId}`,
     knowledge_base_id: knowledgeBaseId,
@@ -35,7 +33,6 @@ function buildArtifact(
     content: status === 'succeeded' ? '# 结论' : null,
     source_document_ids: [101],
     generation_config: {},
-    error_code: null,
     error_message: null,
     execution_health: 'healthy',
     can_retry: status === 'failed',
@@ -43,7 +40,6 @@ function buildArtifact(
     user_id: 7,
     created_at: '2026-07-26T12:00:00+08:00',
     updated_at: '2026-07-26T12:00:00+08:00',
-    completed_at: status === 'succeeded' ? '2026-07-26T12:01:00+08:00' : null,
   }
 }
 
