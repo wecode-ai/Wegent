@@ -220,6 +220,28 @@ describe('REST adapters', () => {
     expect(formData.get('enabled')).toBe('false')
   })
 
+  test('ensures a built-in plugin through its stable key', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({ plugin: {} })
+
+    await createPluginApi(client).ensureBuiltinPluginInstalled('wegent-sites', {
+      deviceId: 'device-1',
+    })
+
+    expect(client.post).toHaveBeenCalledWith('/plugins/builtin/wegent-sites/ensure-installed', {
+      device_id: 'device-1',
+    })
+  })
+
+  test('ensures a built-in plugin without requiring a target device', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({ plugin: {} })
+
+    await createPluginApi(client).ensureBuiltinPluginInstalled('wegent-sites')
+
+    expect(client.post).toHaveBeenCalledWith('/plugins/builtin/wegent-sites/ensure-installed', {})
+  })
+
   test('starts project-scoped terminal and IDE sessions', async () => {
     const client = mockClient()
     vi.mocked(client.post).mockResolvedValue({ url: 'http://localhost/session' })

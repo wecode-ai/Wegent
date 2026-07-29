@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.device import DeviceCapabilitySyncResponse
+
 PluginInstallState = Literal[
     "not_installed",
     "installed",
@@ -17,7 +19,7 @@ PluginInstallState = Literal[
 
 
 class PluginSkillComponent(BaseModel):
-    """Skill metadata discovered inside a Claude Code plugin."""
+    """Skill metadata discovered inside a plugin."""
 
     name: str
     description: str = ""
@@ -39,7 +41,7 @@ class PluginMCPComponent(BaseModel):
 
 
 class InstalledPluginComponents(BaseModel):
-    """Claude Code plugin component inventory."""
+    """Cross-runtime plugin component inventory."""
 
     skills: List[PluginSkillComponent] = Field(default_factory=list)
     commands: List[PluginPathComponent] = Field(default_factory=list)
@@ -73,10 +75,10 @@ class PluginInterface(BaseModel):
 
 
 class InstalledPluginSource(BaseModel):
-    """Source identity for a user-installed Claude Code plugin."""
+    """Source identity for a user-installed plugin."""
 
     type: Literal["upload", "marketplace", "local"] = "upload"
-    providerKey: str = "claude-code"
+    providerKey: str = "codex-local"
     pluginKey: str
     catalogItemId: Optional[str] = None
     marketplace: Optional[str] = None
@@ -91,7 +93,7 @@ class InstalledPluginPackageRef(BaseModel):
 
 
 class InstalledPluginSpec(BaseModel):
-    """User-scoped Claude Code plugin installation state."""
+    """User-scoped plugin installation state."""
 
     source: InstalledPluginSource
     displayName: str
@@ -127,7 +129,7 @@ class InstalledPlugin(BaseModel):
 
 
 class InstalledPluginListResponse(BaseModel):
-    """Response for listing user-installed Claude Code plugins."""
+    """Response for listing user-installed plugins."""
 
     items: List[InstalledPlugin]
 
@@ -205,10 +207,17 @@ class PluginMarketplaceListResponse(BaseModel):
     items: List[PluginMarketplaceItem]
 
 
+class BuiltinPluginInstallRequest(BaseModel):
+    """Optional target device that must acknowledge the built-in plugin."""
+
+    device_id: Optional[str] = Field(default=None, min_length=1)
+
+
 class PluginMarketplaceInstallResponse(BaseModel):
     """Response for installing a marketplace plugin."""
 
     plugin: InstalledPlugin
+    sync: Optional[DeviceCapabilitySyncResponse] = None
 
 
 PluginMarketplacePublishResponse.model_rebuild()

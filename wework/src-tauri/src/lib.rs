@@ -4426,6 +4426,7 @@ pub fn run() {
             local_executor::local_executor_codex_home_migration_status,
             local_executor::local_executor_disconnect_backend,
             local_executor::local_executor_ensure_started,
+            local_executor::local_executor_initialize_bundled_plugin_marketplace,
             local_executor::local_executor_initialize_codex_home,
             local_executor::local_executor_import_external_content,
             local_executor::local_executor_migrate_native_codex_home,
