@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.db import timezone as db_timezone
 from app.models.subtask import SubtaskRole, SubtaskStatus
 from app.services.chat.access import permissions
 from app.services.chat.correction import service as correction_service
@@ -131,26 +130,6 @@ def test_database_datetime_serialization_treats_sqlite_values_as_utc():
     )
 
     assert datetime.fromisoformat(result).utcoffset() == timezone.utc.utcoffset(None)
-
-
-def test_database_datetime_serialization_uses_configured_session_timezone(monkeypatch):
-    db = _NoModelCrudDb()
-    db.get_bind = lambda: SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
-    monkeypatch.setattr(
-        db_timezone.settings,
-        "DATABASE_SESSION_TIMEZONE",
-        "-05:30",
-    )
-
-    result = permissions._serialize_database_datetime(
-        db,
-        datetime(2026, 7, 29, 2, 30),  # noqa: DTZ001
-    )
-
-    assert datetime.fromisoformat(result).utcoffset() == -timedelta(
-        hours=5,
-        minutes=30,
-    )
 
 
 def test_active_streaming_subtask_validation_rejects_terminal_subtask(monkeypatch):

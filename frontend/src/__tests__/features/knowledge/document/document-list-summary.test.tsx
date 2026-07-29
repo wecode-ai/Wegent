@@ -335,6 +335,7 @@ describe('DocumentList summary header', () => {
 
     expect(addSource).toHaveClass('w-full')
     expect(search).toHaveClass('w-full')
+    expect(search).toHaveAccessibleName()
     expect(screen.getByText('artifact.addMaterials')).toBeInTheDocument()
     expect(scopeSummary).toContainElement(selectCurrentPage)
     expect(selectCurrentPage.compareDocumentPosition(defaultScopeHint)).toBe(

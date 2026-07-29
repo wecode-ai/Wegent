@@ -121,6 +121,7 @@ export function DocumentSourceWorkspaceHeader({
           type="text"
           className="h-11 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
           placeholder={searchPlaceholder}
+          aria-label={searchPlaceholder}
           value={searchQuery}
           onChange={event => onSearchQueryChange(event.target.value)}
           data-testid="document-source-search-input"

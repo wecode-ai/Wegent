@@ -4,10 +4,11 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import { useWorkspaceTaskSidebar } from './useWorkspaceTaskSidebar'
 
 const TASK_SIDEBAR_COLLAPSED_KEY = 'task-sidebar-collapsed'
+const useHydrationSafeLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 interface UseKnowledgeTaskSidebarOptions {
   isMobile: boolean
@@ -20,7 +21,7 @@ export function useKnowledgeTaskSidebar({
 }: UseKnowledgeTaskSidebarOptions) {
   const [userCollapsed, setUserCollapsed] = useState(false)
 
-  useEffect(() => {
+  useHydrationSafeLayoutEffect(() => {
     setUserCollapsed(localStorage.getItem(TASK_SIDEBAR_COLLAPSED_KEY) === 'true')
   }, [])
 
