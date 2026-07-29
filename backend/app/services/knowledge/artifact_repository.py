@@ -11,7 +11,13 @@ from typing import NoReturn
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Query, Session
 
-from app.models.knowledge_artifact import KnowledgeArtifactRecord
+from app.models.knowledge_artifact import (
+    KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH,
+    KNOWLEDGE_ARTIFACT_ERROR_MESSAGE_MAX_LENGTH,
+    KNOWLEDGE_ARTIFACT_UNSET_DATETIME,
+    KNOWLEDGE_ARTIFACT_UNSET_ID,
+    KnowledgeArtifactRecord,
+)
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
     KnowledgeArtifactStatus,
@@ -38,20 +44,20 @@ class KnowledgeArtifactRepository:
             artifact_type=artifact.artifact_type.value,
             title=artifact.title,
             status=artifact.status.value,
-            task_id=artifact.task_id,
-            assistant_subtask_id=artifact.assistant_subtask_id,
-            content=artifact.content,
+            task_id=self._id_to_storage(artifact.task_id),
+            assistant_subtask_id=self._id_to_storage(artifact.assistant_subtask_id),
+            content=self._content_to_storage(artifact.content),
             source_document_ids=artifact.source_document_ids,
             generation_config=artifact.generation_config,
-            error_code=artifact.error_code,
-            error_message=artifact.error_message,
+            error_code=artifact.error_code or "",
+            error_message=self._error_message_to_storage(artifact.error_message),
             user_id=artifact.user_id,
             schema_version=artifact.schema_version,
             version=artifact.version,
             attempt=artifact.attempt,
             created_at=artifact.created_at,
             updated_at=artifact.updated_at,
-            completed_at=artifact.completed_at,
+            completed_at=self._datetime_to_storage(artifact.completed_at),
         )
         try:
             self.db.add(record)
@@ -147,12 +153,12 @@ class KnowledgeArtifactRepository:
                 return artifact, False
 
             record.status = KnowledgeArtifactStatus.QUEUED.value
-            record.task_id = None
-            record.assistant_subtask_id = None
-            record.content = None
-            record.error_code = None
-            record.error_message = None
-            record.completed_at = None
+            record.task_id = KNOWLEDGE_ARTIFACT_UNSET_ID
+            record.assistant_subtask_id = KNOWLEDGE_ARTIFACT_UNSET_ID
+            record.content = ""
+            record.error_code = ""
+            record.error_message = ""
+            record.completed_at = KNOWLEDGE_ARTIFACT_UNSET_DATETIME
             record.attempt += 1
             record.version += 1
             record.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -179,14 +185,22 @@ class KnowledgeArtifactRepository:
                 .update(
                     {
                         KnowledgeArtifactRecord.status: artifact.status.value,
-                        KnowledgeArtifactRecord.task_id: artifact.task_id,
-                        KnowledgeArtifactRecord.assistant_subtask_id: (
-                            artifact.assistant_subtask_id
+                        KnowledgeArtifactRecord.task_id: self._id_to_storage(
+                            artifact.task_id
                         ),
-                        KnowledgeArtifactRecord.content: artifact.content,
-                        KnowledgeArtifactRecord.error_code: artifact.error_code,
-                        KnowledgeArtifactRecord.error_message: artifact.error_message,
-                        KnowledgeArtifactRecord.completed_at: artifact.completed_at,
+                        KnowledgeArtifactRecord.assistant_subtask_id: (
+                            self._id_to_storage(artifact.assistant_subtask_id)
+                        ),
+                        KnowledgeArtifactRecord.content: self._content_to_storage(
+                            artifact.content
+                        ),
+                        KnowledgeArtifactRecord.error_code: artifact.error_code or "",
+                        KnowledgeArtifactRecord.error_message: (
+                            self._error_message_to_storage(artifact.error_message)
+                        ),
+                        KnowledgeArtifactRecord.completed_at: (
+                            self._datetime_to_storage(artifact.completed_at)
+                        ),
                         KnowledgeArtifactRecord.updated_at: artifact.updated_at,
                         KnowledgeArtifactRecord.version: (
                             KnowledgeArtifactRecord.version + 1
@@ -255,21 +269,56 @@ class KnowledgeArtifactRepository:
             artifact_type=record.artifact_type,
             title=record.title,
             status=record.status,
-            task_id=record.task_id,
-            assistant_subtask_id=record.assistant_subtask_id,
-            content=record.content,
+            task_id=KnowledgeArtifactRepository._id_from_storage(record.task_id),
+            assistant_subtask_id=KnowledgeArtifactRepository._id_from_storage(
+                record.assistant_subtask_id
+            ),
+            content=record.content or None,
             source_document_ids=list(record.source_document_ids or []),
             generation_config=dict(record.generation_config or {}),
-            error_code=record.error_code,
-            error_message=record.error_message,
+            error_code=record.error_code or None,
+            error_message=record.error_message or None,
             user_id=record.user_id,
             schema_version=record.schema_version,
             version=record.version,
             attempt=record.attempt,
             created_at=record.created_at,
             updated_at=record.updated_at,
-            completed_at=record.completed_at,
+            completed_at=KnowledgeArtifactRepository._datetime_from_storage(
+                record.completed_at
+            ),
         )
+
+    @staticmethod
+    def _id_to_storage(value: int | None) -> int:
+        return KNOWLEDGE_ARTIFACT_UNSET_ID if value is None else value
+
+    @staticmethod
+    def _id_from_storage(value: int) -> int | None:
+        return None if value == KNOWLEDGE_ARTIFACT_UNSET_ID else value
+
+    @staticmethod
+    def _datetime_to_storage(value: datetime | None) -> datetime:
+        return KNOWLEDGE_ARTIFACT_UNSET_DATETIME if value is None else value
+
+    @staticmethod
+    def _datetime_from_storage(value: datetime) -> datetime | None:
+        if value == KNOWLEDGE_ARTIFACT_UNSET_DATETIME:
+            return None
+        return value
+
+    @staticmethod
+    def _content_to_storage(value: str | None) -> str:
+        content = value or ""
+        if len(content) > KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH:
+            raise ArtifactStorageError(
+                "Artifact content exceeds the database length limit"
+            )
+        return content
+
+    @staticmethod
+    def _error_message_to_storage(value: str | None) -> str:
+        return (value or "")[:KNOWLEDGE_ARTIFACT_ERROR_MESSAGE_MAX_LENGTH]
 
     def _raise_storage_error(
         self,

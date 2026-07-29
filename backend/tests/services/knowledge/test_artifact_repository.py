@@ -10,13 +10,21 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.models.knowledge_artifact import KnowledgeArtifactRecord
+from app.models.knowledge_artifact import (
+    KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH,
+    KNOWLEDGE_ARTIFACT_UNSET_DATETIME,
+    KNOWLEDGE_ARTIFACT_UNSET_ID,
+    KnowledgeArtifactRecord,
+)
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
     KnowledgeArtifactStatus,
     KnowledgeArtifactType,
 )
-from app.services.knowledge.artifact_repository import KnowledgeArtifactRepository
+from app.services.knowledge.artifact_repository import (
+    ArtifactStorageError,
+    KnowledgeArtifactRepository,
+)
 
 
 @pytest.fixture
@@ -77,6 +85,47 @@ def test_repository_round_trip_list_limit_and_delete(db: Session):
         is True
     )
     assert repository.get(12, "artifact-1") is None
+
+
+def test_repository_maps_optional_values_to_non_null_storage(db: Session):
+    repository = KnowledgeArtifactRepository(db)
+    artifact = build_artifact()
+    artifact.task_id = None
+    artifact.assistant_subtask_id = None
+
+    persisted = repository.create(artifact)
+    record = db.get(KnowledgeArtifactRecord, artifact.artifact_id)
+
+    assert persisted.task_id is None
+    assert persisted.assistant_subtask_id is None
+    assert persisted.content is None
+    assert persisted.error_code is None
+    assert persisted.error_message is None
+    assert persisted.completed_at is None
+    assert record.task_id == KNOWLEDGE_ARTIFACT_UNSET_ID
+    assert record.assistant_subtask_id == KNOWLEDGE_ARTIFACT_UNSET_ID
+    assert record.content == ""
+    assert record.error_code == ""
+    assert record.error_message == ""
+    assert record.completed_at == KNOWLEDGE_ARTIFACT_UNSET_DATETIME
+
+
+def test_repository_rejects_content_over_storage_limit(db: Session):
+    repository = KnowledgeArtifactRepository(db)
+    artifact = build_artifact()
+    artifact.content = "x" * (KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH + 1)
+
+    with pytest.raises(
+        ArtifactStorageError,
+        match="Artifact content exceeds the database length limit",
+    ):
+        repository.create(artifact)
+
+
+def test_model_uses_minimal_production_indexes():
+    index_names = {index.name for index in KnowledgeArtifactRecord.__table__.indexes}
+
+    assert index_names == {"idx_knowledge_artifacts_kb_created"}
 
 
 def test_execution_update_preserves_concurrent_rename(db: Session):

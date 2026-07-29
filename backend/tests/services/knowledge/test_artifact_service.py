@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.knowledge_artifact import KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH
 from app.models.subtask import SubtaskStatus
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
@@ -330,6 +331,19 @@ def test_parse_mind_map_accepts_explanatory_text_around_json():
 
     assert '"root_id":"root"' in result
     assert '"parent_id":"root"' in result
+
+
+def test_parse_briefing_rejects_content_over_storage_limit():
+    content = "x" * (KNOWLEDGE_ARTIFACT_CONTENT_MAX_LENGTH + 1)
+
+    with pytest.raises(
+        ArtifactValidationError,
+        match="exceeds the supported content length",
+    ):
+        ArtifactService._parse_content(
+            KnowledgeArtifactType.BRIEFING,
+            content,
+        )
 
 
 def test_resolve_document_ids_deduplicates_in_request_order():
