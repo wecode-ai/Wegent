@@ -18,6 +18,8 @@ export interface SlashCommand {
   searchAliases?: string[]
   requiresEmptyComposer?: boolean
   Icon: ComponentType<{ className?: string }>
+  iconUrl?: string | null
+  trailingIcon?: ComponentType<{ className?: string }>
   enabled?: boolean
   testId: string
   skill?: LocalDeviceSkill

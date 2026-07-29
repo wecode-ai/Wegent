@@ -1596,6 +1596,7 @@
     "quick_phrase_delete_confirm": "删除这条快捷短语？",
     "no_slash_commands": "暂无匹配命令",
     "slash_command_group_actions": "操作",
+    "slash_command_group_plugins": "插件",
     "slash_command_group_skills": "技能",
     "slash_command_plan": "计划模式",
     "slash_command_plan_description": "必要时先提问确认，再继续执行",

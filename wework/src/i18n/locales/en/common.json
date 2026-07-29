@@ -1594,6 +1594,7 @@
     "quick_phrase_delete_confirm": "Delete this quick phrase?",
     "no_slash_commands": "No matching commands",
     "slash_command_group_actions": "Actions",
+    "slash_command_group_plugins": "Plugins",
     "slash_command_group_skills": "Skills",
     "slash_command_plan": "Plan mode",
     "slash_command_plan_description": "Ask clarifying questions before continuing when needed",

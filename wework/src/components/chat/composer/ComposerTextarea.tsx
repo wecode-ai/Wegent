@@ -1,8 +1,9 @@
-import { ClipboardList, Cpu, Package, Plug, Target } from 'lucide-react'
+import { ClipboardList, Cpu, ExternalLink, Package, Plug, Store, Target } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
+import { navigateTo } from '@/lib/navigation'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
@@ -253,25 +254,40 @@ export function ComposerTextarea({
     }))
   }, [skillCandidates, t])
 
-  const appSlashCommands = useMemo<SlashCommand[]>(() => {
-    const appGroup = t('workbench.slash_command_group_apps', 'Apps')
-    return appCandidates.map(candidate => ({
+  const pluginSlashCommands = useMemo<SlashCommand[]>(() => {
+    const pluginGroup = t('workbench.slash_command_group_plugins', '插件')
+    const commands = appCandidates.map(candidate => ({
       id: candidate.key,
       title: candidate.title,
       description: candidate.description,
-      metaLabel: candidate.metaLabel,
-      group: appGroup,
+      metaLabel: t('workbench.composer_plugin_add', '添加'),
+      group: pluginGroup,
       searchAliases: candidate.searchAliases,
       Icon: Plug,
+      iconUrl: candidate.app.logoUrl,
       enabled: candidate.enabled,
       testId: slashAppTestId(candidate.app.id),
       app: candidate.app,
-    }))
+    })) satisfies SlashCommand[]
+
+    commands.push({
+      id: 'plugin-marketplace',
+      title: t('workbench.composer_open_plugin_marketplace', '打开插件市场'),
+      description: t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件'),
+      group: pluginGroup,
+      searchAliases: ['plugin', 'plugins', 'marketplace', '插件', '插件市场'],
+      Icon: Store,
+      trailingIcon: ExternalLink,
+      testId: 'plugin-marketplace',
+      onSelect: () => navigateTo('/plugins'),
+    })
+
+    return commands
   }, [appCandidates, t])
 
   const slashCommands = useMemo(
-    () => [...actionSlashCommands, ...skillSlashCommands, ...appSlashCommands],
-    [actionSlashCommands, appSlashCommands, skillSlashCommands]
+    () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],
+    [actionSlashCommands, pluginSlashCommands, skillSlashCommands]
   )
 
   const filteredSlashCommands = useMemo(() => {
@@ -356,7 +372,7 @@ export function ComposerTextarea({
   const hasMentionCandidates = mentionCandidates.length > 0
   const hasMentionLoadError = !hasMentionCandidates && (loadError || appsLoadError)
   const isMentionLoading = !hasMentionCandidates && (loading || appsLoading)
-  const hasMentionSlashCommands = skillSlashCommands.length + appSlashCommands.length > 0
+  const hasMentionSlashCommands = skillSlashCommands.length + appCandidates.length > 0
   const hasSlashMentionLoadError =
     !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loadError) || appsLoadError)
   const isSlashMentionLoading =

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createRef, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
-import type { LocalDeviceSkill } from '@/types/api'
+import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type {
   ComposerCloudMentionCandidate,
@@ -27,6 +27,25 @@ const GMAIL_SKILL: LocalDeviceSkill = {
   source: 'codex',
 }
 const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
+
+const GITHUB_PLUGIN: LocalDeviceApp = {
+  id: 'github',
+  name: 'GitHub',
+  description: 'View repositories, issues, pull requests, and Actions',
+  logoUrl: 'https://example.com/github.png',
+  isAccessible: true,
+  isEnabled: true,
+  pluginDisplayNames: ['Wegent Cloud'],
+  source: 'wegent-connector',
+  skillPath: '/tmp/github/SKILL.md',
+}
+
+const TEST_MODEL: UnifiedModel = {
+  name: 'gpt-5.6-sol',
+  type: 'user',
+  displayName: 'GPT-5.6 Sol',
+  config: { ui: { family: 'gpt' } },
+}
 
 const WEBSITE_PROJECT: CloudProject = {
   id: '7',
@@ -184,6 +203,58 @@ describe('ComposerTextarea', () => {
 
     fireEvent.mouseDown(screen.getByTestId('local-skill-chip-gmail'), { button: 0 })
     expect(onOpenSkillFile).toHaveBeenCalledWith('/tmp/gmail/SKILL.md')
+  })
+
+  test('places callable plugins between model and skill slash commands', async () => {
+    const textareaRef = createRef<HTMLElement>()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onListLocalApps={async () => [GITHUB_PLUGIN]}
+          onListLocalSkills={async () => [GMAIL_SKILL]}
+          models={[TEST_MODEL]}
+          selectedModel={TEST_MODEL}
+          onSelectModel={vi.fn()}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '/'
+      editor.focus()
+    })
+
+    const modelOption = screen.getByTestId('slash-command-option-model')
+    const pluginOption = await screen.findByTestId('slash-command-option-app-github')
+    const marketplaceOption = screen.getByTestId('slash-command-option-plugin-marketplace')
+    const skillOption = await screen.findByTestId('slash-command-option-skill-gmail')
+
+    expect(modelOption.compareDocumentPosition(pluginOption)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(pluginOption.compareDocumentPosition(marketplaceOption)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(marketplaceOption.compareDocumentPosition(skillOption)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(pluginOption.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://example.com/github.png'
+    )
+
+    fireEvent.click(pluginOption)
+    await waitFor(() => expect(editor.value).toBe('[$GitHub](/tmp/github/SKILL.md) '))
   })
 
   test('inserts an authorized cloud reference from the @ menu', async () => {
