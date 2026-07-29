@@ -113,7 +113,7 @@ impl RuntimeWorkRpcHandler {
             .worktrees
             .update_settings(patch)
             .map_err(|error| AppIpcError::new("worktree_settings_failed", error))?;
-        let _ = self.worktrees.prune(&self.store.list_task_summaries(true));
+        self.schedule_worktree_prune();
         let mut value = serde_json::to_value(settings)
             .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
         value["deviceId"] = Value::String(self.device_id.clone());
@@ -158,23 +158,70 @@ impl RuntimeWorkRpcHandler {
         let cleanup_generation = self.worktree_cleanup_generation.clone();
         let worktrees = self.worktrees.clone();
         let store = self.store.clone();
-        tokio::spawn(async move {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        runtime.spawn(async move {
+            sleep(WORKTREE_AUTO_CLEANUP_IDLE_DELAY).await;
+            let mut empty_rounds = 0;
             loop {
-                sleep(WORKTREE_AUTO_CLEANUP_IDLE_DELAY).await;
                 if cleanup_generation.load(Ordering::SeqCst) != generation {
                     return;
                 }
 
-                let tasks = store.list_task_summaries(true);
-                if tasks.iter().any(|task| task.running) {
-                    continue;
-                }
-
-                let result = tokio::task::spawn_blocking(move || worktrees.prune(&tasks)).await;
+                let worktrees = worktrees.clone();
+                let store = store.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let tasks = store.list_task_summaries(true);
+                    let has_running_tasks = tasks.iter().any(|task| task.running);
+                    worktrees
+                        .prune_auto_batch(&tasks)
+                        .map(|batch| (batch, has_running_tasks))
+                })
+                .await;
                 match result {
-                    Ok(Err(_)) | Err(_) | Ok(Ok(_)) => {}
+                    Ok(Ok((batch, _))) if !batch.removed.is_empty() => {
+                        for error in batch.errors {
+                            log_executor_event(
+                                "automatic worktree cleanup skipped a worktree",
+                                &[("error", error)],
+                            );
+                        }
+                        empty_rounds = 0;
+                        sleep(WORKTREE_AUTO_CLEANUP_BATCH_DELAY).await;
+                    }
+                    Ok(Ok((batch, _))) if !batch.errors.is_empty() => {
+                        for error in batch.errors {
+                            log_executor_event(
+                                "automatic worktree cleanup skipped a worktree",
+                                &[("error", error)],
+                            );
+                        }
+                        sleep(WORKTREE_AUTO_CLEANUP_ERROR_DELAY).await;
+                    }
+                    Ok(Ok((_, has_running_tasks)))
+                        if has_running_tasks
+                            && empty_rounds + 1 < WORKTREE_AUTO_CLEANUP_MAX_EMPTY_ROUNDS =>
+                    {
+                        empty_rounds += 1;
+                        sleep(WORKTREE_AUTO_CLEANUP_BATCH_DELAY).await;
+                    }
+                    Ok(Ok(_)) => return,
+                    Ok(Err(error)) => {
+                        log_executor_event(
+                            "automatic worktree cleanup failed",
+                            &[("error", error)],
+                        );
+                        sleep(WORKTREE_AUTO_CLEANUP_ERROR_DELAY).await;
+                    }
+                    Err(error) => {
+                        log_executor_event(
+                            "automatic worktree cleanup worker failed",
+                            &[("error", error.to_string())],
+                        );
+                        return;
+                    }
                 }
-                return;
             }
         });
     }
