@@ -30,6 +30,10 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     let fake_codex = write_fake_codex(&log_path);
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let request = ExecutionRequest {
+        task_id: "task-525".to_owned(),
+        auth_token: Some("task-jwt".to_owned()),
+        skill_identity_token: Some("skill-jwt".to_owned()),
+        user_name: Some("alice".to_owned()),
         prompt: json!("implement feature"),
         bot: json!([{"shell_type": "ClaudeCode"}]),
         model_config: json!({
@@ -66,6 +70,22 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     assert_eq!(messages[2]["params"]["model"], "gpt-5");
     assert_eq!(messages[2]["params"]["cwd"], "/tmp/wegent/project");
     assert_eq!(messages[2]["params"]["permissions"], ":danger-full-access");
+    assert_eq!(
+        messages[2]["params"]["config"]["shell_environment_policy.set.WEGENT_TASK_ID"],
+        "task-525"
+    );
+    assert_eq!(
+        messages[2]["params"]["config"]["shell_environment_policy.set.AUTH_TOKEN"],
+        "task-jwt"
+    );
+    assert_eq!(
+        messages[2]["params"]["config"]["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
+        "skill-jwt"
+    );
+    assert_eq!(
+        messages[2]["params"]["config"]["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
+        "alice"
+    );
     assert_eq!(messages[3]["method"], "turn/start");
     assert_eq!(messages[3]["params"]["threadId"], "thread-1");
     assert_eq!(messages[3]["params"]["model"], "gpt-5");

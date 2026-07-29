@@ -24,7 +24,7 @@ use tokio::{
 };
 
 use crate::{
-    agents::runtime_capabilities,
+    agents::{runtime_capabilities, task_identity::task_identity_env},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
@@ -2006,6 +2006,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .push(shell_path_config_override());
     launch_config
         .config_overrides
+        .extend(task_identity_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
@@ -2125,6 +2128,19 @@ fn shell_path_config_override() -> String {
         env::var("PATH").ok().as_deref().unwrap_or_default(),
     );
     format!("shell_environment_policy.set.PATH={}", toml_value(&path))
+}
+
+fn task_identity_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    task_identity_env(request)
+        .into_iter()
+        .map(|(key, value)| {
+            format!(
+                "shell_environment_policy.set.{}={}",
+                toml_key_segment(&key),
+                toml_value(&value)
+            )
+        })
+        .collect()
 }
 
 fn codex_streaming_patch_config_overrides() -> Vec<String> {
