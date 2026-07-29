@@ -2249,7 +2249,7 @@ export function PluginsWorkspace({
                       setQuery(event.target.value)
                       setSystemSkillPage(1)
                     }}
-                    placeholder={t('workbench.plugins_marketplace_search', '搜索插件、品牌或能力')}
+                    placeholder={t('workbench.plugins_marketplace_search', '搜索插件')}
                     data-testid="plugins-search-input"
                     className="h-9 w-full rounded-lg border border-border bg-background pl-3 pr-9 text-sm leading-5 text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
                   />

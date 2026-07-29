@@ -256,7 +256,7 @@ export function ComposerTextarea({
 
   const pluginSlashCommands = useMemo<SlashCommand[]>(() => {
     const pluginGroup = t('workbench.slash_command_group_plugins', '插件')
-    const commands = appCandidates.map(candidate => ({
+    const commands: SlashCommand[] = appCandidates.map(candidate => ({
       id: candidate.key,
       title: candidate.title,
       description: candidate.description,
@@ -268,7 +268,7 @@ export function ComposerTextarea({
       enabled: candidate.enabled,
       testId: slashAppTestId(candidate.app.id),
       app: candidate.app,
-    })) satisfies SlashCommand[]
+    }))
 
     commands.push({
       id: 'plugin-marketplace',
