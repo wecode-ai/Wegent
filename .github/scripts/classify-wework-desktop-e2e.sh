@@ -99,9 +99,14 @@ classify_wework_path() {
       return
       ;;
 
-    # Conversation switching, restoration, navigation, and pane isolation.
-    wework/src/features/workbench/runtimeConversationCache* | \
-      wework/src/features/workbench/runtimePaneMessages* | \
+    # Conversation cache changes also affect background guidance in the core
+    # task flow, while the remaining files are covered by conversation state.
+    wework/src/features/workbench/runtimeConversationCache*)
+      select_target "core:core-task-flow"
+      select_target "core:conversation-state"
+      return
+      ;;
+    wework/src/features/workbench/runtimePaneMessages* | \
       wework/src/components/layout/useWorkbenchPaneSession* | \
       wework/src/components/chat/MessageTurnNavigation* | \
       wework/src/components/chat/ScrollableMessageArea*)

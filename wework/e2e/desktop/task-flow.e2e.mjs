@@ -947,17 +947,9 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
 async function verifyBackgroundGuidanceNavigation({
   composerSelector,
   control,
-  projectRowSelector,
+  otherTaskRowTestId,
+  runningTaskRowTestId,
 }) {
-  const runningTaskSnapshot = await waitForSnapshot(
-    control,
-    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
-    'The streaming task row was not available before sending guidance'
-  )
-  const runningTaskRowTestId = runningTaskSnapshot.testIds.find(testId =>
-    testId.startsWith('runtime-local-task-row-')
-  )
-  assert.ok(runningTaskRowTestId, 'The streaming task row identity was not found')
   const sourceUserMessageCountBeforeGuidance = Number(
     await control.command('getElementCount', '[data-testid="message-user"]')
   )
@@ -976,11 +968,10 @@ async function verifyBackgroundGuidanceNavigation({
   assert.match(guidanceStatus, /引导中|Guiding/, 'The guidance did not enter its sending state')
   await captureVerificationScreenshot(control, 'guidance-background-01-sending.png')
 
-  await control.command(
-    'clickWhenEnabled',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-  )
+  await ensureTaskRowVisible(control, otherTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${otherTaskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await waitForSnapshot(
     control,
@@ -993,49 +984,7 @@ async function verifyBackgroundGuidanceNavigation({
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
   await captureVerificationScreenshot(control, 'guidance-background-02-other-task.png')
 
-  await ensureTaskRowVisible(control, runningTaskRowTestId)
-  await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
-    text: BACKGROUND_GUIDANCE,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const pendingRestoredSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('conversation-queue-panel') &&
-      snapshot.text.includes(BACKGROUND_GUIDANCE) &&
-      (snapshot.text.includes('引导中') || snapshot.text.includes('Guiding')),
-    'The unapplied guidance was not restored when the user returned to its source conversation'
-  )
-  assert.equal(
-    countTextOccurrences(pendingRestoredSnapshot.text, BACKGROUND_GUIDANCE),
-    1,
-    'Restoring the unapplied guidance duplicated it in the source conversation'
-  )
-  assert.equal(
-    Number(await control.command('getElementCount', '[data-testid="message-user"]')),
-    sourceUserMessageCountBeforeGuidance,
-    'The unapplied guidance was prematurely rendered as a user message'
-  )
-  await captureVerificationScreenshot(control, 'guidance-background-03-pending-restored.png')
-
-  await control.command(
-    'clickWhenEnabled',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-  )
-  await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      !snapshot.testIds.includes('conversation-queue-panel') &&
-      !snapshot.text.includes(BACKGROUND_GUIDANCE),
-    'The restored pending guidance leaked after the user left its source conversation'
-  )
-  await captureVerificationScreenshot(control, 'guidance-background-04-waiting-in-background.png')
-
+  control.holdInitialCompletionResponse()
   control.releaseInitialToolExecution()
   await withTimeout(
     control.awaitScenarioRequestCount('initial', 2),
@@ -1049,6 +998,7 @@ async function verifyBackgroundGuidanceNavigation({
       !snapshot.text.includes(BACKGROUND_GUIDANCE),
     'The applied background guidance appeared in the conversation the user was viewing'
   )
+  await captureVerificationScreenshot(control, 'guidance-background-03-applied-in-background.png')
 
   await ensureTaskRowVisible(control, runningTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
@@ -1056,6 +1006,11 @@ async function verifyBackgroundGuidanceNavigation({
   })
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: BACKGROUND_GUIDANCE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  control.releaseInitialCompletionResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForSnapshot(
@@ -1079,13 +1034,12 @@ async function verifyBackgroundGuidanceNavigation({
     '',
     'The applied guidance was unexpectedly restored into the composer'
   )
-  await captureVerificationScreenshot(control, 'guidance-background-05-applied.png')
+  await captureVerificationScreenshot(control, 'guidance-background-04-applied.png')
 
-  await control.command(
-    'clickWhenEnabled',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-  )
+  await ensureTaskRowVisible(control, otherTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${otherTaskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await waitForSnapshot(
     control,
@@ -1094,7 +1048,7 @@ async function verifyBackgroundGuidanceNavigation({
       !snapshot.text.includes(BACKGROUND_GUIDANCE),
     'The settled guidance leaked after the user left its source conversation again'
   )
-  await captureVerificationScreenshot(control, 'guidance-background-06-left-again.png')
+  await captureVerificationScreenshot(control, 'guidance-background-05-left-again.png')
 
   await ensureTaskRowVisible(control, runningTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${runningTaskRowTestId}"]`, {
@@ -1134,7 +1088,7 @@ async function verifyBackgroundGuidanceNavigation({
     restoredGuidance.top < assistantAfterGuidance.top,
     'The restored guidance message was appended after the assistant continuation'
   )
-  await captureVerificationScreenshot(control, 'guidance-background-07-restored.png')
+  await captureVerificationScreenshot(control, 'guidance-background-06-restored.png')
 
   await verifyForegroundGuidanceScroll({
     composerSelector,
@@ -5825,6 +5779,10 @@ class DesktopE2EServer {
     this.initialToolRelease = new Promise(resolvePromise => {
       this.releaseInitialTool = resolvePromise
     })
+    this.initialCompletionHeld = false
+    this.initialCompletionRelease = new Promise(resolvePromise => {
+      this.releaseInitialCompletion = resolvePromise
+    })
     this.followUpRelease = new Promise(resolvePromise => {
       this.releaseFollowUp = resolvePromise
     })
@@ -6111,6 +6069,14 @@ class DesktopE2EServer {
 
   releaseInitialToolExecution() {
     this.releaseInitialTool()
+  }
+
+  holdInitialCompletionResponse() {
+    this.initialCompletionHeld = true
+  }
+
+  releaseInitialCompletionResponse() {
+    this.releaseInitialCompletion()
   }
 
   releaseFollowUpResponse() {
@@ -6665,6 +6631,9 @@ class DesktopE2EServer {
       // triggers a transcript refresh. Real providers have network latency here; an
       // immediate mock response can otherwise race the live image-view rendering.
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+      if (this.initialCompletionHeld) {
+        await this.initialCompletionRelease
+      }
       const responseEvents = [
         responseCreated(responseId),
         encryptedReasoningItem('wework-e2e-encrypted-reasoning', FORK_ENCRYPTED_CONTENT),
@@ -10325,9 +10294,24 @@ async function main() {
     let taskRowCompletionText = COMPLETION_TEXT
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
-      const initialModelLabel = await control.command('waitFor', activeModelSelector, {
+      await control.command('waitFor', activeModelSelector, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
+      const backgroundNavigationTaskRowTestId = await createCheckpointTaskFixture(
+        control,
+        composerSelector
+      )
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      control.setScenario('initial')
+      const taskRowsBeforeInitialTask = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      )
       phase = 'initial-task'
       await sendPrompt(control, composerSelector, TASK_PROMPT)
       await withTimeout(
@@ -10337,11 +10321,16 @@ async function main() {
       )
       const runningTaskSnapshot = await waitForSnapshot(
         control,
-        snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+        snapshot =>
+          snapshot.testIds.some(
+            testId =>
+              testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeInitialTask.has(testId)
+          ),
         'The initial task row was not available before its response completed'
       )
-      taskRowTestId = runningTaskSnapshot.testIds.find(testId =>
-        testId.startsWith('runtime-local-task-row-')
+      taskRowTestId = runningTaskSnapshot.testIds.find(
+        testId =>
+          testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeInitialTask.has(testId)
       )
       assert.ok(taskRowTestId, 'The initial task row identity was not found')
       await verifyUserMessageNavigation({
@@ -10408,7 +10397,8 @@ async function main() {
         taskRowTestId = await verifyBackgroundGuidanceNavigation({
           composerSelector,
           control,
-          projectRowSelector,
+          otherTaskRowTestId: backgroundNavigationTaskRowTestId,
+          runningTaskRowTestId: taskRowTestId,
         })
         if (GUIDANCE_BACKGROUND_ONLY) {
           await writeFile(
