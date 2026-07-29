@@ -715,6 +715,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'toggleSidebar': {
+      const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
+      window.dispatchEvent(event)
+      if (!event.defaultPrevented) {
+        throw new Error('No desktop sidebar handled the toggle request')
+      }
+      return ''
+    }
     case 'performanceSnapshot': {
       const processMemory = navigator.platform.toLowerCase().includes('mac')
         ? await invoke('get_wework_process_snapshot')

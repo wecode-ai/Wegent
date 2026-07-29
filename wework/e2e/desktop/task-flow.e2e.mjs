@@ -10518,10 +10518,7 @@ async function main() {
       )
       await control.command('finishAnimations', 'body')
 
-      await control.command('click', '[data-testid="collapse-sidebar-button"]')
-      await control.command('waitFor', '[data-testid="expand-sidebar-button"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
+      await control.command('toggleSidebar', '')
       await control.command('finishAnimations', 'body')
       const collapsedSidebarMetrics = await waitForElementWidth(
         control,
@@ -10551,10 +10548,7 @@ async function main() {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 350))
       await captureVerificationScreenshot(control, 'workspace-panel-03-expanded-sidebar-hidden.png')
 
-      await control.command('click', '[data-testid="expand-sidebar-button"]')
-      await control.command('waitFor', '[data-testid="collapse-sidebar-button"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
+      await control.command('toggleSidebar', '')
       await control.command('finishAnimations', 'body')
       await waitForElementWidth(
         control,
