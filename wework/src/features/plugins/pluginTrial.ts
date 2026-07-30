@@ -60,10 +60,13 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
 }
 
 function registerPluginMentionIcon(plugin: InstalledPlugin, reference: string): void {
+  const pluginKey =
+    plugin.spec.source.pluginKey ||
+    (typeof plugin.metadata.name === 'string' ? plugin.metadata.name : null)
   registerComposerMentionIcon(
     reference,
     resolvePluginLogoUrl({
-      pluginKey: plugin.spec.source.pluginKey || plugin.metadata.name,
+      pluginKey,
       logo: plugin.spec.interface?.logo,
       composerIcon: plugin.spec.interface?.composerIcon,
     })
