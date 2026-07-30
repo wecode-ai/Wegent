@@ -138,6 +138,7 @@ config = {
             "binaries/codex/x86_64-pc-windows-msvc/**/*",
             "binaries/codex/legal/**/*",
             "bundled-hooks/**/*",
+            "bundled-plugins",
         ],
     },
     "plugins": {
