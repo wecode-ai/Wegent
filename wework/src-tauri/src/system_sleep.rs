@@ -159,38 +159,53 @@ fn is_runtime_state_event(event: &str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-type SleepInhibitorHandle = ();
+struct SleepInhibitor;
 
 #[cfg(not(target_os = "windows"))]
-type SleepInhibitorHandle = Child;
-
 struct SleepInhibitor {
-    #[allow(dead_code)]
-    handle: SleepInhibitorHandle,
+    child: Child,
 }
 
 impl SleepInhibitor {
     fn acquire() -> Result<Self, String> {
-        let handle = sleep_inhibitor_handle()?;
-        Ok(Self { handle })
+        acquire_sleep_inhibitor()
     }
 }
 
+#[cfg(target_os = "windows")]
+fn acquire_sleep_inhibitor() -> Result<SleepInhibitor, String> {
+    // Call SetThreadExecutionState directly so no console window is created.
+    // ES_SYSTEM_REQUIRED (0x00000001) resets the system idle timer and keeps
+    // the system awake while the thread is active; ES_CONTINUOUS (0x80000000)
+    // keeps the state in effect until reset. Reset happens in Drop by calling
+    // again with ES_CONTINUOUS.
+    unsafe {
+        let result = windows_sys::Win32::System::Power::SetThreadExecutionState(
+            windows_sys::Win32::System::Power::ES_SYSTEM_REQUIRED
+                | windows_sys::Win32::System::Power::ES_CONTINUOUS,
+        );
+        if result == 0 {
+            return Err("SetThreadExecutionState returned zero".to_owned());
+        }
+    }
+    Ok(SleepInhibitor)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn acquire_sleep_inhibitor() -> Result<SleepInhibitor, String> {
+    let child = spawn_inhibitor_command(sleep_inhibitor_command()?)?;
+    Ok(SleepInhibitor { child })
+}
+
 #[cfg(target_os = "macos")]
-fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
+fn sleep_inhibitor_command() -> Result<Command, String> {
     let mut command = Command::new("/usr/bin/caffeinate");
     command.arg("-i");
-    let child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("failed to start sleep inhibitor: {error}"))?;
-    Ok(child)
+    Ok(command)
 }
 
 #[cfg(target_os = "linux")]
-fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
+fn sleep_inhibitor_command() -> Result<Command, String> {
     let mut command = Command::new("systemd-inhibit");
     command.args([
         "--what=sleep",
@@ -200,31 +215,22 @@ fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
         "sleep",
         "infinity",
     ]);
-    let child = command
+    Ok(command)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn sleep_inhibitor_command() -> Result<Command, String> {
+    Err("system sleep inhibition is not supported on this platform".to_owned())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn spawn_inhibitor_command(mut command: Command) -> Result<Child, String> {
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|error| format!("failed to start sleep inhibitor: {error}"))?;
-    Ok(child)
-}
-
-#[cfg(target_os = "windows")]
-fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
-    // Call SetThreadExecutionState directly so no console window is created.
-    // ES_AWAYMODE_REQUIRED (0x00000040) keeps the system running while the
-    // thread is active; ES_CONTINUOUS (0x80000000) keeps the state in effect
-    // until reset. Reset happens in Drop by calling again with ES_CONTINUOUS.
-    unsafe {
-        let result = windows_sys::Win32::System::Power::SetThreadExecutionState(
-            windows_sys::Win32::System::Power::ES_AWAYMODE_REQUIRED
-                | windows_sys::Win32::System::Power::ES_CONTINUOUS,
-        );
-        if result == 0 {
-            return Err("SetThreadExecutionState returned zero".to_owned());
-        }
-    }
-    Ok(())
+        .map_err(|error| format!("failed to start sleep inhibitor: {error}"))
 }
 
 #[cfg(target_os = "windows")]
@@ -241,16 +247,11 @@ impl Drop for SleepInhibitor {
 #[cfg(not(target_os = "windows"))]
 impl Drop for SleepInhibitor {
     fn drop(&mut self) {
-        if let Err(error) = self.handle.kill() {
+        if let Err(error) = self.child.kill() {
             log::warn!("Failed to stop system sleep inhibitor: {error}");
         }
-        let _ = self.handle.wait();
+        let _ = self.child.wait();
     }
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
-    Err("system sleep inhibition is not supported on this platform".to_owned())
 }
 
 #[cfg(test)]
@@ -285,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn late_terminal_event_does_not_settle_an_unrelated_task() {
+    fn late_terminal_event_does_not_settle_an_unrelated_running_task() {
         let mut tasks = RunningTaskState::default();
         tasks.observe(["current-task".to_owned()]);
 
