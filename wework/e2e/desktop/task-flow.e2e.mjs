@@ -1003,6 +1003,25 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const activeGuidanceUserMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  const activeGuidanceAssistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const activeGuidance = activeGuidanceUserMessages.at(-1)
+  const activeAssistantContinuation = activeGuidanceAssistantMessages.at(-1)
+  assert.ok(activeGuidance, 'The active background guidance message was not rendered')
+  assert.ok(
+    activeAssistantContinuation,
+    'The active assistant continuation after background guidance was not rendered'
+  )
+  assert.ok(
+    activeGuidance.top < activeAssistantContinuation.top,
+    'The active background guidance message was appended after the running assistant'
+  )
   control.releaseInitialCompletionResponse()
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: COMPLETION_TEXT,

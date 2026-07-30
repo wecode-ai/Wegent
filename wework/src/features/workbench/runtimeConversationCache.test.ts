@@ -152,6 +152,7 @@ describe('runtimeConversationCache', () => {
         role: 'assistant',
         content: 'working',
         status: 'streaming',
+        subtaskId: 'subtask-1',
         createdAt: '2026-07-27T00:00:00.000Z',
       },
     ])
@@ -175,13 +176,13 @@ describe('runtimeConversationCache', () => {
 
     expect(settled?.id).toBe('client-guidance-1')
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
-    expect(getRuntimeConversationMessages(address)).toEqual([
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
       {
-        id: 'assistant-1',
+        id: 'assistant-1-before-guidance-client-guidance-1',
         role: 'assistant',
         content: 'working',
-        status: 'streaming',
-        createdAt: '2026-07-27T00:00:00.000Z',
+        status: 'done',
+        runtimeGuidanceSplitBefore: true,
       },
       {
         id: 'client-guidance-1',
@@ -191,6 +192,102 @@ describe('runtimeConversationCache', () => {
         createdAt: '2026-07-27T00:00:02.000Z',
         runtimeGuidance: true,
       },
+      {
+        id: 'assistant-1-after-guidance-client-guidance-1',
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        subtaskId: 'subtask-1',
+        runtimeGuidanceContinuation: true,
+      },
+    ])
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'subtask-1',
+      content: 'working after guidance',
+    })
+
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      'working',
+      'follow the updated direction',
+      ' after guidance',
+    ])
+  })
+
+  test('keeps guidance split boundaries warm with their streaming conversation', () => {
+    cacheRuntimeConversationMessages(address, [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'working',
+        status: 'streaming',
+        subtaskId: 'subtask-1',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+    ])
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'client-guidance-1',
+        content: 'follow the updated direction',
+        status: 'sending',
+        deliveryMode: 'guidance',
+        createdAt: '2026-07-27T00:00:01.000Z',
+      },
+    ])
+    settleRuntimeConversationGuidance(address, {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      guidanceId: 'runtime-guidance-1',
+      message: 'follow the updated direction',
+      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+    })
+
+    for (let index = 0; index < 50; index += 1) {
+      const otherAddress = { ...address, taskId: `other-task-${index}` }
+      cacheRuntimeConversationMessages(otherAddress, [
+        {
+          id: `other-assistant-${index}`,
+          role: 'assistant',
+          content: 'other output',
+          status: 'streaming',
+          subtaskId: `other-subtask-${index}`,
+          createdAt: '2026-07-27T00:00:00.000Z',
+        },
+      ])
+      cacheRuntimeConversationQueuedMessages(otherAddress, [
+        {
+          id: `other-guidance-${index}`,
+          content: 'other guidance',
+          status: 'sending',
+          deliveryMode: 'guidance',
+          createdAt: '2026-07-27T00:00:01.000Z',
+        },
+      ])
+      settleRuntimeConversationGuidance(otherAddress, {
+        taskId: otherAddress.taskId,
+        deviceId: otherAddress.deviceId,
+        guidanceId: `other-guidance-${index}`,
+        message: 'other guidance',
+        appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'subtask-1',
+        content: ` update ${index}`,
+      })
+    }
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'subtask-1',
+      content: 'working after guidance',
+    })
+
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      'working',
+      'follow the updated direction',
+      ' after guidance',
     ])
   })
 
