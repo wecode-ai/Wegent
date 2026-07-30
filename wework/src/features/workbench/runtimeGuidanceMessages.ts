@@ -20,6 +20,8 @@ export function createAppliedRuntimeGuidanceMessage(
   guidanceMessage: RuntimePaneQueuedMessage,
   payload: RuntimeGuidanceAppliedPayload
 ): AppliedRuntimeGuidanceMessage {
+  const appliedAtMs = Number.isFinite(payload.appliedAtMs) ? payload.appliedAtMs : Date.now()
+
   return {
     id: guidanceMessage.id,
     role: 'user',
@@ -28,7 +30,7 @@ export function createAppliedRuntimeGuidanceMessage(
       attachments: persistAttachmentReferences(guidanceMessage.attachments),
     }),
     status: 'done',
-    createdAt: new Date(payload.appliedAtMs).toISOString(),
+    createdAt: new Date(appliedAtMs).toISOString(),
     runtimeGuidance: true,
     ...(guidanceMessage.runtimeGoalRequest && { runtimeGoalRequest: true }),
     ...(guidanceMessage.codeComments?.length && { codeComments: guidanceMessage.codeComments }),
@@ -50,8 +52,14 @@ export function insertAppliedRuntimeGuidance(
 
   const assistantMessage = messages[assistantIndex]
   if (assistantMessage.subtaskId) {
+    const previousPrefix = splitBoundaries.get(assistantMessage.subtaskId)?.prefix ?? ''
+    for (const subtaskId of splitBoundaries.keys()) {
+      if (subtaskId !== assistantMessage.subtaskId) {
+        splitBoundaries.delete(subtaskId)
+      }
+    }
     splitBoundaries.set(assistantMessage.subtaskId, {
-      prefix: assistantMessage.content,
+      prefix: `${previousPrefix}${assistantMessage.content}`,
     })
   }
 
@@ -95,8 +103,7 @@ export function transformRuntimePaneActionForGuidanceSplits(
   switch (action.type) {
     case 'assistant_chunk':
       return action
-    case 'assistant_done': {
-      splitBoundaries.delete(action.subtaskId)
+    case 'assistant_done':
       return {
         ...action,
         content:
@@ -104,10 +111,8 @@ export function transformRuntimePaneActionForGuidanceSplits(
             ? undefined
             : trimGuidanceSplitPrefix(boundary.prefix, action.content),
       }
-    }
     case 'assistant_error':
     case 'assistant_cancelled':
-      splitBoundaries.delete(action.subtaskId)
       return action
     default:
       return action
