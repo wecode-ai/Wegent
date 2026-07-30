@@ -56,7 +56,7 @@ jobs:
             # Merge groups, main pushes, and ci:all force every module test.
             .github/scripts/classify-ci-changes.sh --all
           else
-            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" |
               .github/scripts/classify-ci-changes.sh
           fi
 

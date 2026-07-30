@@ -48,7 +48,7 @@ jobs:
             [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
             .github/scripts/classify-ci-changes.sh --all
           else
-            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" |
               .github/scripts/classify-ci-changes.sh
           fi
 
