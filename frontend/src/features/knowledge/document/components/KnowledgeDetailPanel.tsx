@@ -416,6 +416,7 @@ export function KnowledgeDetailPanel({
               onGroupClick={onGroupClick}
               initialDocPath={initialDocPath}
               initialDocumentId={initialDocumentId}
+              isOrganization={groupInfo?.groupType === 'organization'}
             />
           ) : (
             <KnowledgePermissionDialog

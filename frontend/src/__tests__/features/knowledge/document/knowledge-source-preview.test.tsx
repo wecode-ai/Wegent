@@ -151,6 +151,25 @@ describe('KnowledgeSourcePreview', () => {
     await waitFor(() => expect(onDownload).toHaveBeenCalledTimes(1))
   })
 
+  it('does not offer download for oversized files when original-file download is disabled', () => {
+    render(
+      <KnowledgeSourcePreview
+        document={{
+          ...document,
+          file_size: KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES + 1,
+        }}
+        active={true}
+        onDownload={onDownload}
+        allowDownload={false}
+      />
+    )
+
+    expect(fetchAttachmentFile).not.toHaveBeenCalled()
+    expect(
+      screen.queryByTestId('knowledge-source-preview-too-large-download')
+    ).not.toBeInTheDocument()
+  })
+
   it('offers only retry after loading the original file fails', async () => {
     const user = userEvent.setup()
     ;(fetchAttachmentFile as jest.Mock)

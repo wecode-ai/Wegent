@@ -1431,6 +1431,7 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
+                allowDownload={!isOrganization}
                 onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
                 onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
                 onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
@@ -1489,6 +1490,7 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
                 ragConfigured={ragConfigured}
+                allowDownload={!isOrganization}
                 onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
                 onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
                 onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}

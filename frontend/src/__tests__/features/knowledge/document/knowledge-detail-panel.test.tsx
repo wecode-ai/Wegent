@@ -11,6 +11,7 @@ import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 const mockChatArea = jest.fn()
 const mockSourcePanel = jest.fn()
 const mockGenerationPanel = jest.fn()
+const mockDocumentList = jest.fn()
 const mockSelectTask = jest.fn()
 const mockFetchPermission = jest.fn()
 
@@ -114,7 +115,10 @@ jest.mock('@/features/knowledge/document/components/KnowledgeBaseSummaryCard', (
 }))
 
 jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
-  DocumentList: () => null,
+  DocumentList: (props: { isOrganization?: boolean }) => {
+    mockDocumentList(props)
+    return null
+  },
 }))
 
 jest.mock('@/features/knowledge/permission/components/PermissionManagementTab', () => ({
@@ -196,6 +200,24 @@ describe('KnowledgeDetailPanel workspace', () => {
       expect.objectContaining({
         externalPromptRequest: expect.objectContaining({ requestId: 'request-1' }),
       })
+    )
+  })
+
+  it('passes organization scope to the classic document list', () => {
+    render(
+      <KnowledgeDetailPanel
+        selectedKb={knowledgeBase}
+        currentView="documents"
+        groupInfo={{
+          groupId: 'organization',
+          groupName: 'Organization',
+          groupType: 'organization',
+        }}
+      />
+    )
+
+    expect(mockDocumentList).toHaveBeenLastCalledWith(
+      expect.objectContaining({ isOrganization: true })
     )
   })
 })

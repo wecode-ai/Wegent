@@ -65,6 +65,8 @@ interface DocumentItemProps {
   isReindexing?: boolean
   /** Whether the knowledge base has RAG configured (retriever + embedding model) */
   ragConfigured?: boolean
+  /** Whether original-file download actions are available */
+  allowDownload?: boolean
   /** Width of the name column in pixels (for table mode column resize) */
   nameColumnWidth?: number
   /** Whether to reserve the table action column */
@@ -104,6 +106,7 @@ export function DocumentItem({
   isRefreshing = false,
   isReindexing = false,
   ragConfigured = true,
+  allowDownload = true,
   nameColumnWidth,
   showActionsColumn: showActionsColumnProp,
   indent = 0,
@@ -191,7 +194,7 @@ export function DocumentItem({
   }
 
   // Whether to show download button
-  const showDownload = document.source_type === 'file' && !!document.attachment_id
+  const showDownload = allowDownload && document.source_type === 'file' && !!document.attachment_id
   // Check document source type
   const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'

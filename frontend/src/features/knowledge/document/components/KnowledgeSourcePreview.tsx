@@ -23,6 +23,7 @@ interface KnowledgeSourcePreviewProps {
   document: KnowledgeDocument
   active: boolean
   onDownload: () => void
+  allowDownload?: boolean
   className?: string
 }
 
@@ -30,6 +31,7 @@ export function KnowledgeSourcePreview({
   document,
   active,
   onDownload,
+  allowDownload = true,
   className,
 }: KnowledgeSourcePreviewProps) {
   const { t } = useTranslation('knowledge')
@@ -82,16 +84,18 @@ export function KnowledgeSourcePreview({
           limit: formatFileSize(KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES),
         })}
         action={
-          <Button
-            type="button"
-            variant="primary"
-            onClick={onDownload}
-            className="max-md:min-h-[44px] max-md:min-w-[44px]"
-            data-testid="knowledge-source-preview-too-large-download"
-          >
-            <Download className="h-4 w-4" />
-            {t('document.document.detail.sourcePreview.download')}
-          </Button>
+          allowDownload ? (
+            <Button
+              type="button"
+              variant="primary"
+              onClick={onDownload}
+              className="max-md:min-h-[44px] max-md:min-w-[44px]"
+              data-testid="knowledge-source-preview-too-large-download"
+            >
+              <Download className="h-4 w-4" />
+              {t('document.document.detail.sourcePreview.download')}
+            </Button>
+          ) : undefined
         }
       />
     )
@@ -138,16 +142,18 @@ export function KnowledgeSourcePreview({
               <RefreshCw className="h-4 w-4" />
               {t('common:actions.retry')}
             </Button>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={onDownload}
-              className="max-md:min-h-[44px] max-md:min-w-[44px]"
-              data-testid="knowledge-source-preview-render-error-download"
-            >
-              <Download className="h-4 w-4" />
-              {t('document.document.detail.sourcePreview.download')}
-            </Button>
+            {allowDownload && (
+              <Button
+                type="button"
+                variant="primary"
+                onClick={onDownload}
+                className="max-md:min-h-[44px] max-md:min-w-[44px]"
+                data-testid="knowledge-source-preview-render-error-download"
+              >
+                <Download className="h-4 w-4" />
+                {t('document.document.detail.sourcePreview.download')}
+              </Button>
+            )}
           </div>
         }
       />

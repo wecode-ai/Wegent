@@ -95,10 +95,19 @@ jest.mock('@/features/knowledge/document/components/ChunksSection', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeSourcePreview', () => ({
-  KnowledgeSourcePreview: ({ active, className }: { active: boolean; className?: string }) => (
+  KnowledgeSourcePreview: ({
+    active,
+    allowDownload,
+    className,
+  }: {
+    active: boolean
+    allowDownload?: boolean
+    className?: string
+  }) => (
     <div
       className={className}
       data-active={String(active)}
+      data-allow-download={String(allowDownload)}
       data-testid="mock-knowledge-source-preview"
     />
   ),
@@ -256,6 +265,25 @@ describe('DocumentDetailDialog original file preview', () => {
     await user.click(screen.getByTestId('knowledge-document-source-tab'))
     expect(screen.getByTestId('mock-knowledge-source-preview')).not.toHaveClass('hidden')
     expect(sourceActions).not.toHaveClass('invisible')
+  })
+
+  it('hides original-file download actions for organization knowledge bases', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+        isOrganization={true}
+      />
+    )
+
+    expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
+    expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+      'data-allow-download',
+      'false'
+    )
   })
 
   it('hides the source preview tab for non-file documents', () => {

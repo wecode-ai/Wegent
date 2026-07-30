@@ -91,7 +91,7 @@ interface DocumentDetailDialogProps {
   knowledgeBaseName?: string
   /** Current knowledge base namespace - used for resolving cross-namespace relative links */
   knowledgeBaseNamespace?: string
-  /** Whether this KB belongs to an organization-level namespace (affects URL format) */
+  /** Whether this KB belongs to an organization-level namespace */
   isOrganization?: boolean
 }
 
@@ -170,6 +170,7 @@ export function DocumentDetailDialog({
     () => Boolean(document && isKnowledgeSourcePreviewSupported(document)),
     [document]
   )
+  const allowDownload = !isOrganization
   const isSourceView = contentSourceMode === 'source' && canPreviewSource
 
   // Track if content has changed (compare against content at edit start)
@@ -402,20 +403,22 @@ export function DocumentDetailDialog({
                       aria-hidden={!isSourceView}
                       data-testid="knowledge-source-preview-actions"
                     >
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleSourceDownload}
-                        className="max-md:min-h-[44px] max-md:min-w-[44px]"
-                        aria-label={t('document.document.detail.sourcePreview.download')}
-                        data-testid="knowledge-source-preview-download"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        <span className="hidden md:inline">
-                          {t('document.document.detail.sourcePreview.download')}
-                        </span>
-                      </Button>
+                      {allowDownload && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSourceDownload}
+                          className="max-md:min-h-[44px] max-md:min-w-[44px]"
+                          aria-label={t('document.document.detail.sourcePreview.download')}
+                          data-testid="knowledge-source-preview-download"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">
+                            {t('document.document.detail.sourcePreview.download')}
+                          </span>
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="outline"
@@ -504,6 +507,7 @@ export function DocumentDetailDialog({
                 document={document}
                 active={open}
                 onDownload={handleSourceDownload}
+                allowDownload={allowDownload}
                 className={cn(!isSourceView && 'hidden')}
               />
             )}
