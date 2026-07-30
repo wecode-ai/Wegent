@@ -1,11 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import {
-  currentMonitor,
-  getCurrentWindow,
-  primaryMonitor,
-  type Monitor,
-} from '@tauri-apps/api/window'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { CloudAuthorizationHandle } from '@/features/cloud-connection/CloudConnectionContext'
 import { isHttpUrl, openExternalUrl } from './external-links'
 import { isTauriRuntime } from './runtime-environment'
@@ -17,14 +12,7 @@ const AUTHORIZATION_WINDOW_WIDTH = 1000
 const AUTHORIZATION_WINDOW_HEIGHT = 640
 const AUTHORIZATION_WINDOW_MIN_WIDTH = 960
 const AUTHORIZATION_WINDOW_MIN_HEIGHT = 620
-const AUTHORIZATION_WINDOW_VERTICAL_OFFSET = -36
 const AUTHORIZATION_WINDOW_REPOSITION_DELAY_MS = 100
-
-interface AuthorizationWindowPosition {
-  x?: number
-  y?: number
-  center: boolean
-}
 
 interface TauriWebviewWindowHandle {
   close: () => Promise<void>
@@ -37,62 +25,6 @@ interface TauriWebviewWindowHandle {
     event: string,
     handler: (event: { payload: T }) => void
   ) => Promise<UnlistenFn>
-}
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), maximum)
-}
-
-function authorizationWindowPhysicalPosition(
-  position: { x: number; y: number },
-  size: { width: number; height: number },
-  authorizationWindowSize: { width: number; height: number },
-  monitor: Monitor,
-  centerOnMonitor: boolean
-): { x: number; y: number } {
-  const scaleFactor = monitor.scaleFactor > 0 ? monitor.scaleFactor : 1
-  const workArea = monitor.workArea
-  const workAreaRight = workArea.position.x + workArea.size.width
-  const workAreaBottom = workArea.position.y + workArea.size.height
-  const maximumX = Math.max(workArea.position.x, workAreaRight - authorizationWindowSize.width)
-  const maximumY = Math.max(workArea.position.y, workAreaBottom - authorizationWindowSize.height)
-  const desiredX = centerOnMonitor
-    ? workArea.position.x + (workArea.size.width - authorizationWindowSize.width) / 2
-    : position.x + (size.width - authorizationWindowSize.width) / 2
-  const desiredY =
-    (centerOnMonitor
-      ? workArea.position.y + (workArea.size.height - authorizationWindowSize.height) / 2
-      : position.y + (size.height - authorizationWindowSize.height) / 2) +
-    AUTHORIZATION_WINDOW_VERTICAL_OFFSET * scaleFactor
-
-  return {
-    x: Math.round(clamp(desiredX, workArea.position.x, maximumX)),
-    y: Math.round(clamp(desiredY, workArea.position.y, maximumY)),
-  }
-}
-
-function positionAuthorizationWindow(
-  position: { x: number; y: number },
-  size: { width: number; height: number },
-  monitor: Monitor,
-  centerOnMonitor: boolean
-): AuthorizationWindowPosition {
-  const scaleFactor = monitor.scaleFactor > 0 ? monitor.scaleFactor : 1
-  const physicalPosition = authorizationWindowPhysicalPosition(
-    position,
-    size,
-    {
-      width: AUTHORIZATION_WINDOW_WIDTH * scaleFactor,
-      height: AUTHORIZATION_WINDOW_HEIGHT * scaleFactor,
-    },
-    monitor,
-    centerOnMonitor
-  )
-  return {
-    x: Math.round(physicalPosition.x / scaleFactor),
-    y: Math.round(physicalPosition.y / scaleFactor),
-    center: false,
-  }
 }
 
 async function closeAuthorizationWindow(windowHandle: TauriWebviewWindowHandle): Promise<void> {
@@ -174,24 +106,6 @@ function formatTauriError(payload: unknown): string {
   return 'Unknown Tauri window error'
 }
 
-async function getAuthorizationWindowPosition(
-  currentWindow: ReturnType<typeof getCurrentWindow>
-): Promise<AuthorizationWindowPosition> {
-  try {
-    const [position, size, activeMonitor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.outerSize(),
-      currentMonitor(),
-    ])
-    const monitor = activeMonitor ?? (await primaryMonitor())
-    if (!monitor) return { center: true }
-    return positionAuthorizationWindow(position, size, monitor, activeMonitor === null)
-  } catch (error) {
-    console.warn('[CloudConnection] Failed to position authorization window', error)
-    return { center: true }
-  }
-}
-
 async function waitForWindowCreation(windowHandle: TauriWebviewWindowHandle): Promise<void> {
   let settled = false
   const unlistenFns: UnlistenFn[] = []
@@ -242,7 +156,6 @@ export async function openCloudAuthorizationWindow(
   }
 
   const currentWindow = getCurrentWindow()
-  const position = await getAuthorizationWindowPosition(currentWindow)
   const authWindow = new WebviewWindow(CLOUD_AUTHORIZATION_WINDOW_LABEL, {
     url,
     title: CLOUD_AUTHORIZATION_WINDOW_TITLE,
@@ -250,7 +163,7 @@ export async function openCloudAuthorizationWindow(
     height: AUTHORIZATION_WINDOW_HEIGHT,
     minWidth: AUTHORIZATION_WINDOW_MIN_WIDTH,
     minHeight: AUTHORIZATION_WINDOW_MIN_HEIGHT,
-    ...position,
+    center: true,
     preventOverflow: true,
     resizable: true,
     maximizable: false,
