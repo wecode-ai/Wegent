@@ -365,7 +365,10 @@ fn append_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
 }
 
 fn ignored_process_env_key(key: &str) -> bool {
-    key.starts_with("_PYI_") || key.starts_with("_MEI_") || key == "_MEIPASS"
+    key.starts_with("_PYI_")
+        || key.starts_with("_MEI_")
+        || key.starts_with("BASH_FUNC_")
+        || key == "_MEIPASS"
 }
 
 #[cfg(test)]
