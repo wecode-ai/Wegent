@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
+import { createServer as createTcpServer } from 'node:net'
 import {
   access,
   appendFile,
@@ -645,6 +646,67 @@ async function reservePort() {
   assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
   await new Promise(resolvePromise => server.close(resolvePromise))
   return address.port
+}
+
+class BlockingNetworkProxy {
+  constructor() {
+    this.requests = []
+    this.sockets = new Set()
+    this.released = false
+    this.server = createTcpServer(socket => {
+      this.sockets.add(socket)
+      socket.on('close', () => this.sockets.delete(socket))
+      socket.on('error', () => this.sockets.delete(socket))
+      if (this.released) {
+        socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+        return
+      }
+      let request = ''
+      socket.on('data', chunk => {
+        if (request) return
+        request = chunk.toString('utf8').split(/\r?\n/, 1)[0]?.trim() ?? ''
+        if (request) this.requests.push(request)
+      })
+    })
+  }
+
+  async start() {
+    await new Promise((resolvePromise, reject) => {
+      this.server.once('error', reject)
+      this.server.listen(0, '127.0.0.1', resolvePromise)
+    })
+    const address = this.server.address()
+    assert.ok(address && typeof address !== 'string', 'Unable to start blocking network proxy')
+    this.url = `http://127.0.0.1:${address.port}`
+  }
+
+  async waitForRequest(timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+    return this.waitForRequestAfter(0, timeoutMs)
+  }
+
+  async waitForRequestAfter(requestCount, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      if (this.requests.length > requestCount) return this.requests[requestCount]
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+    }
+    throw new Error('Codex did not reach the blocking network proxy')
+  }
+
+  release() {
+    if (this.released) return
+    this.released = true
+    for (const socket of this.sockets) {
+      socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+    }
+  }
+
+  async stop() {
+    this.release()
+    for (const socket of this.sockets) socket.destroy()
+    this.sockets.clear()
+    await new Promise(resolvePromise => this.server.close(resolvePromise))
+  }
 }
 
 async function waitForUrl(url, message, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
@@ -2704,6 +2766,61 @@ async function initializeBlankCodexHome({ codexHome, control }) {
     false,
     'Creating a blank Codex home unexpectedly migrated native Codex content'
   )
+}
+
+async function waitForBundledMarketplaceRegistration(codexHome) {
+  const configPath = join(codexHome, 'config.toml')
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    if (await pathExists(configPath)) {
+      const config = await readFile(configPath, 'utf8')
+      if (
+        config.includes('[marketplaces.wework-personal]') &&
+        config.includes('source_type = "local"')
+      ) {
+        return
+      }
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error('The bundled local plugin marketplace was not registered in the background')
+}
+
+async function verifyStartupIgnoresBlockedCodexNetwork({
+  blockingNetworkProxy,
+  codexNetworkProbeEnabledPath,
+  control,
+  restartDesktopApp,
+}) {
+  await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
+  await writeFile(codexNetworkProbeEnabledPath, 'enabled\n', 'utf8')
+  await restartDesktopApp()
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const blockedRequest = await blockingNetworkProxy.waitForRequest()
+  await rm(codexNetworkProbeEnabledPath, { force: true })
+  assert.match(
+    blockedRequest,
+    /^(CONNECT|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) /,
+    'The blocking proxy did not capture an HTTP request'
+  )
+  blockingNetworkProxy.release()
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('setLocalProxyUrl', 'body', { value: '' })
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    snapshot.testIds.includes('desktop-workbench-main'),
+    'Blocked Codex network traffic hid the ready workbench'
+  )
+
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 }
 
 async function verifyOfficialPluginSource(repositoryRoot) {
@@ -8720,6 +8837,68 @@ async function writeCodexConfig(
   )
 }
 
+async function createBlockingCodexLauncher(realCodexBinary, expectedProxyUrl, resultDir) {
+  const launcherPath = join(resultDir, 'codex-network-probe.mjs')
+  const enabledPath = join(resultDir, 'codex-network-probe.enabled')
+  await writeFile(
+    launcherPath,
+    `#!/usr/bin/env node
+import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { connect } from 'node:net'
+
+const realCodexBinary = ${JSON.stringify(realCodexBinary)}
+const expectedProxyUrl = ${JSON.stringify(expectedProxyUrl)}
+const enabledPath = ${JSON.stringify(enabledPath)}
+const args = process.argv.slice(2)
+let delegated = false
+
+function delegateToRealCodex() {
+  if (delegated) return
+  delegated = true
+  const child = spawn(realCodexBinary, args, {
+    env: process.env,
+    stdio: 'inherit',
+  })
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => child.kill(signal))
+  }
+  child.once('error', error => {
+    console.error(error)
+    process.exitCode = 1
+  })
+  child.once('exit', (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal)
+      return
+    }
+    process.exit(code ?? 1)
+  })
+}
+
+if (!args.includes('app-server') || !existsSync(enabledPath)) {
+  delegateToRealCodex()
+} else {
+  const proxy = new URL(expectedProxyUrl)
+  const socket = connect({
+    host: proxy.hostname,
+    port: Number(proxy.port),
+  })
+  socket.once('connect', () => {
+    socket.write(
+      'CONNECT chatgpt.com:443 HTTP/1.1\\r\\nHost: chatgpt.com:443\\r\\nConnection: keep-alive\\r\\n\\r\\n'
+    )
+  })
+  socket.once('close', delegateToRealCodex)
+  socket.once('error', delegateToRealCodex)
+}
+`,
+    'utf8'
+  )
+  await chmod(launcherPath, 0o755)
+  return { enabledPath, launcherPath }
+}
+
 function codexUpstreamApiFormat(protocol) {
   return protocol === 'responses'
     ? 'openai-responses'
@@ -9533,10 +9712,15 @@ async function main() {
   const modelSwitchVerification = []
   let app
   let appBundlePath
+  let blockingNetworkProxy
   let cloudEnvironment
   let phase = 'startup'
   try {
     await control.start()
+    if (RUNS_PLUGIN_E2E) {
+      blockingNetworkProxy = new BlockingNetworkProxy()
+      await blockingNetworkProxy.start()
+    }
     const codexBinary = await resolveExecutable(
       process.env.CODEX_BIN ?? process.env.CODEX_BINARY_PATH,
       'codex',
@@ -9545,6 +9729,10 @@ async function main() {
     const codexVersion = commandOutput(codexBinary, ['--version'])
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
+    const blockingCodexLauncher = RUNS_PLUGIN_E2E
+      ? await createBlockingCodexLauncher(codexBinary, blockingNetworkProxy.url, resultDir)
+      : null
+    const appCodexBinary = blockingCodexLauncher?.launcherPath ?? codexBinary
 
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     const executorBinary = await buildExecutor()
@@ -9572,7 +9760,7 @@ async function main() {
 
     const appEnvironment = {
       ...process.env,
-      CODEX_BIN: codexBinary,
+      CODEX_BIN: appCodexBinary,
       HOME: homePath,
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
@@ -9683,12 +9871,14 @@ async function main() {
         codexHome,
         control,
       })
-      await restartDesktopApp(() =>
-        writeCodexConfig(codexHome, control.url, '[features]\nplugins = true')
-      )
-      await control.command('waitFor', '[data-testid="projects-create-button"]', {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      await writeCodexConfig(codexHome, control.url, '[features]\nplugins = true')
+      await verifyStartupIgnoresBlockedCodexNetwork({
+        blockingNetworkProxy,
+        codexNetworkProbeEnabledPath: blockingCodexLauncher.enabledPath,
+        control,
+        restartDesktopApp,
       })
+      await waitForBundledMarketplaceRegistration(codexHome)
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
@@ -11569,6 +11759,7 @@ async function main() {
     throw error
   } finally {
     await cloudEnvironment?.stop()
+    await blockingNetworkProxy?.stop()
     await stopDesktopAppProcess(app)
     await control.close()
     if (appBundlePath) {

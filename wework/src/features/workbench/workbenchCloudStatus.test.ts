@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
@@ -10,6 +10,7 @@ import {
   selectRuntimeWorkView,
   selectVisibleDevices,
   startCloudRuntimeSync,
+  timedWorkbenchBootstrapRequest,
 } from './workbenchCloudStatus'
 
 function workspace(
@@ -153,6 +154,28 @@ describe('mergeRuntimeWorkLists', () => {
     }
 
     expect(mergeRuntimeWorkLists(localWork, cloudWork).chats).toEqual([])
+  })
+})
+
+describe('timedWorkbenchBootstrapRequest', () => {
+  test('settles an unreachable background request after the configured timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const resultPromise = timedWorkbenchBootstrapRequest(
+        'cloudRuntimeWork',
+        new Promise(() => undefined),
+        8000
+      )
+
+      await vi.advanceTimersByTimeAsync(8000)
+
+      await expect(resultPromise).resolves.toMatchObject({
+        status: 'rejected',
+        reason: new Error('cloudRuntimeWork timed out after 8000ms'),
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

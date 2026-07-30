@@ -60,14 +60,17 @@ export interface BundledPluginMarketplace {
   pluginCount: number
 }
 
-interface CodexHomeMigrationStatus {
-  shouldPromptMigration: boolean
-}
-
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+let initializedLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
 let reconciledBundledPluginMarketplaceKey = ''
+let reconcilingBundledPluginMarketplaceKey = ''
+let reconcileBundledPluginMarketplacePromise: Promise<void> | null = null
 let synchronizedCodexRuntimeConfigKey = ''
+
+function isExecutorHealthy(status: LocalExecutorStatus): boolean {
+  return status.running && status.ready !== false && !status.error
+}
 
 async function synchronizeCodexRuntimeConfig(runtimeInstanceId?: string): Promise<void> {
   const proxyUrl = getLocalProxyUrl().trim()
@@ -94,24 +97,48 @@ async function reconcileBundledPluginMarketplace(
   ].join(':')
   if (reconciledBundledPluginMarketplaceKey === reconciliationKey) return
 
-  const available = await invoke<{
-    marketplaces: Array<{ name: string; path?: string | null }>
-  }>(LOCAL_EXECUTOR_COMMANDS.request, {
-    method: 'codex.app_server_request',
-    params: {
-      method: 'plugin/list',
-      params: { cwds: null },
-    },
-  })
-  const existing = available.marketplaces.find(candidate => candidate.name === marketplace.id)
-  if (
-    existing &&
-    normalizedMarketplacePath(existing.path) === normalizedMarketplacePath(marketplace.path)
-  ) {
-    reconciledBundledPluginMarketplaceKey = reconciliationKey
-    return
-  }
-  if (existing) {
+  const addMarketplace = () =>
+    invoke<{ marketplaceName: string }>(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'marketplace/add',
+        params: {
+          source: marketplace.path,
+          refName: null,
+          sparsePaths: null,
+        },
+      },
+    })
+
+  let added: { marketplaceName: string }
+  try {
+    added = await addMarketplace()
+  } catch (addError) {
+    const available = await invoke<{
+      marketplaces: Array<{ name: string; path?: string | null }>
+    }>(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'plugin/list',
+        params: {
+          cwds: null,
+          marketplaceKinds: ['local'],
+        },
+      },
+    })
+    const existing = available.marketplaces.find(candidate => candidate.name === marketplace.id)
+    if (
+      existing &&
+      normalizedMarketplacePath(existing.path) === normalizedMarketplacePath(marketplace.path)
+    ) {
+      reconciledBundledPluginMarketplaceKey = reconciliationKey
+      return
+    }
+    if (!existing) {
+      throw new Error(`Bundled plugin marketplace ${marketplace.id} could not be registered`, {
+        cause: addError,
+      })
+    }
     await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
       method: 'codex.app_server_request',
       params: {
@@ -119,24 +146,45 @@ async function reconcileBundledPluginMarketplace(
         params: { marketplaceName: marketplace.id },
       },
     })
+    added = await addMarketplace()
   }
-  const added = await invoke<{ marketplaceName: string }>(LOCAL_EXECUTOR_COMMANDS.request, {
-    method: 'codex.app_server_request',
-    params: {
-      method: 'marketplace/add',
-      params: {
-        source: marketplace.path,
-        refName: null,
-        sparsePaths: null,
-      },
-    },
-  })
   if (added.marketplaceName !== marketplace.id) {
     throw new Error(
       `Bundled plugin marketplace resolved to ${added.marketplaceName || 'an unknown name'}`
     )
   }
   reconciledBundledPluginMarketplaceKey = reconciliationKey
+}
+
+export async function ensureBundledPluginMarketplaceRegistered(): Promise<void> {
+  const marketplace = initializedBundledPluginMarketplace
+  const status = initializedLocalExecutorStatus
+  if (!marketplace || !status) return
+  if (!isExecutorHealthy(status)) return
+  const reconciliationKey = [
+    status.runtimeInstanceId || 'current-runtime',
+    normalizedMarketplacePath(marketplace.path),
+  ].join(':')
+  if (
+    reconciledBundledPluginMarketplaceKey === reconciliationKey ||
+    (reconcilingBundledPluginMarketplaceKey === reconciliationKey &&
+      reconcileBundledPluginMarketplacePromise)
+  ) {
+    return reconcileBundledPluginMarketplacePromise ?? Promise.resolve()
+  }
+
+  reconcilingBundledPluginMarketplaceKey = reconciliationKey
+  const reconciliation = reconcileBundledPluginMarketplace(
+    marketplace,
+    status.runtimeInstanceId
+  ).finally(() => {
+    if (reconcileBundledPluginMarketplacePromise === reconciliation) {
+      reconcileBundledPluginMarketplacePromise = null
+      reconcilingBundledPluginMarketplaceKey = ''
+    }
+  })
+  reconcileBundledPluginMarketplacePromise = reconciliation
+  return reconciliation
 }
 
 export function getInitializedBundledPluginMarketplace(): BundledPluginMarketplace | null {
@@ -150,20 +198,10 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
         LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace
       )
       initializedBundledPluginMarketplace = marketplace
-      const migrationStatus = await invoke<CodexHomeMigrationStatus>(
-        LOCAL_EXECUTOR_COMMANDS.codexHomeMigrationStatus
-      )
       const status = await invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure)
-      if (status.running && status.ready !== false && !status.error) {
+      initializedLocalExecutorStatus = status
+      if (isExecutorHealthy(status)) {
         await synchronizeCodexRuntimeConfig(status.runtimeInstanceId)
-      }
-      if (
-        !migrationStatus.shouldPromptMigration &&
-        status.running &&
-        status.ready !== false &&
-        !status.error
-      ) {
-        await reconcileBundledPluginMarketplace(marketplace, status.runtimeInstanceId)
       }
       return status
     })().finally(() => {
@@ -172,6 +210,16 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
   }
 
   return ensureLocalExecutorStartedPromise
+}
+
+export function resetLocalExecutorStateForTests(): void {
+  ensureLocalExecutorStartedPromise = null
+  initializedLocalExecutorStatus = null
+  initializedBundledPluginMarketplace = null
+  reconciledBundledPluginMarketplaceKey = ''
+  reconcilingBundledPluginMarketplaceKey = ''
+  reconcileBundledPluginMarketplacePromise = null
+  synchronizedCodexRuntimeConfigKey = ''
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {

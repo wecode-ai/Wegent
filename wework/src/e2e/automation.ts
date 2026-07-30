@@ -17,12 +17,14 @@ import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
+import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -730,6 +732,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'storeLocalProxyUrl':
+      return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'setLocalProxyUrl': {
+      const proxyUrl = command.value?.trim() ?? ''
+      const config = saveLocalProxyUrl(proxyUrl)
+      await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+        method: 'runtime.codex.runtime_config.update',
+        params: { proxyUrl: proxyUrl || null },
+      })
+      return JSON.stringify(config)
+    }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
       window.dispatchEvent(event)
