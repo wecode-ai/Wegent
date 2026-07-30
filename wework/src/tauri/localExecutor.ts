@@ -21,6 +21,7 @@ export interface LocalExecutorStatus {
   ready?: boolean
   deviceId?: string
   runtimeInstanceId?: string
+  codexInitializeElapsedMs?: number
   version?: string
   error?: string
 }
@@ -66,21 +67,9 @@ let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
 let reconciledBundledPluginMarketplaceKey = ''
 let reconcilingBundledPluginMarketplaceKey = ''
 let reconcileBundledPluginMarketplacePromise: Promise<void> | null = null
-let synchronizedCodexRuntimeConfigKey = ''
 
 function isExecutorHealthy(status: LocalExecutorStatus): boolean {
   return status.running && status.ready !== false && !status.error
-}
-
-async function synchronizeCodexRuntimeConfig(runtimeInstanceId?: string): Promise<void> {
-  const proxyUrl = getLocalProxyUrl().trim()
-  const synchronizationKey = `${runtimeInstanceId ?? 'current-runtime'}:${proxyUrl}`
-  if (synchronizedCodexRuntimeConfigKey === synchronizationKey) return
-  await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
-    method: 'runtime.codex.runtime_config.update',
-    params: { proxyUrl: proxyUrl || null },
-  })
-  synchronizedCodexRuntimeConfigKey = synchronizationKey
 }
 
 function normalizedMarketplacePath(path: string | null | undefined): string {
@@ -198,11 +187,11 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
         LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace
       )
       initializedBundledPluginMarketplace = marketplace
-      const status = await invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure)
+      const proxyUrl = getLocalProxyUrl().trim()
+      const status = await invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure, {
+        proxyUrl: proxyUrl || null,
+      })
       initializedLocalExecutorStatus = status
-      if (isExecutorHealthy(status)) {
-        await synchronizeCodexRuntimeConfig(status.runtimeInstanceId)
-      }
       return status
     })().finally(() => {
       ensureLocalExecutorStartedPromise = null
@@ -219,7 +208,6 @@ export function resetLocalExecutorStateForTests(): void {
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
   reconcileBundledPluginMarketplacePromise = null
-  synchronizedCodexRuntimeConfigKey = ''
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
