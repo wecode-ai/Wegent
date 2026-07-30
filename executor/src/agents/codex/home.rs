@@ -36,6 +36,9 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
     use toml_edit::{value, DocumentMut};
 
     let config_path = codex_home.join("config.toml");
+    if !config_path.exists() {
+        return Ok(());
+    }
     let content = fs::read_to_string(&config_path).unwrap_or_default();
     let mut document = content.parse::<DocumentMut>().map_err(|error| {
         format!(

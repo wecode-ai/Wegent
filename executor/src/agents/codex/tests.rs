@@ -250,6 +250,21 @@ fn prepare_wework_codex_home_links_user_auth() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn prepare_wework_codex_home_keeps_blank_config_absent() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-blank-config");
+    let codex_home = root.join("wework-codex");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+    assert!(
+        !codex_home.join("config.toml").exists(),
+        "blank Codex home initialization must keep config.toml absent"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn prepare_wework_codex_home_replaces_stale_auth_link() {
