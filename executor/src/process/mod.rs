@@ -819,6 +819,7 @@ async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandO
     let mut command = Command::new(&spec.program);
     command.args(&spec.args).envs(&spec.env);
     command.kill_on_drop(true);
+    hide_windows_console(&mut command);
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -873,6 +874,7 @@ where
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    hide_windows_console(&mut command);
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -1395,6 +1397,7 @@ async fn run_prepared_command(
     mut command: Command,
     stdin: Option<String>,
 ) -> std::io::Result<std::process::Output> {
+    hide_windows_console(&mut command);
     let Some(input) = stdin else {
         return command.output().await;
     };
@@ -1587,6 +1590,14 @@ fn failure_message(stderr: Vec<u8>, stdout: Vec<u8>) -> String {
 
 fn decode_output(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).trim().to_owned()
+}
+
+pub fn hide_windows_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 #[cfg(test)]

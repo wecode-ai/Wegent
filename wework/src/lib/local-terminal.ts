@@ -14,8 +14,9 @@ export function isLocalTerminalAvailable(): boolean {
   const isIosLike =
     /iPad|iPhone|iPod/.test(userAgent) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1)
   const isMacOs = platform.startsWith('Mac') || userAgent.includes('Mac OS X')
+  const isWindows = platform.startsWith('Win') || /Windows NT/.test(userAgent)
 
-  return isTauriRuntime() && isMacOs && !isIosLike
+  return isTauriRuntime() && (isMacOs || isWindows) && !isIosLike
 }
 
 export async function getLocalExecutorDeviceId(
