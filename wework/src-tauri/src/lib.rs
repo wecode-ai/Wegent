@@ -1,6 +1,8 @@
 mod appshots;
 mod desktop_capture;
 mod embedded_browser;
+#[cfg(target_os = "macos")]
+mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
 mod local_executor;
