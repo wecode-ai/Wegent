@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react'
 import JSZip from 'jszip'
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
@@ -55,6 +55,7 @@ import { SkillUploadDialog } from './SkillUploadDialog'
 import { InstallPluginDialog } from './plugin-dialogs/InstallPluginDialog'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
 import { resolvePluginLogoUrl } from './plugin-assets'
+import { formatPluginVersion } from './plugin-display'
 import { installedPluginSourceLabel, mergeInstalledPlugins } from './installedPluginMerge'
 import {
   installedPluginDistribution,
@@ -79,7 +80,6 @@ interface AddMarketFormData {
   source: string
   gitRef: string
   subPath: string
-  displayName: string
 }
 
 interface PendingMcpUninstall {
@@ -317,13 +317,16 @@ function withMarketplaceListingInterface(
   installed: InstalledPluginItem,
   marketplaceItem: PluginMarketplaceItem
 ): InstalledPluginItem {
+  const version = installed.version || marketplaceItem.version
   return {
     ...installed,
+    version,
     raw: {
       ...installed.raw,
       spec: {
         ...installed.raw.spec,
         interface: marketplaceItem.interface,
+        version,
       },
     },
   }
@@ -419,12 +422,12 @@ function marketplaceRowMetaItems(
   }
   if (item.accessRole === 'owner' && item.visibility === 'personal') {
     const meta = [t('workbench.plugins_personal_created', '个人创建')]
-    if (item.version) meta.push(`v${item.version}`)
+    if (item.version) meta.push(`v${formatPluginVersion(item.version)}`)
     return meta
   }
   const publisher = (item.author || item.sourceLabel || item.sourceProvider || '').trim()
   const meta = publisher ? [publisher] : []
-  if (item.version) meta.push(`v${item.version}`)
+  if (item.version) meta.push(`v${formatPluginVersion(item.version)}`)
   return meta
 }
 
@@ -445,6 +448,16 @@ function cloudMarketplaceKey(): string {
 function localMarketplaceIdFromItem(item: PluginMarketplaceItem): string | null {
   const marketplaceId = item.manifest?.marketplaceId
   return typeof marketplaceId === 'string' && marketplaceId.trim() ? marketplaceId.trim() : null
+}
+
+function isMarketplaceSourceValid(value: string): boolean {
+  const source = value.trim()
+  return (
+    /^[\w.-]+\/[\w.-]+$/.test(source) ||
+    /^(https?:\/\/|ssh:\/\/|git@)[^\s]+$/i.test(source) ||
+    /^(\/|\.{1,2}\/|~\/)[^\0]+$/.test(source) ||
+    /^[a-zA-Z]:[\\/][^\0]+$/.test(source)
+  )
 }
 
 function isLocalCodexMarketplaceItem(item: PluginMarketplaceItem): boolean {
@@ -532,132 +545,213 @@ function AddMarketDialog({
   onSubmit: (event: FormEvent) => void
 }) {
   const { t } = useTranslation('common')
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const sourceInputRef = useRef<HTMLInputElement>(null)
+  const sourceIsValid = isMarketplaceSourceValid(formData.source)
+  const sourceError = Boolean(formData.source.trim()) && !sourceIsValid
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const frameId = window.requestAnimationFrame(() => sourceInputRef.current?.focus())
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      if (previouslyFocused?.isConnected) {
+        previouslyFocused.focus()
+      } else {
+        document.querySelector<HTMLElement>('[data-testid="plugins-create-button"]')?.focus()
+      }
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
 
+  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      if (!isSubmitting) onClose()
+      return
+    }
+    if (event.key !== 'Tab') return
+
+    const focusable = Array.from(
+      dialogRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ) ?? []
+    )
+    if (focusable.length === 0) {
+      event.preventDefault()
+      dialogRef.current?.focus()
+      return
+    }
+
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (!sourceIsValid) {
+      event.preventDefault()
+      sourceInputRef.current?.focus()
+      return
+    }
+    onSubmit(event)
+  }
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/[0.38] p-6"
+      onClick={() => {
+        if (!isSubmitting) onClose()
+      }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="plugins-marketplace-dialog-title"
+        tabIndex={-1}
         data-testid="plugins-marketplace-dialog"
-        className="w-full max-w-md rounded-xl border border-border bg-background p-6 shadow-xl"
+        className="max-h-[88vh] w-full max-w-[600px] overflow-y-auto rounded-[18px] bg-background shadow-[0_28px_90px_rgba(0,0,0,0.22)] ring-1 ring-black/5"
         onClick={event => event.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
       >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-text-primary">
-            {t('workbench.plugins_add_market', '添加插件市场')}
-          </h2>
+        <div className="flex items-start justify-between gap-6 border-b border-border px-6 py-[21px]">
+          <div className="min-w-0">
+            <h2
+              id="plugins-marketplace-dialog-title"
+              className="heading-base font-semibold leading-7 text-text-primary"
+            >
+              {t('workbench.plugins_add_market', '添加插件市场')}
+            </h2>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t(
+                'workbench.plugins_add_market_description',
+                '从 GitHub 仓库、Git URL 或本地文件夹添加。'
+              )}{' '}
+              <a
+                href="https://developers.openai.com/plugins/build/plugins"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-blue-600 hover:underline"
+              >
+                {t('common.learn_more', '了解更多')}
+              </a>
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
+            disabled={isSubmitting}
+            data-testid="plugins-marketplace-close-button"
+            className="flex h-8 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-50"
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <p className="mb-6 text-sm text-text-secondary">
-          {t(
-            'workbench.plugins_add_market_description',
-            '从 GitHub 仓库、Git URL 或本地文件夹添加。'
-          )}
-        </p>
-
-        <form onSubmit={onSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-text-primary">
-              {t('workbench.plugins_market_source', '来源')} *
-            </label>
-            <input
-              type="text"
-              required
-              data-testid="plugins-marketplace-path-input"
-              value={formData.source}
-              onChange={event => onChange({ ...formData, source: event.target.value })}
-              placeholder="openai/plugins 或 git@github.com:org/repo.git"
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-text-primary">
-              {t('workbench.plugins_market_git_ref', 'Git 引用')}
-              <span className="ml-1 font-normal text-text-muted">
-                ({t('common.optional', '可选')})
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-5 px-6 py-[22px]">
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-text-primary">
+                {t('workbench.plugins_market_source', '来源')}
+              </span>
+              <input
+                ref={sourceInputRef}
+                type="text"
+                required
+                autoComplete="off"
+                aria-invalid={sourceError}
+                aria-describedby="plugins-marketplace-source-note"
+                data-testid="plugins-marketplace-path-input"
+                value={formData.source}
+                onChange={event => onChange({ ...formData, source: event.target.value })}
+                placeholder="openai/plugins 或 git@github.com:org/repo.git"
+                className={[
+                  'h-10 w-full rounded-lg border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:ring-2',
+                  sourceError
+                    ? 'border-red-500/70 focus:border-red-500 focus:ring-red-500/15'
+                    : 'border-border focus:border-focus/70 focus:ring-focus/15',
+                ].join(' ')}
+              />
+              <span
+                id="plugins-marketplace-source-note"
+                className={[
+                  'mt-1.5 block text-xs leading-4',
+                  sourceError ? 'text-red-600' : 'text-text-muted',
+                ].join(' ')}
+              >
+                {sourceError
+                  ? t(
+                      'workbench.plugins_market_source_invalid',
+                      '请输入 GitHub 简写、Git URL 或本地目录。'
+                    )
+                  : t(
+                      'workbench.plugins_market_source_hint',
+                      '支持 GitHub 简写、HTTPS/SSH Git URL 或本地目录。'
+                    )}
               </span>
             </label>
-            <input
-              type="text"
-              value={formData.gitRef}
-              onChange={event => onChange({ ...formData, gitRef: event.target.value })}
-              placeholder="main"
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-            />
-          </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-text-primary">
-              {t('workbench.plugins_market_sub_path', '输入路径')}
-              <span className="ml-1 font-normal text-text-muted">
-                ({t('common.optional', '可选')})
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-text-primary">
+                {t('workbench.plugins_market_git_ref', 'Git 引用')}
               </span>
+              <input
+                type="text"
+                autoComplete="off"
+                data-testid="plugins-marketplace-git-ref-input"
+                value={formData.gitRef}
+                onChange={event => onChange({ ...formData, gitRef: event.target.value })}
+                placeholder={t('workbench.plugins_market_git_ref_placeholder', '主分支')}
+                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+              />
             </label>
-            <input
-              type="text"
-              value={formData.subPath}
-              onChange={event => onChange({ ...formData, subPath: event.target.value })}
-              placeholder="plugins/"
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-            />
-            <p className="mt-1 text-xs text-text-muted">
-              {t('workbench.plugins_market_sub_path_hint', '仓库内插件目录的相对路径')}
-            </p>
-          </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-text-primary">
-              {t('workbench.plugins_market_display_name', '市场显示名称')}
-              <span className="ml-1 font-normal text-text-muted">
-                ({t('common.optional', '可选')})
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-text-primary">
+                {t('workbench.plugins_market_sparse_path', '稀疏路径')}
               </span>
+              <textarea
+                data-testid="plugins-marketplace-sparse-path-input"
+                value={formData.subPath}
+                onChange={event => onChange({ ...formData, subPath: event.target.value })}
+                placeholder="plugins/codex"
+                className="min-h-[78px] w-full resize-y rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+              />
             </label>
-            <input
-              type="text"
-              value={formData.displayName}
-              onChange={event => onChange({ ...formData, displayName: event.target.value })}
-              placeholder={t('workbench.plugins_market_display_name_placeholder', '自动生成')}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-            />
-            <p className="mt-1 text-xs text-text-muted">
-              {t(
-                'workbench.plugins_market_display_name_hint',
-                '将显示在市场 Tab 中，留空则自动生成'
-              )}
-            </p>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex justify-end gap-[9px] border-t border-border px-6 py-4">
             <button
               type="button"
               data-testid="plugins-marketplace-cancel-button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="h-9 rounded-lg px-4 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:opacity-50"
+              className="h-9 rounded-lg border border-border bg-surface px-4 text-sm font-medium text-text-primary transition-colors hover:bg-muted disabled:opacity-50"
             >
               {t('common.cancel', '取消')}
             </button>
             <button
               type="submit"
               data-testid="plugins-marketplace-save-button"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !sourceIsValid}
               className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background transition-colors hover:bg-text-primary/90 disabled:opacity-50"
             >
               {isSubmitting
                 ? t('workbench.plugins_adding_market', '添加中...')
-                : t('workbench.plugins_add_market', '添加市场')}
+                : t('workbench.plugins_confirm_add_market', '添加市场')}
             </button>
           </div>
         </form>
@@ -723,14 +817,7 @@ function PluginMarketplaceRow({
     <article
       data-testid={`${testIdPrefix}plugin-marketplace-row-${item.id}`}
       className="plugin-market-card"
-      tabIndex={0}
       onClick={onOpen}
-      onKeyDown={event => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onOpen()
-        }
-      }}
     >
       <button
         type="button"
@@ -956,7 +1043,6 @@ export function PluginsWorkspace({
     source: '',
     gitRef: '',
     subPath: '',
-    displayName: '',
   })
   const [isAddingMarket, setIsAddingMarket] = useState(false)
   const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
@@ -1567,18 +1653,16 @@ export function PluginsWorkspace({
   const addMarketplace = (event: FormEvent) => {
     event.preventDefault()
     const source = addMarketForm.source.trim()
-    if (!source) return
+    if (!isMarketplaceSourceValid(source)) return
 
     setIsAddingMarket(true)
 
-    // 构建完整的路径，支持 GitHub 简写、Git URL 和本地路径
+    // Build the full path from the supported marketplace source formats.
     let fullPath = source
     if (/^[\w-]+\/[\w-]+$/.test(source)) {
-      // GitHub 简写格式：owner/repo
       fullPath = `https://github.com/${source}.git`
     }
 
-    // 如果有 gitRef 或 subPath，添加到路径中
     if (addMarketForm.gitRef.trim()) {
       fullPath = `${fullPath}#${addMarketForm.gitRef.trim()}`
     }
@@ -1597,7 +1681,7 @@ export function PluginsWorkspace({
           rememberMarketplaceKey(selectedKey)
           setSelectedMarketplaceKey(selectedKey)
         }
-        setAddMarketForm({ source: '', gitRef: '', subPath: '', displayName: '' })
+        setAddMarketForm({ source: '', gitRef: '', subPath: '' })
         setShowAddMarketDialog(false)
         refreshMarketplace()
       })
@@ -2482,7 +2566,9 @@ export function PluginsWorkspace({
       : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
     const detailPlugin = selectedMarketplacePluginDetail ?? baseDetailPlugin
     const deviceState = selectedMarketplacePlugin.currentDeviceInstallation?.state
-    const isInstalled = selectedMarketplacePlugin.installed && deviceState === 'installed'
+    const isInstalled =
+      selectedMarketplacePlugin.installed &&
+      (deviceState === undefined || deviceState === 'installed')
     const isFailed = deviceState === 'failed'
     const isDeviceSyncing =
       deviceState === 'pending' ||

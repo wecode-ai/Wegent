@@ -16,7 +16,8 @@ import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import { resolvePluginAssetUrl } from './plugin-assets'
+import { resolvePluginLogoUrl } from './plugin-assets'
+import { formatPluginVersion } from './plugin-display'
 import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 
 interface PluginDetailViewProps {
@@ -169,9 +170,11 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
 }
 
 function installedPluginLogo(plugin: InstalledPluginItem): string {
-  return resolvePluginAssetUrl(
-    plugin.raw.spec.interface?.logo || plugin.raw.spec.interface?.composerIcon
-  )
+  return resolvePluginLogoUrl({
+    pluginKey: plugin.raw.spec.source.pluginKey || plugin.name,
+    logo: plugin.raw.spec.interface?.logo,
+    composerIcon: plugin.raw.spec.interface?.composerIcon,
+  })
 }
 
 function pluginDisplayDescription(plugin: InstalledPluginItem): string {
@@ -317,7 +320,7 @@ function detailRows(
     },
     {
       label: '版本',
-      value: plugin.spec.version || formatManifestValue(manifest.version),
+      value: formatPluginVersion(plugin.spec.version || formatManifestValue(manifest.version)),
     },
   ]
   if (isExternalSource && homepage) {
@@ -438,6 +441,7 @@ export function PluginDetailView({
     </section>
   )
   const logo = installedPluginLogo(plugin)
+  const version = formatPluginVersion(plugin.version)
   const prompts = pluginPromptExamples(plugin)
   const description = pluginDisplayDescription(plugin)
   const deviceSummary = pluginDeviceSummary(plugin)
@@ -617,7 +621,7 @@ export function PluginDetailView({
               {plugin.raw.spec.interface?.developerName ||
                 plugin.raw.spec.author ||
                 plugin.sourceLabel}
-              {plugin.version ? ` · v${plugin.version}` : ''}
+              {version ? ` · v${version}` : ''}
             </p>
             {deviceSummary && (
               <p className="mt-1 text-xs leading-4 text-text-muted">{deviceSummary}</p>

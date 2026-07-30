@@ -1035,7 +1035,7 @@ button.plugin-market-filter[aria-selected='true']:hover:not(:disabled) {
 .plugin-installed-icons-scroller {
   overflow-x: auto;
   overflow-y: visible;
-  min-height: 54px;
+  min-height: 48px;
   padding-bottom: 28px;
   margin-bottom: -20px;
   overscroll-behavior-x: contain;
@@ -1043,7 +1043,7 @@ button.plugin-market-filter[aria-selected='true']:hover:not(:disabled) {
 
 .plugin-installed-icons-track {
   display: flex;
-  min-height: 54px;
+  min-height: 48px;
   align-items: flex-start;
   gap: 7px;
   width: max-content;
@@ -1082,8 +1082,8 @@ button.plugin-installed-strip-item {
   -webkit-appearance: none;
   position: relative;
   display: grid;
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   flex-shrink: 0;
   place-items: center;
   border: 0;
@@ -1148,6 +1148,10 @@ button.plugin-installed-strip-item:focus-visible::after {
 }
 
 .plugin-installed-strip-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  padding: 4px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.05);
   pointer-events: none;
 }
@@ -1166,8 +1170,8 @@ button.plugin-installed-strip-item:focus-visible::after {
 
 .plugin-installed-strip {
   overflow: visible;
-  margin: 0 0 26px;
-  padding: 0 0 16px;
+  margin: 0 0 22px;
+  padding: 0 0 12px;
   border-bottom: 1px solid rgb(229 229 226);
 }
 

@@ -1436,10 +1436,21 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('plugins-create-button'))
     await userEvent.click(screen.getByTestId('plugins-add-market-option'))
-    await userEvent.type(
-      screen.getByTestId('plugins-marketplace-path-input'),
-      '/Users/test/plugins'
+    expect(screen.getByRole('dialog', { name: '添加插件市场' })).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-marketplace-save-button')).toBeDisabled()
+    expect(screen.getByTestId('plugins-marketplace-sparse-path-input')).toBeInstanceOf(
+      HTMLTextAreaElement
     )
+    expect(screen.queryByText('市场显示名称')).not.toBeInTheDocument()
+    const sourceInput = screen.getByTestId('plugins-marketplace-path-input')
+    await waitFor(() => expect(sourceInput).toHaveFocus())
+    await userEvent.type(sourceInput, 'invalid')
+    await userEvent.tab()
+    expect(screen.getByText('请输入 GitHub 简写、Git URL 或本地目录。')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-marketplace-save-button')).toBeDisabled()
+    await userEvent.clear(sourceInput)
+    await userEvent.type(sourceInput, '/Users/test/plugins')
+    expect(screen.getByTestId('plugins-marketplace-save-button')).toBeEnabled()
     await userEvent.click(screen.getByTestId('plugins-marketplace-save-button'))
 
     await waitFor(() =>

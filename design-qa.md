@@ -79,6 +79,74 @@
 - Initial implementation comparison: no P0/P1/P2 findings; no corrective visual iteration was required.
 - Follow-up create-flow comparison: removed the separate new-folder/existing-folder actions and added the post-selection create form requested in the second reference. The revised `create-comparison.png` has no P0/P1/P2 findings.
 
+---
+
+# Plugin Marketplace Fidelity QA
+
+## Source visual truth
+
+- Interactive design: `/Users/md/Desktop/Wework-插件市场/wework-assistant-plugin-codex-demo.html`
+- UI specification: `/Users/md/Desktop/Wework-插件市场/wework-plugin-market-ui-development-spec.md`
+- Marketplace: `/Users/md/.codex/visualizations/2026/07/30/019fb297-cb7b-77f3-b396-71b85be63d98/plugin-ui-audit/01-demo-market.png`
+- GitHub detail: `/Users/md/.codex/visualizations/2026/07/30/019fb297-cb7b-77f3-b396-71b85be63d98/plugin-ui-audit/02-demo-detail.png`
+- Plugin management: `/Users/md/.codex/visualizations/2026/07/30/019fb297-cb7b-77f3-b396-71b85be63d98/plugin-ui-audit/03-demo-management.png`
+- Add-market dialog: `/Users/md/.codex/visualizations/2026/07/30/019fb297-cb7b-77f3-b396-71b85be63d98/plugin-ui-audit/10-demo-add-market.png`
+
+## Implementation evidence
+
+- Marketplace: `wework/test-results/ai-verify/plugin-market-fidelity/01-market-after.png`
+- Add-market dialog: `wework/test-results/ai-verify/plugin-market-fidelity/02-add-market-after.png`
+- GitHub detail: `wework/test-results/ai-verify/plugin-market-fidelity/03-github-detail-after.png`
+- Plugin management: `wework/test-results/ai-verify/plugin-market-fidelity/04-management-after.png`
+- Marketplace comparison: `wework/test-results/ai-verify/plugin-market-fidelity/compare-market-final.png`
+- Detail comparison: `wework/test-results/ai-verify/plugin-market-fidelity/compare-detail-final.png`
+- Management comparison: `wework/test-results/ai-verify/plugin-market-fidelity/compare-management-final.png`
+- Add-market comparison: `wework/test-results/ai-verify/plugin-market-fidelity/compare-add-market-final.png`
+
+## Viewport and state
+
+- Every source and implementation capture is 1280 × 720 pixels in the light desktop layout.
+- Implementation captures come from an isolated real Tauri session on `feature/wework-marketplace`.
+- The source uses fixed demo plugin data. The implementation uses the real isolated Codex catalog and installed-plugin state, so plugin names, counts, descriptions, and available prompt templates are intentionally data-dependent.
+- GitHub is installed in the implementation state. Its market card, detail primary action, version, and management row were compared as the same installed lifecycle state.
+
+## Required fidelity surfaces
+
+- Typography, card geometry, section spacing, borders, radii, controls, and two-column density match the reference at the shared viewport.
+- The installed-plugin strip now uses the reference 38px control and 34px logo density.
+- GitHub uses the same brand asset in the marketplace, detail, and management views.
+- Repository revision hashes are removed from displayed plugin versions while semantic prerelease versions remain unchanged.
+- The add-market dialog matches the reference 600px frame, 18px radius, separated header/body/footer, three fields, textarea treatment, overlay, and disabled primary action.
+- The dialog has a named modal role, initial focus, focus containment, Escape dismissal, focus restoration, immediate field-level source validation, and stable test IDs.
+
+## Findings
+
+- No actionable P0, P1, or P2 visual differences remain.
+- P3: the implementation retains the existing marketplace refresh icon because it is an active product recovery control; the demo omits it.
+- P3: the repository desktop shell sidebar is 240px while the demo shell is 251px. Plugin-page internal spacing and component geometry align after that inherited shell offset.
+- Accepted data constraint: the real GitHub catalog currently supplies one prompt template and no demo-only simulated authorization row, while the source fixture supplies three templates and a mock GitHub App authorization. The responsive three-column template and authorization components remain available when those fields exist.
+
+## Primary interactions tested
+
+- Open the plugin marketplace and confirm the installed strip and catalog render.
+- Open the installed GitHub card and confirm the detail page shows the GitHub logo, normalized version, action menu, and `立即试用` rather than an install action.
+- Open Add marketplace from the Create menu.
+- Confirm an invalid source shows a field-level error and keeps the submit action disabled.
+- Recover with the valid `openai/plugins` shorthand.
+- Close the dialog with Escape and return to the marketplace.
+- Open plugin management and confirm the installed rows, brand icons, toggles, trial actions, and menus render.
+
+## Verification
+
+- Full Wework test suite: 225 files passed, 2228 tests passed.
+- Focused plugin tests after the final iteration: 2 files passed, 35 tests passed.
+- TypeScript project check passed.
+- Focused ESLint check passed.
+- Real Tauri visual and interaction verification passed.
+- No frontend render or Tauri process error occurred. The isolated executor recorded one remote GitHub plugin-detail lookup returning 404; the installed/catalog data still rendered correctly, and this external lookup did not affect the verified UI states.
+
+**Final result:** passed
+
 **Implementation checklist**
 
 - [x] Centered local/cloud create-project dialog.
